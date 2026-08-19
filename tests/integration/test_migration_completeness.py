@@ -10,8 +10,8 @@ def test_migrations_contain_all_schema_tables():
     but forgets to add it to the migration script for existing deployments.
     """
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    schema_path = os.path.join(base_dir, "app", "db", "schema_pg.sql")
-    migrations_path = os.path.join(base_dir, "app", "db", "migrations.py")
+    schema_path = os.path.join(base_dir, "scripts", "migration", "schema_pg.sql")
+    migrations_path = os.path.join(base_dir, "scripts", "migration", "pg_migrations.py")
     
     assert os.path.exists(schema_path), f"schema_pg.sql not found at {schema_path}"
     assert os.path.exists(migrations_path), f"migrations.py not found at {migrations_path}"
@@ -50,8 +50,8 @@ def test_migrations_contain_schema_alter_tables():
     using _safe_add_column.
     """
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    schema_path = os.path.join(base_dir, "app", "db", "schema_pg.sql")
-    migrations_path = os.path.join(base_dir, "app", "db", "migrations.py")
+    schema_path = os.path.join(base_dir, "scripts", "migration", "schema_pg.sql")
+    migrations_path = os.path.join(base_dir, "scripts", "migration", "pg_migrations.py")
     
     with open(schema_path, "r", encoding="utf-8") as f:
         schema_content = f.read()

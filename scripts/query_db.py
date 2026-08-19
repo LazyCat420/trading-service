@@ -1,5 +1,5 @@
 import asyncio
-from app.db.connection import get_db
+from scripts.migration.pg_connection import get_db
 
 with get_db() as conn:
     with conn.cursor() as cur:

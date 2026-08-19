@@ -27,7 +27,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.db.connection import get_db                                # noqa: E402
+from scripts.migration.pg_connection import get_db                                # noqa: E402
 from app.autoresearch.scorecard import (                            # noqa: E402
     MATURITY_N, REGRESSION_MARGIN, VERDICT_CONTAMINATED, VERDICT_IMMATURE,
     VERDICT_REGRESSED, build_scorecard, regression_verdict,

@@ -48,7 +48,7 @@ def main() -> int:
                     help="enqueue and exit without waiting")
     args = ap.parse_args()
 
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
     cycle_id = f"cycle-observe-{int(time.time())}"

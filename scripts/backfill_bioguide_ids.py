@@ -5,7 +5,7 @@ import sys
 # Ensure project root is in path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.db.connection import get_db
+from scripts.migration.pg_connection import get_db
 from app.utils.politician_matcher import resolve_bioguide_id
 
 def main():

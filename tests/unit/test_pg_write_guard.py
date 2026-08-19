@@ -163,7 +163,7 @@ class _FakeConn:
 
 
 def test_cursor_execute_is_guarded(guard):
-    from app.db.connection import PooledCursor
+    from scripts.migration.pg_connection import PooledCursor
 
     conn = _FakeConn()
     cur = PooledCursor(conn)
@@ -174,7 +174,7 @@ def test_cursor_execute_is_guarded(guard):
 
 
 def test_cursor_executemany_is_guarded(guard):
-    from app.db.connection import PooledCursor
+    from scripts.migration.pg_connection import PooledCursor
 
     conn = _FakeConn()
     cur = PooledCursor(conn)
@@ -186,7 +186,7 @@ def test_cursor_executemany_is_guarded(guard):
 
 def test_cursor_still_executes_permitted_sql(guard):
     """Negative control: the guard must not break ordinary traffic."""
-    from app.db.connection import PooledCursor
+    from scripts.migration.pg_connection import PooledCursor
 
     conn = _FakeConn()
     cur = PooledCursor(conn)

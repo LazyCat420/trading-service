@@ -96,7 +96,7 @@ def main() -> int:
           f"(slang minus listed)")
 
     try:
-        from app.db.connection import get_db
+        from scripts.migration.pg_connection import get_db
 
         with get_db() as db:
             median = db.execute(

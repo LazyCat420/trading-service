@@ -7,7 +7,7 @@ The original tests did this:
     mock_get_db.return_value = mock_db          # get_db() IS the cursor
     mock_db.execute.return_value.fetchone...
 
-`app.db.connection.get_db` is decorated `@contextmanager`, so it returns a
+`scripts.migration.pg_connection.get_db` is decorated `@contextmanager`, so it returns a
 `_GeneratorContextManager` and the cursor only exists inside a `with` block.
 Both services were written against the mock's contract rather than the real
 one — `db = get_db(); db.execute(...)` — so **every method raised
@@ -203,7 +203,7 @@ def test_get_db_never_hands_back_something_you_can_execute_on():
     could not fail. If the fake is ever loosened back to
     `MagicMock(return_value=cursor)`, this goes red.
     """
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     handle = get_db()
     assert not hasattr(handle, "execute"), (
@@ -620,7 +620,7 @@ def test_pooled_cursor_has_no_rowcount_so_counts_must_use_returning():
     becomes a metric permanently reporting 0 — indistinguishable from "nothing
     happened". Both ledger updaters use `RETURNING id` instead.
     """
-    from app.db.connection import PooledCursor
+    from scripts.migration.pg_connection import PooledCursor
 
     assert not hasattr(PooledCursor, "rowcount")
     assert not hasattr(PooledCursor, "__getattr__"), (

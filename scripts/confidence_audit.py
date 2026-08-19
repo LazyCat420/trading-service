@@ -87,7 +87,7 @@ _PX: dict[tuple, float | None] = {}
 
 def _prime(rows: list[tuple], horizon: int) -> None:
     """Resolve forward returns once, in a single connection."""
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     need = {(r[0], str(r[1])[:10]) for r in rows}
     with get_db() as db:
@@ -126,7 +126,7 @@ def _signed(ticker, day, horizon: int, action: str) -> float | None:
 
 
 def load_decisions(since: str) -> list[tuple]:
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         return db.execute(
@@ -164,7 +164,7 @@ def q1_horizons(since: str) -> dict:
 def q2_synth(since: str, horizon: int) -> dict:
     import json as _json
 
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         desks = db.execute(

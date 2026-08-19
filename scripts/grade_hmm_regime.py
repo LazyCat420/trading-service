@@ -81,7 +81,7 @@ from app.quant.regime_grading import (  # noqa: E402,F401
 
 def _asset_closes(symbol: str) -> list[tuple]:
     """asset_prices closes — what grade_regime_calls.py scores the LLM on."""
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         rows = db.execute(
@@ -103,7 +103,7 @@ def backfill(sessions: int, ticker: str, stride: int = 1) -> int:
     from app.quant.regime_hmm import (
         classify_regime, ensure_posterior_table, persist_posterior,
     )
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     closes = _market_closes(ticker)
     if not closes:
@@ -255,7 +255,7 @@ def grade(ticker: str, compare: bool, json_out: str | None) -> int:
 
 def _grade_llm(days: set[str], spx: list[tuple]) -> dict:
     """The LLM's forward calls, scored only on days the HMM also covered."""
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         rows = db.execute(

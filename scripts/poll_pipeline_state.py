@@ -18,11 +18,11 @@ import time
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 try:
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 except ImportError:
     # Fallback path inclusion
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
 def poll_state(last_cycle_id: str, last_phase: str, last_status: str, timeout_seconds: int = 900):
     start_time = time.monotonic()

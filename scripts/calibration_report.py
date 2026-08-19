@@ -36,7 +36,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.db.connection import get_db  # noqa: E402
+from scripts.migration.pg_connection import get_db  # noqa: E402
 from app.quant.stat_gates import (  # noqa: E402
     is_oos_degradation,
     newey_west_tstat,

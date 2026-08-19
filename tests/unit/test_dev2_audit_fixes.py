@@ -37,7 +37,7 @@ async def test_yfinance_collector_uses_session(mock_ticker):
 def test_tool_registry_log_usage_explicit_called_at(mock_insert_docs):
     """The telemetry row must carry an explicit called_at and full attribution.
 
-    This used to patch `app.db.connection.get_db` and inspect SQL text. The
+    This used to patch `scripts.migration.pg_connection.get_db` and inspect SQL text. The
     telemetry callback writes through `mongo_store.insert_docs` now, so the
     patch intercepted nothing and the row went to the production
     `tool_usage_stats` collection. Reading the DOCUMENT instead of the SQL is

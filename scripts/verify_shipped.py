@@ -290,7 +290,7 @@ def _median(xs: list[int]) -> int:
 
 # ── 3. What has the database recorded? ─────────────────────────────────────
 def check_database(rep: Report) -> None:
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     try:
         with get_db() as db:

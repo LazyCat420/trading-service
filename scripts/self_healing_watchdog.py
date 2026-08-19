@@ -49,7 +49,7 @@ from datetime import datetime, timezone
 # Ensure project root is in path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.db.connection import get_db
+from scripts.migration.pg_connection import get_db
 from app.cognition.evolution.target_map import list_available_targets, resolve_target
 from app.cognition.evolution.repair_scope import is_patchable
 

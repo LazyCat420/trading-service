@@ -499,7 +499,7 @@ def _seed_and_migrate():
     # ── Auto-migrations for existing PostgreSQL databases (guarded) ──
     if os.getenv("RUN_PG_MIGRATIONS") == "1":
         try:
-            from app.db.migrations import run_migrations
+            from scripts.migration.pg_migrations import run_migrations
             conn = _pool.getconn()
             try:
                 run_migrations(conn)
@@ -516,7 +516,7 @@ def _seed_and_migrate():
             logger.warning(f"[DB] Migration setup warning: {e}")
 
         try:
-            from app.db.init_db import run_auto_migrations
+            from scripts.migration.pg_init_db import run_auto_migrations
             run_auto_migrations()
         except Exception as e:
             logger.warning(f"[DB] Inline auto-migrations warning: {e}")

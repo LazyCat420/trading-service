@@ -1,4 +1,4 @@
-from app.db.connection import get_db
+from scripts.migration.pg_connection import get_db
 with get_db() as db:
     db.execute("UPDATE v3_system_commands SET status = 'error' WHERE status IN ('pending', 'running')")
     db.execute("UPDATE system_commands SET status = 'error' WHERE status IN ('pending', 'running')")

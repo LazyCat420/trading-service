@@ -36,7 +36,7 @@ def rec(phase: str, status: str, name: str, detail: str = "") -> None:
 def phase1() -> None:
     P = "1 infra"
     try:
-        from app.db.connection import get_db
+        from scripts.migration.pg_connection import get_db
         with get_db() as db:
             db.execute("SELECT 1").fetchone()
         rec(P, PASS, "DB connection live", "app/db/connection.py get_db()")
@@ -86,7 +86,7 @@ def phase1() -> None:
 
 def phase2() -> None:
     P = "2 trigger"
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     # THE top triage item: a command stuck at 'running' means the poller died
     # mid-command and no new cycle can claim the slot.
@@ -118,7 +118,7 @@ def phase2() -> None:
 
 def phase3() -> None:
     P = "3 pipeline"
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     try:
         with get_db() as db:
@@ -154,7 +154,7 @@ def phase3() -> None:
 
 def phase4() -> None:
     P = "4 data"
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     try:
         import httpx
@@ -220,7 +220,7 @@ def phase5() -> None:
 
 def phase67(cycle_id: str) -> None:
     P6, P7 = "6 verdict", "7 post"
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         desks = db.execute(

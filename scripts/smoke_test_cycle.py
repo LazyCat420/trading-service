@@ -45,7 +45,7 @@ async def run_smoke_test(ticker: str, timeout: int, skip_collection: bool, skip_
     # Force test-friendly settings
     os.environ["MAX_CYCLE_TICKERS"] = "1"
 
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
     from app.config import settings
 
     print("=" * 70)
@@ -205,7 +205,7 @@ async def run_smoke_test(ticker: str, timeout: int, skip_collection: bool, skip_
 
 def _dump_final_events(cycle_id: str, verbose: bool = False):
     """Print the last 20 events for debugging."""
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     print()
     print("  --- Last 20 events ---")

@@ -33,8 +33,8 @@ def test_trading_cycle_source_is_patchable(path):
     ("app/cognition/evolution/debate.py", "repair machinery"),
     ("app/cognition/evolution/repair_scope.py", "the scope guard itself"),
     # A bad migration is not recoverable by rolling back a source patch.
-    ("app/db/migrations.py", "schema"),
-    ("app/db/schema_pg.sql", "schema"),
+    ("scripts/migration/pg_migrations.py", "schema"),
+    ("scripts/migration/schema_pg.sql", "schema"),
     # Settings and secrets handling.
     ("app/config/settings.py", "config"),
     # Build/deploy/dependency surfaces.
@@ -90,6 +90,6 @@ def test_deny_beats_allow():
 
 def test_assert_patchable_raises_with_reason():
     with pytest.raises(PermissionError, match="Automated repair refused"):
-        assert_patchable("app/db/migrations.py")
+        assert_patchable("scripts/migration/pg_migrations.py")
     # And stays silent on a legitimate target.
     assert_patchable("app/v3/orchestrator.py")

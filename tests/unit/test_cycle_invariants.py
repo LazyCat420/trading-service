@@ -230,7 +230,7 @@ pytestmark_live = pytest.mark.skipif(
 
 
 def _recent_summaries(limit=10):
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         rows = db.execute(

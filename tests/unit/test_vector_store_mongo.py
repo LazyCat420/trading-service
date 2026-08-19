@@ -251,7 +251,7 @@ def test_the_store_is_mongo_only_whatever_the_flags_say(monkeypatch):
             imported.update(a.name for a in node.names)
 
     assert not {i for i in imported if "psycopg" in i or "pgvector" in i}
-    assert "app.db.connection" not in imported
+    assert "scripts.migration.pg_connection" not in imported
     assert "get_db" not in imported
 
     calls = {getattr(n.func, "attr", None) or getattr(n.func, "id", None)

@@ -902,7 +902,7 @@ def _known_tickers() -> set[str]:
     because a hallucinated ticker appears in neither (verified: VKTX, correctly
     dropped, has 0 rows in both).
     """
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         rows = db.execute(
@@ -1031,7 +1031,7 @@ async def _opinion_card(sem, video: dict, known: set[str]) -> dict | None:
 
 
 def stage_opinions(limit: int | None) -> None:
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     docs = _load_jsonl(TRANSCRIPTS)
     if not docs:

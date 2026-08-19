@@ -88,9 +88,9 @@ class TestConcurrencyIsGatedOnAnIdleCycle:
     cycle degrades the desk it is supposed to be measuring."""
 
     def test_unreadable_pipeline_state_fails_closed(self, monkeypatch):
-        # Poisoning the module makes `from app.db.connection import get_db`
+        # Poisoning the module makes `from scripts.migration.pg_connection import get_db`
         # raise, which is the only way to reach the except branch.
-        monkeypatch.setitem(sys.modules, "app.db.connection", None)
+        monkeypatch.setitem(sys.modules, "scripts.migration.pg_connection", None)
         busy, why = jb.cycle_is_running()
         assert busy is True, "an unreadable pipeline_state must block the stress phase"
         # Strict: must be the REFUSAL message, not a successful status read.
@@ -112,9 +112,9 @@ class TestConcurrencyIsGatedOnAnIdleCycle:
             def __enter__(self): return _DB()
             def __exit__(self, *a): return False
 
-        mod = type(sys)("app.db.connection")
+        mod = type(sys)("scripts.migration.pg_connection")
         mod.get_db = lambda: _Ctx()
-        monkeypatch.setitem(sys.modules, "app.db.connection", mod)
+        monkeypatch.setitem(sys.modules, "scripts.migration.pg_connection", mod)
         busy, _ = jb.cycle_is_running()
         assert busy is expected
 

@@ -97,7 +97,7 @@ def fetch_articles(n: int, days: int,
     mechanical symbol match, not a judge model — the point is to remove the
     confound without introducing a second model's opinion as ground truth.
     """
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     sql = """
         SELECT id, ticker, COALESCE(title, ''), summary

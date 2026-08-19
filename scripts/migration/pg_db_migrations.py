@@ -7,13 +7,13 @@ Consolidates _ensure_summary_columns() that was duplicated in:
   - summarizer.py (superset with quality columns)
 
 Usage:
-    from app.utils.db_migrations import ensure_summary_columns
+    from scripts.migration.pg_db_migrations import ensure_summary_columns
     ensure_summary_columns()  # safe to call multiple times
 """
 
 import logging
 
-from app.db.connection import get_db
+from scripts.migration.pg_connection import get_db
 
 logger = logging.getLogger(__name__)
 

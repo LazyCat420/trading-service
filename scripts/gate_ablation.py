@@ -175,7 +175,7 @@ def _floor_for(created_at) -> int:
 
 
 def load_desks(since: str) -> list[dict]:
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         rows = db.execute(
@@ -239,7 +239,7 @@ def prime_forward_returns(desks: list[dict], horizon: int) -> None:
     cursor inside the outer loop, and the connection closed underneath them
     ("the cursor is closed") the moment the enclosing `with get_db()` unwound.
     """
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     todo = {(r["ticker"], str(r["created_at"])[:10]) for r in desks}
     with get_db() as db:

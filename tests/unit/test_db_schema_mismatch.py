@@ -9,8 +9,8 @@ def test_analysis_results_schema_matches_db_writer():
     """Verify that analysis_results schema contains all columns inserted by db_writer.py
     and that they are covered by migrations.py"""
     
-    schema_file = os.path.join(os.path.dirname(__file__), "..", "..", "app", "db", "schema_pg.sql")
-    migrations_file = os.path.join(os.path.dirname(__file__), "..", "..", "app", "db", "migrations.py")
+    schema_file = os.path.join(os.path.dirname(__file__), "..", "..", "scripts", "migration", "schema_pg.sql")
+    migrations_file = os.path.join(os.path.dirname(__file__), "..", "..", "scripts", "migration", "pg_migrations.py")
     
     schema_content = get_file_content(schema_file)
     migrations_content = get_file_content(migrations_file)
@@ -41,8 +41,8 @@ def test_pipeline_state_schema_matches_state_manager():
     """Verify that pipeline_state schema contains all columns inserted by state_manager.py
     and that they are covered by migrations.py"""
     
-    schema_file = os.path.join(os.path.dirname(__file__), "..", "..", "app", "db", "schema_pg.sql")
-    migrations_file = os.path.join(os.path.dirname(__file__), "..", "..", "app", "db", "migrations.py")
+    schema_file = os.path.join(os.path.dirname(__file__), "..", "..", "scripts", "migration", "schema_pg.sql")
+    migrations_file = os.path.join(os.path.dirname(__file__), "..", "..", "scripts", "migration", "pg_migrations.py")
     
     schema_content = get_file_content(schema_file)
     migrations_content = get_file_content(migrations_file)

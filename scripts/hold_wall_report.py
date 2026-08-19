@@ -110,7 +110,7 @@ def _open_item_46(since: str, until: str, desks) -> None:
             str(_as_dict(meta.get("decision_score")).get("band") or "").upper()
             == "AVOID")
 
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         rows = _rows(db, """
@@ -204,7 +204,7 @@ def main() -> int:
     ap.add_argument("--until", default="2100-01-01")
     a = ap.parse_args()
 
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     win = [a.since, a.until]
     with get_db() as db:

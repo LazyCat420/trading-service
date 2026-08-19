@@ -28,7 +28,7 @@ PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 
 
 def _desks(cycle_id: str) -> list[dict]:
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         rows = db.execute(
@@ -206,7 +206,7 @@ def check_synthesizer_receives_blocks(_desks: list[dict]) -> tuple[str, str]:
 def check_overrides_recorded(cycle_id: str, desks: list[dict]) -> tuple[str, str]:
     """A HOLD the desk agreed on and a HOLD that overruled a Board BUY were the
     same row, so the largest filter on trade flow was unmeasurable."""
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     expected = {
         d.get("ticker"): (d.get("final_decision") or {}).get("action")

@@ -44,8 +44,8 @@ class TestGetDbContextManager:
         mock_pool = MagicMock()
         mock_pool.getconn.return_value = mock_conn
 
-        with patch("app.db.connection._ensure_pool", return_value=mock_pool):
-            from app.db.connection import get_db
+        with patch("scripts.migration.pg_connection._ensure_pool", return_value=mock_pool):
+            from scripts.migration.pg_connection import get_db
 
             with get_db() as db:
                 assert db is not None
@@ -64,8 +64,8 @@ class TestGetDbContextManager:
         mock_pool = MagicMock()
         mock_pool.getconn.return_value = mock_conn
 
-        with patch("app.db.connection._ensure_pool", return_value=mock_pool):
-            from app.db.connection import get_db
+        with patch("scripts.migration.pg_connection._ensure_pool", return_value=mock_pool):
+            from scripts.migration.pg_connection import get_db
 
             try:
                 with get_db() as db:
@@ -96,9 +96,9 @@ class TestPoolTimeoutRecovery:
             mock_conn,  # Success after GC
         ]
 
-        with patch("app.db.connection._ensure_pool", return_value=mock_pool), \
+        with patch("scripts.migration.pg_connection._ensure_pool", return_value=mock_pool), \
              patch("gc.collect") as mock_gc:
-            from app.db.connection import get_db
+            from scripts.migration.pg_connection import get_db
 
             with get_db() as db:
                 assert db is not None
@@ -116,7 +116,7 @@ class TestLeakDetection:
 
     def test_pooled_cursor_del_warns_on_leak(self):
         """If PooledCursor is garbage-collected without close(), it logs a warning."""
-        from app.db.connection import PooledCursor
+        from scripts.migration.pg_connection import PooledCursor
 
         mock_conn = MagicMock()
         mock_conn.cursor.return_value = MagicMock()
@@ -127,7 +127,7 @@ class TestLeakDetection:
         assert not cursor._closed
 
         # Simulate garbage collection
-        with patch("app.db.connection.logger") as mock_logger:
+        with patch("scripts.migration.pg_connection.logger") as mock_logger:
             cursor.__del__()
 
         mock_logger.warning.assert_called_once()
@@ -143,7 +143,7 @@ class TestCloseIdempotency:
 
     def test_double_close_is_safe(self):
         """Calling close() twice should not raise or call putconn twice."""
-        from app.db.connection import PooledCursor
+        from scripts.migration.pg_connection import PooledCursor
 
         mock_conn = MagicMock()
         mock_conn.cursor.return_value = MagicMock()
@@ -178,8 +178,8 @@ class TestConcurrentAccess:
 
         def worker():
             try:
-                with patch("app.db.connection._ensure_pool", return_value=mock_pool):
-                    from app.db.connection import get_db
+                with patch("scripts.migration.pg_connection._ensure_pool", return_value=mock_pool):
+                    from scripts.migration.pg_connection import get_db
                     with get_db() as db:
                         db.execute("SELECT 1")
                         results.append(True)
@@ -208,7 +208,7 @@ class TestExecuteErrorHandling:
 
     def test_execute_rolls_back_on_error(self):
         """If execute() raises, it should rollback the connection."""
-        from app.db.connection import PooledCursor
+        from scripts.migration.pg_connection import PooledCursor
 
         mock_cursor = MagicMock()
         mock_cursor.execute.side_effect = Exception("syntax error")

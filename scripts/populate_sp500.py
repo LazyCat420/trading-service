@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 # Add parent dir to path so we can import app modules
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from app.db.connection import get_db
+from scripts.migration.pg_connection import get_db
 
 def fetch_sp500_tickers():
     print("Fetching S&P 500 ticker list from Wikipedia...")

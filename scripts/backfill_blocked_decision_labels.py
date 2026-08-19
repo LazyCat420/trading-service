@@ -30,7 +30,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.db.connection import get_db  # noqa: E402
+from scripts.migration.pg_connection import get_db  # noqa: E402
 
 SELECT = """
 SELECT d.id, d.cycle_id, d.ticker, d.action, d.confidence,

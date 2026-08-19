@@ -177,7 +177,7 @@ def sample(n: int) -> list[dict[str, Any]]:
     Ordered by md5(id) rather than random() so re-running --sample returns the
     same rows and the oracle stays comparable across runs.
     """
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         rows = db.execute(_SAMPLE_SQL, [n]).fetchall()

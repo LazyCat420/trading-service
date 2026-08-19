@@ -60,7 +60,7 @@ def load_panel(start: str, end: str | None = None) -> pd.DataFrame:
     """Wide close panel [date x ticker]. Chunked by year to keep the planner
     off a single huge grouped scan — the Postgres container has the Docker
     default 64MB /dev/shm and fans out to parallel workers on big joins."""
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     end = end or str(date.today())
     frames = []

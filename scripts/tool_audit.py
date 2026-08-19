@@ -97,7 +97,7 @@ def load_whitelists() -> dict[str, list[str]]:
 
 
 def fetch(days: int) -> tuple[dict, dict, dict]:
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     calls: dict[str, dict[str, dict]] = defaultdict(lambda: defaultdict(
         lambda: {"n": 0, "ok": 0}))

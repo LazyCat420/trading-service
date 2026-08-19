@@ -90,7 +90,7 @@ def real_db(real_test_db_engine):
         pytest.skip("Test database not enabled. Set TRADING_BOT_TEST_DB=1 to enable.")
 
     from psycopg_pool import ConnectionPool
-    from app.db.connection import PooledCursor
+    from scripts.migration.pg_connection import PooledCursor
 
     pool = ConnectionPool(conninfo=real_test_db_engine, min_size=1, max_size=2, kwargs={"autocommit": True})
     pool.wait()
@@ -123,7 +123,7 @@ def patch_real_get_db(real_db):
     @contextmanager
     def fake_get_db():
         yield real_db
-    with patch("app.db.connection.get_db", fake_get_db):
+    with patch("scripts.migration.pg_connection.get_db", fake_get_db):
         yield real_db
 
 
@@ -160,7 +160,7 @@ def live_db():
     import psycopg
 
     from app.config import settings
-    from app.db.connection import PooledCursor
+    from scripts.migration.pg_connection import PooledCursor
 
     try:
         conn = psycopg.connect(
@@ -177,7 +177,7 @@ def live_db():
         def _get_db():
             yield cursor
 
-        with patch("app.db.connection.get_db", _get_db):
+        with patch("scripts.migration.pg_connection.get_db", _get_db):
             yield cursor
         cursor.close()
 
@@ -324,8 +324,8 @@ def patch_get_db(mock_db):
     def _fake_get_db():
         yield mock_db
 
-    with patch("app.db.connection.get_db", _fake_get_db), \
-         patch("app.db.connection._ensure_pool"):
+    with patch("scripts.migration.pg_connection.get_db", _fake_get_db), \
+         patch("scripts.migration.pg_connection._ensure_pool"):
         yield mock_db
 
 

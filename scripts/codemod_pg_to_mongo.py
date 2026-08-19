@@ -47,7 +47,7 @@ from scripts.sql_to_mongo import Unsupported, translate  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 APP = REPO / "app"
-SKIP_FILES = {"app/db/migrations.py", "app/db/init_db.py", "app/db/connection.py",
+SKIP_FILES = {"scripts/migration/pg_migrations.py", "scripts/migration/pg_init_db.py", "scripts/migration/pg_connection.py",
               "app/db/mongo_store.py", "app/db/mongo_query.py", "app/db/table_spec.py"}
 PARAM_RE = re.compile(r"\{p(\d+)\}")
 

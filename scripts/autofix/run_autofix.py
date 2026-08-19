@@ -67,7 +67,7 @@ from app.cognition.evolution.coral.worktree import (        # noqa: E402
 from app.cognition.evolution.repair_scope import (              # noqa: E402
     ALLOWED_PREFIXES, is_patchable,
 )
-from app.db.connection import get_db                            # noqa: E402
+from scripts.migration.pg_connection import get_db                            # noqa: E402
 
 logger = logging.getLogger("run_autofix")
 

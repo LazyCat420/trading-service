@@ -1,5 +1,5 @@
 import logging
-from app.db.connection import get_db
+from scripts.migration.pg_connection import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -8,7 +8,7 @@ def run_auto_migrations():
     with get_db() as db:
         # Run central summary column migrations first
         try:
-            from app.utils.db_migrations import ensure_summary_columns
+            from scripts.migration.pg_db_migrations import ensure_summary_columns
             ensure_summary_columns(db)
         except Exception as e:
             logger.warning("ensure_summary_columns on startup failed: %s", e)

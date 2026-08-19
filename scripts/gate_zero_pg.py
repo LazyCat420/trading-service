@@ -12,8 +12,8 @@ import it):
 
   driver_import   `import psycopg` / `from psycopg...` / `from pgvector...`
   connection_import
-                  `from app.db.connection import ...` / `from app.db import
-                  connection` / `import app.db.connection`
+                  `from scripts.migration.pg_connection import ...` / `from app.db import
+                  connection` / `import scripts.migration.pg_connection`
   get_db_call     a call to `get_db(...)`, however it was imported
   execute_call    `.execute(...)` / `.executemany(...)` on something that is
                   not a sqlite3 connection or cursor
@@ -59,15 +59,18 @@ REPO = Path(__file__).resolve().parents[1]
 # application stops, so it is held to a separate rule (see scripts/migration/).
 DEFAULT_TARGETS = ("app", "cycle_main.py")
 
-# Files whose whole purpose is to build or retire the Postgres schema. They are
-# deleted at teardown rather than converted; counting them every run would
-# make the number move for a reason that is not conversion progress. They are
-# still reported, under `schema_files`, so the deletion cannot be forgotten.
+# Files whose whole purpose is to build or retire the Postgres schema. They
+# moved out of `app/` at teardown (2026-08-18) rather than being converted, so
+# they are already outside DEFAULT_TARGETS and contribute nothing to the count.
+# They stay listed, and stay reported under `schema_files`, because the DDL
+# they carry is what recreates a dropped table: anyone dropping a table has to
+# delete it here in the same change, or the next `run_migrations()` call brings
+# it back. That is how 40 of 57 "purged" tables returned.
 SCHEMA_FILES = {
-    "app/db/migrations.py",
-    "app/db/init_db.py",
-    "app/db/schema_pg.sql",
-    "app/utils/db_migrations.py",
+    "scripts/migration/pg_migrations.py",
+    "scripts/migration/pg_init_db.py",
+    "scripts/migration/schema_pg.sql",
+    "scripts/migration/pg_db_migrations.py",
 }
 
 # Files that must KEEP talking to Postgres, and why. These are not unfinished
@@ -75,17 +78,27 @@ SCHEMA_FILES = {
 # are printed on every run, because an exemption nobody re-reads is how a
 # permanent exception gets granted to something temporary.
 #
-# `table_spec` reads `information_schema.columns` to build the column list and
-# type mappers the PG->Mongo backfill uses. Its only callers are
-# pg_to_mongo_backfill.py, migrate_all.py and check_generated_specs.py.
-# Converting it to Mongo would mean asking the destination store to describe
-# the source schema, which it cannot do — and would break the migration
-# itself. It moves to scripts/migration/ at teardown, with psycopg, so the
-# application image can drop the driver while the parity tooling keeps working
-# against the frozen Postgres backup.
+# `table_spec` emits SQL against `information_schema.columns` to build the
+# column list and type mappers the PG->Mongo backfill uses. Converting it to
+# Mongo would mean asking the destination store to describe the source schema,
+# which it cannot do.
+#
+# It was slated to move to scripts/migration/ at teardown "so the application
+# image can drop the driver". That premise was measured false on 2026-08-18 and
+# the move was cancelled: `table_spec` imports no psycopg at all (it takes an
+# open `db` handle as an argument), so it never put the driver in the image —
+# `connection.py` was the repo's only psycopg importer, and it has moved. The
+# module also has a live application caller now: `mongo_query._money()` reads
+# `uses_decimal128()` from it, deliberately, so the read and write paths cannot
+# disagree about which collections carry the dec128 policy. Moving it under
+# scripts/ would make the app import from its own tooling.
+#
+# So it stays, and stays exempt: its `execute_call` findings are SQL aimed at
+# the frozen Postgres backup, not unconverted application work.
 MIGRATION_TOOLING = {
-    "app/db/table_spec.py": "reads information_schema for the backfill mappers; "
-                            "moves to scripts/migration/ at teardown",
+    "app/db/table_spec.py": "emits information_schema SQL for the backfill "
+                            "mappers, but imports no driver; stays in app/db "
+                            "because mongo_query._money() reads its dec128 policy",
 }
 
 DRIVER_ROOTS = {"psycopg", "psycopg2", "pgvector", "psycopg_pool"}
@@ -119,7 +132,7 @@ class Scanner(ast.NodeVisitor):
             root = alias.name.split(".")[0]
             if root in DRIVER_ROOTS:
                 self._add("driver_import", node, f"import {alias.name}")
-            elif alias.name in ("app.db.connection",):
+            elif alias.name in ("scripts.migration.pg_connection",):
                 self._add("connection_import", node, f"import {alias.name}")
         self.generic_visit(node)
 
@@ -129,7 +142,7 @@ class Scanner(ast.NodeVisitor):
         names = ", ".join(a.name for a in node.names)
         if root in DRIVER_ROOTS:
             self._add("driver_import", node, f"from {module} import {names}")
-        elif module == "app.db.connection":
+        elif module == "scripts.migration.pg_connection":
             self._add("connection_import", node, f"from {module} import {names}")
         elif module == "app.db" and any(a.name == "connection" for a in node.names):
             self._add("connection_import", node, f"from {module} import {names}")

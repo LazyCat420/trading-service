@@ -281,7 +281,6 @@ numpy==2.4.6
     #   crawl4ai
     #   onnxruntime
     #   pandas
-    #   pgvector
     #   rank-bm25
     #   rouge-score
     #   scikit-learn
@@ -337,8 +336,6 @@ pathvalidate==3.3.1
     # via piper-tts
 peewee==4.0.6
     # via yfinance
-pgvector==0.3.6
-    # via -r requirements.in
 pillow==12.3.0
     # via crawl4ai
 piper-tts==1.4.2
@@ -376,12 +373,6 @@ protobuf==7.35.0
     #   yfinance
 psutil==7.2.2
     # via crawl4ai
-psycopg[binary,pool]==3.2.6
-    # via -r requirements.in
-psycopg-binary==3.2.6
-    # via psycopg
-psycopg-pool==3.3.1
-    # via psycopg
 py-machineid==1.0.0
     # via twscrape
 pyarrow==24.0.0
@@ -609,8 +600,6 @@ typing-extensions==4.15.0
     #   opentelemetry-semantic-conventions
     #   pandera
     #   posthog
-    #   psycopg
-    #   psycopg-pool
     #   pydantic
     #   pydantic-core
     #   pyee

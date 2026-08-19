@@ -171,17 +171,12 @@ class BootService:
         except Exception as e:
             logger.warning("[Boot] Audit worker shutdown: %s", e)
 
-        # PostgreSQL pool shutdown. boot_service itself issues no SQL any more,
-        # but other modules are still on PG and this is the process's only
-        # close_db() caller — dropping it would leak the pool at shutdown.
-        # Delete this block with app/db/connection.py at teardown, not before.
-        try:
-            import importlib
-
-            importlib.import_module("app.db.connection").close_db()
-            logger.info("[Boot] PostgreSQL connection pool closed.")
-        except Exception as e:
-            logger.warning("[Boot] PostgreSQL close: %s", e)
+        # The PostgreSQL pool shutdown that stood here was deleted with
+        # `app/db/connection.py` at teardown (2026-08-18), as its own comment
+        # instructed. No module under `app/` opens a PG pool any more — the
+        # driver lives only in `scripts/migration/`, whose scripts are
+        # short-lived processes that close their own pool on exit. There is
+        # nothing left for this process to close.
 
         logger.info("[Boot] Shutdown complete.")
 
@@ -232,7 +227,11 @@ class BootService:
 
     @classmethod
     def _init_vector_indices(cls):
-        # pgvector HNSW + FTS indexes are created in schema_pg.sql
+        # Nothing to do at boot. The pgvector HNSW + FTS indexes this stage
+        # documented were created by `schema_pg.sql`, which no longer runs;
+        # `VectorStore._mongo_coll()` creates the Mongo equivalents lazily on
+        # first use instead. Kept as a named no-op so the boot stage list still
+        # reads as the full sequence.
         pass
 
     @classmethod

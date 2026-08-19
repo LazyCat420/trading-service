@@ -32,7 +32,7 @@ def _warning_record(msg: str = "boom") -> logging.LogRecord:
 def failing_db(monkeypatch):
     """Make the handler's write fail.
 
-    The fault used to be injected at `app.db.connection.get_db`. The handler
+    The fault used to be injected at `scripts.migration.pg_connection.get_db`. The handler
     writes both rows through `mongo_store.insert_docs` now, so that is the
     surface that has to explode for the drop counter to see anything.
 
@@ -43,7 +43,7 @@ def failing_db(monkeypatch):
     detaches every DbLoggingHandler from the root logger for its duration,
     leaving the handler the test constructs as the only one counting.
 
-    (The old fixture patched `app.db.connection.get_db`, which the handler had
+    (The old fixture patched `scripts.migration.pg_connection.get_db`, which the handler had
     already stopped using, so the counter never moved at all and neither the
     fault nor this interference was visible.)
     """

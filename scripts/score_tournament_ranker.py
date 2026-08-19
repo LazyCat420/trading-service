@@ -61,7 +61,7 @@ MIN_N_PER_SIDE = 30
 
 def load(since: str, horizon: int) -> dict[str, list[float]]:
     """winning_side -> [forward return %] for every scorable desk."""
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         rows = db.execute(

@@ -24,7 +24,7 @@ import asyncio
 import logging
 import time
 
-from app.db.connection import get_db
+from scripts.migration.pg_connection import get_db
 from app.collectors.explicit_fetch_guard import is_blocked_for_explicit_fetch
 from app.collectors.yfinance_collector import collect_price_history
 

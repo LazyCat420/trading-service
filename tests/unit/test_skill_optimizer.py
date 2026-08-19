@@ -225,7 +225,7 @@ def _patch_loader(row=None, raises=None):
 
     `skill_loader` reads `agent_skills` through `mongo_query.find_row`, which
     returns a TUPLE in the requested column order (`skill_text`, `version`).
-    The old `patch("app.db.connection.get_db", ...)` intercepted nothing here.
+    The old `patch("scripts.migration.pg_connection.get_db", ...)` intercepted nothing here.
     """
     q = MagicMock()
     if raises is not None:

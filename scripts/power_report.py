@@ -44,7 +44,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.db.connection import get_db  # noqa: E402
+from scripts.migration.pg_connection import get_db  # noqa: E402
 
 Z_ALPHA_2 = 1.959964  # two-sided 0.05
 Z_POWER = 0.8416212  # 80%

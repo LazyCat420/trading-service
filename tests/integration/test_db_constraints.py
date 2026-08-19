@@ -1,5 +1,5 @@
 import pytest
-from app.db.connection import get_db
+from scripts.migration.pg_connection import get_db
 
 @pytest.fixture(autouse=True)
 def patch_get_db():

@@ -26,7 +26,7 @@ from decimal import Decimal
 
 import pymongo
 
-from app.db import connection
+from scripts.migration import pg_connection as connection
 from app.db import mongo_store
 from app.db import table_spec
 from app.db.collections import collection_for

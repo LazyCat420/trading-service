@@ -50,7 +50,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 APP = REPO / "app"
-SCHEMA = APP / "db" / "schema_pg.sql"
+SCHEMA = REPO / "scripts" / "migration" / "schema_pg.sql"
 
 WRITE_FUNCS = {"insert_docs", "upsert_doc", "bulk_upsert"}
 

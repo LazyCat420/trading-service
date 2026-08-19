@@ -44,7 +44,7 @@ async def run_streaming_test(ticker: str, timeout: int, verbose: bool):
     # Force test-friendly settings
     os.environ["MAX_CYCLE_TICKERS"] = "1"
 
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
     from app.config import settings
 
     print("=" * 70)

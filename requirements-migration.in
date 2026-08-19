@@ -1,0 +1,16 @@
+# ============================================================
+# Migration & parity tooling ONLY — never installed in the image
+# ============================================================
+# The Postgres driver the backfill, parity and one-off analysis scripts under
+# `scripts/` need to read the frozen Postgres backup. Split out of
+# `requirements.in` on 2026-08-18 at teardown, when `app/db/connection.py`
+# moved to `scripts/migration/pg_connection.py` and `app/` stopped importing
+# psycopg entirely.
+#
+# `tests/unit/test_app_image_has_no_pg_driver.py` fails if psycopg comes back
+# into `requirements.in`, or if any module under `app/` imports it.
+#
+# Install locally with:
+#   pip install -r requirements-migration.in
+
+psycopg[binary,pool]==3.2.6

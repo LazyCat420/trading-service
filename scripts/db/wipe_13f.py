@@ -28,7 +28,7 @@ import sys
 # Run as a script from anywhere, the way the sibling db/ scripts did.
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from app.db.connection import get_db  # noqa: E402 — must follow the path bootstrap
+from scripts.migration.pg_connection import get_db  # noqa: E402 — must follow the path bootstrap
 
 
 def wipe_13f(*, dry_run: bool) -> int:

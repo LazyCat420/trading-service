@@ -6,7 +6,7 @@ not armed. Every one is a BUY, so teaching the checker to read them would have
 started real trades. These tests pin "retired and not armed" in both directions.
 
 These used to pass a `_FakeDb` into `retire_inert_dynamic_triggers(db)` and to
-patch `app.db.connection.get_db` for the reconciliation cases, then assert on
+patch `scripts.migration.pg_connection.get_db` for the reconciliation cases, then assert on
 SQL text (`s.startswith("UPDATE")`). Neither hook exists now:
 `retire_inert_dynamic_triggers()` takes no argument and drives
 `mongo_query.find_rows` / `mongo_store.update_docs` itself, and

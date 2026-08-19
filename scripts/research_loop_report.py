@@ -38,7 +38,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.db.connection import get_db  # noqa: E402
+from scripts.migration.pg_connection import get_db  # noqa: E402
 
 
 def question_section(days: int) -> dict:

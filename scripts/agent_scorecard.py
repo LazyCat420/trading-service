@@ -156,7 +156,7 @@ def _wilson(hits: int, n: int) -> tuple[float, float]:
 
 def fetch_rows(since: str) -> list[dict]:
     """Resolved outcomes joined to their desk. One row per (cycle, ticker)."""
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         rows = db.execute(
@@ -209,7 +209,7 @@ def fetch_rows_from_prices(since: str, horizon: int = 7) -> list[dict]:
     `horizon` sessions later. Applied identically to every agent, so
     cross-agent comparisons stay fair even where the fill is idealized.
     """
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     sessions = horizon + 1  # entry + horizon forward sessions
     with get_db() as db:
@@ -484,7 +484,7 @@ def main() -> int:
         # Say out loud how much of the resolved data never reaches the score.
         # Silence here is what let a 65-row join masquerade as the sample.
         try:
-            from app.db.connection import get_db
+            from scripts.migration.pg_connection import get_db
             with get_db() as _db:
                 _resolved = _db.execute(
                     "SELECT count(*) FROM decision_outcomes "

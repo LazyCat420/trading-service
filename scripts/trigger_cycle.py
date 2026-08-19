@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 # Ensure the project root is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.db.connection import get_db
+from scripts.migration.pg_connection import get_db
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Trigger a trading cycle via system_commands database queue")

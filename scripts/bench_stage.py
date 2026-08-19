@@ -75,11 +75,11 @@ os.environ.setdefault("EXECUTION_MODE", "staging")
 def install_read_only_db() -> None:
     """Wrap `get_db` so every sandbox connection is read-only.
 
-    Patched on the module (`app.db.connection.get_db`) rather than on each
+    Patched on the module (`scripts.migration.pg_connection.get_db`) rather than on each
     caller, because callers import it inside functions at call time — the same
     reason the test suite's autouse fixture patches it there.
     """
-    from app.db import connection as _conn
+    from scripts.migration import pg_connection as _conn
 
     real_get_db = _conn.get_db
 
@@ -95,7 +95,7 @@ def install_read_only_db() -> None:
 def live_cycle_id() -> str | None:
     """Return the cycle id of a running cycle, or None. Never raises."""
     try:
-        from app.db.connection import get_db
+        from scripts.migration.pg_connection import get_db
 
         with get_db() as db:
             row = db.execute(

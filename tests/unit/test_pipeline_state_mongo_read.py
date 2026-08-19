@@ -108,7 +108,7 @@ def test_at_full_mongo_a_missing_document_does_not_read_postgres(store):
 
     import contextlib
 
-    from app.db import connection
+    from scripts.migration import pg_connection as connection
 
     @contextlib.contextmanager
     def fake_db():

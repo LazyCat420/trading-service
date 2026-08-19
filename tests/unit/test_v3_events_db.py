@@ -2,7 +2,7 @@ import pytest
 import uuid
 import json
 from datetime import datetime, timezone
-from app.db.connection import get_db
+from scripts.migration.pg_connection import get_db
 from app.services.pipeline_state import PipelineStateDB
 
 
@@ -22,7 +22,7 @@ def test_pipeline_events_db_persistence(patch_real_get_db):
     `real_db` hands back a real cursor for the TEST's own queries but leaves
     `get_db` mocked for the code under test, so a test requesting only `real_db`
     still exercises a MagicMock. `patch_real_get_db` wraps it and patches
-    `app.db.connection.get_db`; both skip unless `TRADING_BOT_TEST_DB` is set
+    `scripts.migration.pg_connection.get_db`; both skip unless `TRADING_BOT_TEST_DB` is set
     and `TEST_DATABASE_URL` actually answers.
     """
     cycle_id = f"test-events-{uuid.uuid4().hex[:6]}"

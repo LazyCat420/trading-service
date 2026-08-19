@@ -93,7 +93,7 @@ class TestGapProbe:
     def test_probe_fails_closed(self):
         """An unreachable DB must not make every ticker look stale and set off
         fallback fetches fleet-wide."""
-        with patch("app.db.connection.get_db", side_effect=RuntimeError("down")):
+        with patch("scripts.migration.pg_connection.get_db", side_effect=RuntimeError("down")):
             assert data_rotator._is_missing_recent_session("ASC") is False
 
     def test_ticker_with_no_rows_is_not_a_gap(self):
@@ -112,7 +112,7 @@ class TestGapProbe:
             def __exit__(self, *a):
                 return False
 
-        with patch("app.db.connection.get_db", return_value=_Ctx()):
+        with patch("scripts.migration.pg_connection.get_db", return_value=_Ctx()):
             assert data_rotator._is_missing_recent_session("NEWTICKER") is False
 
 

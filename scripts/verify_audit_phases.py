@@ -28,7 +28,7 @@ def check(name: str, status: str, detail: str = "") -> None:
 
 
 def _desks(cycle_id: str) -> list[tuple]:
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         return db.execute(
@@ -43,7 +43,7 @@ def main() -> int:
     ap.add_argument("--cycle", default="")
     args = ap.parse_args()
 
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     cycle_id = args.cycle
     if not cycle_id:

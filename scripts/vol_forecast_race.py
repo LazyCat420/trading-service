@@ -78,7 +78,7 @@ def build_series(ticker: str = "SPY") -> list[dict]:
     Every forecast is for the session AFTER `as_of`, built only from data
     through `as_of`.
     """
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
     from app.quant.garch import garch_forecast
     from app.quant.returns import dominant_source_sql
     from scripts.grade_hmm_regime import _load_posteriors, predictive_band

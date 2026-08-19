@@ -2,7 +2,7 @@ import sys
 import os
 import time
 sys.path.append('/home/lazycat/github/projects/sun/trading-service')
-from app.db.connection import get_db
+from scripts.migration.pg_connection import get_db
 
 max_retries = 5
 for attempt in range(max_retries):

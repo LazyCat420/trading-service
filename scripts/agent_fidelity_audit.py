@@ -122,7 +122,7 @@ _PROSE_KEYS = ("summary", "reasoning", "thesis", "price_implied_assumption")
 
 
 def audit(days: int) -> dict:
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     enforced = _reconciled_fields()
     stats: dict[str, dict] = defaultdict(lambda: {

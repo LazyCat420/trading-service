@@ -152,7 +152,7 @@ def _db_attribution() -> dict:
     only, model_shadow_runs is the off-critical-path bench. A box with rows in
     only one of them is doing exactly one kind of work.
     """
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     out: dict = {}
     with get_db() as db:
@@ -212,7 +212,7 @@ def load_corpus(limit: int) -> list[dict]:
     fixture would measure a distribution the desk does not have — and the point
     of this benchmark is to predict live behaviour, not fixture behaviour.
     """
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     rows: list[dict] = []
     with get_db() as db:
@@ -420,7 +420,7 @@ def _summarize(arm: str, rs: list[CallResult]) -> dict:
 def cycle_is_running() -> tuple[bool, str]:
     """A stress test against the box the desk is using degrades production."""
     try:
-        from app.db.connection import get_db
+        from scripts.migration.pg_connection import get_db
         with get_db() as db:
             db.execute("SELECT cycle_id, status FROM pipeline_state ORDER BY updated_at DESC LIMIT 1")
             rows = db.fetchall()
@@ -462,7 +462,7 @@ async def phase_concurrency(model: str, provider: str, corpus: list[dict],
 # ── Persistence ─────────────────────────────────────────────────────────────
 def persist(report: dict) -> None:
     """A JSON file cannot answer 'is it slower than last month'."""
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     try:
         with get_db() as db:

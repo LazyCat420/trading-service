@@ -60,7 +60,7 @@ def _is_poisoned(text: str) -> bool:
 def scrub_evolution_lessons(dry_run: bool = True) -> int:
     """Remove poisoned entries from evolution_lessons table."""
     try:
-        from app.db.connection import get_db
+        from scripts.migration.pg_connection import get_db
 
         with get_db() as db:
             rows = db.execute(
@@ -134,7 +134,7 @@ def scrub_evolution_lessons(dry_run: bool = True) -> int:
 def scrub_cycle_context(dry_run: bool = True) -> int:
     """Remove poisoned entries from cycle_context table (claims/summaries)."""
     try:
-        from app.db.connection import get_db
+        from scripts.migration.pg_connection import get_db
 
         with get_db() as db:
             rows = db.execute(

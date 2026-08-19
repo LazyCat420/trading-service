@@ -47,7 +47,7 @@ def main() -> int:
                     help="cap how many tickers to process (0 = no cap)")
     args = ap.parse_args()
 
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
     from app.processors.technical_processor import compute_technicals
 
     if args.ticker:

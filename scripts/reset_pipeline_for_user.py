@@ -1,5 +1,5 @@
 import sys
-from app.db.connection import get_db
+from scripts.migration.pg_connection import get_db
 
 with get_db() as db:
     db.execute("UPDATE pipeline_state SET status = 'idle', cycle_id = NULL, progress = '' WHERE status IN ('starting', 'running')")

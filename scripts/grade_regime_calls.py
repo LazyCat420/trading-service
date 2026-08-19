@@ -33,7 +33,7 @@ VIX_DEADBAND_PCT = 5.0
 
 
 def _load_closes(symbol: str) -> list[tuple]:
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         rows = db.execute(
@@ -63,7 +63,7 @@ def main() -> int:
     ap.add_argument("--json", dest="json_out", help="Write the raw report here")
     args = ap.parse_args()
 
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         rows = db.execute(

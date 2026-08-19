@@ -50,7 +50,7 @@ STRICTLY READ-ONLY, on both stores, by construction:
   * Mongo is only ever `count_documents` / `find` / `aggregate`. Nothing here
     calls `mongo_store.ensure_indexes()` — that one creates indexes, which is a
     write;
-  * it deliberately does NOT go through `app.db.connection`. The pooled cursor
+  * it deliberately does NOT go through `scripts.migration.pg_connection`. The pooled cursor
     runs the write guard on every statement, and for a table at `mongo` with
     MONGO_GUARD_BLOCK_READS=1 that guard would (correctly) refuse this tool's own
     `SELECT count(*)`. Auditing a frozen table must not require disarming the
@@ -267,7 +267,7 @@ def git_provenance() -> dict:
 class ReadOnlyPG:
     """A psycopg connection the server itself will not let us write through.
 
-    Not `app.db.connection`: that pool runs the write guard on every statement,
+    Not `scripts.migration.pg_connection`: that pool runs the write guard on every statement,
     and at mode `mongo` with the read guard armed it would refuse this tool's own
     count. The audit must not require disarming the thing it is auditing.
     """

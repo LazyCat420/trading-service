@@ -55,7 +55,7 @@ class TestNoCoverageIsSilent:
     def test_a_db_failure_is_silent(self, monkeypatch):
         def boom(*_a, **_k):
             raise RuntimeError("pool exhausted")
-        monkeypatch.setattr("app.db.connection.get_db", boom)
+        monkeypatch.setattr("scripts.migration.pg_connection.get_db", boom)
 
         assert ob.fetch_opinions("AAPL") == []
         assert ob.build_opinion_block("AAPL") == ""

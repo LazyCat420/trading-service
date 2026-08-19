@@ -6,7 +6,7 @@ import os
 import gc
 
 from app.cognition.orchestration.runner import execute_v2_pipeline
-from app.db.connection import get_db
+from scripts.migration.pg_connection import get_db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

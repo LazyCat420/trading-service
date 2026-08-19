@@ -12,7 +12,7 @@ import pytest
 
 # ── Paths ──
 APP_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "app")
-SCHEMA_PATH = os.path.join(APP_DIR, "db", "schema_pg.sql")
+SCHEMA_PATH = os.path.join(APP_DIR, "..", "scripts", "migration", "schema_pg.sql")
 
 
 def _parse_schema_tables() -> dict[str, set[str]]:

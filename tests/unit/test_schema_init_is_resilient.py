@@ -28,11 +28,11 @@ import re
 
 import pytest
 
-from app.db.connection import split_sql_statements
+from scripts.migration.pg_connection import split_sql_statements
 
 _SCHEMA = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "app", "db", "schema_pg.sql",
+    "scripts", "migration", "schema_pg.sql",
 )
 
 

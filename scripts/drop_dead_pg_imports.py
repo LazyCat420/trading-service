@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Remove `from app.db.connection import ...` lines whose names are never used.
+"""Remove `from scripts.migration.pg_connection import ...` lines whose names are never used.
 
 The conversion deleted call sites and left the imports behind. A dead import is
 not cosmetic: it is a live edge into `connection.py`, and `connection.py` is
@@ -42,10 +42,10 @@ APP = REPO / "app"
 
 # Retired by deletion at teardown, not edited now.
 SCHEMA_FILES = {
-    "app/db/init_db.py",
-    "app/db/migrations.py",
+    "scripts/migration/pg_init_db.py",
+    "scripts/migration/pg_migrations.py",
     "app/db/connection.py",
-    "app/utils/db_migrations.py",
+    "scripts/migration/pg_db_migrations.py",
 }
 
 
@@ -77,7 +77,7 @@ def process(path: Path, apply: bool) -> tuple[int, list[str]]:
     if rel in SCHEMA_FILES:
         return 0, []
     source = path.read_text(encoding="utf-8")
-    if "app.db.connection" not in source:
+    if "scripts.migration.pg_connection" not in source:
         return 0, []
     try:
         tree = ast.parse(source)
@@ -85,7 +85,7 @@ def process(path: Path, apply: bool) -> tuple[int, list[str]]:
         return 0, [f"{rel}: does not parse, skipped"]
 
     aliases = {a for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
-               and n.module == "app.db.connection" for a in n.names}
+               and n.module == "scripts.migration.pg_connection" for a in n.names}
     used = _used_names(tree, aliases)
 
     lines = source.splitlines(keepends=True)
@@ -94,7 +94,7 @@ def process(path: Path, apply: bool) -> tuple[int, list[str]]:
     removed = 0
 
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.ImportFrom) and node.module == "app.db.connection"):
+        if not (isinstance(node, ast.ImportFrom) and node.module == "scripts.migration.pg_connection"):
             continue
         keep = [a for a in node.names if (a.asname or a.name) in used]
         if keep:
@@ -105,7 +105,7 @@ def process(path: Path, apply: bool) -> tuple[int, list[str]]:
                 )
                 names = ", ".join(a.name + (f" as {a.asname}" if a.asname else "") for a in keep)
                 indent = " " * (len(lines[node.lineno - 1]) - len(lines[node.lineno - 1].lstrip()))
-                lines[node.lineno - 1] = f"{indent}from app.db.connection import {names}\n"
+                lines[node.lineno - 1] = f"{indent}from scripts.migration.pg_connection import {names}\n"
                 for ln in range(node.lineno, node.end_lineno or node.lineno):
                     drop_lines.append(ln)
                 removed += len(node.names) - len(keep)

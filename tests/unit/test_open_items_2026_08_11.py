@@ -88,7 +88,7 @@ def test_importing_the_wipe_script_deletes_nothing():
     """The DELETE used to sit at module scope with no __main__ guard, so an
     import was enough to wipe the table. The broken get_db() was the only thing
     standing in front of it."""
-    with patch("app.db.connection.get_db") as fake_db:
+    with patch("scripts.migration.pg_connection.get_db") as fake_db:
         runpy.run_path(str(REPO / "scripts/db/wipe_13f.py"), run_name="not_main")
     assert not fake_db.called, "importing the module touched the database"
 

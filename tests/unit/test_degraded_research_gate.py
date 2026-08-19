@@ -17,7 +17,7 @@ from app.v3.guardrails import research_degraded
 def _no_telemetry():
     """Patch the telemetry probe to report a clean cycle.
 
-    The probe used to run raw SQL through `app.db.connection.get_db`; it is a
+    The probe used to run raw SQL through `scripts.migration.pg_connection.get_db`; it is a
     `mongo_store.aggregate` over `agent_tool_telemetry` now, so patching
     `get_db` intercepted nothing and every one of these cases was scored
     against the live store.

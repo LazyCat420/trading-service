@@ -11,7 +11,11 @@ paramiko==4.0.0
 
 # Data Collection
 yfinance==1.2.0
-psycopg[binary,pool]==3.2.6
+# psycopg was removed 2026-08-18 at Postgres teardown. Nothing under `app/` or
+# `cycle_main.py` imports it any more — `app/db/connection.py` was the only
+# importer and now lives at `scripts/migration/pg_connection.py`. The backfill
+# and parity scripts that still read the frozen Postgres backup install it from
+# `requirements-migration.in`; they are not in the image's import graph.
 finnhub-python==2.4.27
 edgartools==5.25.1
 beautifulsoup4==4.14.3

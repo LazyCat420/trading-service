@@ -290,7 +290,7 @@ def mock_mongo_db(monkeypatch):
     def _forbid_postgres(*args, **kwargs):
         raise AssertionError("CRITICAL VIOLATION: PostgreSQL was called during the trading cycle!")
 
-    monkeypatch.setattr("app.db.connection.get_db", _forbid_postgres)
+    monkeypatch.setattr("scripts.migration.pg_connection.get_db", _forbid_postgres)
 
     return collections
 

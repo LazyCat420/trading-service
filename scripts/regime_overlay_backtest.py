@@ -63,7 +63,7 @@ def load_aligned_series(ticker: str = "SPY") -> list[dict]:
     The posterior for `as_of` is paired with the return of the session that
     comes STRICTLY AFTER it, which is the only return it could have traded.
     """
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
     from app.quant.returns import dominant_source_sql
 
     with get_db() as db:

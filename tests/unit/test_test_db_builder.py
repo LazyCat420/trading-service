@@ -163,11 +163,11 @@ def test_every_lazy_ddl_entry_point_is_registered():
     }
     # Run by the builder's first two steps, not by the lazy registry.
     known_elsewhere = {
-        ("app.db.connection", "_init_schema"),
-        ("app.db.migrations", "run_migrations"),
-        ("app.db.migrations", "_fix_eth_cagr_data"),
-        ("app.db.migrations", "_create_decision_scores"),
-        ("app.db.migrations", "_create_persistent_research_tables"),
+        ("scripts.migration.pg_connection", "_init_schema"),
+        ("scripts.migration.pg_migrations", "run_migrations"),
+        ("scripts.migration.pg_migrations", "_fix_eth_cagr_data"),
+        ("scripts.migration.pg_migrations", "_create_decision_scores"),
+        ("scripts.migration.pg_migrations", "_create_persistent_research_tables"),
         # Not schema: a local sqlite cache and a runtime profiler table.
         ("app.scraper.core.failure_cache", "__init__"),
         ("app.monitoring.pipeline_profiler", "_persist_to_db"),
@@ -219,7 +219,7 @@ def test_every_table_the_service_writes_to_is_created_by_something():
     import re
 
     repo = pathlib.Path(__file__).resolve().parents[2]
-    schema_sql = (repo / "app" / "db" / "schema_pg.sql").read_text(encoding="utf-8")
+    schema_sql = (repo / "scripts" / "migration" / "schema_pg.sql").read_text(encoding="utf-8")
     py_ddl = "\n".join(
         p.read_text(encoding="utf-8")
         for p in (repo / "app").rglob("*.py")

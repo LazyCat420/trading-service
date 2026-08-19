@@ -53,8 +53,17 @@ If it is not visible at that URL, it is not written down.
   2026-08-05 — see `04-incidents.md`.
 - **A deploy restarts the container and kills any in-flight cycle.** Check
   `pipeline_state` before deploying.
-- **The container has no `psql` and no `asyncpg`.** Use
-  `from app.db.connection import get_db` for Postgres and `pymongo` for Mongo.
-- **Migrations run at boot** from `app/db/connection.py`, and a failing
-  migration is logged as a warning while the service starts anyway. Verify
-  schema changes landed; do not assume.
+- **The container has no `psql`, no `asyncpg`, and — since 2026-08-18 — no
+  psycopg either.** The service is on Mongo: use `pymongo`, or the
+  `app/db/mongo_query.py` helpers that mirror the old cursor API. Nothing under
+  `app/` may import a Postgres driver; `tests/unit/test_app_image_has_no_pg_driver.py`
+  fails the build if one comes back.
+- **No migrations run at boot any more.** `app/db/connection.py` moved to
+  `scripts/migration/pg_connection.py` at teardown, taking `_init_schema()` and
+  `run_migrations()` with it; boot now runs `init_mongo_schema()` only. The
+  Postgres DDL is retained there deliberately, for the backfill and parity
+  scripts that still read the frozen Postgres backup.
+- **Dropping a table means deleting its DDL in the same change.** The
+  `CREATE TABLE IF NOT EXISTS` blocks in `scripts/migration/pg_migrations.py`
+  and `schema_pg.sql` recreate anything a `DROP TABLE` removes, the next time
+  a migration script runs. That is how 40 of 57 "purged" tables came back.

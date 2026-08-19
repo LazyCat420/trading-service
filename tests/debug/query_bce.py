@@ -1,6 +1,6 @@
 import logging
 import sys
-from app.db.connection import get_db
+from scripts.migration.pg_connection import get_db
 
 logging.basicConfig(level=logging.INFO)
 

@@ -258,7 +258,7 @@ def test_persist_entries_re_raises_a_db_failure(monkeypatch):
         raise RuntimeError("db down")
         yield  # pragma: no cover
 
-    monkeypatch.setattr("app.db.connection.get_db", _boom)
+    monkeypatch.setattr("scripts.migration.pg_connection.get_db", _boom)
 
     with pytest.raises(RuntimeError):
         tel._persist_entries(_desk(2), [{"agent_name": "a", "token_usage": 1}])
@@ -275,7 +275,7 @@ def test_a_real_db_failure_leaves_the_entries_pending(monkeypatch):
         raise RuntimeError("db down")
         yield  # pragma: no cover
 
-    monkeypatch.setattr("app.db.connection.get_db", _boom)
+    monkeypatch.setattr("scripts.migration.pg_connection.get_db", _boom)
     desk = _desk(2)
 
     assert flush_agent_telemetry(desk) == 0

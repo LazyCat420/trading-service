@@ -65,7 +65,7 @@ def ensure_key_index(table: str) -> str:
     The index is created on the same fields the backfill keys on — read from
     table_spec, not guessed — so it always matches the upsert filter.
     """
-    from app.db import connection, table_spec
+    from scripts.migration import pg_connection as connection, table_spec
     from app.db.collections import collection_for
     from app.db.mongo_store import get_doc_db
 

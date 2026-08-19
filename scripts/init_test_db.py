@@ -182,7 +182,7 @@ def _drop_everything(dsn: str) -> None:
 # fails when a new lazy CREATE TABLE appears that is not listed here, which
 # gives the same coverage without the reflection.
 LAZY_DDL: tuple[tuple[str, str], ...] = (
-    ("app.db.init_db", "run_auto_migrations"),
+    ("scripts.migration.pg_init_db", "run_auto_migrations"),
     ("app.db.checkpoints", "ensure_checkpoints_table"),
     ("app.db.memory_repo", "_ensure_schema"),
     ("app.analytics.returns_engine", "_ensure_tables"),
@@ -203,8 +203,8 @@ LAZY_DDL: tuple[tuple[str, str], ...] = (
 # Lazy DDL that needs a live cursor handed to it.
 LAZY_DDL_WITH_DB: tuple[tuple[str, str], ...] = (
     ("app.db.evolution_repo", "_ensure_table"),
-    ("app.utils.db_migrations", "ensure_summary_columns"),
-    ("app.utils.db_migrations", "ensure_source_quality_table"),
+    ("scripts.migration.pg_db_migrations", "ensure_summary_columns"),
+    ("scripts.migration.pg_db_migrations", "ensure_source_quality_table"),
 )
 
 
@@ -219,8 +219,8 @@ def build(target: Target, *, reset: bool) -> int:
         _drop_everything(target.dsn)
         print(f"tables now  : {_table_count(target.dsn)}")
 
-    from app.db.connection import _init_schema, get_db
-    from app.db.migrations import run_migrations
+    from scripts.migration.pg_connection import _init_schema, get_db
+    from scripts.migration.pg_migrations import run_migrations
 
     print("step 1/3    : schema_pg.sql")
     _init_schema(target.dsn)

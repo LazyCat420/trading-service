@@ -14,7 +14,7 @@ from datetime import datetime
 
 sys.path.insert(0, ".")
 
-from app.db import connection, table_spec  # noqa: E402
+from scripts.migration import pg_connection as connection, table_spec  # noqa: E402
 from scripts.pg_to_mongo_backfill import TABLES  # noqa: E402
 
 

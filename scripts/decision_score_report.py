@@ -33,7 +33,7 @@ from collections import Counter
 
 def _universe_scores():
     from app.quant.decision_score import compute_decision_score, rank_scores
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         rows = db.execute(
@@ -108,7 +108,7 @@ def distribution() -> int:
 
 
 def shadow() -> int:
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         rows = db.execute(

@@ -125,7 +125,7 @@ def test_alignment_pairs_a_posterior_with_the_NEXT_session(monkeypatch):
 
     # load_aligned_series imports both of these inside the function body, so
     # patching them at their source modules is what reaches it.
-    import app.db.connection as conn
+    import scripts.migration.pg_connection as conn
     import app.quant.returns as rets
     monkeypatch.setattr(conn, "get_db", lambda: _DB())
     monkeypatch.setattr(rets, "dominant_source_sql", lambda: "'yfinance'")
@@ -161,7 +161,7 @@ def test_a_posterior_with_no_following_session_is_dropped(monkeypatch):
         def fetchall(self):
             return self._rows
 
-    import app.db.connection as conn
+    import scripts.migration.pg_connection as conn
     import app.quant.returns as rets
     monkeypatch.setattr(conn, "get_db", lambda: _DB())
     monkeypatch.setattr(rets, "dominant_source_sql", lambda: "'yfinance'")

@@ -30,7 +30,7 @@ def fetch_adv(tickers: set[str]) -> dict[str, float]:
     charges the conservative default rather than assuming a cheap fill."""
     if not tickers:
         return {}
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     try:
         with get_db() as db:
@@ -57,7 +57,7 @@ def fetch_decisions(since: str, horizon: int) -> list[dict]:
     bookkeeping-limited (n=40 and it ignores --since), while scoring desks
     straight off prices gives ~10-20x the sample and includes HOLDs.
     """
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     sessions = horizon + 1
     out: list[dict] = []

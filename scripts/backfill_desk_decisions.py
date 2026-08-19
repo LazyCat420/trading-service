@@ -44,7 +44,7 @@ def main() -> int:
     ap.add_argument("--since", default="2026-07-01")
     args = ap.parse_args()
 
-    from app.db.connection import get_db
+    from scripts.migration.pg_connection import get_db
 
     with get_db() as db:
         rows = db.execute(
