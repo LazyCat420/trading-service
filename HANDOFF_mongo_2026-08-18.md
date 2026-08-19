@@ -10,10 +10,19 @@ came from a document rather than a measurement, it says so.
 
 ## State
 
-| | measured now |
+| | measured now (2026-08-19) |
 |---|---|
-| **trading-service** `quality-purge` @ `4207af8` | Gate 1: **6 couplings in 1 file** · suite **5000 pass / 0 fail / 0 error** |
-| **trading-client** `client-mongo-conversion` @ `10de5952` | **564 `.execute(` sites in 67 files — untouched** |
+| **trading-service** `quality-purge` @ `daa3dba` | Gate 1: **0 couplings in 0 files** · suite **5039 pass / 1 fail / 0 error** |
+| **trading-client** `client-mongo-conversion` @ `10de5952` | **810 `.execute(` sites in 126 files — untouched** |
+
+The one service failure is `test_prism_prompt_injection`, which hits a vLLM
+502. It passes in isolation and touches no Mongo, Decimal or psycopg code —
+an endpoint outage, not this work.
+
+**Phases 1, 2, 3 (partial) and 5 (partial) are DONE and pushed.** See
+`documentation/chapters/` ch.76. What remains is phase 4 (the client) plus
+the parity sweep and the cutover itself. The client count is 810/126, not the
+564/67 recorded below: that figure excluded `app/` subpackages.
 
 Both branches pushed, both worktrees clean, **nothing deployed**.
 
@@ -47,60 +56,55 @@ a "0 failed" summary I had already relayed as green.
 
 ## What is left, in order
 
-### 1. `connection.py` teardown (S8) — small, do it first
-Still on disk: `connection.py` 18KB, `migrations.py` 205KB, `schema_pg.sql`
-116KB, `init_db.py` 13KB, `db_migrations.py` 7KB. `requirements.in:14` still
-has `psycopg`.
+### 1. `connection.py` teardown (S8) — **DONE** @ `6bc835f`
+Gate 1 went 6 -> 0 (control still 1,860 on master). `connection.py`,
+`migrations.py`, `init_db.py`, `schema_pg.sql` and `db_migrations.py` moved to
+`scripts/migration/` — moved, not deleted, because the parity checks still read
+the source store and the DDL must stay findable. psycopg split into
+`requirements-migration.in`; the image no longer installs a Postgres driver
+(`tests/unit/test_app_image_has_no_pg_driver.py`, sabotage-verified).
 
-Delete the DDL **in the same change as the drop**. A `DROP TABLE` here survives
-only until the next boot: `run_migrations()` runs at startup and both
-`migrations.py` and `schema_pg.sql` declare the tables with
-`CREATE TABLE IF NOT EXISTS`. That is how 40 of 57 "purged" tables came back
-empty and the live count read 197 rather than 157.
+`table_spec.py` did NOT move, correcting the plan below: it imports no psycopg
+at all (it takes an open `db` handle), so it never put the driver in the image,
+and `mongo_query._money_cols()` now reads its per-column policy — moving it
+would make `app/` import from its own tooling.
 
-`app/db/table_spec.py` must NOT be converted — it reads `information_schema`
-for the backfill's column mappers and its only callers are the migration
-scripts. Move it to `scripts/migration/` with psycopg, so the app image drops
-the driver while parity tooling keeps working against the frozen backup. Gate 1
-already exempts it and prints the reason on every run.
+### 2. Money as Decimal (S3) — **DONE** @ `daa3dba`
+The reverted attempt's diagnosis was right and its granularity was wrong. The
+policy was per TABLE, so ratios (`stop_loss_pct`) and share counts (`qty`) were
+promoted alongside real amounts, and `entry_price * (1 + effective_tp)` broke on
+the RATIO. `table_spec.column_is_money()` is per COLUMN and both halves resolve
+through it. 17 of 26 numeric columns across the 7 money collections are amounts.
 
-### 2. Money as Decimal (S3) — designed, deliberately not flipped
-The plumbing is in and tested: `_clean_val(as_decimal=...)` and `_money()` in
-`app/db/mongo_query.py`, resolving through `table_spec.uses_decimal128`.
-Flipping it works — `100000.07 + 0.03` gives `100000.10` instead of
-`100000.09999999999`.
+The real defect was in the ledger, not the storage: the FIFO sell loop did
+`lot_entry = float(lot_entry)` and accumulated P&L in float. Also fixed:
+`agg_row`/`group_rows`/`join_rows` leaked a raw `bson.Decimal128`, so the same
+column had a different type depending on which helper fetched it.
 
-It is reverted anyway, and the docstring in `_clean_val` says why: the money
-path mixes money with things that are not money — ratios (`take_profit_pct`),
-vendor quotes still stored as float, share counts. `entry_price * (1 +
-effective_tp)` raises `TypeError` the moment `entry_price` is a Decimal, and
-that is **one of 39 such sites across 8 modules** (paper_trader 13,
-bot_manager 11, portfolio 10).
+Artifact: `tests/unit/test_money_is_cent_exact.py` — real isolated Mongo, real
+Decimal128, 1,000-movement reconciliation to the cent, with a negative control
+proving float does NOT reconcile. (The first movement set cancelled out and the
+control caught it. Keep that control.)
 
-Doing it means deciding per boundary whether to promote the float or demote the
-Decimal, and proving it with the **cent-exact reconciliation artifact** Tier F
-requires — not with a green suite.
+### 3. Seed + parity (S6) — **half done**
+DONE:
+- `ensure_key_index` moved INTO `backfill()`. It lived in `migrate_all.py` and
+  was called from ITS loop, so seeding one table with `pg_to_mongo_backfill.py`
+  — the documented way — upserted against a collection scan and the only
+  symptom was slowness. That is the 15-29 rows/s figure.
+- `backfilled_at` has a writer (`stamp_backfilled`). A MISMATCH deliberately
+  does NOT stamp it; it records `backfill_last_attempt` instead, so a failed
+  load cannot read as a completed one.
+- Parity now compares money EXACTLY. `_normalize` demoted every Decimal to
+  float before `_values_equal` applied `abs_tol=1e-9`, so the check could not
+  fail on the drift Decimal128 exists to remove.
 
-Correct the premise while you are there: the plan says "psycopg-NUMERIC
-parity". There are **zero** NUMERIC columns in `schema_pg.sql` and **328**
-`DOUBLE PRECISION`. Postgres returned floats. Decimal128 is an upgrade being
-chosen, which is what the 2026-07-21 decision actually said.
-
-### 3. Seed + parity (S6) — not started
-`migration_ledger.json`: **161 migrate-scope tables, 0 with `backfilled_at`.**
-The writer was never built; the fields exist and are empty. Any "135/141
-seeded" claim has no artifact behind it.
-
-Prime suspect for the 15 rows/s seed rate, verified in code and unfixed:
-`pg_to_mongo_backfill.py` never calls `ensure_key_index`, so a direct-entrypoint
-seed upserts against a collection scan (~29 rows/s is the documented signature
-of exactly that). Move the call *into* `backfill()` so the invariant cannot be
-skipped by entrypoint choice, then re-time before believing the 12-day
-price_history extrapolation.
-
-Per the user's decision, exhaustive parity is scoped to money + live
-operational state; everything else gets count-level checks. Data preservation
-is explicitly not the goal — the frozen PG container is the archive.
+LEFT: run the actual sweep. `verify_all` (exhaustive, batched `$in`,
+collation-safe) already exists and is the right tool — `--verify-fields`
+samples and cannot certify a promotion. Money + live operational state get the
+exhaustive sweep; everything else count-level, per the user's scoping. Nothing
+has been re-timed since the index fix, so treat any previous rows/s figure as
+void.
 
 ### 4. trading-client — the whole thing, untouched
 564 `.execute(` sites in 67 files, plus 220 more in `scripts/`. The branch adds
@@ -118,10 +122,30 @@ split-brain), and unify `mongo_query.py`/`mongo_store.py` across the two repos
 with the byte-identity check that already exists for `collection_map.json`.
 
 ### 5. Cutover — after everything above
-Mongo-aware deploy interlocks **first**: `.claude/hooks/guard_deploy.py` and
-`trading-service/.claude/hooks/_check_cycle_running.py` both read
-`pipeline_state` from Postgres and fail open. They die silently the moment that
-table leaves PG.
+The deploy interlocks are **DONE** @ `daa3dba`, and they were worse than
+"will die silently": one of them already had.
+
+`_check_cycle_running.py` imported `psycopg2`, which is not installed anywhere
+in this repo, and swallowed the ImportError into `unknown|`. Its caller only
+blocked on `running*`, so `unknown` fell through to exit 0 — that hook has been
+permitting every deploy, including ones that would kill a live cycle, while
+looking healthy. `guard_deploy.py` warned (exit 0) on every failure path and
+would have joined it the moment `pipeline_state:mongo` lands.
+
+Both now read Mongo and both fail **CLOSED**, with an explicit
+`DEPLOY_SKIP_CYCLE_CHECK=1` override: a false block costs minutes, a false
+allow kills a 30-minute cycle. Also fixed: the probe's bare `load_dotenv()`
+found no `.env` when invoked from a worktree, and the missing-venv path exited
+0. `tests/unit/test_deploy_interlocks_fail_closed.py` runs both hooks as
+subprocesses against the isolated test DB and was verified by sabotage on each.
+
+Note `guard_deploy.py` lives in `sun/.claude/hooks/`, which is **not a git
+repo** — that edit is on disk only and is not carried by this branch. There is
+a **second copy** at `sun/.gemini/hooks/guard_deploy.py` (the Gemini/Antigravity
+payload variant, not byte-identical); it had the same psycopg probe and the same
+fail-open, and was fixed the same way and behaviour-tested the same way. If you
+touch one, check the other — two copies of a guard drift, and the whole failure
+mode here was a guard that looked installed and did nothing.
 
 Then, as one event: stop both containers → final delta-seed + verify →
 ff-merge both branches → deploy service first (it owns `ensure_indexes`) then
