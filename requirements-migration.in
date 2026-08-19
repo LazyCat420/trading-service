@@ -14,3 +14,14 @@
 #   pip install -r requirements-migration.in
 
 psycopg[binary,pool]==3.2.6
+
+# The SQL parser `scripts/sql_to_mongo.py` translates through, and therefore
+# what `scripts/codemod_pg_to_mongo.py` needs to run. Pinned here on
+# 2026-08-19 because it was in NO requirements file at all — installed by hand
+# into trading-service/.venv and nowhere else, so the codemod simply did not
+# run in a fresh checkout or in trading-client, and the only symptom was an
+# ImportError at the moment someone tried to use it.
+#
+# Migration tooling, not runtime: nothing under `app/` imports it, and it must
+# stay out of `requirements.in` for the same reason psycopg did.
+sqlglot==30.17.0
