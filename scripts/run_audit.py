@@ -1,42 +1,45 @@
-import os
-import psycopg
-from psycopg.rows import dict_row
-from pathlib import Path
-import json
+"""Quick per-cycle audit: four counts from the store, then the local log.
 
-DATABASE_URL = os.environ["DATABASE_URL"]
+Reads MongoDB — this is one of the instruments the cutover is verified WITH.
+A Postgres reader pointed at a Mongo-only cycle counts an empty table and
+prints a clean audit.
+"""
+import os
+import sys
+import json
+from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.db import mongo_query, mongo_store  # noqa: E402
+
 
 def run_audit():
-    with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
-        with conn.cursor() as cur:
-            # Get latest cycle_id
-            cur.execute("SELECT cycle_id FROM pipeline_state ORDER BY started_at DESC LIMIT 1;")
-            row = cur.fetchone()
-            if not row:
-                print("No pipeline_state found.")
-                return
-            cycle_id = row['cycle_id']
-            print(f"Latest cycle_id: {cycle_id}")
+    # pipeline_state is a singleton row; the ORDER BY started_at DESC LIMIT 1
+    # is preserved rather than assumed away, since a second row would change
+    # which cycle this audits.
+    row = mongo_query.find_row(
+        "pipeline_state", {}, ["cycle_id"], sort=[("started_at", -1)])
+    if not row:
+        print("No pipeline_state found.")
+        return
+    cycle_id = row[0]
+    print(f"Latest cycle_id: {cycle_id}")
 
-            # 1. DB: Total Analysis Results
-            print("\\n--- DB: Total Analysis Results ---")
-            cur.execute("SELECT COUNT(*) as total FROM analysis_results WHERE cycle_id = %s;", (cycle_id,))
-            print(cur.fetchone())
+    print("\n--- DB: Total Analysis Results ---")
+    print({"total": mongo_store.count_docs("analysis_results", {"cycle_id": cycle_id})})
 
-            # 2. DB: Fallback HOLDs
-            print("\\n--- DB: Fallback HOLDs (0% Confidence) ---")
-            cur.execute("SELECT COUNT(*) as fallbacks FROM analysis_results WHERE cycle_id = %s AND thesis_verdict = 'HOLD' AND confidence = 0;", (cycle_id,))
-            print(cur.fetchone())
+    print("\n--- DB: Fallback HOLDs (0% Confidence) ---")
+    print({"fallbacks": mongo_store.count_docs("analysis_results", {
+        "cycle_id": cycle_id, "thesis_verdict": "HOLD", "confidence": 0})})
 
-            # 3. DB: Brain Graph Nodes
-            print("\\n--- DB: Brain Graph Nodes Created ---")
-            cur.execute("SELECT COUNT(*) as nodes FROM ontology_nodes WHERE source_cycle_id = %s;", (cycle_id,))
-            print(cur.fetchone())
+    print("\n--- DB: Brain Graph Nodes Created ---")
+    print({"nodes": mongo_store.count_docs(
+        "ontology_nodes", {"source_cycle_id": cycle_id})})
 
-            # 4. DB: Brain Graph Edges
-            print("\\n--- DB: Brain Graph Edges Created ---")
-            cur.execute("SELECT COUNT(*) as edges FROM ontology_edges WHERE source_cycle_id = %s;", (cycle_id,))
-            print(cur.fetchone())
+    print("\n--- DB: Brain Graph Edges Created ---")
+    print({"edges": mongo_store.count_docs(
+        "ontology_edges", {"source_cycle_id": cycle_id})})
 
     # 5. Local Logs: JSONL parsing
     print("\\n--- LOGS: Cycle Events ---")

@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Pre/post-cycle health checklist, in execution order.
 
+Reads MongoDB. This is one of the instruments the cutover is verified WITH, so
+it cannot be the last thing still reading Postgres: a Mongo-only cycle audited
+by a Postgres reader reports on a store nothing writes any more.
+
 Encodes the seven-phase checklist as executable assertions so "is the cycle
 healthy" is a command rather than a reading exercise. Each check names the
 module or table it probes, so a FAIL points at a file.
@@ -23,7 +27,22 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+from app.db import mongo_query, mongo_store  # noqa: E402
+
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
+
+
+def _ago(**delta) -> datetime:
+    """`now() - interval '...'`, in UTC."""
+    return datetime.now(timezone.utc) - timedelta(**delta)
+
+
+def _midnight_ago(**delta) -> datetime:
+    """`CURRENT_DATE - n` — a day boundary, not a moment."""
+    d = (datetime.now(timezone.utc) - timedelta(**delta)).date()
+    return datetime(d.year, d.month, d.day)
 _R: list[tuple[str, str, str, str]] = []
 
 
@@ -36,19 +55,22 @@ def rec(phase: str, status: str, name: str, detail: str = "") -> None:
 def phase1() -> None:
     P = "1 infra"
     try:
-        from scripts.migration.pg_connection import get_db
-        with get_db() as db:
-            db.execute("SELECT 1").fetchone()
-        rec(P, PASS, "DB connection live", "app/db/connection.py get_db()")
+        mongo_store.get_doc_db().command("ping")
+        rec(P, PASS, "DB connection live",
+            f"mongo {mongo_store.TRADING_MONGO_DB}")
     except Exception as e:
         rec(P, FAIL, "DB connection live", f"{type(e).__name__}: {e}")
         return
 
     for tbl in ("v3_system_commands", "system_commands", "pipeline_state"):
         try:
-            with get_db() as db:
-                db.execute(f"SELECT 1 FROM {tbl} LIMIT 1").fetchone()
-            rec(P, PASS, f"{tbl} accessible")
+            # count, not "SELECT 1 LIMIT 1": Mongo creates a collection on first
+            # ACCESS in some drivers and never errors on a missing one, so an
+            # existence probe that cannot fail proves nothing. The count is the
+            # cheapest read that distinguishes reachable-and-populated from
+            # reachable-and-empty, and the detail prints it.
+            n = mongo_store.count_docs(tbl, {})
+            rec(P, PASS if n else WARN, f"{tbl} accessible", f"{n} doc(s)")
         except Exception as e:
             rec(P, FAIL, f"{tbl} accessible", str(e)[:80])
 
@@ -86,28 +108,22 @@ def phase1() -> None:
 
 def phase2() -> None:
     P = "2 trigger"
-    from scripts.migration.pg_connection import get_db
 
     # THE top triage item: a command stuck at 'running' means the poller died
     # mid-command and no new cycle can claim the slot.
     for tbl in ("v3_system_commands", "system_commands"):
         try:
-            with get_db() as db:
-                stuck = db.execute(
-                    f"SELECT count(*) FROM {tbl} WHERE status = 'running' "
-                    "AND created_at < now() - interval '2 hours'"
-                ).fetchone()[0]
+            stuck = mongo_store.count_docs(
+                tbl, {"status": "running", "created_at": {"$lt": _ago(hours=2)}})
             rec(P, FAIL if stuck else PASS, f"{tbl} no stuck 'running'",
                 f"{stuck} row(s) running >2h" if stuck else "")
         except Exception as e:
             rec(P, WARN, f"{tbl} no stuck 'running'", str(e)[:60])
 
     try:
-        with get_db() as db:
-            recent = db.execute(
-                "SELECT count(*) FROM v3_system_commands WHERE status = 'error' "
-                "AND created_at > now() - interval '2 days'"
-            ).fetchone()[0]
+        recent = mongo_store.count_docs(
+            "v3_system_commands",
+            {"status": "error", "created_at": {"$gt": _ago(days=2)}})
         rec(P, WARN if recent else PASS, "no recent command errors",
             f"{recent} error(s) in 48h" if recent else "")
     except Exception as e:
@@ -118,14 +134,11 @@ def phase2() -> None:
 
 def phase3() -> None:
     P = "3 pipeline"
-    from scripts.migration.pg_connection import get_db
 
     try:
-        with get_db() as db:
-            row = db.execute(
-                "SELECT status, cycle_id, updated_at FROM pipeline_state "
-                "WHERE singleton_id = 'current'"
-            ).fetchone()
+        row = mongo_query.find_row(
+            "pipeline_state", {"singleton_id": "current"},
+            ["status", "cycle_id", "updated_at"])
         if not row:
             rec(P, WARN, "pipeline_state clean", "no singleton row yet")
         elif row[0] == "running":
@@ -154,7 +167,6 @@ def phase3() -> None:
 
 def phase4() -> None:
     P = "4 data"
-    from scripts.migration.pg_connection import get_db
 
     try:
         import httpx
@@ -167,22 +179,18 @@ def phase4() -> None:
 
     # Freshness is the gate most likely to silently starve a cycle.
     try:
-        with get_db() as db:
-            fresh = db.execute(
-                "SELECT count(DISTINCT ticker) FROM price_history "
-                "WHERE date > CURRENT_DATE - 5"
-            ).fetchone()[0]
+        # `date` is a DATE column: the store coerces the bound (app/db/date_fields.py),
+        # so midnight-5-days is the same boundary CURRENT_DATE - 5 was.
+        fresh = len(mongo_store.distinct_values(
+            "price_history", "ticker", {"date": {"$gt": _midnight_ago(days=5)}}))
         rec(P, PASS if fresh > 50 else WARN, "price data fresh",
             f"{fresh} tickers with bars in the last 5 days")
     except Exception as e:
         rec(P, WARN, "price data fresh", str(e)[:60])
 
     try:
-        with get_db() as db:
-            n = db.execute(
-                "SELECT count(*) FROM news_articles "
-                "WHERE published_at > now() - interval '2 days'"
-            ).fetchone()[0]
+        n = mongo_store.count_docs(
+            "news_articles", {"published_at": {"$gt": _ago(days=2)}})
         rec(P, PASS if n else WARN, "news flowing", f"{n} articles in 48h")
     except Exception as e:
         rec(P, SKIP, "news flowing", str(e)[:60])
@@ -220,54 +228,42 @@ def phase5() -> None:
 
 def phase67(cycle_id: str) -> None:
     P6, P7 = "6 verdict", "7 post"
-    from scripts.migration.pg_connection import get_db
 
-    with get_db() as db:
-        desks = db.execute(
-            "SELECT count(*) FROM shared_desk WHERE cycle_id = %s", [cycle_id]
-        ).fetchone()[0]
-        done = db.execute(
-            "SELECT count(*) FROM shared_desk WHERE cycle_id = %s "
-            "AND desk_data->>'phase' IN ('PM_DONE','INIT')", [cycle_id]
-        ).fetchone()[0]
+    desks = mongo_store.count_docs("shared_desk", {"cycle_id": cycle_id})
+    # `desk_data->>'phase'` is a field of the embedded document in Mongo, so the
+    # JSON operator becomes dotted-path addressing.
+    done = mongo_store.count_docs(
+        "shared_desk",
+        {"cycle_id": cycle_id, "desk_data.phase": {"$in": ["PM_DONE", "INIT"]}})
     rec(P6, PASS if desks else FAIL, "desks written", f"{desks} desk(s)")
     rec(P6, PASS if done == desks else WARN, "all desks reached a terminal phase",
         f"{done}/{desks}")
 
-    with get_db() as db:
-        decided = db.execute(
-            "SELECT count(*) FROM shared_desk WHERE cycle_id = %s "
-            "AND desk_data->'final_decision' IS NOT NULL", [cycle_id]
-        ).fetchone()[0]
+    # `IS NOT NULL` -> `$ne: None`, which in Mongo also excludes documents where
+    # the field is ABSENT — the same set the SQL returned, since a desk that
+    # never decided has no key rather than a null one.
+    decided = mongo_store.count_docs(
+        "shared_desk",
+        {"cycle_id": cycle_id, "desk_data.final_decision": {"$ne": None}})
     rec(P6, PASS if decided else FAIL, "verdicts produced", f"{decided}/{desks}")
 
-    with get_db() as db:
-        saved = db.execute(
-            "SELECT count(*) FROM analysis_results WHERE cycle_id = %s",
-            [cycle_id],
-        ).fetchone()[0]
+    saved = mongo_store.count_docs("analysis_results", {"cycle_id": cycle_id})
     rec(P6, PASS if saved else WARN, "result_saver persisted", f"{saved} row(s)")
 
-    with get_db() as db:
-        row = db.execute(
-            "SELECT status FROM pipeline_state WHERE singleton_id = 'current'"
-        ).fetchone()
+    row = mongo_query.find_row(
+        "pipeline_state", {"singleton_id": "current"}, ["status"])
     rec(P7, PASS if row and row[0] == "done" else WARN,
         "pipeline reached 'done'", f"status={row[0] if row else '?'}")
 
     # Tool DIVERSITY, not just count: the 2026-07-28 finding was that the same
     # opening fired on every ticker, which a per-cycle count cannot see.
-    with get_db() as db:
-        rows = db.execute(
-            "SELECT ticker, count(DISTINCT tool_name) FROM agent_tool_telemetry "
-            "WHERE cycle_id = %s GROUP BY ticker", [cycle_id]
-        ).fetchall()
-        tot = db.execute(
-            "SELECT count(DISTINCT tool_name), count(*) FROM agent_tool_telemetry "
-            "WHERE cycle_id = %s", [cycle_id]
-        ).fetchone()
-    rec(P7, PASS if tot[0] else WARN, "tools used this cycle",
-        f"{tot[0]} distinct, {tot[1]} calls across {len(rows)} ticker(s)")
+    telemetry = mongo_query.find_rows(
+        "agent_tool_telemetry", {"cycle_id": cycle_id}, ["ticker", "tool_name"])
+    tickers = {t for t, _ in telemetry}
+    distinct_tools = {tool for _, tool in telemetry}
+    rec(P7, PASS if distinct_tools else WARN, "tools used this cycle",
+        f"{len(distinct_tools)} distinct, {len(telemetry)} calls "
+        f"across {len(tickers)} ticker(s)")
 
 
 def main() -> int:

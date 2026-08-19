@@ -1,0 +1,76 @@
+"""The instruments the cutover is verified WITH must read the store it moves to.
+
+A Mongo-only cycle graded by a Postgres reader grades a store nothing writes
+any more. Every check comes back clean — zero errors, zero stuck commands, zero
+duplicate agent runs — because every table it counts is frozen. That is the
+worst possible failure for a verification tool: it reports success, in detail,
+with numbers.
+
+`gate_zero_pg.py` scans `app/` and deliberately not `scripts/`, because the
+migration and parity tooling must keep reading the frozen Postgres backup
+forever. These four files are the exception inside that exception: they are how
+the cutover and the 24-72h soak get judged, so they are held to `app/`'s rule.
+
+The ratchet on the rest of `scripts/` is here too. 0 is not reachable there yet
+— 97 files of one-off reports and backfills still read Postgres — and a gate
+nobody can turn on is worth less than a number that may only go down.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO))
+
+from scripts.gate_zero_pg import scan  # noqa: E402
+
+# The soak battery, per the cutover runbook: grade a cycle, check the pre/post
+# checklist, smoke-test one ticker, and the quick per-cycle count audit.
+INSTRUMENTS = (
+    "scripts/cycle_audit.py",
+    "scripts/cycle_healthcheck.py",
+    "scripts/smoke_test_cycle.py",
+    "scripts/run_audit.py",
+)
+
+# Measured 2026-08-19, immediately after the four instruments above were
+# converted. Lower it whenever a script is converted, moved under
+# scripts/migration/, or deleted; never raise it.
+SCRIPTS_RATCHET = 427
+
+
+@pytest.mark.parametrize("rel", INSTRUMENTS)
+def test_an_instrument_has_no_postgres_coupling(rel):
+    assert (REPO / rel).exists(), f"{rel} is gone — the runbook still names it"
+    result = scan(REPO, targets=(rel,))
+    assert result["errors"] == [], result["errors"]
+    sites = [f for f in result["findings"]]
+    assert result["total"] == 0, (
+        f"{rel} still reads Postgres: "
+        + "; ".join(f"{f['kind']} at line {f['line']}" for f in sites[:5]))
+
+
+def test_the_scan_finds_couplings_when_they_exist(tmp_path):
+    """NEGATIVE CONTROL: a scan that finds nothing because it LOOKED at nothing
+    passes the four assertions above just as happily. This pins that the same
+    call, pointed at a file that does couple, comes back nonzero."""
+    bad = tmp_path / "reader.py"
+    bad.write_text(
+        "import psycopg\n"
+        "def f():\n"
+        "    with psycopg.connect('x') as c:\n"
+        "        c.execute('SELECT 1 FROM positions')\n",
+        encoding="utf-8")
+    result = scan(tmp_path, targets=("reader.py",))
+    assert result["total"] > 0
+
+
+def test_the_rest_of_scripts_only_ratchets_down():
+    total = scan(REPO, targets=("scripts",))["total"]
+    assert total <= SCRIPTS_RATCHET, (
+        f"scripts/ grew a Postgres coupling: {total} > {SCRIPTS_RATCHET}. "
+        "Convert it, move it under scripts/migration/, or delete it — do not "
+        "raise the ratchet.")

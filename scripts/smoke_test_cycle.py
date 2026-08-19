@@ -13,7 +13,7 @@ Usage:
     python scripts/smoke_test_cycle.py --timeout 600 # 10-minute timeout
 
 Environment:
-    DATABASE_URL must be set (or .env file present).
+    MONGO_URI / TRADING_MONGO_DB must resolve (or .env file present).
 """
 
 import argparse
@@ -45,13 +45,13 @@ async def run_smoke_test(ticker: str, timeout: int, skip_collection: bool, skip_
     # Force test-friendly settings
     os.environ["MAX_CYCLE_TICKERS"] = "1"
 
-    from scripts.migration.pg_connection import get_db
+    from app.db import mongo_query, mongo_store
     from app.config import settings
 
     print("=" * 70)
     print(f"  SMOKE TEST: {ticker}")
     print(f"  Timeout: {timeout}s | Skip collection: {skip_collection} | Skip trade: {skip_trade} | Resume: {resume}")
-    print(f"  DB: {settings.DATABASE_URL.split('@')[-1] if '@' in settings.DATABASE_URL else 'local'}")
+    print(f"  DB: mongo {mongo_store.TRADING_MONGO_DB}")
     print("=" * 70)
     print()
 
@@ -107,23 +107,21 @@ async def run_smoke_test(ticker: str, timeout: int, skip_collection: bool, skip_
         status = state.get("status", "unknown")
 
         # Check for new events
-        with get_db() as db:
-            db.execute(
-                "SELECT COUNT(*) FROM pipeline_events WHERE cycle_id = %s",
-                [cycle_id],
-            )
-            event_count = db.fetchone()[0]
+        event_count = mongo_store.count_docs(
+            "pipeline_events", {"cycle_id": cycle_id})
 
         if event_count > last_event_count:
             # New events arrived
             if verbose:
-                with get_db() as db:
-                    db.execute(
-                        "SELECT phase, step, detail, status, elapsed_ms FROM pipeline_events "
-                        "WHERE cycle_id = %s ORDER BY timestamp ASC OFFSET %s",
-                        [cycle_id, last_event_count],
-                    )
-                    for row in db.fetchall():
+                # OFFSET n over a timestamp-ordered read = "the events I have
+                # not printed yet". Mongo has no OFFSET in this helper, so the
+                # slice is taken in Python over the same ordering.
+                _events = mongo_query.find_rows(
+                    "pipeline_events", {"cycle_id": cycle_id},
+                    ["phase", "step", "detail", "status", "elapsed_ms"],
+                    sort=[("timestamp", 1)])
+                if True:
+                    for row in _events[last_event_count:]:
                         _phase, _step, _detail, _status, _ms = row
                         _emoji = "✅" if _status == "ok" else "❌" if _status == "error" else "⏳" if _status == "running" else "⏭️"
                         _elapsed_str = f" ({_ms}ms)" if _ms else ""
@@ -154,12 +152,8 @@ async def run_smoke_test(ticker: str, timeout: int, skip_collection: bool, skip_
     final_state = PipelineService.get_current_state(summary_only=False)
 
     # Check for analysis results
-    with get_db() as db:
-        db.execute(
-            "SELECT ticker, result_json FROM analysis_results WHERE cycle_id = %s",
-            [cycle_id],
-        )
-        analysis_rows = db.fetchall()
+    analysis_rows = mongo_query.find_rows(
+        "analysis_results", {"cycle_id": cycle_id}, ["ticker", "result_json"])
 
     print(f"  Elapsed: {int(elapsed)}s")
     print(f"  Total events: {last_event_count}")
@@ -205,23 +199,20 @@ async def run_smoke_test(ticker: str, timeout: int, skip_collection: bool, skip_
 
 def _dump_final_events(cycle_id: str, verbose: bool = False):
     """Print the last 20 events for debugging."""
-    from scripts.migration.pg_connection import get_db
+    from app.db import mongo_query
 
     print()
     print("  --- Last 20 events ---")
-    with get_db() as db:
-        db.execute(
-            "SELECT phase, step, detail, status, elapsed_ms, timestamp "
-            "FROM pipeline_events WHERE cycle_id = %s ORDER BY timestamp DESC LIMIT 20",
-            [cycle_id],
-        )
-        rows = db.fetchall()
-        for row in reversed(rows):
-            _phase, _step, _detail, _status, _ms, _ts = row
-            _emoji = "✅" if _status == "ok" else "❌" if _status == "error" else "⏳" if _status == "running" else "⏭️"
-            _elapsed_str = f" ({_ms}ms)" if _ms else ""
-            _ts_str = _ts.strftime("%H:%M:%S") if hasattr(_ts, "strftime") else str(_ts)[:8]
-            print(f"  {_emoji} {_ts_str} [{_phase}] {_step}: {_detail[:80]}{_elapsed_str}")
+    rows = mongo_query.find_rows(
+        "pipeline_events", {"cycle_id": cycle_id},
+        ["phase", "step", "detail", "status", "elapsed_ms", "timestamp"],
+        sort=[("timestamp", -1)], limit=20)
+    for row in reversed(rows):
+        _phase, _step, _detail, _status, _ms, _ts = row
+        _emoji = "✅" if _status == "ok" else "❌" if _status == "error" else "⏳" if _status == "running" else "⏭️"
+        _elapsed_str = f" ({_ms}ms)" if _ms else ""
+        _ts_str = _ts.strftime("%H:%M:%S") if hasattr(_ts, "strftime") else str(_ts)[:8]
+        print(f"  {_emoji} {_ts_str} [{_phase}] {_step}: {(_detail or '')[:80]}{_elapsed_str}")
     print("  ---")
 
 

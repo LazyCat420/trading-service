@@ -340,12 +340,21 @@ def main() -> int:
     ap.add_argument("--show", choices=KINDS, help="print individual sites of this kind")
     ap.add_argument("--limit", type=int, default=40)
     ap.add_argument("--self-test", action="store_true", help="run the negative control against master")
+    ap.add_argument("--targets", nargs="*", default=list(DEFAULT_TARGETS),
+                    help="paths to scan, relative to --root (default: app cycle_main.py)")
+    ap.add_argument("--max", type=int, default=0, metavar="N",
+                    help="RATCHET: fail above N findings instead of above 0. "
+                         "For scripts/, where 0 is not reachable yet — the "
+                         "operational tooling is converted but 97 files of "
+                         "one-off reports and backfills still read the frozen "
+                         "Postgres. A ratchet that only moves down is worth "
+                         "more than a gate nobody can turn on.")
     args = ap.parse_args()
 
     if args.self_test:
         return self_test()
 
-    result = scan(Path(args.root).resolve())
+    result = scan(Path(args.root).resolve(), targets=tuple(args.targets))
     render(result, args.show, args.limit)
 
     if args.json:
@@ -357,6 +366,19 @@ def main() -> int:
 
     if result["errors"]:
         return 2
+    if args.max:
+        total = result["total"]
+        print()
+        if total > args.max:
+            print(f"RATCHET FAILED: {total} findings > {args.max} allowed in "
+                  f"{' '.join(args.targets)}")
+            return 1
+        if total < args.max:
+            print(f"ratchet can tighten: {total} findings, allowance {args.max} "
+                  "— lower --max in the caller")
+        else:
+            print(f"ratchet held at {total} findings in {' '.join(args.targets)}")
+        return 0
     return 0 if result["total"] == 0 else 1
 
 

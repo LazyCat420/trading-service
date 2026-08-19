@@ -19,6 +19,11 @@ below would not have had any of those go unnoticed.
 The point is not a health score. It is that each number here has a known
 bad value that was actually observed, so "looks fine" has to be earned.
 
+READS MONGO. This is one of the instruments the cutover is verified WITH, so
+it cannot be the last thing still reading Postgres: a Mongo-only cycle graded
+by a Postgres reader grades a store nothing writes any more, and every check
+would come back clean because every table would be empty.
+
 Usage:
   scripts/cycle_audit.py --watch                 # follow the running cycle
   scripts/cycle_audit.py --check                 # grade the latest cycle
@@ -33,16 +38,12 @@ import json
 import os
 import sys
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
+from datetime import datetime, timedelta, timezone
 
-try:
-    import psycopg2
-except ImportError:
-    sys.exit("psycopg2 is required: use the repo venv (.venv/bin/python)")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-DSN = os.environ.get(
-    "DATABASE_URL", "postgresql://trader:trading_bot_pass@10.0.0.16:5433/trading_bot"
-)
+from app.db import mongo_query, mongo_store  # noqa: E402
 
 # Collectors granted the slow lane in app/v3/data_report.py. If these still
 # land late, the extended budget is not big enough (or is not deployed).
@@ -59,15 +60,21 @@ def _c(status: str, text: str | None = None) -> str:
     return f"{_COLOR.get(status, '')}{text or status}{_RESET}"
 
 
-def connect():
-    return psycopg2.connect(DSN)
+def _prefix(value: str) -> dict:
+    """`LIKE 'value%'` — anchored, with the value escaped.
+
+    Anchored because an unanchored regex is a `LIKE '%value%'`, which is a
+    different query: `policy_action LIKE 'HOLD_POLICY_BLOCKED%'` would start
+    matching anything that merely CONTAINS the phrase.
+    """
+    import re as _re
+
+    return {"$regex": f"^{_re.escape(value)}"}
 
 
-def latest_cycle(cur) -> str | None:
-    cur.execute(
-        "SELECT cycle_id FROM pipeline_events ORDER BY timestamp DESC LIMIT 1"
-    )
-    row = cur.fetchone()
+def latest_cycle() -> str | None:
+    row = mongo_query.find_row(
+        "pipeline_events", {}, ["cycle_id"], sort=[("timestamp", -1)])
     return row[0] if row else None
 
 
@@ -76,25 +83,22 @@ def latest_cycle(cur) -> str | None:
 # values from the 07-31 audit, not round numbers.
 
 
-def check_collector_lateness(cur, cycle_id):
+def check_collector_lateness(cycle_id):
     """The slow-lane fix: multi_api_news/youtube must land inside the budget.
 
     Baseline to beat: cycle-v3-1785504601 had 12 late arrivals out of 12
     attempts for these two collectors — a 100% waste rate.
     """
-    cur.execute(
-        """
-        SELECT step FROM pipeline_events
-        WHERE cycle_id = %s AND step LIKE 'v3_precollect_%%'
-        """,
-        [cycle_id],
-    )
+    steps = mongo_query.find_rows(
+        "pipeline_events",
+        {"cycle_id": cycle_id, "step": _prefix("v3_precollect_")},
+        ["step"])
     ok = late = 0
-    for (step,) in cur.fetchall():
+    for (step,) in steps:
         for name in SLOW_COLLECTORS:
-            if f"_{name}_late_" in step:
+            if f"_{name}_late_" in (step or ""):
                 late += 1
-            elif f"_{name}_ok_" in step:
+            elif f"_{name}_ok_" in (step or ""):
                 ok += 1
     total = ok + late
     if total == 0:
@@ -106,41 +110,39 @@ def check_collector_lateness(cur, cycle_id):
             {"ok": ok, "late": late, "late_rate": round(rate, 3)})
 
 
-def check_collector_errors(cur, cycle_id):
+def check_collector_errors(cycle_id):
     """Hard collector failures. 07-31 baseline: 4 (yfinance_price on 4 tickers)."""
-    cur.execute(
-        """
-        SELECT detail FROM pipeline_events
-        WHERE cycle_id = %s AND status = 'error' AND step LIKE 'v3_precollect_%%'
-        """,
-        [cycle_id],
-    )
-    errs = [r[0] for r in cur.fetchall()]
+    errs = [r[0] for r in mongo_query.find_rows(
+        "pipeline_events",
+        {"cycle_id": cycle_id, "status": "error", "step": _prefix("v3_precollect_")},
+        ["detail"])]
     status = PASS if not errs else (WARN if len(errs) <= 2 else FAIL)
     return ("no collector hard failures", status,
-            f"{len(errs)} errors" + (f" — e.g. {errs[0][:80]}" if errs else ""),
+            f"{len(errs)} errors" + (f" — e.g. {str(errs[0])[:80]}" if errs else ""),
             {"count": len(errs), "samples": errs[:5]})
 
 
-def check_stale_prices(cur, cycle_id):
+def check_stale_prices(cycle_id):
     """A decision must not be reasoned on a price far from the one it records.
 
     RBLX was analyzed at 39.27 against an entry of 51.68 — a 24% gap that no
     gate caught, because the stale-price guardrail was shadow-only.
     """
-    cur.execute(
-        """
-        SELECT a.ticker, a.analysis_price, d.entry_price
-        FROM analysis_results a
-        JOIN decision_outcomes d
-          ON d.cycle_id = a.cycle_id AND d.ticker = a.ticker
-        WHERE a.cycle_id = %s
-          AND a.analysis_price > 0 AND d.entry_price > 0
-        """,
-        [cycle_id],
+    # The SQL joined on (cycle_id, ticker). cycle_id is pinned on BOTH sides by
+    # the filters, so the remaining equality is the ticker — which is what
+    # join_rows expresses. Pinning it on both sides is not optional: joining on
+    # the ticker alone would pair this cycle's analysis with another cycle's
+    # outcome and grade a price gap that never happened.
+    rows = mongo_query.join_rows(
+        "analysis_results",
+        {"cycle_id": cycle_id, "analysis_price": {"$gt": 0}}, "ticker",
+        "decision_outcomes", "ticker",
+        {"cycle_id": cycle_id, "entry_price": {"$gt": 0}},
+        left_fields=["ticker", "analysis_price"], right_fields=["entry_price"],
+        select=[("l", "ticker"), ("l", "analysis_price"), ("r", "entry_price")],
     )
     gaps = []
-    for tkr, ap, ep in cur.fetchall():
+    for tkr, ap, ep in rows:
         dev = abs(float(ap) - float(ep)) / float(ep)
         if dev > 0.02:
             gaps.append((tkr, round(dev * 100, 1)))
@@ -152,50 +154,37 @@ def check_stale_prices(cur, cycle_id):
             {"gaps": gaps})
 
 
-def check_stale_guardrail_enforcing(cur, cycle_id):
+def check_stale_guardrail_enforcing(cycle_id):
     """A guardrail that says would_block while blocking nothing is not a gate.
 
     07-31: 3 SHADOW_STALE_PRICE_DATA firings, all would_block=true, none
     enforced. The promotion of this gate to enforcing is the top open item.
     """
-    cur.execute(
-        """
-        SELECT guardrail, COUNT(*) FROM v3_guardrail_firings
-        WHERE cycle_id = %s GROUP BY 1
-        """,
-        [cycle_id],
-    )
-    rows = dict(cur.fetchall())
-    shadow = sum(v for k, v in rows.items() if k.startswith("SHADOW_"))
-    enforced = sum(v for k, v in rows.items() if not k.startswith("SHADOW_"))
+    rows = dict(Counter(
+        r[0] for r in mongo_query.find_rows(
+            "v3_guardrail_firings", {"cycle_id": cycle_id}, ["guardrail"])))
+    shadow = sum(v for k, v in rows.items() if (k or "").startswith("SHADOW_"))
+    enforced = sum(v for k, v in rows.items() if not (k or "").startswith("SHADOW_"))
     status = PASS if shadow == 0 else WARN
     return ("no shadow-only guardrail firings", status,
             f"{shadow} shadow / {enforced} enforced" + (f" — {rows}" if rows else ""),
             {"shadow": shadow, "enforced": enforced, "rules": rows})
 
 
-def check_tool_failures(cur, cycle_id):
+def check_tool_failures(cycle_id):
     """Agent tool call health. 07-31 baseline: 14/123 failed (11.4%)."""
-    cur.execute(
-        """
-        SELECT COUNT(*), COUNT(*) FILTER (WHERE NOT success),
-               COUNT(*) FILTER (WHERE was_blocked)
-        FROM agent_tool_telemetry WHERE cycle_id = %s
-        """,
-        [cycle_id],
-    )
-    total, failed, blocked = cur.fetchone()
-    total = total or 0
+    calls = mongo_query.find_rows(
+        "agent_tool_telemetry", {"cycle_id": cycle_id},
+        ["tool_name", "success", "was_blocked"])
+    total = len(calls)
     if total == 0:
         return ("agent tool calls succeed", INFO, "no tool calls yet", {})
-    cur.execute(
-        """
-        SELECT tool_name, COUNT(*) FROM agent_tool_telemetry
-        WHERE cycle_id = %s AND NOT success GROUP BY 1 ORDER BY 2 DESC LIMIT 4
-        """,
-        [cycle_id],
-    )
-    worst = cur.fetchall()
+    # `NOT success` in SQL is false OR... nothing: the column is NOT NULL. A
+    # document missing the field reads as None here, which is not a success
+    # either, so `not s` is the same set.
+    failed = sum(1 for _, s, _ in calls if not s)
+    blocked = sum(1 for _, _, b in calls if b)
+    worst = Counter(t for t, s, _ in calls if not s).most_common(4)
     rate = failed / total
     status = PASS if rate < 0.02 else (WARN if rate < 0.10 else FAIL)
     return ("agent tool calls succeed", status,
@@ -205,42 +194,40 @@ def check_tool_failures(cur, cycle_id):
              "by_tool": dict(worst), "fail_rate": round(rate, 3)})
 
 
-def check_duplicate_agent_runs(cur, cycle_id):
+def check_duplicate_agent_runs(cycle_id):
     """One research agent should run once per ticker. 07-31: 17 extra runs."""
-    cur.execute(
-        """
-        SELECT agent_name, ticker, COUNT(*) c FROM v3_agent_telemetry
-        WHERE cycle_id = %s AND ticker IS NOT NULL AND ticker <> ''
-        GROUP BY 1,2 HAVING COUNT(*) > 1
-        """,
-        [cycle_id],
+    pairs = Counter(
+        (a, t) for a, t in mongo_query.find_rows(
+            "v3_agent_telemetry",
+            {"cycle_id": cycle_id, "ticker": {"$nin": [None, ""]}},
+            ["agent_name", "ticker"])
     )
-    dupes = cur.fetchall()
+    dupes = [(a, t, c) for (a, t), c in pairs.items() if c > 1]
     extra = sum(c - 1 for _, _, c in dupes)
     status = PASS if extra == 0 else (WARN if extra <= 3 else FAIL)
     return ("no duplicate agent runs", status,
             f"{extra} extra run(s) across {len(dupes)} agent/ticker pairs",
-            {"extra": extra, "pairs": [(a, t, c) for a, t, c in dupes[:8]]})
+            {"extra": extra, "pairs": dupes[:8]})
 
 
-def check_policy_blocks_recorded(cur, cycle_id):
+def check_policy_blocks_recorded(cycle_id):
     """A blocked decision must be visible in the outcome record.
 
     07-31: RIVN's BUY was blocked by the confidence gate, but
     decision_outcomes.overridden_from was NULL — the block is invisible to
     anyone reading outcomes, so it can never be scored.
     """
-    cur.execute(
-        """
-        SELECT t.ticker, t.policy_action, d.overridden_from
-        FROM trade_results t
-        LEFT JOIN decision_outcomes d
-          ON d.cycle_id = t.cycle_id AND d.ticker = t.ticker
-        WHERE t.cycle_id = %s AND t.policy_action LIKE 'HOLD_POLICY_BLOCKED%%'
-        """,
-        [cycle_id],
+    # A LEFT JOIN, and the outer half is the whole check: a blocked trade with
+    # NO outcome row at all is the worst version of "not recorded", and an
+    # inner join would drop exactly those and report a clean cycle.
+    rows = mongo_query.left_join_rows(
+        "trade_results",
+        {"cycle_id": cycle_id, "policy_action": _prefix("HOLD_POLICY_BLOCKED")},
+        "ticker",
+        "decision_outcomes", "ticker", {"cycle_id": cycle_id},
+        left_fields=["ticker", "policy_action"], right_fields=["overridden_from"],
+        select=[("l", "ticker"), ("l", "policy_action"), ("r", "overridden_from")],
     )
-    rows = cur.fetchall()
     unrecorded = [t for t, _, ov in rows if not ov]
     status = PASS if not unrecorded else FAIL
     return ("policy blocks recorded in outcomes", status,
@@ -249,40 +236,34 @@ def check_policy_blocks_recorded(cur, cycle_id):
             {"blocks": len(rows), "unrecorded": unrecorded})
 
 
-def check_cycle_attribution(cur, cycle_id):
+def check_cycle_attribution(cycle_id):
     """Telemetry that loses its cycle_id cannot be audited later.
 
     07-31: 92 agent_audit_log rows in the window all had cycle_id = ''.
     """
-    cur.execute(
-        """
-        SELECT COUNT(*) FROM agent_audit_log
-        WHERE (cycle_id IS NULL OR cycle_id = '')
-          AND created_at > NOW() - INTERVAL '2 hours'
-        """
-    )
-    orphans = cur.fetchone()[0]
+    # `cycle_id IS NULL OR cycle_id = ''` — in Mongo `{"$in": [None, ""]}` also
+    # matches documents with no such field, which is the same "unattributed"
+    # the SQL meant.
+    orphans = mongo_store.count_docs("agent_audit_log", {
+        "cycle_id": {"$in": [None, ""]},
+        "created_at": {"$gt": datetime.now(timezone.utc) - timedelta(hours=2)},
+    })
     status = PASS if orphans == 0 else WARN
     return ("telemetry keeps its cycle_id", status,
             f"{orphans} unattributed agent_audit_log rows in the last 2h",
             {"orphans": orphans})
 
 
-def check_benchmark_timings(cur, cycle_id):
+def check_benchmark_timings(cycle_id):
     """Phase timings should be filled from pipeline_events since 2026-08-03.
 
     cache_hit_pct is the COLLECTOR fast-path skip rate (scraper steps skipped
     because a <48h thesis existed) — it says nothing about LLM KV-cache reuse;
     that lives in v3_agent_telemetry.cached_tokens.
     """
-    cur.execute(
-        """
-        SELECT collect_ms, analyze_ms, trade_ms, total_tokens, cache_hit_pct
-        FROM cycle_benchmarks WHERE cycle_id = %s
-        """,
-        [cycle_id],
-    )
-    row = cur.fetchone()
+    row = mongo_query.find_row(
+        "cycle_benchmarks", {"cycle_id": cycle_id},
+        ["collect_ms", "analyze_ms", "trade_ms", "total_tokens", "cache_hit_pct"])
     if not row:
         return ("phase timings recorded", INFO, "no benchmark row yet", {})
     collect, analyze, trade, tokens, cache = row
@@ -296,7 +277,7 @@ def check_benchmark_timings(cur, cycle_id):
             {"missing": missing, "tokens": tokens, "collector_skip_pct": cache})
 
 
-def check_confidence_is_monotonic(cur, cycle_id):
+def check_confidence_is_monotonic(cycle_id):
     """Higher stated confidence must win more often, or it is not confidence.
 
     This is a COHORT check, not a per-cycle one — it reads the whole resolved
@@ -312,24 +293,38 @@ def check_confidence_is_monotonic(cur, cycle_id):
     → 4.57), so confidence is tracking magnitude while wearing a probability
     label. Anything sizing positions off it is reading the wrong axis.
     """
-    cur.execute(
-        """
-        SELECT width_bucket(confidence, 70, 95, 3) b,
-               COUNT(*) n,
-               ROUND(AVG(confidence)::numeric, 1) stated,
-               ROUND(100.0 * COUNT(*) FILTER (WHERE outcome = 'WIN')
-                     / NULLIF(COUNT(*), 0), 1) realized
-        FROM decision_outcomes
-        WHERE outcome IN ('WIN', 'LOSS') AND confidence >= 70
-        GROUP BY 1 HAVING COUNT(*) >= 30 ORDER BY 1
-        """
-    )
-    rows = cur.fetchall()
-    if len(rows) < 2:
+    rows = mongo_query.find_rows(
+        "decision_outcomes",
+        {"outcome": {"$in": ["WIN", "LOSS"]}, "confidence": {"$gte": 70}},
+        ["confidence", "outcome"])
+
+    # `width_bucket(confidence, 70, 95, 3)`: three equal bands across [70, 95),
+    # and everything at or above 95 lands in a fourth. Reproduced exactly —
+    # collapsing the overflow band into the top one would merge the desk's most
+    # confident decisions into the band this check is comparing them against.
+    def bucket(c: float) -> int:
+        if c >= 95:
+            return 4
+        return int((float(c) - 70) / (25 / 3)) + 1
+
+    grouped: dict[int, list] = defaultdict(list)
+    for conf, outcome in rows:
+        if conf is None:
+            continue
+        grouped[bucket(float(conf))].append((float(conf), outcome))
+
+    ordered = [(b, v) for b, v in sorted(grouped.items()) if len(v) >= 30]
+    if len(ordered) < 2:
         return ("confidence ranks outcomes", INFO,
                 "not enough resolved rows above the floor to rank", {})
 
-    buckets = [(float(s), float(r), n) for _, n, s, r in rows if r is not None]
+    buckets = []
+    for _, vals in ordered:
+        n = len(vals)
+        stated = round(sum(c for c, _ in vals) / n, 1)
+        realized = round(100.0 * sum(1 for _, o in vals if o == "WIN") / n, 1)
+        buckets.append((stated, realized, n))
+
     inversions = [
         (buckets[i][0], buckets[i][1], buckets[i + 1][0], buckets[i + 1][1])
         for i in range(len(buckets) - 1)
@@ -362,26 +357,17 @@ CHECKS = [
 
 
 def run_checks(cycle_id: str, as_json: bool = False) -> int:
-    with connect() as conn, conn.cursor() as cur:
-        results = []
-        for fn in CHECKS:
-            try:
-                results.append(fn(cur, cycle_id))
-            except Exception as e:  # a broken check must not look like a pass
-                # Postgres aborts the whole transaction on a bad statement, so
-                # without this rollback one failing check silently fails every
-                # check after it — the tool would report a clean cycle because
-                # it never got to look.
-                conn.rollback()
-                results.append((fn.__name__, FAIL, f"check errored: {e}", {}))
+    results = []
+    for fn in CHECKS:
+        try:
+            results.append(fn(cycle_id))
+        except Exception as e:  # a broken check must not look like a pass
+            results.append((fn.__name__, FAIL, f"check errored: {e}", {}))
 
-        cur.execute(
-            """SELECT status, buy_count, sell_count, hold_count, trade_executed,
-                      elapsed_ms, tickers_final
-               FROM cycle_run_summaries WHERE cycle_id = %s""",
-            [cycle_id],
-        )
-        summary = cur.fetchone()
+    summary = mongo_query.find_row(
+        "cycle_run_summaries", {"cycle_id": cycle_id},
+        ["status", "buy_count", "sell_count", "hold_count", "trade_executed",
+         "elapsed_ms", "tickers_final"])
 
     if as_json:
         print(json.dumps({
@@ -419,37 +405,32 @@ def watch(cycle_id: str | None, poll: float = 5.0) -> int:
     print(f"  watching {cycle_id or '(latest)'} — ctrl-c to stop\n")
     try:
         while True:
-            with connect() as conn, conn.cursor() as cur:
-                cid = cycle_id or latest_cycle(cur)
-                if not cid:
-                    time.sleep(poll)
-                    continue
-                cur.execute(
-                    """SELECT id, timestamp, phase, step, detail, status
-                       FROM pipeline_events
-                       WHERE cycle_id = %s AND id > %s
-                       ORDER BY id""",
-                    [cid, seen_max_id],
-                )
-                for _id, ts, phase, step, detail, status in cur.fetchall():
-                    seen_max_id = max(seen_max_id, _id)
-                    counts[status] += 1
-                    if phase != last_phase:
-                        print(f"\n  ── {phase} ──")
-                        last_phase = phase
-                    if status in ("error", "warning"):
-                        print(f"  {ts:%H:%M:%S} {_c(FAIL if status=='error' else WARN, status.upper())} "
-                              f"{step}: {(detail or '')[:100]}")
-                    elif status == "ok":
-                        print(f"  {ts:%H:%M:%S} {(detail or step)[:110]}")
-                cur.execute(
-                    "SELECT status FROM pipeline_state WHERE singleton_id='current'"
-                )
-                row = cur.fetchone()
-                if row and row[0] in ("done", "error", "stopped"):
-                    print(f"\n  cycle {row[0]} — "
-                          f"{counts['error']} errors, {counts['warning']} warnings\n")
-                    return run_checks(cid)
+            cid = cycle_id or latest_cycle()
+            if not cid:
+                time.sleep(poll)
+                continue
+            events = mongo_query.find_rows(
+                "pipeline_events",
+                {"cycle_id": cid, "id": {"$gt": seen_max_id}},
+                ["id", "timestamp", "phase", "step", "detail", "status"],
+                sort=[("id", 1)])
+            for _id, ts, phase, step, detail, status in events:
+                seen_max_id = max(seen_max_id, _id or 0)
+                counts[status] += 1
+                if phase != last_phase:
+                    print(f"\n  ── {phase} ──")
+                    last_phase = phase
+                if status in ("error", "warning"):
+                    print(f"  {ts:%H:%M:%S} {_c(FAIL if status=='error' else WARN, status.upper())} "
+                          f"{step}: {(detail or '')[:100]}")
+                elif status == "ok":
+                    print(f"  {ts:%H:%M:%S} {(detail or step)[:110]}")
+            row = mongo_query.find_row(
+                "pipeline_state", {"singleton_id": "current"}, ["status"])
+            if row and row[0] in ("done", "error", "stopped"):
+                print(f"\n  cycle {row[0]} — "
+                      f"{counts['error']} errors, {counts['warning']} warnings\n")
+                return run_checks(cid)
             time.sleep(poll)
     except KeyboardInterrupt:
         print("\n  stopped watching\n")
@@ -468,8 +449,7 @@ def main() -> int:
 
     cid = args.cycle
     if not cid and not args.watch:
-        with connect() as conn, conn.cursor() as cur:
-            cid = latest_cycle(cur)
+        cid = latest_cycle()
         if not cid:
             sys.exit("no cycles found")
 
