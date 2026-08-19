@@ -29,6 +29,11 @@ the Postgres figure at the default period.
     scripts/recompute_technicals.py                     # every eligible ticker
     scripts/recompute_technicals.py --tickers AAPL MSFT
     scripts/recompute_technicals.py --verify            # coverage only, no writes
+
+The eligibility pass is a `$group` over every `price_history` document by
+(ticker, source), which no index serves — on 15.7M documents that is minutes of
+silence before the first ticker appears. It is not hung; progress flushes from
+the first line onward.
 """
 from __future__ import annotations
 
@@ -137,7 +142,7 @@ def main() -> int:
     if args.limit:
         eligible = eligible[: args.limit]
 
-    print(f"{len(eligible):,} eligible ticker(s), period={args.period}")
+    print(f"{len(eligible):,} eligible ticker(s), period={args.period}", flush=True)
     if args.dry_run:
         for t in eligible[:20]:
             print(f"  {t:8} {coverage[t]:>6,} sessions")
@@ -162,7 +167,13 @@ def main() -> int:
             empty.append(ticker)
         if i % 100 == 0 or i == len(eligible):
             rate = written / max(1e-9, time.time() - started)
-            print(f"[{i}/{len(eligible)}] {written:,} rows  {rate:,.0f} rows/s")
+            # flush: Python block-buffers stdout when it is a file rather than
+            # a TTY, so a redirected long run shows NOTHING for the first 8KB —
+            # which reads exactly like a hung job. Measured on the first run of
+            # this script: five minutes of silence with the process alive and
+            # waiting on Mongo.
+            print(f"[{i}/{len(eligible)}] {written:,} rows  {rate:,.0f} rows/s",
+                  flush=True)
 
     elapsed = time.time() - started
     report = {
