@@ -7605,7 +7605,15 @@
     {
       "archive_file": null,
       "archived_at": null,
-      "backfilled_at": null,
+      "backfill_last_attempt": {
+        "at": "2026-08-19T08:47:06.791920+00:00",
+        "mongo_docs": 15758716,
+        "ok": true,
+        "pg_rows": 15758716
+      },
+      "backfilled_at": "2026-08-19T08:47:06.791920+00:00",
+      "backfilled_mongo_docs": 15758716,
+      "backfilled_pg_rows": 15758716,
       "client_readers": [
         "trading-client/app/chat/chat_context.py:678:select",
         "trading-client/app/data/market_regime_engine.py:60:select",
