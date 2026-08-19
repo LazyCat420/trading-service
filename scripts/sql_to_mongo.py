@@ -792,6 +792,51 @@ def _translate_delete(tree, ctx: _Ctx) -> Translation:
     return Translation("delete", table, call, ctx.count, "count")
 
 
+# Postgres system catalogs and information_schema views. These describe the
+# DATABASE, not the application's data, and Mongo has no equivalent — so a
+# translation of them is not a port, it is a silently wrong answer.
+#
+# Found on 2026-08-19 in trading-client: the codemod happily rewrote
+#
+#     SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+#  -> mongo_query.find_rows('pg_tables', {'schemaname': 'public'}, ['tablename'])
+#
+# at 10 call sites. Valid code, no error, and `pg_tables` is not a collection —
+# so "list the tables in this database" would return an empty list forever, and
+# every caller that iterates the result would simply do nothing. The routes
+# affected are the schema browser, the ontology builder and the data-audit
+# sweep, all of which would report a clean, empty database.
+#
+# The right port is `db.list_collection_names()` (or `$listCatalog`), which is
+# a hand transform, not a query rewrite — hence a refusal rather than a
+# translation.
+_SYSTEM_CATALOGS = frozenset({
+    "pg_tables", "pg_class", "pg_attribute", "pg_indexes", "pg_stat_user_tables",
+    "pg_stat_activity", "pg_namespace", "pg_type", "pg_constraint",
+    "pg_stat_statements", "pg_locks", "pg_settings", "pg_database",
+    # `information_schema.columns` arrives from sqlglot as the bare name
+    # `columns`, which reads like an ordinary table and is the most dangerous
+    # of these — it is also a plausible application table name.
+    "columns", "tables", "key_column_usage", "table_constraints",
+    "referential_constraints", "information_schema",
+})
+
+
+def _refuse_system_catalogs(tree) -> None:
+    """Refuse any statement touching a Postgres catalog. See _SYSTEM_CATALOGS."""
+    for table in tree.find_all(exp.Table):
+        name = (table.name or "").lower()
+        db = (table.text("db") or "").lower()
+        if db == "information_schema" or name in _SYSTEM_CATALOGS:
+            qualified = f"{db}.{name}" if db else name
+            raise Unsupported(
+                f"{qualified} is a Postgres system catalog — Mongo has no "
+                "equivalent, and translating it yields a query against a "
+                "collection that does not exist (a silent empty result). Use "
+                "db.list_collection_names() by hand."
+            )
+
+
 def translate(sql: str) -> Translation:
     """SQL text → Translation. Raises Unsupported with a reason."""
     norm = " ".join(sql.split())
@@ -807,6 +852,8 @@ def translate(sql: str) -> Translation:
         raise Unsupported(f"unparsed: {exc}") from exc
     if tree is None:
         raise Unsupported("unparsed: empty tree")
+
+    _refuse_system_catalogs(tree)
 
     ctx = _Ctx()
     if isinstance(tree, exp.Select):
