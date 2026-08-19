@@ -155,8 +155,18 @@ def scan() -> list[Site]:
                 # join or a subquery. Do not claim it as mechanical.
                 kind = "dynamic"
                 features = features + ["f-string"]
+            # WHOLE statement, not a preview. This used to store the first 220
+            # characters, which is fine for a printed table and wrong for an
+            # artifact: scripts/verify_translations.py translates and EXECUTES
+            # `sql` from this file, so 330 of 1,274 sites — 26 of the sweep's
+            # mechanical SELECTs — were judged on a mutilated statement. Five
+            # died as `UndefinedColumn: column "reso" does not exist` and were
+            # scored ERROR against the translator; the other 21 parsed anyway,
+            # with a clause missing, and their row counts were compared as if
+            # they meant something. Truncation belongs in the PRINTER (main()
+            # already does it), never in the record.
             sites.append(Site(rel, node.lineno, kind, verb, tables, features,
-                              " ".join(sql.split())[:220], rel in SCHEMA_FILES))
+                              " ".join(sql.split()), rel in SCHEMA_FILES))
     return sites
 
 

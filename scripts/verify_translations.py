@@ -204,9 +204,15 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--json", type=Path)
     ap.add_argument("--show-differ", action="store_true")
+    # The default inventory is the CURRENT tree's, which on this branch holds
+    # almost no SQL left to judge — app/ is converted. The sweep's subject is
+    # the SQL the conversion started from, so point it at the master-era
+    # artifact (reports/sql_inventory_<sha>.json) to re-run the real check.
+    ap.add_argument("--inventory", type=Path,
+                    default=REPO / "reports" / "sql_inventory.json")
     args = ap.parse_args()
 
-    inv = json.loads((REPO / "reports" / "sql_inventory.json").read_text())
+    inv = json.loads(args.inventory.read_text())
     selects = [s for s in inv["sites"]
                if not s["schema_file"] and s["kind"] == "mechanical"
                and s["verb"].upper() == "SELECT"]
