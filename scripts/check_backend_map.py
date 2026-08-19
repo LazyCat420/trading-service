@@ -122,6 +122,35 @@ def main(argv: list[str] | None = None) -> int:
             "disagree about which store is authoritative"
         )
 
+    # Files both repos must carry BYTE-IDENTICALLY. They share no runtime code
+    # path -- only files -- so a divergence here is two different answers to
+    # the same question, running in two containers against one database.
+    #
+    # `money_policy.py` decides which COLUMNS are Decimal128. The service
+    # writes through it and the client reads through it, so if the copies drift
+    # the client renders a raw bson.Decimal128 where the service stored money,
+    # or demotes to float a column the service keeps exact. `collection_map`
+    # decides which physical collection a table name resolves to, and two
+    # answers there means two collections.
+    for rel in ("app/db/money_policy.py", "app/db/collection_map.json"):
+        ours = REPO_ROOT / rel
+        theirs = Path(sibling) / rel
+        # A missing file on EITHER side is a skip, not a failure, and the two
+        # sides are treated the same on purpose. This runs against synthetic
+        # trees in its own tests and against partial checkouts; the claim being
+        # checked is "if both exist they must agree", and turning an absent
+        # file into a failure only teaches people to pass --sibling /dev/null.
+        # `test_the_real_repo_passes` is what pins the real tree.
+        if not ours.exists():
+            print(f"SKIP: {ours} not found")
+        elif not theirs.exists():
+            print(f"SKIP: {theirs} not found (sibling repo not checked out here)")
+        elif ours.read_bytes() != theirs.read_bytes():
+            problems.append(
+                f"{theirs} is not byte-identical to {ours} -- the two repos "
+                "would disagree about the same contract at runtime"
+            )
+
     if problems:
         print(f"FAIL: {len(problems)} disagreement(s) between the map and the ledger:")
         for p in problems:

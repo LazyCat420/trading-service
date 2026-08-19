@@ -114,3 +114,46 @@ def test_the_real_repo_passes():
         text=True,
     )
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+SHARED_WITH_CLIENT = ("app/db/money_policy.py", "app/db/collection_map.json")
+
+
+@pytest.mark.parametrize("rel", SHARED_WITH_CLIENT)
+def test_the_real_repo_actually_has_the_shared_files(rel):
+    """The script SKIPS a missing file, so something must assert presence.
+
+    A skip is right for the script — it runs against synthetic trees and
+    partial checkouts, and failing on absence would just teach people to point
+    `--sibling` at an empty directory. But "skipped" and "verified" then look
+    identical in its output, so if nothing else checked, deleting
+    `money_policy.py` from this repo would make the check PASS.
+
+    This is the half that cannot be skipped: in the committed tree the file is
+    present, full stop.
+    """
+    assert (_ROOT / rel).exists(), (
+        f"{rel} is missing from this repo — check_backend_map.py would silently "
+        "SKIP its byte-identity check and report OK"
+    )
+
+
+@pytest.mark.parametrize("rel", SHARED_WITH_CLIENT)
+def test_the_shared_files_match_the_client(rel):
+    """Byte-identity against the real sibling, asserted in the suite.
+
+    The script only checks this when someone runs it; this fails in the normal
+    test run. Skips when no client checkout is present here, because that is an
+    environment fact rather than drift.
+    """
+    ours = _ROOT / rel
+    for sibling in (_ROOT.parent / "trading-client",
+                    _ROOT.parent / "tc-mongo-conversion"):
+        theirs = sibling / rel
+        if theirs.exists():
+            assert theirs.read_bytes() == ours.read_bytes(), (
+                f"{theirs} is not byte-identical to {ours} — the service and "
+                "the client would disagree about the same contract at runtime"
+            )
+            return
+    pytest.skip("no trading-client checkout found beside this one")
