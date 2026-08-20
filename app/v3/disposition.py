@@ -19,14 +19,18 @@ first census possible at all.
 **IT CHANGES NOTHING ABOUT WHAT THE DESK TRADES.** Action, confidence and the
 policy gates are untouched. This is a label emitted beside the decision.
 
-THE INPUTS WERE CENSUSED FIRST, over 2026-08-01..08-20, production cycles only:
+THE INPUTS WERE CENSUSED FIRST — `scripts/followup_report.py --since 2026-08-01
+--until 2026-08-20`, production cycles only, 338 HOLDs of 377 decisions:
 
-    policy_action ................ 316 of 350 HOLDs   (all HOLD_NO_SIGNAL)
+    policy_action ................ 316   (every one of them HOLD_NO_SIGNAL)
     estimate.stop_loss ........... 303
-    estimate.dynamic_trigger ..... 251
+    estimate.dynamic_trigger ..... 239
     hold_reason .................. 174   (shipped 08-12; aborts never get one)
-    hold_substitute ...............86
+    hold_substitute ............... 86
     desk_note.catalyst_call ...... 145 of 145 desk notes, 70 not already priced
+
+Quote that window CLOSED. Left open it drifts as cycles land, and a number that
+moved on its own is indistinguishable from one a code change moved.
 
 That census is not decoration. Signal 3 of `hold_reason` shipped reading three
 artifacts that never carried the field and fired 0 times in 132 HOLDs; the rule
@@ -126,8 +130,8 @@ _ABORT_MARKERS = ("V3 Pipeline aborted", "Circuit breaker tripped")
 
 #: Which way a `dynamic_trigger` points. Taken from the live vocabulary, not
 #: invented: `sma_50_drop` (140), `sma_50_reclaim` (23), `rsi_14_oversold` (16),
-#: `sma_50_rise` (13), `trailing_drop` (5) are the head of the distribution over
-#: 251 HOLD triggers in the censused window.
+#: `sma_50_rise` (13) and `trailing_drop` (5) are the head of the distribution
+#: over the HOLD triggers in the censused window.
 #:
 #: WAIT-FOR-LOWER — the desk likes the name and wants a better price.
 _PULLBACK_TOKENS = ("drop", "below", "oversold", "support", "pullback", "dip")
@@ -149,8 +153,10 @@ def classify_trigger(setup: Any) -> str | None:
     This is a question about DIRECTION only. Whether the trigger can actually
     fire is a different question with a different answer — see
     `app.trading.order_triggers.dynamic_trigger_is_evaluable`, which rejects
-    every `reclaim`/`breakout` spelling. 24% of the Board's HOLD triggers are
-    inert by that test, and they are disproportionately the entry-side ones.
+    every `reclaim`/`breakout` spelling as written. A quarter of the Board's
+    HOLD triggers were inert by that test, disproportionately the entry-side
+    ones, until `normalize_dynamic_trigger_type` began repairing the
+    unambiguous ones at creation.
     Direction is still worth reading on an inert trigger: it says what the desk
     meant, which is what the disposition is about.
     """
@@ -230,8 +236,9 @@ def derive_disposition(result: dict, *, catalyst: Any = None) -> dict | None:
     # can be returned and a follow-up needs all of them.
     #
     # Measured when this was first run without it: `WATCH_CATALYST` outranked
-    # the price branch on 85 HOLDs, and 75 of those had ALSO stated a price
-    # condition (51 pullback, 24 breakout) which the label silently swallowed.
+    # the price branch on 83 HOLDs, and most of those had ALSO stated a price
+    # condition which the label silently swallowed — 108 rows in the window
+    # carry both (78 pullback, 30 breakout).
     # A name waiting on an earnings date AND a pullback to the SMA-50 needs the
     # event review and the price trigger; keeping only the winning label would
     # have armed one of the two and lost the other without anything reporting a

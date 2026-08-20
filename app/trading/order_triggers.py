@@ -22,7 +22,8 @@ _INERT_TRIGGERS_SEEN: set[str] = set()
 #: mapped onto the one word the checker below understands. `rise` and `above`
 #: are already understood and are not listed.
 #:
-#: MEASURED 2026-08-20 over 251 HOLD triggers: **24% could never fire**, and
+#: MEASURED 2026-08-20 over the 239 dynamic triggers stated on HOLDs in
+#: 2026-08-01..08-20: **59 of them (25%) could never fire**, and
 #: they were disproportionately the ENTRY-side ones — `sma_50_reclaim` alone
 #: was 23 — on a desk whose only executable action is BUY. The chain was
 #: silent: `decision_agent`'s prompt already enumerates the legal set and
@@ -200,7 +201,7 @@ async def create_trigger(
     # 2026-08-20 an unevaluable dynamic setup was accepted here and deleted
     # later by `retire_inert_dynamic_triggers`, so the desk's stated condition
     # disappeared with nothing telling the caller it had. Rewriting the known
-    # synonyms recovers 56% of the loss; the rest is refused loudly, because an
+    # synonyms recovers 58% of the loss; the rest is refused loudly, because an
     # error the caller can see beats a row the sweeper removes.
     if trigger_type == "dynamic" and dynamic_trigger_type:
         original = dynamic_trigger_type
