@@ -1104,10 +1104,25 @@ async def check_stop_losses(
             logger.warning("[stop-loss] %s: no price data, skipping", ticker)
             continue
 
-        # Check if price has dropped below stop-loss level
-        stop_price = entry_price * (1 - effective_stop)
-        if current_price <= stop_price:
-            pnl_pct = ((current_price - entry_price) / entry_price) * 100
+        # `entry_price` is money (Decimal); `effective_stop` is a ratio and
+        # `current_price` a vendor quote, both float. Promote the float side —
+        # demoting the entry price would discard the exactness it is stored
+        # for, in the comparison that decides whether to sell.
+        #
+        # This is the same boundary check_take_profits() handles below, and it
+        # was MISSED here when the reads moved to Mongo. `Decimal * float`
+        # raises TypeError, so every background risk sweep died at this line
+        # before reaching a single stop: 97 occurrences of "Background risk
+        # sweep failed ... unsupported operand type(s) for *: 'decimal.Decimal'
+        # and 'float'" in the 40 minutes after the 2026-08-19 cutover deploy.
+        # Take-profits kept working, so the harvest ran while the protective
+        # downside stop did not — the asymmetry that makes this worth a test.
+        entry_price = mongo_query.as_money(entry_price)
+        stop_price = entry_price * (1 - mongo_query.as_money(effective_stop))
+        if mongo_query.as_money(current_price) <= stop_price:
+            pnl_pct = float(
+                ((mongo_query.as_money(current_price) - entry_price) / entry_price) * 100
+            )
             logger.warning(
                 "[stop-loss] %s: TRIGGERED @ $%.2f (entry=$%.2f, stop=%.1f%% =$%.2f, loss=%.1f%%)",
                 ticker,
