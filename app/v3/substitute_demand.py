@@ -40,6 +40,23 @@ DEFAULT_LOOKBACK_HOURS = 72
 MAX_CARRIED = 10
 
 
+def _desk_data(doc: dict) -> dict:
+    """`shared_desk.desk_data` as a dict, whichever shape it is stored in.
+
+    Text today (`json.dumps` in `save_desk`), an embedded document for every
+    desk written before the cutover. `load_desk` already accepts both; so must
+    anything else that reads the field.
+    """
+    raw = (doc or {}).get("desk_data")
+    if isinstance(raw, str):
+        try:
+            import json
+            return json.loads(raw)
+        except Exception:  # noqa: BLE001 — one corrupt desk is not an outage
+            return {}
+    return raw or {}
+
+
 def recent_substitute_demand(
     hours: int = DEFAULT_LOOKBACK_HOURS,
     limit: int = MAX_CARRIED,
@@ -51,14 +68,26 @@ def recent_substitute_demand(
         from app.db import mongo_store
 
         cutoff = datetime.now(timezone.utc) - timedelta(hours=int(hours))
+        # The WHOLE desk_data, parsed here — not a dotted projection.
+        #
+        # `save_desk` stores desk_data as `json.dumps(...)` TEXT, and a Mongo
+        # projection cannot descend into a string: it returns no `desk_data`
+        # key at all, so the document is skipped in silence — no exception, no
+        # log line, one fewer substitute. Every desk written since the cutover
+        # is text; the desks that still answered this query were the
+        # pre-cutover ones, written as embedded documents. Measured
+        # 2026-08-19: 36 document-shaped and 6 text-shaped desks in the
+        # 72-hour window, all six of them from after the cutover — so this
+        # function was days away from returning {} forever while looking
+        # exactly as healthy as it does now.
         docs = mongo_store.find_docs(
             "shared_desk",
             {"created_at": {"$gte": cutoff}},
-            projection={"desk_data.bear_rebuttal.preferred_alternative": 1},
+            projection={"desk_data": 1},
         )
         counts: Counter[str] = Counter()
         for d in docs:
-            desk = d.get("desk_data") or {}
+            desk = _desk_data(d)
             pa = (desk.get("bear_rebuttal") or {}).get("preferred_alternative") or {}
             if pa.get("status") == "NAMED":
                 tkr = (pa.get("ticker") or "").strip().upper()

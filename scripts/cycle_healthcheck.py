@@ -22,6 +22,7 @@ Exit 0 = no FAILs. WARN never fails the run; it flags something to look at.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -226,25 +227,48 @@ def phase5() -> None:
 
 # ── Phase 6/7: verdicts and post-cycle, for a specific cycle ─────────────────
 
+def _desk_data(doc: dict) -> dict:
+    """`shared_desk.desk_data`, whichever shape it is stored in.
+
+    Written as a JSON STRING today (`json.dumps` in save_desk); `load_desk`
+    already accepts both, and so must every reader — a desk written before the
+    cutover is a real embedded document.
+    """
+    raw = (doc or {}).get("desk_data")
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except Exception:  # noqa: BLE001 — a corrupt desk is not a crash here
+            return {}
+    return raw or {}
+
+
 def phase67(cycle_id: str) -> None:
     P6, P7 = "6 verdict", "7 post"
 
-    desks = mongo_store.count_docs("shared_desk", {"cycle_id": cycle_id})
-    # `desk_data->>'phase'` is a field of the embedded document in Mongo, so the
-    # JSON operator becomes dotted-path addressing.
-    done = mongo_store.count_docs(
-        "shared_desk",
-        {"cycle_id": cycle_id, "desk_data.phase": {"$in": ["PM_DONE", "INIT"]}})
+    docs = mongo_store.find_docs("shared_desk", {"cycle_id": cycle_id},
+                                 projection={"desk_data": 1, "ticker": 1})
+    desks = len(docs)
+
+    # `desk_data` is TEXT, not an embedded document: `save_desk` writes
+    # `json.dumps(desk.to_dict())` (app/v3/desk_persistence.py:28). A dotted
+    # path cannot descend into a string, so the `desk_data->>'phase'`
+    # translation — `{"desk_data.phase": ...}` — matched NOTHING and this check
+    # reported "verdicts produced 0/3" for cycle-v3-1787193855, whose three
+    # desks all reached PM_DONE with a final_decision. Measured both ways on
+    # identical content: as a document the projection returns the field, as a
+    # string it returns no `desk_data` key at all.
+    #
+    # Parsed here rather than queried server-side, because that is what the
+    # store actually holds. If `desk_data` is ever converted to a real
+    # document, `_desk_data` below keeps working — it takes both shapes.
+    decoded = [_desk_data(d) for d in docs]
+    done = sum(1 for dd in decoded if (dd or {}).get("phase") in ("PM_DONE", "INIT"))
     rec(P6, PASS if desks else FAIL, "desks written", f"{desks} desk(s)")
     rec(P6, PASS if done == desks else WARN, "all desks reached a terminal phase",
         f"{done}/{desks}")
 
-    # `IS NOT NULL` -> `$ne: None`, which in Mongo also excludes documents where
-    # the field is ABSENT — the same set the SQL returned, since a desk that
-    # never decided has no key rather than a null one.
-    decided = mongo_store.count_docs(
-        "shared_desk",
-        {"cycle_id": cycle_id, "desk_data.final_decision": {"$ne": None}})
+    decided = sum(1 for dd in decoded if (dd or {}).get("final_decision") is not None)
     rec(P6, PASS if decided else FAIL, "verdicts produced", f"{decided}/{desks}")
 
     saved = mongo_store.count_docs("analysis_results", {"cycle_id": cycle_id})
