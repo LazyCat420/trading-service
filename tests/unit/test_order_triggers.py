@@ -99,12 +99,20 @@ async def test_create_dynamic_trigger_supersedes_same_type(mock_get_current_pric
     # Same-setup dynamic triggers dedupe: the supersede is keyed on
     # dynamic_trigger_type so re-arming the same setup doesn't stack rows,
     # while a DIFFERENT setup on the same ticker survives.
+    #
+    # `sma_200_reclaim` is NORMALISED to `sma_200_rise` on the way in (2026-08-20)
+    # — this test used to assert it was stored verbatim, which is to say it
+    # asserted that a watch which could never fire was written and left for the
+    # inert sweeper to delete. Both the supersede key and the stored row take
+    # the normalised setup, so re-arming the same condition under either
+    # spelling dedupes against the other instead of stacking two rows for one
+    # condition.
     filters = _supersede_filters(store)
     assert len(filters) == 1
-    assert filters[0]["dynamic_trigger_type"] == "sma_200_reclaim"
+    assert filters[0]["dynamic_trigger_type"] == "sma_200_rise"
     assert filters[0]["trigger_type"] == "dynamic"
     doc = _inserted(store)
-    assert doc["dynamic_trigger_type"] == "sma_200_reclaim"
+    assert doc["dynamic_trigger_type"] == "sma_200_rise"
     assert doc["dynamic_trigger_value"] == 206.75
 
 
