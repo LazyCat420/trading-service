@@ -19,6 +19,11 @@ run a real cycle and writes real desks, but:
 
 `trade=False` means decisions are produced and saved but no orders are placed.
 
+Reads and writes MONGO. The queue moved there at the cutover and the poller
+reads nothing else, so the Postgres INSERT this used to do enqueued a command
+that was never claimed — it printed "enqueued START_V3_CYCLE" and then polled a
+frozen `pipeline_state` until it timed out.
+
     python scripts/observe_cycle.py --tickers JPM,NVDA,MP
     python scripts/observe_cycle.py --tickers JPM --trade    # actually trades
 """
@@ -31,6 +36,7 @@ import os
 import sys
 import time
 import uuid
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -48,7 +54,7 @@ def main() -> int:
                     help="enqueue and exit without waiting")
     args = ap.parse_args()
 
-    from scripts.migration.pg_connection import get_db
+    from app.db import mongo_query, mongo_store
 
     tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
     cycle_id = f"cycle-observe-{int(time.time())}"
@@ -62,21 +68,24 @@ def main() -> int:
 
     # Refuse to queue behind a cycle already in flight — two concurrent cycles
     # fight over the pipeline_state singleton.
-    with get_db() as db:
-        busy = db.execute(
-            "SELECT id, command_type, status FROM v3_system_commands "
-            "WHERE status IN ('pending', 'running') ORDER BY created_at DESC LIMIT 1"
-        ).fetchone()
-        if busy:
-            print(f"REFUSING: a command is already {busy[2]} ({busy[1]}, id={busy[0]}). "
-                  f"Wait for it or clear it first.")
-            return 1
+    busy = mongo_query.find_row(
+        "v3_system_commands", {"status": {"$in": ["pending", "running"]}},
+        ["id", "command_type", "status"], sort=[("created_at", -1)],
+    )
+    if busy:
+        print(f"REFUSING: a command is already {busy[2]} ({busy[1]}, id={busy[0]}). "
+              f"Wait for it or clear it first.")
+        return 1
 
-        cmd_id = f"obs-{uuid.uuid4().hex[:8]}"
-        db.execute(
-            "INSERT INTO v3_system_commands (id, command_type, payload) VALUES (%s, %s, %s)",
-            [cmd_id, "START_V3_CYCLE", json.dumps(payload)],
-        )
+    cmd_id = f"obs-{uuid.uuid4().hex[:8]}"
+    mongo_store.insert_docs("v3_system_commands", [{
+        "id": cmd_id,
+        "command_type": "START_V3_CYCLE",
+        "payload": json.dumps(payload),
+        "status": "pending",
+        "progress": 0,
+        "created_at": datetime.now(timezone.utc),
+    }])
 
     print(f"enqueued START_V3_CYCLE {cmd_id}")
     print(f"  cycle_id : {cycle_id}")
@@ -92,14 +101,10 @@ def main() -> int:
     last = None
     while time.monotonic() < deadline:
         time.sleep(POLL_SECONDS)
-        with get_db() as db:
-            row = db.execute(
-                "SELECT status, error_message FROM v3_system_commands WHERE id = %s",
-                [cmd_id],
-            ).fetchone()
-            state = db.execute(
-                "SELECT status, phase, progress FROM pipeline_state"
-            ).fetchone()
+        row = mongo_query.find_row(
+            "v3_system_commands", {"id": cmd_id}, ["status", "error_message"])
+        state = mongo_query.find_row(
+            "pipeline_state", {"singleton_id": "current"}, ["status", "phase", "progress"])
         status = row[0] if row else "?"
         if state and state != last:
             print(f"  [{status}] pipeline={state[0]} phase={state[1]} {state[2] or ''}")

@@ -12,7 +12,7 @@ forever. These four files are the exception inside that exception: they are how
 the cutover and the 24-72h soak get judged, so they are held to `app/`'s rule.
 
 The ratchet on the rest of `scripts/` is here too. 0 is not reachable there yet
-— 97 files of one-off reports and backfills still read Postgres — and a gate
+— ~100 files of one-off reports and backfills still read Postgres — and a gate
 nobody can turn on is worth less than a number that may only go down.
 """
 from __future__ import annotations
@@ -34,12 +34,25 @@ INSTRUMENTS = (
     "scripts/cycle_healthcheck.py",
     "scripts/smoke_test_cycle.py",
     "scripts/run_audit.py",
+    # The control plane, added 2026-08-19 after the first post-cutover cycle.
+    # These four do not grade a cycle, they START and GUARD one, and reading the
+    # frozen store made each of them lie in a different direction: the two
+    # triggers enqueued onto a Postgres queue no poller reads and printed
+    # success; `check_pipeline_state` (the command guard_deploy.py tells an
+    # operator to run) answered `done` mid-cycle; and `deploy_preflight` — the
+    # last gate before the container swap — printed "pipeline idle, deploy may
+    # proceed" while cycle-v3-1787193855 was analyzing, which is the 2026-08-11
+    # cycle-killing incident with the safety catch filed off.
+    "scripts/trigger_cycle.py",
+    "scripts/observe_cycle.py",
+    "scripts/check_pipeline_state.py",
+    "scripts/deploy_preflight.py",
 )
 
-# Measured 2026-08-19, immediately after the four instruments above were
-# converted. Lower it whenever a script is converted, moved under
-# scripts/migration/, or deleted; never raise it.
-SCRIPTS_RATCHET = 427
+# Measured 2026-08-19 after the control-plane four were converted (427 before).
+# Lower it whenever a script is converted, moved under scripts/migration/, or
+# deleted; never raise it.
+SCRIPTS_RATCHET = 408
 
 
 @pytest.mark.parametrize("rel", INSTRUMENTS)
