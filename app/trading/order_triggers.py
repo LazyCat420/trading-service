@@ -18,6 +18,56 @@ _TRIGGER_METRIC_COLUMNS = frozenset({"sma_20", "sma_50", "sma_200", "rsi_14"})
 _INERT_TRIGGERS_SEEN: set[str] = set()
 
 
+#: Spellings the Board emits for "price gets back ABOVE this moving average",
+#: mapped onto the one word the checker below understands. `rise` and `above`
+#: are already understood and are not listed.
+#:
+#: MEASURED 2026-08-20 over 251 HOLD triggers: **24% could never fire**, and
+#: they were disproportionately the ENTRY-side ones — `sma_50_reclaim` alone
+#: was 23 — on a desk whose only executable action is BUY. The chain was
+#: silent: `decision_agent`'s prompt already enumerates the legal set and
+#: already names "sma_50_reclaim" as a forbidden invention, `create_trigger`
+#: accepted it anyway, and `retire_inert_dynamic_triggers` then deactivated it.
+#: The desk stated a condition, the system agreed, and the name ended up with
+#: no watch — which is why live inert count reads a healthy 0.
+#:
+#: ONLY UNAMBIGUOUS SYNONYMS BELONG HERE. A bare `sma_50_break` names no
+#: direction and `resistance_breakout` names no metric column; both are
+#: refused rather than guessed at, because inventing a direction the desk did
+#: not state is worse than declining to arm.
+_DIRECTION_SYNONYMS = {
+    "reclaim": "rise",
+    "reclaims": "rise",
+    "breakout": "rise",
+    "breaks_out": "rise",
+}
+
+
+def normalize_dynamic_trigger_type(setup: str) -> str:
+    """Rewrite a known synonym onto the checker's vocabulary; else unchanged.
+
+    Returns the setup as-is when it is already evaluable or when no
+    unambiguous mapping exists — the caller decides what to do with a setup
+    that is still unevaluable afterwards.
+    """
+    setup = (setup or "").strip()
+    if not setup or dynamic_trigger_is_evaluable(setup):
+        return setup
+    if not setup.startswith("sma_"):
+        # Only the moving-average family has a metric column to compare
+        # against. `support_bounce` and `resistance_break` name a level the
+        # checker cannot look up at all.
+        return setup
+    parts = setup.split("_")
+    for i, part in enumerate(parts):
+        if part in _DIRECTION_SYNONYMS:
+            candidate = "_".join(parts[:i] + [_DIRECTION_SYNONYMS[part]])
+            # Never hand back something that still cannot fire.
+            if dynamic_trigger_is_evaluable(candidate):
+                return candidate
+    return setup
+
+
 def dynamic_trigger_is_evaluable(setup: str) -> bool:
     """Can check_price_triggers() below actually evaluate this setup?"""
     setup = (setup or "").strip()
@@ -145,6 +195,32 @@ async def create_trigger(
 
     if trigger_type == "trailing_stop" and (not trailing_pct or trailing_pct <= 0):
         return {"error": "trailing_stop requires a positive trailing_pct"}
+
+    # NORMALISE BEFORE STORING, and refuse what cannot be normalised. Until
+    # 2026-08-20 an unevaluable dynamic setup was accepted here and deleted
+    # later by `retire_inert_dynamic_triggers`, so the desk's stated condition
+    # disappeared with nothing telling the caller it had. Rewriting the known
+    # synonyms recovers 56% of the loss; the rest is refused loudly, because an
+    # error the caller can see beats a row the sweeper removes.
+    if trigger_type == "dynamic" and dynamic_trigger_type:
+        original = dynamic_trigger_type
+        dynamic_trigger_type = normalize_dynamic_trigger_type(dynamic_trigger_type)
+        if dynamic_trigger_type != original:
+            logger.info(
+                "[TRIGGER] %s: normalised dynamic setup %r -> %r so it can fire",
+                ticker, original, dynamic_trigger_type,
+            )
+        if not dynamic_trigger_is_evaluable(dynamic_trigger_type):
+            logger.warning(
+                "[TRIGGER] %s: REFUSED dynamic setup %r — the checker cannot "
+                "evaluate it and no unambiguous rewrite exists, so storing it "
+                "would create a watch that never fires.", ticker, original,
+            )
+            return {
+                "error": f"Unevaluable dynamic_trigger_type: {original!r}. Use "
+                         f"sma_20/50/200 or rsi_14 with drop|below|rise|above, "
+                         f"or trailing_drop."
+            }
 
     trigger_id = f"trg-{uuid.uuid4().hex[:10]}"
     now = datetime.now(timezone.utc)
