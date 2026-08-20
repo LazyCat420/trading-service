@@ -105,13 +105,33 @@ async def poll_system_commands():
             cmd = mongo_query.find_row('system_commands', {'status': 'pending', 'command_type': {'$in': ['AUTORESEARCH', 'ACTIVATE_BRAIN_GRAPH', 'RUN_FRED_COLLECTION', 'RUN_MARKET_COLLECTION', 'EVALUATE_STRATEGY']}}, ['id', 'command_type', 'payload'])
 
             if cmd:
-                job_id, cmd_type, payload_str = cmd
+                job_id, cmd_type, raw_payload = cmd
                 logger.info("Found pending %s command: %s", cmd_type, job_id)
                 mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'running', 'started_at': datetime.now(timezone.utc)}})
 
-                payload = json.loads(payload_str) if payload_str else {}
-
                 try:
+                    # Mongo stores `payload` as a DOCUMENT — PipelineService
+                    # enqueues AUTORESEARCH with a dict on purpose
+                    # (pipeline_service.py:2364, "one enqueue, one shape").
+                    # Postgres stored it as JSON text, and the codemod left
+                    # this `json.loads` behind: after the cutover it raised
+                    # `the JSON object must be str, bytes or bytearray, not
+                    # dict` on the FIRST post-cycle job, cycle-v3-1787193855's
+                    # job_a000e299. The command had already been marked
+                    # `running`, and the raise happened above the inner try, so
+                    # the outer handler logged "Error polling system_commands"
+                    # and looped — leaving the job claimed forever and the
+                    # cycle with no autoresearch report at all. Every cycle
+                    # after the cutover would have lost its reflection the same
+                    # way, one stuck row at a time.
+                    #
+                    # Parsed inside the try so a payload that genuinely cannot
+                    # be read marks the command `error` and releases it,
+                    # instead of stranding it in `running`.
+                    payload = (json.loads(raw_payload) if isinstance(raw_payload, str)
+                               else (raw_payload or {}))
+
+
                     if cmd_type == "AUTORESEARCH":
                         await run_autoresearch(job_id, payload)
                     elif cmd_type == "ACTIVATE_BRAIN_GRAPH":
