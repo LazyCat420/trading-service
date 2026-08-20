@@ -50,6 +50,30 @@ async def get_market_data(ticker: str) -> str:
 
     from app.db import mongo_store, mongo_query
 
+    # P/E BASIS — which window, and did the vendors agree?
+    #
+    # The row below is whichever source wrote LAST. That decided the desk's
+    # P/E, and on 2026-08-20 it handed COF a 12.2 while finviz showed 79: two
+    # correct numbers over two different trailing-twelve-month windows (the
+    # Discover charge quarter had rolled off one and not the other). 16 of the
+    # 501 tickers carrying two sources disagree by >=2x, and which vendor is
+    # right FLIPS by ticker, so this states the window instead of picking a
+    # favourite. Advisory text only — it changes no field the desk trades on.
+    try:
+        from app.quant import pe_basis
+        _pe_rows = mongo_store.find_docs(
+            'fundamentals', {'ticker': ticker},
+            sort=[('snapshot_date', -1)], limit=25)
+        # No price is read here on purpose: `price_history` is keyed by
+        # vendor and the sources disagree ~20%, so resolve_pe falls back to
+        # market cap over TTM net income rather than importing that error.
+        _resolved = pe_basis.resolve_pe(ticker, rows=_pe_rows)
+        if _resolved.get('value') is not None:
+            sections.append("P/E basis: " + pe_basis.describe(_resolved))
+    except Exception as _pe_err:  # noqa: BLE001
+        # Never cost the report its fundamentals over an advisory line.
+        logger.debug("[finance_tools] %s: P/E basis unavailable: %s", ticker, _pe_err)
+
     # Fundamentals
     rows = mongo_query.find_rows('fundamentals', {'ticker': ticker}, ['snapshot_date', 'market_cap', 'pe_ratio', 'forward_pe', 'peg_ratio', 'price_to_book', 'profit_margin', 'roe', 'revenue', 'revenue_growth', 'debt_to_equity', 'beta', 'week_52_high', 'week_52_low', 'short_float_pct'], sort=[('snapshot_date', -1)], limit=1)
     sections.append(
