@@ -49,6 +49,20 @@ cutoff}}` where cutoff carries a time is a legitimate range bound, and rounding
 it to midnight would silently widen the window. Only write-side documents are
 floored to midnight, which is what the column meant and what the backfill
 stored.
+
+TIMESTAMPS TOO (2026-08-20)
+---------------------------
+The same defect surfaced on the TIMESTAMP columns the day after the cutover:
+`log_manager` wrote `cycle_run_summaries.finished_at` as `.isoformat()` text
+beside 352 seeded BSON datetimes, and because Date outranks String in BSON
+type order, every `sort=[("started_at", -1)]` kept answering the last
+PRE-cutover cycle — the client's "audit the newest cycle" endpoint, the
+benchmarks panel, and (worst) `episodic_memory`'s per-ticker recency sort,
+which made every memory formed after the cutover unretrievable. Nothing
+raised; the store just split. So the registry now also covers the manifest's
+`timestamp with/without time zone` columns, coerced by `as_timestamp` — which
+parses ISO strings and normalises to the store's native shape (naive UTC) but
+never floors, because a timestamp's time of day is the value.
 """
 from __future__ import annotations
 
@@ -77,23 +91,38 @@ _FILTER_LIST_OPERATORS = frozenset({"$and", "$or", "$nor"})
 # take numbers and `$unset` takes a throwaway, so none of them can hold a date.
 _UPDATE_DOC_OPERATORS = frozenset({"$set", "$setOnInsert", "$max", "$min"})
 
+_TIMESTAMP_TYPES = frozenset({
+    "timestamp with time zone", "timestamp without time zone",
+})
 
-def _load() -> dict[str, frozenset[str]]:
+
+def _load() -> tuple[dict[str, frozenset[str]], dict[str, frozenset[str]]]:
     columns = json.loads(_MANIFEST.read_text())["columns"]
-    out: dict[str, frozenset[str]] = {}
+    dates: dict[str, frozenset[str]] = {}
+    stamps: dict[str, frozenset[str]] = {}
     for table, cols in columns.items():
-        fields = frozenset(c["name"] for c in cols if c.get("type") == "date")
-        if fields:
-            out[table] = fields
-    return out
+        d = frozenset(c["name"] for c in cols if c.get("type") == "date")
+        t = frozenset(c["name"] for c in cols if c.get("type") in _TIMESTAMP_TYPES)
+        if d:
+            dates[table] = d
+        if t:
+            stamps[table] = t
+    return dates, stamps
 
 
-DATE_FIELDS: dict[str, frozenset[str]] = _load()
+DATE_FIELDS: dict[str, frozenset[str]]
+TIMESTAMP_FIELDS: dict[str, frozenset[str]]
+DATE_FIELDS, TIMESTAMP_FIELDS = _load()
 
 
 def date_fields(collection: str) -> frozenset[str]:
     """The date-typed fields of `collection` (empty for anything unlisted)."""
     return DATE_FIELDS.get(collection, frozenset())
+
+
+def timestamp_fields(collection: str) -> frozenset[str]:
+    """The timestamp-typed fields of `collection` (empty for anything unlisted)."""
+    return TIMESTAMP_FIELDS.get(collection, frozenset())
 
 
 def as_date(value: Any) -> Any:
@@ -118,6 +147,38 @@ def as_date(value: Any) -> Any:
         return datetime(value.year, value.month, value.day)
     if isinstance(value, str) and _ISO_DATE.match(value):
         return datetime(int(value[0:4]), int(value[5:7]), int(value[8:10]))
+    return value
+
+
+def as_timestamp(value: Any) -> Any:
+    """A point in time as the store holds it: a plain datetime, naive, UTC.
+
+    The backfill's rows read back naive-UTC (BSON keeps UTC milliseconds and
+    pymongo decodes without tzinfo), so that is the one shape writes converge
+    on. Unlike `as_date` this NEVER floors — a timestamp's time of day is the
+    value. A value it cannot read is returned untouched: a loud mismatch
+    downstream beats a quiet substitution here.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            value = value.astimezone(timezone.utc)
+        # Rebuilt (not `.replace()`d) so a datetime SUBCLASS — a pandas
+        # Timestamp — becomes the plain datetime the seeded rows compare to.
+        return datetime(value.year, value.month, value.day, value.hour,
+                        value.minute, value.second, value.microsecond)
+    # NOTE the order: datetime subclasses date, so this must come second.
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return value
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
     return value
 
 
@@ -152,28 +213,39 @@ def _coerce_operand(operand: Any, coerce) -> Any:
 
 
 def coerce_filter(collection: str, query: Any) -> Any:
-    """A read/match filter with this collection's date fields normalised."""
-    fields = date_fields(collection)
-    if not fields or not isinstance(query, dict):
+    """A read/match filter with this collection's date and timestamp fields
+    normalised."""
+    dfields = date_fields(collection)
+    tfields = timestamp_fields(collection)
+    if not (dfields or tfields) or not isinstance(query, dict):
         return query
     out = {}
     for key, val in query.items():
         if key in _FILTER_LIST_OPERATORS and isinstance(val, list):
             out[key] = [coerce_filter(collection, sub) for sub in val]
-        elif key in fields:
+        elif key in dfields:
             out[key] = _coerce_operand(val, _as_filter_value)
+        elif key in tfields:
+            out[key] = _coerce_operand(val, as_timestamp)
         else:
             out[key] = val
     return out
 
 
 def coerce_doc(collection: str, doc: Any) -> Any:
-    """A document being written, with this collection's date fields floored to
-    midnight — the form the backfill stored and the natural keys are built on."""
-    fields = date_fields(collection)
-    if not fields or not isinstance(doc, dict):
+    """A document being written: date fields floored to midnight — the form
+    the backfill stored and the natural keys are built on — and timestamp
+    fields parsed to plain datetimes with their time kept."""
+    dfields = date_fields(collection)
+    tfields = timestamp_fields(collection)
+    if not (dfields or tfields) or not isinstance(doc, dict):
         return doc
-    return {k: (as_date(v) if k in fields else v) for k, v in doc.items()}
+    return {
+        k: (as_date(v) if k in dfields
+            else as_timestamp(v) if k in tfields
+            else v)
+        for k, v in doc.items()
+    }
 
 
 def coerce_docs(collection: str, docs: list) -> list:
@@ -187,8 +259,8 @@ def coerce_update(collection: str, update: Any) -> Any:
     date for a date column, and rewriting an operand this does not understand
     is how a helper turns a working query into a silent no-match.
     """
-    fields = date_fields(collection)
-    if not fields or not isinstance(update, dict):
+    if not isinstance(update, dict) or not (
+            date_fields(collection) or timestamp_fields(collection)):
         return update
     return {
         op: (coerce_doc(collection, val) if op in _UPDATE_DOC_OPERATORS else val)
@@ -205,8 +277,8 @@ def coerce_pipeline(collection: str, pipeline: Any) -> Any:
     a `date` there need not be this collection's `date` — rewriting it would be
     guesswork.
     """
-    fields = date_fields(collection)
-    if not fields or not isinstance(pipeline, list) or not pipeline:
+    if not isinstance(pipeline, list) or not pipeline or not (
+            date_fields(collection) or timestamp_fields(collection)):
         return pipeline
     head = pipeline[0]
     if not (isinstance(head, dict) and set(head) == {"$match"}):
