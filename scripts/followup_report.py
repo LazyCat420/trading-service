@@ -34,7 +34,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db import mongo_query  # noqa: E402
-from app.trading.order_triggers import dynamic_trigger_is_evaluable  # noqa: E402
+from app.trading.order_triggers import (  # noqa: E402
+    dynamic_trigger_is_evaluable,
+    normalize_dynamic_trigger_type,
+)
 from app.v3 import disposition as D  # noqa: E402
 
 
@@ -82,7 +85,7 @@ def census(since: str, until: str) -> dict:
     bases: Counter = Counter()
     inputs: Counter = Counter()
     compound: Counter = Counter()
-    trig_total = trig_inert = 0
+    trig_total = trig_inert = trig_recoverable = 0
     inert_types: Counter = Counter()
     holds = actions = parse_failures = 0
 
@@ -125,7 +128,16 @@ def census(since: str, until: str) -> dict:
             trig_total += 1
             if not dynamic_trigger_is_evaluable(setup):
                 trig_inert += 1
-                inert_types[setup] += 1
+                # Split the inert ones by whether the creation-time
+                # normalisation would have saved them. On rows written before
+                # that shipped this is the size of the repair; on rows written
+                # after, a NON-ZERO recoverable count means the fix is not
+                # reaching the writer and the number is the alarm.
+                if dynamic_trigger_is_evaluable(
+                        normalize_dynamic_trigger_type(setup)):
+                    trig_recoverable += 1
+                else:
+                    inert_types[setup] += 1
 
     return {
         "window": [since, until],
@@ -139,6 +151,7 @@ def census(since: str, until: str) -> dict:
         "triggers": {
             "total": trig_total,
             "inert": trig_inert,
+            "recoverable": trig_recoverable,
             "inert_types": dict(inert_types.most_common(10)),
         },
     }
@@ -209,17 +222,27 @@ def _print(c: dict) -> int:
         print("  NO DATA — no HOLD in this window carried a dynamic_trigger.")
     else:
         ok = t["total"] - t["inert"]
+        rec = t.get("recoverable", 0)
+        hard = t["inert"] - rec
         print(f"  triggers stated .............. {t['total']}")
-        print(f"  EVALUABLE .................... {ok}"
+        print(f"  EVALUABLE as written ......... {ok}"
               f" ({100.0 * ok / t['total']:.0f}%)")
-        print(f"  INERT — can never fire ....... {t['inert']}"
+        print(f"  INERT as written ............. {t['inert']}"
               f" ({100.0 * t['inert'] / t['total']:.0f}%)")
+        print(f"    ...of which NORMALISABLE ... {rec}"
+              f"   (reclaim/breakout -> rise, repaired at creation since"
+              f" 2026-08-20)")
+        print(f"    ...STILL inert ............. {hard}"
+              f" ({100.0 * hard / t['total']:.0f}% of all triggers)")
         for k, v in t["inert_types"].items():
             print(f"      {v:4d}  {k}")
         print("  ^ the evaluator accepts sma_*/rsi_* with drop|below|rise|above,")
-        print("    and trailing_drop. Every `reclaim`/`breakout`/`cross` spelling")
-        print("    is rejected — so the ENTRY-side conditions are the ones that")
-        print("    cannot fire, on a desk whose only executable action is BUY.")
+        print("    and trailing_drop. The still-inert ones name a level it")
+        print("    cannot read at all (resistance/support) or no direction")
+        print("    (a bare `break`), and are now REFUSED at creation.")
+        print("  ⚠ ON A WINDOW AFTER 2026-08-20 the NORMALISABLE count should be")
+        print("    0 — anything else means create_trigger's repair is not")
+        print("    reaching the writer, and this line is the alarm.")
 
     print("\nWATCH-CONTRACT FUNNEL (armed -> fired -> re-decided -> resolved)")
     print("  NOT YET WIRED. `derive_baseline_watch` arms a watch for every")
