@@ -11,6 +11,14 @@ rate which is not.
 
 Read-only. Safe against a live cycle.
 
+READS MONGO, since 2026-08-20. It used to read Postgres, and after the cutover
+that did NOT make it fail — which is worse. Measured the day it was ported, over
+`--since 2026-08-18`: the Postgres reader answered with **21 desks and no error**
+while Mongo held 37, and the three cycles it could not see (cycle-v3-1787193855,
+-1787197659, -1787200683) were precisely the post-cutover ones the report exists
+to grade. A frozen feed that still prints a plausible number is the failure mode
+to check for first, not an empty one.
+
 BASELINES, measured 2026-08-11 at service 2a80e8f over the attributed era:
 
     defense present on debated desks .... 82%      (target: ~100%)
@@ -35,9 +43,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.db import mongo_query  # noqa: E402
 
-def _rows(db, sql, args):
-    return db.execute(sql, args).fetchall()
+# Desks whose cycle_id is not a production run. 19% of `shared_desk` is canary,
+# smoke, audit, observe and abort traffic — synthetic probes that never decided
+# anything. Counting them inflates every denominator here. They are excluded by
+# default and the exclusion is PRINTED, never silent; `--include-synthetic`
+# restores the old denominator, which is what the pre-cutover cross-check
+# against the Postgres original has to compare against.
+def _is_production_cycle(cycle_id) -> bool:
+    cid = str(cycle_id or "")
+    return cid.startswith("cycle-v3-") and not cid.startswith("cycle-v3-audit-")
 
 
 def _as_dict(v):
@@ -58,7 +74,7 @@ def _as_dict(v):
     return {}
 
 
-def _open_item_46(since: str, until: str, desks) -> None:
+def _open_item_46(since: str, until: str, desks, synthetic_ok: bool = False) -> None:
     """Is the HOLD label honest about position state, and can it discriminate?
 
     Open Item 46. Before the held branch shipped, `hold_reason` answered "should
@@ -110,14 +126,12 @@ def _open_item_46(since: str, until: str, desks) -> None:
             str(_as_dict(meta.get("decision_score")).get("band") or "").upper()
             == "AVOID")
 
-    from scripts.migration.pg_connection import get_db
-
-    with get_db() as db:
-        rows = _rows(db, """
-            SELECT cycle_id, upper(ticker), result_json
-              FROM analysis_results
-             WHERE created_at >= %s AND created_at < %s
-        """, [since, until])
+    rows = [
+        (d.get("cycle_id"), str(d.get("ticker") or "").upper(), d.get("result_json"))
+        for d in mongo_query.find_dicts(
+            "analysis_results", {"created_at": {"$gte": since, "$lt": until}})
+        if synthetic_ok or _is_production_cycle(d.get("cycle_id"))
+    ]
 
     cross: Counter = Counter()
     leaks: list[str] = []
@@ -202,32 +216,47 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--since", default="2026-08-12")
     ap.add_argument("--until", default="2100-01-01")
+    ap.add_argument("--include-synthetic", action="store_true",
+                    help="count canary/smoke/audit/abort desks too — the old "
+                         "denominator, for cross-checking against the "
+                         "pre-cutover Postgres original")
     a = ap.parse_args()
 
-    from scripts.migration.pg_connection import get_db
+    win = {"created_at": {"$gte": a.since, "$lt": a.until}}
 
-    win = [a.since, a.until]
-    with get_db() as db:
-        desks = _rows(db, """
-            SELECT DISTINCT ON (cycle_id, ticker)
-                   cycle_id, upper(ticker), desk_data
-              FROM shared_desk
-             WHERE created_at >= %s AND created_at < %s
-             ORDER BY cycle_id, ticker, updated_at DESC
-        """, win)
+    # `SELECT DISTINCT ON (cycle_id, ticker) ... ORDER BY updated_at DESC` —
+    # one row per desk, the newest revision of it.
+    newest: dict[tuple, tuple] = {}
+    dropped: Counter = Counter()
+    for d in mongo_query.find_dicts("shared_desk", win):
+        cid, tk = d.get("cycle_id"), str(d.get("ticker") or "").upper()
+        if not a.include_synthetic and not _is_production_cycle(cid):
+            dropped[str(cid or "(empty)")] += 1
+            continue
+        key = (cid, tk)
+        prev = newest.get(key)
+        # updated_at is nullable; a missing one must never outrank a real one.
+        stamp = d.get("updated_at") or d.get("created_at")
+        if prev is None or (stamp is not None and stamp >= prev[0]):
+            newest[key] = (stamp, (cid, tk, d.get("desk_data")))
+    desks = [v[1] for v in newest.values()]
 
-        if not desks:
-            print(f"VACUITY: no desks between {a.since} and {a.until} — "
-                  f"this proved nothing.")
-            return 1
+    if not desks:
+        print(f"VACUITY: no desks between {a.since} and {a.until} — "
+              f"this proved nothing.")
+        return 1
 
-        acted = _rows(db, """
-            SELECT policy_action, count(*)
-              FROM trade_results
-             WHERE created_at >= %s AND created_at < %s
-               AND policy_action IS NOT NULL
-             GROUP BY 1 ORDER BY 2 DESC
-        """, win)
+    acted_q = dict(win, policy_action={"$ne": None})
+    if not a.include_synthetic:
+        # Same production-only rule as the desks, expressed where the grouping
+        # happens — an unfiltered denominator here beside a filtered one above
+        # would put the numerator and denominator on two different populations.
+        acted_q["cycle_id"] = {"$regex": r"^cycle-v3-(?!audit-)"}
+    acted = mongo_query.group_rows(
+        "trade_results", acted_q,
+        keys=["policy_action"], aggs=[("count", None)],
+        select=[("key", "policy_action"), ("agg", 0)],
+        sort=[("a0", -1)])
 
     debated = defense_present = 0
     bear_with = bear_without = with_def = without_def = 0
@@ -277,8 +306,13 @@ def main() -> int:
     def pct(n, d):
         return f"{100.0 * n / d:.0f}%" if d else "n/a"
 
-    print(f"\nHOLD-WALL MECHANISM REPORT  {a.since} .. {a.until}")
-    print(f"desks: {len(desks)}   distinct tickers: {len(analysed)}\n")
+    print(f"\nHOLD-WALL MECHANISM REPORT  {a.since} .. {a.until}   [store: MONGO]")
+    print(f"desks: {len(desks)}   distinct tickers: {len(analysed)}")
+    if dropped:
+        print(f"synthetic desks excluded: {sum(dropped.values())} "
+              f"({', '.join(f'{k}×{v}' for k, v in dropped.most_common(4))})"
+              f"   --include-synthetic to count them")
+    print()
 
     print("FIX 1 — the defense turn (baseline: present 82%, fail-open bear 79%)")
     print(f"  debated desks ................ {debated}")
@@ -309,19 +343,22 @@ def main() -> int:
           " what the carry actually added.")
 
     print("\nFIX 4 — the confidence shadow (records only; gates nothing)")
-    with get_db() as db:
-        sh = _rows(db, """
-            SELECT count(*) FILTER (WHERE result_json LIKE '%%confidence_shadow%%'),
-                   count(*)
-              FROM analysis_results
-             WHERE created_at >= %s AND created_at < %s
-        """, win)
-    stamped, total_ar = (sh[0] if sh else (0, 0))
+    # The Postgres original matched `result_json LIKE '%confidence_shadow%'`.
+    # In Mongo result_json is an embedded document, so this asks the question
+    # the substring match was standing in for: is the KEY there. A row whose
+    # result_json is still a JSON string parses through the same _as_dict as
+    # everything else, so both shapes are counted.
+    stamped = total_ar = 0
+    for d in mongo_query.find_dicts("analysis_results", win):
+        if not a.include_synthetic and not _is_production_cycle(d.get("cycle_id")):
+            continue
+        total_ar += 1
+        stamped += int(bool(_as_dict(d.get("result_json")).get("confidence_shadow")))
     print(f"  decisions carrying a shadow .. {stamped}/{total_ar}")
     print("  read `would_clear_recalibrated` from analysis_results.result_json"
           " before arguing the cutover")
 
-    _open_item_46(a.since, a.until, desks)
+    _open_item_46(a.since, a.until, desks, a.include_synthetic)
 
     print("\nHEADLINE (confounded across all four — do not attribute it to one)")
     tot = sum(n for _, n in acted) or 0
