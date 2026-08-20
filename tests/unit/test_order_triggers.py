@@ -50,6 +50,32 @@ def _supersede_filters(store):
     ]
 
 
+def _consumed_ids(store):
+    """Ids of triggers this sweep CONSUMED — deactivated by id, or stamped fired.
+
+    Deliberately narrower than `_supersede_filters`: `check_triggers` opens with
+    `_expire_stale_dynamic_triggers()` and `retire_inert_dynamic_triggers()`,
+    which legitimately deactivate rows by shape (`created_at < cutoff`,
+    `trigger_type: dynamic`). Those are housekeeping, not consumption, and an
+    assertion that cannot tell them apart fails for the wrong reason.
+    """
+    ids = set()
+    for c in store.update_docs.call_args_list:
+        if c[0][0] != "price_triggers":
+            continue
+        filt, update = c[0][1], c[0][2].get("$set", {})
+        if not isinstance(filt, dict):
+            continue
+        tid = filt.get("id")
+        # The inert sweeper targets a SET (`{"id": {"$in": [...]}}`); only a
+        # scalar id is this sweep consuming one specific trigger.
+        if not isinstance(tid, str):
+            continue
+        if update.get("active") is False or "triggered_at" in update:
+            ids.add(tid)
+    return ids
+
+
 @pytest.mark.asyncio
 async def test_create_trigger_invalid(mongo):
     res1 = await create_trigger("bot1", "AAPL", "invalid_type", 100.0)
@@ -155,7 +181,7 @@ async def test_check_triggers_stop_loss_fired(mock_get_current_price, mock_start
     ]
     # Current price is 95, so stop loss should fire
     mock_get_current_price.return_value = (95.0, None)
-    mock_start_cycle.return_value = {"cycle_id": "test_cycle"}
+    mock_start_cycle.return_value = {"status": "starting", "cycle_id": "test_cycle"}
 
     results = await check_triggers("bot1")
 
@@ -206,7 +232,7 @@ async def test_check_triggers_trailing_stop(mock_get_current_price, mock_start_c
     ]
     # Trigger fires at 200 * 0.9 = 180. Current price = 175
     mock_get_current_price.return_value = (175.0, None)
-    mock_start_cycle.return_value = {"cycle_id": "test_cycle"}
+    mock_start_cycle.return_value = {"status": "starting", "cycle_id": "test_cycle"}
 
     results = await check_triggers("bot1")
 
@@ -256,3 +282,79 @@ def test_list_triggers(mongo):
     assert res[0]["id"] == "trg1"
     # active_only defaults to True and must reach the query
     assert query.find_rows.call_args[0][1] == {"bot_id": "bot1", "active": True}
+
+
+@pytest.mark.asyncio
+@patch("app.services.pipeline_service.PipelineService.start_cycle")
+@patch("app.trading.order_triggers._get_current_price")
+async def test_a_busy_pipeline_does_not_consume_the_trigger(
+    mock_get_current_price, mock_start_cycle, mongo
+):
+    """start_cycle refuses BY RETURN VALUE ("deduplicated"), never by raising.
+
+    The fire branch used to treat any return as a spawn: active=False,
+    triggered_at stamped, "cycle_started" appended — while no cycle ran.
+    Measured 2026-08-14..20 that swallowed 18 of 22 dynamic fires (82%),
+    because single-ticker cycles run ~20-40 min and every fire during one hit
+    the dedup path. A busy answer must leave the trigger ACTIVE for the next
+    sweep.
+    """
+    store, query = mongo
+    query.find_rows.return_value = [
+        ("trg1", "AAPL", "stop_loss", 100.0, "SELL", 1.0, None, None, "reason", None, None)
+    ]
+    mock_get_current_price.return_value = (95.0, None)
+    mock_start_cycle.return_value = {"status": "deduplicated", "message": "Cycle already running"}
+
+    results = await check_triggers("bot1")
+
+    assert results == []
+    # The row must NOT be consumed — that is the whole fix.
+    assert _consumed_ids(store) == set()
+
+
+@pytest.mark.asyncio
+@patch("app.services.pipeline_service.PipelineService.start_cycle")
+@patch("app.trading.order_triggers._get_current_price")
+async def test_a_stuck_pipeline_does_not_consume_the_trigger(
+    mock_get_current_price, mock_start_cycle, mongo
+):
+    """The other refusal shape — {"status": "error"} from a stuck state —
+    takes the same deferral path as "deduplicated"."""
+    store, query = mongo
+    query.find_rows.return_value = [
+        ("trg1", "AAPL", "stop_loss", 100.0, "SELL", 1.0, None, None, "reason", None, None)
+    ]
+    mock_get_current_price.return_value = (95.0, None)
+    mock_start_cycle.return_value = {"status": "error", "message": "stuck at starting"}
+
+    results = await check_triggers("bot1")
+
+    assert results == []
+    assert _consumed_ids(store) == set()
+
+
+@pytest.mark.asyncio
+@patch("app.services.pipeline_service.PipelineService.start_cycle")
+@patch("app.trading.order_triggers._get_current_price")
+async def test_second_fire_in_a_sweep_survives_the_first_ones_cycle(
+    mock_get_current_price, mock_start_cycle, mongo
+):
+    """Batch fires: the first spawn wins, the second hits dedup and must
+    stay active — it used to be consumed alongside the first."""
+    store, query = mongo
+    query.find_rows.return_value = [
+        ("trg1", "AAPL", "stop_loss", 100.0, "SELL", 1.0, None, None, "r", None, None),
+        ("trg2", "MSFT", "stop_loss", 300.0, "SELL", 1.0, None, None, "r", None, None),
+    ]
+    mock_get_current_price.return_value = (50.0, None)
+    mock_start_cycle.side_effect = [
+        {"status": "starting", "cycle_id": "c1"},
+        {"status": "deduplicated", "message": "Cycle already starting"},
+    ]
+
+    results = await check_triggers("bot1")
+
+    assert [r["trigger_id"] for r in results] == ["trg1"]
+    # trg1 spawned and is consumed; trg2 hit dedup and must survive.
+    assert _consumed_ids(store) == {"trg1"}
