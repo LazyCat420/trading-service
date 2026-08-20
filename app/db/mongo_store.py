@@ -298,6 +298,26 @@ def ensure_indexes(session: Optional[Any] = None) -> None:
     _try("v3_agent_telemetry", [("agent_name", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
     _try("tool_usage_stats", [("tool_name", pymongo.ASCENDING), ("called_at", pymongo.DESCENDING)])
     _try("tool_usage_stats", "called_at")
+
+    # technicals: (ticker, date DESC) — the screener's latest-per-ticker read.
+    #
+    # This collection had NO index but `_id` until 2026-08-19, because it is
+    # the one collection nothing seeds through the backfill: it is rebuilt in
+    # place by scripts/recompute_technicals.py, which writes straight through
+    # this module, and `ensure_key_index()` (which creates every other
+    # collection's natural key) only runs on the backfill path.
+    #
+    # The cost was not theoretical. `_latest_per_ticker("technicals", "date")`
+    # in trading-client's screener_snapshot sorts the WHOLE collection by
+    # (ticker, date) — an in-memory sort with no index. On 2026-08-19 that made
+    # the screener take 53.2s and 500 behind the proxy's timeout; with this
+    # index the same aggregation is 0.11s and the endpoint 0.98s. It would also
+    # have got worse on its own: the recompute is refilling this collection
+    # toward ~1.37M documents, where an unindexed sort passes Mongo's 100MB
+    # in-memory sort limit and starts failing outright rather than merely
+    # being slow.
+    _try("technicals", [("ticker", pymongo.ASCENDING), ("date", pymongo.DESCENDING)],
+         name="ticker_date")
     _try("tool_usage_stats", [("agent_name", pymongo.ASCENDING), ("cycle_id", pymongo.ASCENDING)])
     _try("agent_tool_optimization", [("agent_name", pymongo.ASCENDING), ("tool_name", pymongo.ASCENDING)], unique=True)
     _try("decision_outcomes", "resolved_at")
