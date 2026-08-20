@@ -27,6 +27,15 @@ from __future__ import annotations
 
 import pytest
 
+# `sqlglot` is MIGRATION TOOLING, not an application dependency: 467c77b pinned
+# it in requirements-migration.in and 6bc835f took it out of the app image with
+# the rest of the Postgres teardown. Importing it unguarded at module scope
+# turns "the optional tool is absent" into a COLLECTION ERROR, and a collection
+# error aborts the ENTIRE run — `pytest tests` stopped before executing a single
+# test, so the full suite has been unrunnable without
+# --continue-on-collection-errors. Skip cleanly instead.
+pytest.importorskip("sqlglot", reason="migration tooling; see requirements-migration.in")
+
 from scripts.sql_to_mongo import Unsupported, translate
 
 
