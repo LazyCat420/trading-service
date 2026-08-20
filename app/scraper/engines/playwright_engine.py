@@ -107,137 +107,143 @@ class PlaywrightEngine(BaseEngine):
                         headless=True,
                         args=["--disable-blink-features=AutomationControlled"],
                     )
-                    from app.scraper.core.session_manager import (
-                        DEFAULT_UA, browser_headers,
-                    )
-
-                    context = await browser.new_context(
-                        user_agent=DEFAULT_UA,
-                        viewport={
-                            "width": 1280 + random.randint(0, 100),
-                            "height": 900 + random.randint(0, 50),
-                        },
-                        locale="en-US",
-                        timezone_id="America/Los_Angeles",
-                        # Chromium sets Sec-Fetch-* itself, but not
-                        # Accept-Language/Sec-Ch-Ua consistently in headless.
-                        extra_http_headers={
-                            k: v for k, v in browser_headers().items()
-                            if k.lower() not in ("user-agent", "accept-encoding")
-                        },
-                    )
-                    page = await context.new_page()
-
-                    # Apply stealth to bypass Cloudflare
                     try:
-                        from playwright_stealth import Stealth
-                        await Stealth().apply_stealth_async(page)
-                    except Exception as stealth_err:
-                        logger.warning(f"[playwright] Failed to apply stealth: {stealth_err}")
-
-                    # Block heavy resources to speed up loading
-                    allow_images = options.get("allow_images", False)
-                    if allow_images:
-                        await page.route(
-                            "**/*.{mp4,webm,woff,woff2}",
-                            lambda route: route.abort(),
-                        )
-                    else:
-                        await page.route(
-                            "**/*.{png,jpg,jpeg,gif,svg,mp4,webm,woff,woff2}",
-                            lambda route: route.abort(),
+                        from app.scraper.core.session_manager import (
+                            DEFAULT_UA, browser_headers,
                         )
 
-                    # Navigate
-                    timeout_ms = options.get("timeout", 20000)
-                    await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                        context = await browser.new_context(
+                            user_agent=DEFAULT_UA,
+                            viewport={
+                                "width": 1280 + random.randint(0, 100),
+                                "height": 900 + random.randint(0, 50),
+                            },
+                            locale="en-US",
+                            timezone_id="America/Los_Angeles",
+                            # Chromium sets Sec-Fetch-* itself, but not
+                            # Accept-Language/Sec-Ch-Ua consistently in headless.
+                            extra_http_headers={
+                                k: v for k, v in browser_headers().items()
+                                if k.lower() not in ("user-agent", "accept-encoding")
+                            },
+                        )
+                        page = await context.new_page()
 
-                    # Stealth: human-like behavior
-                    await page.mouse.move(
-                        random.randint(200, 800), random.randint(200, 600)
-                    )
-                    await page.wait_for_timeout(800 + random.randint(0, 500))
-
-                    # Dismiss cookie banners / modals
-                    for dismiss_sel in [
-                        "button:has-text('Accept')",
-                        "button:has-text('Accept all')",
-                        "button:has-text('I agree')",
-                        "button:has-text('Continue')",
-                        "[aria-label='Close']",
-                    ]:
+                        # Apply stealth to bypass Cloudflare
                         try:
-                            btn = page.locator(dismiss_sel)
-                            if await btn.count() > 0:
-                                await btn.first.click(timeout=1500)
-                                await page.wait_for_timeout(500)
-                                break
-                        except Exception:
-                            continue
+                            from playwright_stealth import Stealth
+                            await Stealth().apply_stealth_async(page)
+                        except Exception as stealth_err:
+                            logger.warning(f"[playwright] Failed to apply stealth: {stealth_err}")
 
-                    # Wait for specific selector if requested
-                    wait_for = options.get("wait_for")
-                    if wait_for:
-                        try:
-                            await page.wait_for_selector(wait_for, timeout=10000)
-                        except Exception:
-                            logger.warning(f"[playwright] wait_for selector '{wait_for}' timed out")
+                        # Block heavy resources to speed up loading
+                        allow_images = options.get("allow_images", False)
+                        if allow_images:
+                            await page.route(
+                                "**/*.{mp4,webm,woff,woff2}",
+                                lambda route: route.abort(),
+                            )
+                        else:
+                            await page.route(
+                                "**/*.{png,jpg,jpeg,gif,svg,mp4,webm,woff,woff2}",
+                                lambda route: route.abort(),
+                            )
 
-                    # Scroll to bottom if requested
-                    if options.get("scroll"):
-                        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                        await page.wait_for_timeout(2000)
+                        # Navigate
+                        timeout_ms = options.get("timeout", 20000)
+                        await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
 
-                    # Wait for content to render
-                    await page.wait_for_timeout(1000)
+                        # Stealth: human-like behavior
+                        await page.mouse.move(
+                            random.randint(200, 800), random.randint(200, 600)
+                        )
+                        await page.wait_for_timeout(800 + random.randint(0, 500))
 
-                    # Screenshot if requested
-                    if options.get("screenshot"):
-                        import base64
-                        screenshot_bytes = await page.screenshot(type="png", full_page=False)
-                        screenshot_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
-
-                    # Extract data via CSS selectors
-                    data: dict[str, Any] = {}
-                    extract_map = options.get("extract")
-                    if extract_map and isinstance(extract_map, dict):
-                        for field_name, selector in extract_map.items():
+                        # Dismiss cookie banners / modals
+                        for dismiss_sel in [
+                            "button:has-text('Accept')",
+                            "button:has-text('Accept all')",
+                            "button:has-text('I agree')",
+                            "button:has-text('Continue')",
+                            "[aria-label='Close']",
+                        ]:
                             try:
-                                elements = page.locator(selector)
-                                count = await elements.count()
-                                values = []
-                                for i in range(count):
-                                    text = await elements.nth(i).inner_text()
-                                    if text.strip():
-                                        values.append(text.strip())
-                                data[field_name] = values
+                                btn = page.locator(dismiss_sel)
+                                if await btn.count() > 0:
+                                    await btn.first.click(timeout=1500)
+                                    await page.wait_for_timeout(500)
+                                    break
                             except Exception:
-                                data[field_name] = []
+                                continue
 
-                    # Extract raw HTML or article text
-                    raw_html = options.get("raw_html", False)
-                    evaluate_js = options.get("evaluate")
-                    if evaluate_js:
-                        try:
-                            eval_res = await page.evaluate(evaluate_js)
-                            if isinstance(eval_res, dict):
-                                data.update(eval_res)
-                            else:
-                                data["evaluate_result"] = eval_res
-                            # Populate content_data so length check passes
-                            content_data = str(eval_res) if eval_res else "Evaluated successfully"
-                            if len(content_data) < 100:
-                                # Ensure it passes the 100 char limit for success
-                                content_data = (await page.evaluate("() => document.body.innerText")) or content_data
-                        except Exception as eval_err:
-                            logger.error(f"[playwright] Error in custom evaluate: {eval_err}")
-                            raise eval_err
-                    elif raw_html:
-                        content_data = await page.content()
-                    else:
-                        content_data = await page.evaluate(EXTRACT_ARTICLE_JS)
+                        # Wait for specific selector if requested
+                        wait_for = options.get("wait_for")
+                        if wait_for:
+                            try:
+                                await page.wait_for_selector(wait_for, timeout=10000)
+                            except Exception:
+                                logger.warning(f"[playwright] wait_for selector '{wait_for}' timed out")
 
-                    await browser.close()
+                        # Scroll to bottom if requested
+                        if options.get("scroll"):
+                            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                            await page.wait_for_timeout(2000)
+
+                        # Wait for content to render
+                        await page.wait_for_timeout(1000)
+
+                        # Screenshot if requested
+                        if options.get("screenshot"):
+                            import base64
+                            screenshot_bytes = await page.screenshot(type="png", full_page=False)
+                            screenshot_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
+
+                        # Extract data via CSS selectors
+                        data: dict[str, Any] = {}
+                        extract_map = options.get("extract")
+                        if extract_map and isinstance(extract_map, dict):
+                            for field_name, selector in extract_map.items():
+                                try:
+                                    elements = page.locator(selector)
+                                    count = await elements.count()
+                                    values = []
+                                    for i in range(count):
+                                        text = await elements.nth(i).inner_text()
+                                        if text.strip():
+                                            values.append(text.strip())
+                                    data[field_name] = values
+                                except Exception:
+                                    data[field_name] = []
+
+                        # Extract raw HTML or article text
+                        raw_html = options.get("raw_html", False)
+                        evaluate_js = options.get("evaluate")
+                        if evaluate_js:
+                            try:
+                                eval_res = await page.evaluate(evaluate_js)
+                                if isinstance(eval_res, dict):
+                                    data.update(eval_res)
+                                else:
+                                    data["evaluate_result"] = eval_res
+                                # Populate content_data so length check passes
+                                content_data = str(eval_res) if eval_res else "Evaluated successfully"
+                                if len(content_data) < 100:
+                                    # Ensure it passes the 100 char limit for success
+                                    content_data = (await page.evaluate("() => document.body.innerText")) or content_data
+                            except Exception as eval_err:
+                                logger.error(f"[playwright] Error in custom evaluate: {eval_err}")
+                                raise eval_err
+                        elif raw_html:
+                            content_data = await page.content()
+                        else:
+                            content_data = await page.evaluate(EXTRACT_ARTICLE_JS)
+
+                    finally:
+                        # A failed scrape must not orphan a Chromium:
+                        # uvicorn is PID 1 in this container and never
+                        # reaps, so every orphan became an unkillable
+                        # zombie until the host ran out of PIDs.
+                        await browser.close()
 
             # Clean up/format content
             content = None
@@ -274,10 +280,14 @@ class PlaywrightEngine(BaseEngine):
             from playwright.async_api import async_playwright
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)
-                page = await browser.new_page()
-                await page.goto("https://example.com", timeout=10000)
-                title = await page.title()
-                await browser.close()
-                return bool(title)
+                try:
+                    page = await browser.new_page()
+                    await page.goto("https://example.com", timeout=10000)
+                    title = await page.title()
+                    return bool(title)
+                finally:
+                    # Same rule as fetch(): a probe that cannot reach the
+                    # network must not leave a browser behind.
+                    await browser.close()
         except Exception:
             return False

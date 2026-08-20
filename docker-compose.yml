@@ -5,6 +5,14 @@ services:
     image: trading-service:latest
     container_name: trading-service
     restart: unless-stopped
+    # Scraping is delegated to scraper-service, but app.scraper and a baked
+    # Chromium ship in this image too, so the same orphan->zombie path is
+    # reachable from here. On 2026-08-20 that leak (in scraper-service) put
+    # 20,179 zombies on the host, exhausted kernel.pid_max, and took the NAS
+    # down. tini reaps orphans; the cap keeps any future leak inside this
+    # container. The pids cgroup counts THREADS, so leave real headroom.
+    init: true
+    pids_limit: 2048
     env_file:
       - .env
     environment:
