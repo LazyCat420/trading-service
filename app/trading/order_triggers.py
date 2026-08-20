@@ -422,7 +422,32 @@ async def check_triggers(bot_id: str) -> list[dict]:
                     trade=True,
                     trigger_type=f"edge_case_{trigger_type}",
                 )
-                
+
+                # start_cycle REFUSES BY RETURN VALUE, not by raising: a busy
+                # pipeline answers {"status": "deduplicated"} and a stuck one
+                # {"status": "error"}. The `except ValueError` below never sees
+                # either, so this branch used to consume the trigger anyway —
+                # active=False, triggered_at stamped, "cycle_started" logged —
+                # while no cycle ran. Measured 2026-08-14..20: 18 of 22 dynamic
+                # fires (82%) produced no re-analysis, because single-ticker
+                # cycles run ~20-40 min and every fire during one, plus every
+                # fire after the first in a same-sweep batch, hit the dedup
+                # path. The condition the desk stated was met, the watch was
+                # recorded as delivered, and nothing woke.
+                #
+                # Only "starting" is a spawn. Anything else leaves the trigger
+                # ACTIVE so the next sweep retries; if the condition has
+                # drifted back by then, not firing is the honest outcome.
+                if (res or {}).get("status") != "starting":
+                    logger.warning(
+                        "[TRIGGER] Pipeline busy for %s/%s (%s: %s) — trigger "
+                        "stays active, will retry next sweep.",
+                        ticker, trigger_type,
+                        (res or {}).get("status"),
+                        str((res or {}).get("message", ""))[:120],
+                    )
+                    continue
+
                 fired_tickers.add(ticker)
                 mongo_store.update_docs('price_triggers', {'id': trigger_id}, {'$set': {'active': False, 'triggered_at': now}})
                 if trigger_type in ("stop_loss", "take_profit", "trailing_stop"):
