@@ -50,6 +50,11 @@ class YouTubeVideo:
     duration_secs: int
     thumbnail_url: str
     view_count: int = 0
+    # UC… channel id from yt-dlp. Callers (wallgarden's discovery feed) need it
+    # for id-based channel blocking and graph channel nodes — the display name
+    # alone can't be matched reliably. Empty when the source doesn't carry it
+    # (DuckDuckGo fallback, some flat-playlist entries).
+    channel_id: str = ""
 
 
 class YouTubeCollector:
@@ -257,6 +262,7 @@ class YouTubeCollector:
             video_id=video_id,
             title=title,
             channel=video.get("channel", channel),
+            channel_id=video.get("channel_id", "") or "",
             transcript=transcript,
             published_at=published_at,
             duration_secs=duration,
@@ -638,4 +644,5 @@ def _serialize_video(video: YouTubeVideo) -> dict:
         "duration_secs": video.duration_secs,
         "thumbnail_url": video.thumbnail_url,
         "view_count": video.view_count,
+        "channel_id": video.channel_id,
     }
