@@ -668,12 +668,38 @@ async def run_v3_agent(
             quant_math = desk.cycle_metadata.get("quant_math_context", "")
             if quant_math:
                 dynamic_sections.append((_KEEP, quant_math))
-            # Verified indicator values — never shed: these are the numbers the
-            # agent would otherwise invent (measured 2026-07-24), and they are
-            # what the reconciliation pass will enforce on its artifact anyway.
+
+        # Verified indicator values — never shed: these are the numbers the
+        # agent would otherwise invent (measured 2026-07-24), and they are
+        # what the reconciliation pass will enforce on its artifact anyway.
+        #
+        # 2026-08-23: the four debate agents joined this list. The decision
+        # audit (ch.90) replayed 592 desks and found the debaters and the
+        # judge received NO verified numeric block at all — the judge was
+        # instructed to "check claims against the facts" with no facts — and
+        # 1 in 7 checkable numbers in stored debate prose matched nothing on
+        # the desk. FACT blocks widen to the debate; the composite score
+        # (a precomputed verdict) deliberately does not — see below.
+        if agent_name in (
+            "v3_quant_analyst", "v3_board_of_directors",
+            "v3_decision_synthesizer",
+            "v3_bull_agent", "v3_bear_agent",
+            "v3_bull_defense", "v3_debate_judge",
+        ):
             tech_baseline = desk.cycle_metadata.get("technical_baseline_context", "")
             if tech_baseline:
                 dynamic_sections.append((_KEEP, tech_baseline))
+
+        # Book/portfolio risk context: the deciders, plus the two debate seats
+        # that weigh the book side — the bear (exit/avoid theses need the
+        # position and concentration facts) and the judge (grades those
+        # claims). NOT the bull/defense: their job is the case for one name,
+        # not portfolio construction.
+        if agent_name in (
+            "v3_quant_analyst", "v3_board_of_directors",
+            "v3_decision_synthesizer",
+            "v3_bear_agent", "v3_debate_judge",
+        ):
             book_brief = desk.cycle_metadata.get("book_brief_context", "")
             if book_brief:
                 dynamic_sections.append((_KEEP, book_brief))
@@ -692,6 +718,8 @@ async def run_v3_agent(
             "v3_fundamental_analyst",
             "v3_board_of_directors",
             "v3_decision_synthesizer",
+            "v3_bull_agent", "v3_bear_agent",
+            "v3_bull_defense", "v3_debate_judge",
         ):
             fundamental = desk.cycle_metadata.get("fundamental_context", "")
             if fundamental:
@@ -704,15 +732,19 @@ async def run_v3_agent(
         # it addresses (every decision landing below the confidence floor) is
         # precisely a failure of the deciding step.
         #
-        # NOT given to the analysts. They are meant to reach an independent
-        # read; handing every desk the same precomputed verdict would collapse
-        # the disagreement the board is supposed to weigh, and the block's own
+        # NOT given to the analysts, and NOT to the arguing debate seats
+        # (bull/bear/defense). They are meant to reach an independent read;
+        # handing every desk the same precomputed verdict would collapse the
+        # disagreement the board is supposed to weigh, and the block's own
         # confidence term rewards fundamental/technical agreement — which would
-        # then be measuring an echo.
+        # then be measuring an echo. The JUDGE is the exception (2026-08-23):
+        # it grades claims rather than making a case, and the composite's
+        # structural gates and risk/reward are grading criteria, not a side.
         if agent_name in (
             "v3_quant_analyst",
             "v3_board_of_directors",
             "v3_decision_synthesizer",
+            "v3_debate_judge",
         ):
             score_block = desk.cycle_metadata.get("decision_score_context", "")
             if score_block:
@@ -794,7 +826,9 @@ async def run_v3_agent(
         # enforce on the artifact anyway, so dropping them from the prompt only
         # guarantees a disagreement to correct afterwards.
         if agent_name in ("v3_valuation_analyst", "v3_board_of_directors",
-                          "v3_decision_synthesizer"):
+                          "v3_decision_synthesizer",
+                          "v3_bull_agent", "v3_bear_agent",
+                          "v3_bull_defense", "v3_debate_judge"):
             valuation = desk.cycle_metadata.get("valuation_context", "")
             if valuation:
                 dynamic_sections.append((_KEEP, valuation))
