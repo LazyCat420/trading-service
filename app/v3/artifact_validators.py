@@ -523,6 +523,153 @@ def flag_bearish_override_of_fundamental(
     return artifact
 
 
+# ── Debate grounding shadow (2026-08-23, ch.90 fix A2) ──────────────────────
+#
+# The audit extracted 66k numeric claims from stored debate prose and found
+# ~1 in 7 checkable numbers matched nothing on the desk — and NO validator
+# covered any debate artifact. This one MEASURES, never blocks: it diffs
+# metric-tagged numbers in the debate text against the same verified baselines
+# the reconcile passes enforce on the analysts, and attaches counts. It must
+# never mutate text, never fail a phase, and a missing desk means no shadow.
+#
+# A claim is checked only when its OWN sentence names the metric (RSI, P/E,
+# gross margin, SMA-50…). Scale equivalence is accepted (30.2% vs a stored
+# 0.302): a unit convention is not a hallucination.
+
+_GROUNDING_TEXT_FIELDS: dict[str, tuple[str, ...]] = {
+    "bull_argument": ("summary", "claims"),
+    "bear_rebuttal": ("summary", "rebuttals", "independent_risks"),
+    "bull_defense": ("summary", "defense_points", "concessions"),
+    "debate_judge": (
+        "summary", "verified_bull_claims", "unverified_bull_claims",
+        "verified_bear_claims", "unverified_bear_claims",
+    ),
+}
+
+#: (label, regex with one number group, truth-key substrings, tolerance)
+#: tolerance: ("abs", a) | ("rel", r) | ("relabs", r, a) — relabs takes the
+#: looser of the two, matching the reconcile passes' conventions.
+#: Number with optional thousands commas; commas stripped before float().
+_NUM = r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{1,6}(?:\.\d+)?)"
+
+#: Replay-tuned against 30 stored desks (attack2-shadow-replay): the "(14"
+#: of "ATR (14-day)" must not be read as the value, and a number followed by
+#: '%' after SMA-50/200 is a relative distance ("7% above the SMA-50"), not
+#: a level claim — both were live false-positive classes.
+_GROUNDING_PATTERNS: tuple = (
+    ("rsi", r"\bRSI(?:\s*\(?[-\s]?14(?:-day)?\)?)?[^\d\n.]{0,12}?" + _NUM,
+     ("rsi",), ("abs", 1.0)),
+    ("atr", r"\bATR(?:\s*\(?[-\s]?14(?:-day)?\)?)?[^\d\n.]{0,12}?" + _NUM,
+     ("atr",), ("abs", 1.0)),
+    ("pe", r"\bP/E[^\d\n.]{0,10}?" + _NUM, ("pe_ratio", "forward_pe"),
+     ("relabs", 0.05, 0.5)),
+    ("gross_margin", r"\bgross margins?[^\d\n.]{0,15}?" + _NUM + r"\s*%",
+     ("gross_margin",), ("abs", 1.0)),
+    ("oper_margin", r"\boperating margins?[^\d\n.]{0,15}?" + _NUM + r"\s*%",
+     ("oper_margin",), ("abs", 1.0)),
+    ("sma50", r"\bSMA[-\s]?50[^\d\n.]{0,15}?\$?" + _NUM + r"(?!\s*%)",
+     ("sma_50",), ("rel", 0.02)),
+    ("sma200", r"\bSMA[-\s]?200[^\d\n.]{0,15}?\$?" + _NUM + r"(?!\s*%)",
+     ("sma_200",), ("rel", 0.02)),
+    ("fcf_yield", r"\bFCF yields?[^\d\n.]{0,12}?" + _NUM + r"\s*%",
+     ("fcf_yield_pct",), ("abs", 1.0)),
+)
+
+
+def _grounding_texts(artifact: dict, artifact_type: str) -> str:
+    """All checkable prose for this artifact, flattened to one string."""
+    parts: list[str] = []
+    for field in _GROUNDING_TEXT_FIELDS.get(artifact_type, ()):
+        value = artifact.get(field)
+        if isinstance(value, str):
+            parts.append(value)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    parts.extend(str(v) for v in item.values()
+                                 if isinstance(v, str))
+                elif item:
+                    parts.append(str(item))
+    return "\n".join(parts)
+
+
+def _grounding_truth(ticker: str) -> dict[str, float]:
+    """The verified baselines, flattened to {key: float}. Empty on failure."""
+    truth: dict[str, float] = {}
+    try:
+        from app.quant.technical_baseline import compute_technical_baseline
+        from app.quant.fundamental_block import compute_fundamental_baseline
+        from app.quant.valuation_block import compute_valuation_baseline
+
+        for block in (compute_technical_baseline(ticker),
+                      compute_fundamental_baseline(ticker),
+                      compute_valuation_baseline(ticker)):
+            for k, v in (block or {}).items():
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    truth.setdefault(str(k).lower(), float(v))
+    except Exception as exc:  # noqa: BLE001 — a shadow must not cost a debate
+        logger.warning("[GroundingShadow] truth build failed for %s: %s",
+                       ticker, exc)
+    return truth
+
+
+def _within(claimed: float, verified: float, tol: tuple) -> bool:
+    def _one(c: float, v: float) -> bool:
+        if tol[0] == "abs":
+            return abs(c - v) <= tol[1]
+        if tol[0] == "rel":
+            return abs(c - v) <= tol[1] * max(abs(v), 1e-9)
+        return (abs(c - v) <= tol[2]
+                or abs(c - v) <= tol[1] * max(abs(v), 1e-9))
+    # Scale equivalence: 30.2 (%) vs stored 0.302, either direction.
+    return (_one(claimed, verified) or _one(claimed, verified * 100.0)
+            or _one(claimed * 100.0, verified))
+
+
+def attach_grounding_shadow(artifact: dict, desk=None,
+                            artifact_type: str = "") -> dict:
+    """Count grounded vs mismatched metric claims; attach, never block."""
+    import re
+    from datetime import datetime, timezone
+
+    if desk is None or not isinstance(artifact, dict):
+        return artifact
+    text = _grounding_texts(artifact, artifact_type)
+    if not text.strip():
+        return artifact
+    truth = _grounding_truth(getattr(desk, "ticker", ""))
+
+    checked = mismatched = unverifiable = 0
+    worst: list[dict] = []
+    for label, pattern, key_subs, tol in _GROUNDING_PATTERNS:
+        for m in re.finditer(pattern, text, flags=re.IGNORECASE):
+            try:
+                claimed = float(m.group(1).replace(",", ""))
+            except (TypeError, ValueError):
+                continue
+            candidates = [v for k, v in truth.items()
+                          if any(sub in k for sub in key_subs)]
+            if not candidates:
+                unverifiable += 1
+                continue
+            checked += 1
+            if not any(_within(claimed, v, tol) for v in candidates):
+                mismatched += 1
+                if len(worst) < 5:
+                    nearest = min(candidates, key=lambda v: abs(v - claimed))
+                    worst.append({"metric": label, "claimed": claimed,
+                                  "verified": nearest})
+    artifact["_grounding_shadow"] = {
+        "checked": checked,
+        "mismatched": mismatched,
+        "unverifiable": unverifiable,
+        "worst": worst,
+        "as_of": datetime.now(timezone.utc).isoformat(),
+        "truth_keys": len(truth),
+    }
+    return artifact
+
+
 _VALIDATORS = {
     "regime_classification": validate_regime_artifact,
     "desk_note": validate_desk_note_artifact,
@@ -533,14 +680,33 @@ _VALIDATORS = {
     "final_decision": validate_trade_decision_artifact,
 }
 
+#: Desk-aware shadow validators, dispatched AFTER the per-type coercions.
+#: Kept in a separate table so the `(artifact)`-signature validators above
+#: stay untouched. The dispatch used to take no desk at all — the bear
+#: substitute normalisation documents living at the call site for exactly
+#: that reason; this table is the seam that ends the workaround.
+_DESK_VALIDATORS = {
+    "bull_argument": attach_grounding_shadow,
+    "bear_rebuttal": attach_grounding_shadow,
+    "bull_defense": attach_grounding_shadow,
+    "debate_judge": attach_grounding_shadow,
+}
 
-def validate_artifact(artifact_type: str, artifact: dict) -> dict:
+
+def validate_artifact(artifact_type: str, artifact: dict, desk=None) -> dict:
     """Dispatch to the per-type validator; identity for unknown types."""
     validator = _VALIDATORS.get(artifact_type)
-    if not validator:
-        return artifact
-    try:
-        return validator(artifact)
-    except Exception as e:
-        logger.warning("[ArtifactValidator] %s validation failed (artifact kept as-is): %s", artifact_type, e)
-        return artifact
+    if validator:
+        try:
+            artifact = validator(artifact)
+        except Exception as e:
+            logger.warning("[ArtifactValidator] %s validation failed (artifact kept as-is): %s", artifact_type, e)
+    desk_validator = _DESK_VALIDATORS.get(artifact_type)
+    if desk_validator:
+        try:
+            artifact = desk_validator(artifact, desk=desk,
+                                      artifact_type=artifact_type)
+        except Exception as e:  # noqa: BLE001 — shadow must not cost a phase
+            logger.warning("[ArtifactValidator] %s grounding shadow failed "
+                           "(artifact kept as-is): %s", artifact_type, e)
+    return artifact

@@ -1664,7 +1664,7 @@ async def run_v3_agent(
         # the DB unvalidated — a null trigger value means the watch can NEVER
         # fire (order_triggers gates on `value is not None`).
         from app.v3.artifact_validators import validate_artifact as _coerce_artifact
-        artifact = _coerce_artifact(artifact_type, artifact)
+        artifact = _coerce_artifact(artifact_type, artifact, desk=desk)
 
         # A SELL the bot cannot place is not a verdict. Applied to the decision
         # artifacts only, and only when the desk knows the position is not held
