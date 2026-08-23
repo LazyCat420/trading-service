@@ -183,9 +183,11 @@ _OUTCOME_CONTEXT_AGENTS = frozenset({
 def get_ticker_outcome_context(ticker: str) -> str:
     """Pull resolved trade outcomes for this ticker from the DB.
 
-    Returns a formatted string for analyst prompt injection,
-    or empty string if no history exists.  Queries PostgreSQL
-    (decision_outcomes table) — deterministic, bounded, no flat-file I/O.
+    Returns a formatted string for analyst prompt injection, or empty string
+    if no history exists. Queries Mongo (`decision_outcomes`) — deterministic,
+    bounded, no flat-file I/O. A failed read logs a warning: 31% of desks
+    carry no prior-trade lines (audit 2026-08-23), and a silent "" here is
+    indistinguishable from "no history".
     """
     if not ticker or ticker.startswith("_"):
         return ""  # Skip synthetic tickers like _AUDIT_
@@ -225,7 +227,12 @@ def get_ticker_outcome_context(ticker: str) -> str:
             "do not repeat past mistakes.\n"
         )
         return "\n".join(lines)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — history is optional, but say so
+        logger.warning(
+            "[OutcomeContext] prior-trade history read failed for %s: %s: %s "
+            "— prompt will carry no history for this ticker",
+            ticker, type(exc).__name__, exc,
+        )
         return ""
 
 
