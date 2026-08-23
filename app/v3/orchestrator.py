@@ -486,8 +486,8 @@ async def run_v3_pipeline(
         _b = await asyncio.wait_for(
             asyncio.to_thread(compute_technical_baseline, ticker), timeout=10,
         )
-        _trd = (_b or {}).get("age_trading_days")
-        if isinstance(_trd, int) and _trd > 3:
+        _trd = _stale_age((_b or {}).get("age_trading_days"))
+        if _trd is not None and _trd > 3:
             from app.v3.telemetry import record_guardrail_firing
 
             desk.cycle_metadata["stale_price_age_trading_days"] = _trd
@@ -2837,6 +2837,19 @@ def _is_degraded_decision(decision: dict) -> bool:
     return "action" in decision and decision.get("action") is None
 
 
+def _stale_age(value: Any) -> float | None:
+    """Numeric trading-day age, or None when unreadable.
+
+    The detection block and the gate both used `isinstance(..., int)`, so a
+    float age (e.g. 10.0 from a vendor change) was never stashed AND never
+    gated — the guard disarmed silently at both ends. bool is excluded because
+    it passes an isinstance-int check while meaning something else entirely.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
 def _record_gate(desk: SharedDesk, label: str, **detail: Any) -> str:
     """Record an enforcing policy-gate firing, then return its label unchanged.
 
@@ -3189,8 +3202,8 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
     # must not execute. Age is stashed at desk-build time by the detection
     # block; absent means fresh (or detection failed — executor checks remain
     # the backstop for that).
-    stale_age = desk.cycle_metadata.get("stale_price_age_trading_days")
-    if isinstance(stale_age, int) and stale_age > 3:
+    stale_age = _stale_age(desk.cycle_metadata.get("stale_price_age_trading_days"))
+    if stale_age is not None and stale_age > 3:
         return _record_gate(
             desk, "HOLD_POLICY_BLOCKED_STALE_PRICE_DATA",
             action=action, age_trading_days=stale_age,

@@ -88,6 +88,30 @@ def test_stale_age_at_detection_threshold_does_not_block():
     assert _apply_policy_gates(desk) == "EXECUTE_BUY"
 
 
+def test_gate_blocks_buy_on_float_stale_age():
+    """A float age must gate exactly like an int.
+
+    The old check was `isinstance(stale_age, int)`, so a vendor or writer
+    type change to 10.0 disarmed the gate silently (fault-injection audit
+    2026-08-23: float 10.0 reached EXECUTE_BUY).
+    """
+    desk = _desk()
+    desk.cycle_metadata["stale_price_age_trading_days"] = 10.0
+    assert _apply_policy_gates(desk) == "HOLD_POLICY_BLOCKED_STALE_PRICE_DATA"
+
+
+def test_fresh_or_unreadable_stale_age_does_not_block():
+    """Both ways: fresh floats pass; unreadable values fail open as before.
+
+    bool is excluded deliberately — `True` is an int to isinstance but is not
+    an age; it must not gate.
+    """
+    for age in (2, 2.9, None, "10", True):
+        desk = _desk()
+        desk.cycle_metadata["stale_price_age_trading_days"] = age
+        assert _apply_policy_gates(desk) == "EXECUTE_BUY", f"age={age!r}"
+
+
 # ── SELL-on-unheld: the bug that survived 5+ downstream fixes ────────
 # The gate must express "can't sell, not held" ITSELF — every prior fix
 # patched a downstream layer (agent prompt, executor block, event emit)
