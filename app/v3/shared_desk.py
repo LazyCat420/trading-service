@@ -207,8 +207,11 @@ _DECISION_ARTIFACT_TYPES = frozenset({"final_decision", "trade_decision"})
 
 _VALID_PROVENANCE = frozenset(p.value for p in DecisionProvenance)
 
-# Max compressed context size to prevent context snowball
-_MAX_COMPRESSED_CONTEXT_CHARS = 8000
+# Max compressed context size to prevent context snowball.
+# 8000 -> 10000 on 2026-08-23 (ch.90): the debate-structure block joined the
+# verdict channel; without headroom the new arrays would be truncated away,
+# recreating the exact hop-loss the block exists to fix.
+_MAX_COMPRESSED_CONTEXT_CHARS = 10000
 
 
 @dataclass
@@ -721,6 +724,18 @@ class SharedDesk:
                     f"## Bull Final Defense ({verdict}, confidence: {conf}%)\n{summary}"
                 )
 
+            # The structured debate content, verbatim and bounded (ch.90):
+            # the audit measured that bull claims[], bear rebuttals/
+            # counter_evidence/independent_risks and the judge's verified/
+            # unverified lists NEVER reached the Board — only summary prose
+            # did, and bear.independent_risks was absent from the Board's view
+            # on 50% of desks. Appended to the VERDICT channel (before the
+            # tournament/judge prose) so the research tail-cut can never be
+            # the thing that drops it.
+            structure = self._debate_structure_block(include_verdicts)
+            if structure:
+                verdict_sections.append(structure)
+
             tournament = getattr(self, "tournament_result", None)
             if tournament and include_verdicts:
                 action = tournament.get("action", "?")
@@ -864,6 +879,91 @@ class SharedDesk:
             )
 
         return combined or "No artifacts on desk yet."
+
+    def _debate_structure_block(self, include_verdicts: bool) -> str:
+        """The debate's structured arrays, verbatim and bounded (~3k chars max).
+
+        The summaries above this block are restatements; these are the claims
+        themselves. Judge content is gated on `include_verdicts` (shadow mode
+        blinds the verdict, not the debate). Items can be objects (current
+        schema) or bare strings (pre-restore rows) — both render.
+        """
+        def _s(v, cap: int) -> str:
+            return str(v or "").strip()[:cap]
+
+        def _take(seq, n):
+            return [x for x in (seq or []) if x][:n]
+
+        lines: list[str] = []
+
+        if self.bull_argument:
+            claims = _take(self.bull_argument.get("claims"), 5)
+            if claims:
+                lines.append("**Bull claims:**")
+                for c in claims:
+                    if isinstance(c, dict):
+                        lines.append(
+                            f"- [{_s(c.get('strength'), 12) or '?'}] "
+                            f"{_s(c.get('claim'), 200)}"
+                            + (f" (source: {_s(c.get('evidence_source'), 60)})"
+                               if c.get("evidence_source") else "")
+                        )
+                    else:
+                        lines.append(f"- {_s(c, 200)}")
+
+        if self.bear_rebuttal:
+            rebuttals = _take(self.bear_rebuttal.get("rebuttals"), 3)
+            if rebuttals:
+                lines.append("**Bear rebuttals (vs specific bull claims):**")
+                for r in rebuttals:
+                    if isinstance(r, dict):
+                        lines.append(
+                            f"- vs \"{_s(r.get('bull_claim_addressed'), 80)}\": "
+                            f"{_s(r.get('rebuttal'), 120)}"
+                            + (f" | counter-evidence: {_s(r.get('counter_evidence'), 120)}"
+                               if r.get("counter_evidence") else "")
+                        )
+                    else:
+                        lines.append(f"- {_s(r, 200)}")
+            risks = _take(self.bear_rebuttal.get("independent_risks"), 5)
+            if risks:
+                lines.append("**Bear independent risks (blind spots the bull "
+                             "never addressed):**")
+                lines.extend(f"- {_s(r, 200)}" for r in risks)
+
+        if include_verdicts and self.debate_judge:
+            for key, label in (
+                ("verified_bull_claims", "Judge — verified bull claims"),
+                ("unverified_bull_claims", "Judge — UNVERIFIED bull claims"),
+                ("verified_bear_claims", "Judge — verified bear claims"),
+                ("unverified_bear_claims", "Judge — UNVERIFIED bear claims"),
+            ):
+                items = _take(self.debate_judge.get(key), 3)
+                if items:
+                    lines.append(f"**{label}:**")
+                    lines.extend(f"- {_s(i, 150)}" for i in items)
+            verdicts = _take(self.debate_judge.get("proposition_verdicts"), 5)
+            if verdicts:
+                lines.append("**Judge — proposition verdicts:**")
+                for v in verdicts:
+                    if isinstance(v, dict):
+                        lines.append(
+                            f"- {_s(v.get('proposition'), 100)} -> "
+                            f"{_s(v.get('verdict'), 40)}"
+                            + (f" ({_s(v.get('why'), 100)})" if v.get("why") else "")
+                        )
+                    else:
+                        lines.append(f"- {_s(v, 200)}")
+            unanswered = _take(self.debate_judge.get("unanswered_bear_risks"), 3)
+            if unanswered:
+                lines.append("**Judge — bear risks the bull never answered "
+                             "(sizing/stops input, NOT a verdict):**")
+                lines.extend(f"- {_s(u, 150)}" for u in unanswered)
+
+        if not lines:
+            return ""
+        return ("## Debate Structure (verbatim claims — the summaries above "
+                "may omit these)\n" + "\n".join(lines))
 
     def record_agent_telemetry(self, entry: dict[str, Any]) -> None:
         """Record a telemetry entry for an agent run."""

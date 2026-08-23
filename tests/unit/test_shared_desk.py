@@ -228,7 +228,8 @@ class TestContextCompression:
             "confidence": 50,
         })
         ctx = desk.get_compressed_context()
-        assert len(ctx) <= 8100  # _MAX_COMPRESSED_CONTEXT_CHARS + margin
+        from app.v3.shared_desk import _MAX_COMPRESSED_CONTEXT_CHARS
+        assert len(ctx) <= _MAX_COMPRESSED_CONTEXT_CHARS + 100
         assert "TRUNCATED" in ctx
 
 

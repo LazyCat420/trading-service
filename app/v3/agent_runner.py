@@ -797,11 +797,18 @@ async def run_v3_agent(
         # on different questions than the debaters argued is worse than no
         # framing at all. Never shed: without it these agents fall back to the
         # generic "is this a buy" debate this module exists to replace.
+        #
+        # 2026-08-23 (ch.90): the two DECIDERS joined. They followed the
+        # debate's verdict (the only input the action measurably tracked)
+        # while never seeing the propositions it was framed around — 0 of 245
+        # desks delivered the frame to the board in the replay audit.
         if agent_name in (
             "v3_bull_agent",
             "v3_bear_agent",
             "v3_bull_defense",
             "v3_debate_judge",
+            "v3_board_of_directors",
+            "v3_decision_synthesizer",
         ):
             frame_block = desk.cycle_metadata.get("debate_frame_context", "")
             if frame_block:

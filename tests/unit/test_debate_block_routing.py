@@ -106,3 +106,14 @@ async def test_fact_blocks_survive_shed_pressure():
     desk.cycle_metadata["memory_context"] = "FILLER " * 40000
     payload = await _prompt_for("v3_bear_agent", desk=desk)
     assert TECH in payload and FUND in payload and VAL in payload and BOOK in payload
+
+
+@pytest.mark.asyncio
+async def test_deciders_see_the_debate_frame():
+    """ch.90 F3.2: the Board followed the debate's verdict while never seeing
+    the propositions it was framed around (0/245 desks)."""
+    frame = "## DEBATE FRAME\nP1: Is the growth organic?"
+    for agent in ("v3_board_of_directors", "v3_decision_synthesizer"):
+        desk = _desk()
+        desk.cycle_metadata["debate_frame_context"] = frame
+        assert frame in await _prompt_for(agent, desk=desk), agent
