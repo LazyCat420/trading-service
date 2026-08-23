@@ -199,7 +199,8 @@ def _catalyst_pending(catalyst: Any) -> bool:
     return bool(named) and not catalyst.get("already_priced_in")
 
 
-def derive_disposition(result: dict, *, catalyst: Any = None) -> dict | None:
+def derive_disposition(result: dict, *, catalyst: Any = None,
+                       held: bool | None = None) -> dict | None:
     """What to do next about this HOLD. None for any other action.
 
     Returning None rather than a default for BUY/SELL is the same choice
@@ -210,19 +211,28 @@ def derive_disposition(result: dict, *, catalyst: Any = None) -> dict | None:
     than read, so this function stays pure and can be recomputed over any
     stored row. Omitting it costs only the `WATCH_CATALYST` branch.
 
+    `held` mirrors `classify_hold`'s contract: pass it when the caller has a
+    better source than the row; otherwise the row's own `hold_reason_held`
+    (written since 08-12) is read, and a KEEP/EXIT_SIGNALLED label implies it.
+
     Precedence is deliberate and runs fail-closed first:
 
         1. no verdict was reached        -> ANALYSIS_INVALID
-        2. the evidence was the problem  -> WATCH_DATA_GAP
-        3. the desk was refused          -> WATCH_ENTRY
-        4. the book already owns it      -> MONITOR_POSITION / EXIT_CANDIDATE
+        2. the book already owns it      -> MONITOR_POSITION / EXIT_CANDIDATE
+        3. the evidence was the problem  -> WATCH_DATA_GAP
+        4. the desk was refused          -> WATCH_ENTRY
         5. the thesis is negative        -> AVOID[_WITH_SUBSTITUTE]
         6. it is waiting for something   -> WATCH_CATALYST / _PULLBACK / _BREAKOUT
         7. it is waiting for nothing     -> DEFER_LOW_EDGE
 
-    Steps 1-3 come before the position branch on purpose. A degraded run on a
-    name the book holds is still a degraded run, and labelling it
-    MONITOR_POSITION would file an incident as a considered decision.
+    Step 1 still comes before the position branch on purpose: a degraded run
+    on a name the book holds is still a degraded run, and labelling it
+    MONITOR_POSITION would file an incident as a considered decision. But the
+    position branch outranks every ENTRY vocabulary — the 2026-08-23 audit
+    found 7/111 HELD names labelled WATCH_* (entry words for a name already
+    owned), because gate labels and trigger fallthroughs were consulted before
+    the book was. A held name's follow-up is position review, whatever else the
+    row says; the outranked signal is preserved in `disposition_basis`.
     """
     if str(result.get("action") or "").strip().upper() != "HOLD":
         return None
@@ -230,6 +240,12 @@ def derive_disposition(result: dict, *, catalyst: Any = None) -> dict | None:
     policy = str(result.get("policy_action") or "").strip().upper()
     label = str(result.get("hold_reason") or "").strip().upper()
     rationale = str(result.get("rationale") or "")
+
+    if held is None:
+        row_held = result.get("hold_reason_held")
+        held = row_held if isinstance(row_held, bool) else None
+    if held is None and label in ("KEEP", "EXIT_SIGNALLED"):
+        held = True
 
     # THE LABEL IS A SUMMARY; THE PAYLOAD IS THE CONTRACT. Every conditional
     # the desk stated travels out whichever branch wins, because only one label
@@ -265,17 +281,38 @@ def derive_disposition(result: dict, *, catalyst: Any = None) -> dict | None:
         # arm entry triggers on a name already owned.
         return out(ANALYSIS_INVALID, "position:unknown")
 
-    # 2. The evidence, not the view.
+    # 2. Capital already committed — outranks every entry vocabulary below.
+    #    `hold_reason`'s held branch is the authority where present; the
+    #    outranked signal (gate, thesis, trigger) rides in the basis so
+    #    nothing is lost, only renamed to position words.
+    if held:
+        if label == "EXIT_SIGNALLED":
+            return out(EXIT_CANDIDATE, "hold_reason:exit_signalled")
+        if label == "AVOID":
+            # A negative thesis on a name the book OWNS is an exit signal,
+            # not an avoidance — AVOID is entry vocabulary.
+            return out(EXIT_CANDIDATE, "held-outranks:hold_reason:avoid")
+        if label == "KEEP":
+            return out(MONITOR_POSITION, "hold_reason:keep")
+        if policy in _DATA_GAP_GATES or policy in _BLOCKED_GATES:
+            return out(MONITOR_POSITION, f"held-outranks:policy:{policy.lower()}")
+        if payload["catalyst_pending"]:
+            return out(MONITOR_POSITION, "held-outranks:desk_note:catalyst_pending")
+        if payload["trigger_direction"]:
+            return out(MONITOR_POSITION, f"held-outranks:trigger:{setup}")
+        return out(MONITOR_POSITION, "held:no_signal")
+
+    # 3. The evidence, not the view.
     if policy in _DATA_GAP_GATES:
         return out(WATCH_DATA_GAP, f"policy:{policy.lower()}")
 
-    # 3. The desk wanted to act and a gate refused it. The blocking condition
+    # 4. The desk wanted to act and a gate refused it. The blocking condition
     #    is named, so this is the follow-up nearest to an actual trade.
     if policy in _BLOCKED_GATES:
         return out(WATCH_ENTRY, f"policy:{policy.lower()}")
 
-    # 4. Capital already committed. `hold_reason`'s held branch is the
-    #    authority; it is the thing that resolved the position tri-state.
+    # Rows from before the held flag existed can still carry the labels the
+    # held branch owns; honour them exactly as before.
     if label == "KEEP":
         return out(MONITOR_POSITION, "hold_reason:keep")
     if label == "EXIT_SIGNALLED":

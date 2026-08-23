@@ -259,3 +259,87 @@ def test_gate_sets_do_not_overlap():
     assert not (D._DATA_GAP_GATES & D._BLOCKED_GATES)
     assert not (D._INVALID_GATES & D._BLOCKED_GATES)
     assert not (D._INVALID_GATES & D._DATA_GAP_GATES)
+
+
+# ── held outranks entry vocabulary (LEAK 7/111, audit 2026-08-23) ────────────
+# hold_wall_report OPEN ITEM 46 found seven HELD names labelled WATCH_* —
+# entry words for names the book already owns (JPM, C×2, HOOD, COF, TSM, VZ).
+# The held signal was in the row (`hold_reason_held`) and never read.
+
+def test_held_gate_block_is_position_review_not_entry_watch():
+    row = _hold(policy_action="HOLD_POLICY_BLOCKED_LOW_CONFIDENCE",
+                hold_reason_held=True)
+    got = D.derive_disposition(row)
+    assert got["disposition"] == D.MONITOR_POSITION
+    assert got["disposition_basis"] == \
+        "held-outranks:policy:hold_policy_blocked_low_confidence"
+
+
+def test_held_data_gap_is_position_review_not_watch_data_gap():
+    row = _hold(policy_action="HOLD_POLICY_BLOCKED_STALE_PRICE_DATA",
+                hold_reason_held=True)
+    got = D.derive_disposition(row)
+    assert got["disposition"] == D.MONITOR_POSITION
+    assert "held-outranks:policy:" in got["disposition_basis"]
+
+
+def test_held_trigger_fallthrough_is_monitor_not_watch_pullback():
+    row = _hold(hold_reason_held=True, estimate=_trigger("sma_50_drop"))
+    got = D.derive_disposition(row)
+    assert got["disposition"] == D.MONITOR_POSITION
+    assert got["disposition_basis"] == "held-outranks:trigger:sma_50_drop"
+    # the payload still carries the trigger — renamed, not lost
+    assert got["trigger_setup"] == "sma_50_drop"
+
+
+def test_held_catalyst_is_monitor_not_watch_catalyst():
+    row = _hold(hold_reason_held=True)
+    got = D.derive_disposition(row, catalyst=CATALYST)
+    assert got["disposition"] == D.MONITOR_POSITION
+    assert got["disposition_basis"] == "held-outranks:desk_note:catalyst_pending"
+    assert got["catalyst_pending"] is True
+
+
+def test_held_avoid_is_an_exit_candidate():
+    """A negative thesis on a name the book OWNS is an exit signal; AVOID is
+    entry vocabulary."""
+    row = _hold(hold_reason="AVOID", hold_reason_held=True)
+    got = D.derive_disposition(row)
+    assert got["disposition"] == D.EXIT_CANDIDATE
+    assert got["disposition_basis"] == "held-outranks:hold_reason:avoid"
+
+
+def test_held_with_nothing_else_is_monitor():
+    got = D.derive_disposition(_hold(hold_reason_held=True))
+    assert got["disposition"] == D.MONITOR_POSITION
+    assert got["disposition_basis"] == "held:no_signal"
+
+
+def test_explicit_held_kwarg_outranks_the_row():
+    """followup_report can pass a joined flag for pre-08-12 rows that never
+    stored `hold_reason_held`."""
+    got = D.derive_disposition(_hold(estimate=_trigger("sma_50_drop")), held=True)
+    assert got["disposition"] == D.MONITOR_POSITION
+
+
+def test_unheld_paths_are_byte_identical():
+    """The fix must not move a single unheld row."""
+    cases = [
+        (_hold(policy_action="HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"),
+         D.WATCH_ENTRY),
+        (_hold(policy_action="HOLD_POLICY_BLOCKED_STALE_PRICE_DATA"),
+         D.WATCH_DATA_GAP),
+        (_hold(hold_reason="AVOID"), D.AVOID),
+        (_hold(estimate=_trigger("sma_50_drop")), D.WATCH_PULLBACK),
+    ]
+    for row, want in cases:
+        row["hold_reason_held"] = False
+        assert D.derive_disposition(row)["disposition"] == want, want
+
+
+def test_analysis_invalid_still_outranks_held():
+    """A degraded run on a held name is still an incident, not a position
+    review — fail-closed stays first."""
+    row = _hold(rationale="V3 Pipeline aborted after 3 agent failures",
+                hold_reason_held=True)
+    assert D.derive_disposition(row)["disposition"] == D.ANALYSIS_INVALID
