@@ -32,6 +32,29 @@ logging.getLogger("apscheduler.scheduler").setLevel(logging.WARNING)
 local_tz = get_localzone()
 
 
+# ── The schedule row shape, in ONE place ─────────────────────────────────
+#
+# This projection was copy-pasted at three call sites (_execute_schedule,
+# load_all_schedules, _rearm_date_schedule), each with its own hand-kept
+# `cols` list zipped against it positionally. Positional unpacking of a
+# duplicated list is the shape where adding a field to three of four copies
+# silently misaligns every column after it — so the list lives here and the
+# call sites read it.
+#
+# The last five are PROVENANCE, not scheduling: they record WHY the research
+# was requested. They were written by research_governor at insert time and
+# then read by nobody — `_execute_schedule` never selected them, so the cycle
+# a schedule started had no idea what catalyst it was chasing.
+_SCHEDULE_COLS = [
+    "id", "name", "schedule_type", "cron_expression", "interval_hours",
+    "earliest_window", "collect", "analyze", "trade", "tickers",
+    "max_tickers", "discovered_tickers", "market_hours_only", "is_active",
+    "last_run_at", "next_run_at", "run_count", "last_status", "last_error",
+    "created_at", "updated_at", "run_at", "expiry_at",
+    "reason_codes", "review_intent", "urgency", "schedule_scope", "job_type",
+]
+
+
 def _stalest_first(universe: set[str], side_collection: str, side_field: str,
                    limit: int, side_query: dict | None = None,
                    max_age_days: int | None = None) -> list[tuple]:
@@ -171,7 +194,7 @@ class SchedulerService:
             "[SCHEDULER] ====== TRIGGER FIRED for schedule %s ======", schedule_id
         )
         # Load latest config from DB to ensure it wasn't deleted or paused
-        row = mongo_query.find_row('cycle_schedules', {'id': schedule_id}, ['id', 'name', 'schedule_type', 'cron_expression', 'interval_hours', 'earliest_window', 'collect', 'analyze', 'trade', 'tickers', 'max_tickers', 'discovered_tickers', 'market_hours_only', 'is_active', 'last_run_at', 'next_run_at', 'run_count', 'last_status', 'last_error', 'created_at', 'updated_at', 'run_at', 'expiry_at'])
+        row = mongo_query.find_row('cycle_schedules', {'id': schedule_id}, _SCHEDULE_COLS)
         if not row:
             logger.warning(
                 "[SCHEDULER] Schedule %s not found in DB, removing from engine.",
@@ -183,31 +206,7 @@ class SchedulerService:
                 pass
             return
 
-        cols = [
-            "id",
-            "name",
-            "schedule_type",
-            "cron_expression",
-            "interval_hours",
-            "earliest_window",
-            "collect",
-            "analyze",
-            "trade",
-            "tickers",
-            "max_tickers",
-            "discovered_tickers",
-            "market_hours_only",
-            "is_active",
-            "last_run_at",
-            "next_run_at",
-            "run_count",
-            "last_status",
-            "last_error",
-            "created_at",
-            "updated_at",
-            "run_at",
-            "expiry_at",
-        ]
+        cols = _SCHEDULE_COLS
         s = dict(zip(cols, row))
 
         if not s["is_active"]:
@@ -252,6 +251,19 @@ class SchedulerService:
         except Exception:
             tickers = []
 
+        # `reason_codes` is stored as a JSON string by research_governor
+        # (`json.dumps(reason_codes or [reason[:120]])`) but the column is
+        # free-form, so a list can also arrive already decoded. Both shapes
+        # normalise to a list here rather than at four read sites downstream.
+        reason_codes = s.get("reason_codes")
+        if isinstance(reason_codes, str):
+            try:
+                reason_codes = json.loads(reason_codes)
+            except (ValueError, TypeError):
+                reason_codes = [reason_codes] if reason_codes else []
+        if not isinstance(reason_codes, list):
+            reason_codes = []
+
         # Dispatch cycle via system_commands table (picked up by cycle_main poller)
         payload = {
             "tickers": tickers,
@@ -261,6 +273,25 @@ class SchedulerService:
             "max_tickers": s.get("max_tickers"),
             "discovered_tickers": s.get("discovered_tickers"),
             "dynamic_selection_mode": True,
+            # ── Provenance ──
+            # The schedule row is the ONLY place that records why this research
+            # was requested — the catalyst, the intent, the urgency. Until now
+            # the payload carried none of it, so the cycle it started could not
+            # say what it was chasing and nothing joined the resulting
+            # analysis_results back to the schedule that caused them. The
+            # schedule row itself is a spent timer the moment it fires; the
+            # research it produced outlives it, and this is the edge between.
+            #
+            # `research_request` is deliberately NOT set: pipeline_service's
+            # _trigger_source checks it BEFORE dynamic_selection_mode, so
+            # setting it would relabel every scheduled run as
+            # "research_governor" and erase the distinction between a cycle
+            # that fired on a timer and one queued for immediate research.
+            "schedule_id": schedule_id,
+            "research_reason": (s.get("name") or "")[:500],
+            "reason_codes": reason_codes,
+            "review_intent": s.get("review_intent"),
+            "urgency": s.get("urgency"),
         }
 
         logger.info(
@@ -361,33 +392,9 @@ class SchedulerService:
     def load_all_schedules():
         """Load all active schedules from DB into APScheduler."""
         logger.info("[SCHEDULER] Loading schedules from DB...")
-        rows = mongo_query.find_rows('cycle_schedules', {'is_active': True}, ['id', 'name', 'schedule_type', 'cron_expression', 'interval_hours', 'earliest_window', 'collect', 'analyze', 'trade', 'tickers', 'max_tickers', 'discovered_tickers', 'market_hours_only', 'is_active', 'last_run_at', 'next_run_at', 'run_count', 'last_status', 'last_error', 'created_at', 'updated_at', 'run_at', 'expiry_at'])
+        rows = mongo_query.find_rows('cycle_schedules', {'is_active': True}, _SCHEDULE_COLS)
 
-        cols = [
-            "id",
-            "name",
-            "schedule_type",
-            "cron_expression",
-            "interval_hours",
-            "earliest_window",
-            "collect",
-            "analyze",
-            "trade",
-            "tickers",
-            "max_tickers",
-            "discovered_tickers",
-            "market_hours_only",
-            "is_active",
-            "last_run_at",
-            "next_run_at",
-            "run_count",
-            "last_status",
-            "last_error",
-            "created_at",
-            "updated_at",
-            "run_at",
-            "expiry_at",
-        ]
+        cols = _SCHEDULE_COLS
 
         count = 0
         for row in rows:
@@ -549,37 +556,13 @@ class SchedulerService:
     @staticmethod
     def refresh_job(schedule_id: str):
         """Refresh a specific job in APScheduler from the DB."""
-        row = mongo_query.find_row('cycle_schedules', {'id': schedule_id}, ['id', 'name', 'schedule_type', 'cron_expression', 'interval_hours', 'earliest_window', 'collect', 'analyze', 'trade', 'tickers', 'max_tickers', 'discovered_tickers', 'market_hours_only', 'is_active', 'last_run_at', 'next_run_at', 'run_count', 'last_status', 'last_error', 'created_at', 'updated_at', 'run_at', 'expiry_at'])
+        row = mongo_query.find_row('cycle_schedules', {'id': schedule_id}, _SCHEDULE_COLS)
         if not row:
             if scheduler.get_job(schedule_id):
                 scheduler.remove_job(schedule_id)
             return
 
-        cols = [
-            "id",
-            "name",
-            "schedule_type",
-            "cron_expression",
-            "interval_hours",
-            "earliest_window",
-            "collect",
-            "analyze",
-            "trade",
-            "tickers",
-            "max_tickers",
-            "discovered_tickers",
-            "market_hours_only",
-            "is_active",
-            "last_run_at",
-            "next_run_at",
-            "run_count",
-            "last_status",
-            "last_error",
-            "created_at",
-            "updated_at",
-            "run_at",
-            "expiry_at",
-        ]
+        cols = _SCHEDULE_COLS
         s = dict(zip(cols, row))
 
         if scheduler.get_job(schedule_id):
