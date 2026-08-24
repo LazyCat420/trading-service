@@ -123,6 +123,77 @@ async def _get_after_hours_earnings() -> str:
         return f"Error loading after-hours earnings news: {str(e)}"
 
 
+def _next_briefing_id() -> int:
+    """The `id` Postgres used to hand out, now that nothing hands it out.
+
+    ## The defect this closes
+
+    Under Postgres `flash_briefings` was::
+
+        id          SERIAL PRIMARY KEY,
+        created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    so this writer never had to supply either field — the database did. Mongo
+    has no column defaults, and the insert below was ported across unchanged.
+    Every briefing written after the cutover therefore landed with **no `id`
+    and no `created_at` at all**, and nothing raised: a collection has no
+    column types to violate.
+
+    The damage is entirely in the READ. `get_recent_flash_briefings` (and the
+    trading-client copy that feeds the Live Feed widget) sorts
+    `created_at` descending with a limit — and in BSON type order a missing
+    field ranks below every real date, so a descending sort puts these
+    documents LAST. Three briefings generated on 2026-08-20 and 2026-08-22
+    were written, stored, and never once displayed; the widget went on showing
+    2026-08-18 as "latest" while the collection grew underneath it. A frozen
+    feed and a dead feed look identical from the UI.
+
+    ## Why max()+1 and not a counter document
+
+    The natural-key index on `id` is NOT unique, so a collision would not be
+    rejected — it would quietly produce two briefings sharing a React key.
+    That argues for care, not for a sequence collection: this is a
+    single-writer path (one APScheduler job at a 4h interval, plus a manual
+    button) where two inserts in the same millisecond are not reachable. A
+    counter document would add a second piece of state to keep correct for no
+    reachable benefit.
+
+    Falls back to a wall-clock-derived id if the max() query fails, because a
+    briefing with an approximate id is worth strictly more than no briefing.
+    """
+    try:
+        current_max = mongo_query.agg_row('flash_briefings', {}, [("max", "id")])[0]
+        return int(current_max) + 1 if current_max is not None else 1
+    except Exception as e:
+        fallback = int(datetime.now(timezone.utc).timestamp())
+        logger.warning(
+            "[FLASH] could not read max(id) (%s) — falling back to %d", e, fallback
+        )
+        return fallback
+
+
+def _briefing_doc(report_content: str, source_urls: list, article_count: int) -> dict:
+    """The document to store, INCLUDING the two fields Postgres used to fill in.
+
+    Extracted so the test suite can assert on the real thing. A test that
+    rebuilds this dict inline proves only that the test can build a dict; the
+    defect was that the production call site omitted two keys, which is exactly
+    what an inline copy cannot catch.
+    """
+    return {
+        'id': _next_briefing_id(),
+        # UTC, not the container clock. The container runs
+        # TZ=America/Los_Angeles and the reader tags naive values with 'Z'
+        # (app/utils/tz.py: "all DB timestamps are stored as naive UTC"), so a
+        # local stamp would display seven hours early. date_fields normalises
+        # this to the naive-UTC shape the seeded documents already hold.
+        'created_at': datetime.now(timezone.utc),
+        'report_content': report_content,
+        'source_urls': source_urls,
+        'article_count': article_count,
+    }
+
+
 async def generate_flash_briefing(report_type: str | None = None) -> str | None:
     """Generate a short flash briefing from the most recently collected news and market data.
     
@@ -239,7 +310,9 @@ async def generate_flash_briefing(report_type: str | None = None) -> str | None:
 
     # Save to DB
     try:
-        mongo_store.insert_docs('flash_briefings', [{'report_content': response, 'source_urls': source_urls[:10], 'article_count': len(rows)}])
+        mongo_store.insert_docs('flash_briefings', [
+            _briefing_doc(response, source_urls[:10], len(rows))
+        ])
         logger.info("[FLASH] Saved flash briefing (%d articles summarized)", len(rows))
     except Exception as e:
         logger.error("[FLASH] Failed to save: %s", e)
