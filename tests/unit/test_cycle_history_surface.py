@@ -167,11 +167,21 @@ def test_trigger_payload_carries_the_tripwire():
          "watch_trigger": {"type": "price_below", "detail": "TRMB fell to $54.00"}},
         ["TRMB"],
     )
+    # Exact equality on purpose: this pins the WHOLE payload shape, so a key
+    # added to _trigger_payload has to be acknowledged here rather than
+    # arriving unnoticed. The schedule-provenance fields (ch.92) are present
+    # and empty — a Watch Desk wake has no schedule behind it, and asserting
+    # that they are None is what proves a wake cannot inherit a stale
+    # catalyst from whatever ran before it.
     assert p == {
         "source": "watch_desk",
         "trigger_type": "price_below",
         "reason": "TRMB fell to $54.00",
         "tickers": ["TRMB"],
+        "schedule_id": None,
+        "reason_codes": [],
+        "review_intent": None,
+        "urgency": None,
     }
 
 

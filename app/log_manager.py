@@ -137,6 +137,21 @@ class LogManager(SDKLogManager):
                         'primary_failure_reason': summary.get("primary_failure_reason"),
                         'report_generated': summary.get("report_generated", False),
                         'trade_skip_categories': summary.get("trade_skip_categories") or {},
+                        # ── Provenance, promoted out of summary_json ──
+                        # These also ride along inside summary_json, but a
+                        # nested key is not a join key: answering "which
+                        # cycles did the earnings catalyst produce?" should
+                        # not require unwinding a blob on 422 rows. $set
+                        # rather than $setOnInsert because _persist_summary
+                        # runs again on the stopped/error paths with the same
+                        # closure — the value is identical, so rewriting it is
+                        # idempotent, while $setOnInsert would leave an
+                        # interrupted cycle's provenance permanently empty.
+                        'trigger_source': summary.get("trigger_source"),
+                        'schedule_id': summary.get("schedule_id"),
+                        'trigger_reason_codes': summary.get("trigger_reason_codes") or [],
+                        'review_intent': summary.get("review_intent"),
+                        'urgency': summary.get("urgency"),
                         'summary_json': summary,
                     },
                     '$setOnInsert': {

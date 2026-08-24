@@ -49,6 +49,9 @@ def _trigger_payload(kwargs: dict, tickers) -> dict:
     trigger = kwargs.get("watch_trigger") or {}
     if not isinstance(trigger, dict):
         trigger = {}
+    codes = kwargs.get("reason_codes")
+    if not isinstance(codes, list):
+        codes = []
     return {
         "source": _trigger_source(kwargs),
         # The Watch Desk's tripwire type (price_below, rsi, news, ...), when one
@@ -57,6 +60,17 @@ def _trigger_payload(kwargs: dict, tickers) -> dict:
         "trigger_type": trigger.get("type") or kwargs.get("trigger_type") or None,
         "reason": (trigger.get("detail") or kwargs.get("research_reason") or None),
         "tickers": list(tickers or []),
+        # ── The schedule that caused this run ──
+        # A `once` schedule row is deactivated the moment it fires and is
+        # otherwise a spent timer, but the catalyst it names ("earnings_2026-08-03",
+        # "growth_deceleration") is the reason the research exists. Pinning it
+        # to the append-only event stream is what lets a later question —
+        # "why did we look at PLTR that day?" — be answered from the cycle
+        # rather than from a schedule row that may be long gone.
+        "schedule_id": kwargs.get("schedule_id") or None,
+        "reason_codes": codes,
+        "review_intent": kwargs.get("review_intent") or None,
+        "urgency": kwargs.get("urgency") or None,
     }
 
 
@@ -75,6 +89,8 @@ def _trigger_detail(kwargs: dict, tickers) -> str:
         parts.append(f"({p['trigger_type']})")
     if p["reason"]:
         parts.append(f"— {p['reason']}")
+    if p["reason_codes"]:
+        parts.append(f"[{', '.join(str(c) for c in p['reason_codes'][:4])}]")
     return " ".join(parts)[:500]
 
 
@@ -597,6 +613,10 @@ class PipelineService:
             "benchmark_group", "discovered_tickers",
             # Scheduler / research-governor provenance (informational)
             "dynamic_selection_mode", "research_request", "research_reason",
+            # Schedule provenance: which schedule fired and what catalyst it
+            # named. Listed here or the guard below would log every scheduled
+            # cycle as carrying unknown keys and drop them.
+            "schedule_id", "reason_codes", "review_intent", "urgency",
             # Watch Desk wake provenance (informational; wake context flows via
             # watch_events, not the payload) + stop-loss trigger tag.
             "watch_wake", "watch_trigger", "trigger_type",
@@ -752,6 +772,21 @@ class PipelineService:
                     "elapsed_ms": int((time.monotonic() - t0) * 1000),
                     "no_trade_reason": None if trade_flag else "trade_disabled",
                     "primary_failure_reason": error,
+                    # ── Why this cycle ran ──
+                    # The same provenance the cycle_trigger event carries, but
+                    # on the summary row so it is JOINABLE without replaying
+                    # 262k audit-log events. `analysis_results` already keys on
+                    # cycle_id; with these fields a ticker's research can be
+                    # traced back to the catalyst that prompted it long after
+                    # the one-shot schedule row that fired it is gone.
+                    "trigger_source": _trigger_source(kwargs),
+                    "schedule_id": kwargs.get("schedule_id") or None,
+                    "trigger_reason_codes": (
+                        kwargs.get("reason_codes")
+                        if isinstance(kwargs.get("reason_codes"), list) else []
+                    ),
+                    "review_intent": kwargs.get("review_intent") or None,
+                    "urgency": kwargs.get("urgency") or None,
                     **summarize_ticker_results(results),
                 }
                 # The dedicated column readers (debug_cycle.py, audits) need the
