@@ -425,6 +425,84 @@ STATIC_FALSE_TICKERS = frozenset(FALSE_TICKERS)
 MIN_MARKET_CAP_OVERRIDE = 1_000_000_000  # $1B
 
 
+# Words that are ordinary English or generic corporate boilerplate. A symbol
+# whose only textual evidence is one of these is not evidence at all.
+#
+# MEASURED 2026-08-24, `news_articles`, 7 days: TWO corrupted registry rows —
+# FCF (First Commonwealth Financial) aliased to "first" and MSBT to "common" —
+# owned 2,342 of 18,328 stored articles, **12.8% of the entire week's news**,
+# and NOT ONE of them mentioned the company. The alias layer matches at 0.90,
+# which skips context scoring entirely, so every article containing the word
+# "first" was filed under FCF and fed the candidate pool, the agents' news
+# section, and trade-enabled watch wakes.
+#
+# The guard lives at the INDEX, not at the match sites: a registry refresh
+# re-reads `company_registry.aliases` from Mongo, so filtering at the four
+# call sites would let the next refresh reintroduce it.
+GENERIC_NAME_WORDS = frozenset("""
+first common the a an and or of for to in on at by with from inc corp co ltd llc plc
+group holdings holding company companies class shares share stock stocks new american
+national international global general capital financial finance bank banks trust fund
+funds partners partnership technologies technology systems services service solutions
+industries enterprises energy resources properties realty media communications health
+healthcare pharma pharmaceuticals motors electric power water gas oil gold silver metals
+mining products brands foods restaurants stores one two three united states usa north
+south east west central grand value growth income equity core total select advantage
+premier prime plus max pro home life care data digital network networks world
+""".split())
+
+
+def _boundary_search(needle: str, haystack_lower: str):
+    """Find `needle` in already-lowercased text on word boundaries.
+
+    `"first" in text` also fires on "firstly"; `"common" in text` fires on
+    "commonwealth". Both were live phantom-ticker sources.
+    """
+    if not needle:
+        return None
+    return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", haystack_lower)
+
+
+def discriminating_name_words(company_name: str, symbol: str) -> list[str]:
+    """The words of a company name that can CORROBORATE the symbol.
+
+    Excludes corporate suffixes, generic English words, and — critically —
+    the symbol's own spelling. "C3.ai, Inc." yields significant word "ai",
+    so the gate below asked "is 'ai' in the text?" to decide whether AI was
+    really mentioned: the symbol was its own evidence. 787 articles were
+    filed under AI in one week; 2 of them were about C3.ai.
+    """
+    sym_low = (symbol or "").lower()
+    words = re.findall(r"\b\w+\b", (company_name or "").lower())
+    return [
+        w for w in words
+        if len(w) > 2 and w not in GENERIC_NAME_WORDS and w != sym_low
+    ]
+
+
+def label_is_usable(label: str) -> bool:
+    """May this company name/alias stand alone as evidence of a mention?
+
+    Refuses the three shapes measured to produce phantom tickers:
+      - purely numeric (registry rows carrying a CIK number as their name),
+      - a single generic English/corporate word ("first", "common"),
+      - anything <= 2 chars (already the rule at the alias match site).
+
+    Applies to `company_name` as well as `aliases`: the two rows that cost
+    12.8% of a week's news were corrupt in BOTH fields — FCF's whole
+    company_name is the string "First", MSBT's is "Common" — so guarding
+    only the alias index left the name index firing on the same word.
+    """
+    a = (label or "").strip().lower()
+    if len(a) <= 2:
+        return False
+    if a.replace(".", "").isdigit():
+        return False
+    if " " not in a and a in GENERIC_NAME_WORDS:
+        return False
+    return True
+
+
 def _is_hard_blocked(sym: str, registry: "CompanyRegistry") -> bool:
     """
     Check if a symbol should be hard-blocked.
@@ -756,8 +834,11 @@ class CompanyRegistry:
     def add_company(self, company: Company):
         """Register a company in all lookup indexes."""
         self._by_symbol[company.symbol.upper()] = company
-        self._by_name[company.name.lower()] = company
+        if label_is_usable(company.name):
+            self._by_name[company.name.lower()] = company
         for alias in company.aliases:
+            if not label_is_usable(alias):
+                continue
             self._by_alias[alias.lower()] = company
 
     def add_rejected(self, sym: str):
@@ -954,7 +1035,7 @@ class CompanyRegistry:
             existing = self._by_symbol.get(sym)
             if existing:
                 for a in aliases:
-                    if a.lower() not in self._by_alias:
+                    if a.lower() not in self._by_alias and label_is_usable(a):
                         existing.aliases.append(a)
                         self._by_alias[a.lower()] = existing
             else:
@@ -1116,10 +1197,14 @@ def extract_tickers(
 
     # ── Layer 1b: Company name matching ──
     for name_key, company in registry._by_name.items():
-        if name_key in text_lower:
+        # Word-boundary, not substring: "apple" must not match "applebee's",
+        # and "common" must not match "commonwealth" — the very word that put
+        # 2,342 articles under FCF/MSBT.
+        _nm = _boundary_search(name_key, text_lower)
+        if _nm:
             sym = company.symbol
             if sym not in candidates or candidates[sym].confidence < 0.90:
-                idx = text_lower.index(name_key)
+                idx = _nm.start()
                 snippet = full_text[max(0, idx - 150) : idx + len(name_key) + 150]
                 candidates[sym] = TickerMatch(
                     symbol=sym,
@@ -1130,10 +1215,11 @@ def extract_tickers(
                 )
 
     for alias_key, company in registry._by_alias.items():
-        if len(alias_key) > 2 and alias_key in text_lower:
+        _am = _boundary_search(alias_key, text_lower) if len(alias_key) > 2 else None
+        if _am:
             sym = company.symbol
             if sym not in candidates or candidates[sym].confidence < 0.90:
-                idx = text_lower.index(alias_key)
+                idx = _am.start()
                 snippet = full_text[max(0, idx - 150) : idx + len(alias_key) + 150]
                 candidates[sym] = TickerMatch(
                     symbol=sym,
@@ -1271,26 +1357,54 @@ def extract_tickers(
         # Bypass if:
         #   - The symbol was matched using direct financial syntax (has_direct_syntax is True)
         #   - The document contains at least one explicit cashtag (e.g. $AAPL)
+        # A cashtag anywhere in the document keeps its bypass: "Bought $AAPL,
+        # MSFT, and NVDA!" is real ticker-list syntax and MSFT/NVDA carry no
+        # "$" of their own. Measured: narrowing this to a per-symbol cashtag
+        # did NOT suppress the AI class (the article driving it has no cashtag
+        # at all) and DID drop MSFT/NVDA from that sentence — cost, no benefit.
         has_cashtag = bool(DOLLAR_TICKER.search(full_text))
-        if tm.source in ("registry", "bare_caps") and not has_direct_syntax and not has_cashtag:
+        has_own_cashtag = bool(re.search(rf"\${re.escape(sym)}(?!\w)", full_text, re.IGNORECASE))
+        # A "word-symbol" is a ticker that is also ordinary English or a stock
+        # abbreviation: AI, ON, ALL, KEY, TECH ... For these, NEITHER bypass
+        # may disarm the cross-validation below, because ordinary prose
+        # satisfies both:
+        #   - `has_direct_syntax` fires on the parenthetical "(AI)", which is
+        #     merely how English introduces an abbreviation —
+        #     "artificial intelligence (AI)";
+        #   - `has_cashtag` fires on ANY "$XYZ" elsewhere in the document.
+        # Only naming the company, or writing "$AI" itself, corroborates.
+        is_word_symbol = sym in FALSE_TICKERS
+        gate_applies = tm.source in ("registry", "bare_caps") and (
+            is_word_symbol or (not has_direct_syntax and not has_cashtag)
+        )
+        if gate_applies:
             company = registry.lookup_symbol(sym)
             if company:
-                name_words = re.findall(r"\b\w+\b", company.name.lower())
-                suffixes = {
-                    "inc", "corp", "ltd", "co", "group", "holdings", "services", 
-                    "financial", "corporation", "limited", "plc", "sa", "ag", 
-                    "trust", "properties", "technologies", "solutions", "systems", 
-                    "insurance", "intl", "international", "company", "companies",
-                    "of", "and", "the", "in", "for"
-                }
-                sig_words = [w for w in name_words if w not in suffixes and len(w) > 1]
-                
+                sig_words = discriminating_name_words(company.name, sym)
+
                 if sig_words:
-                    has_company_mention = any(w in text_lower for w in sig_words)
+                    has_company_mention = any(
+                        _boundary_search(w, text_lower) for w in sig_words
+                    )
                 else:
-                    has_company_mention = company.name.lower() in text_lower
+                    has_company_mention = bool(
+                        _boundary_search(company.name.lower(), text_lower)
+                    )
                 
-                if not has_company_mention:
+                if is_word_symbol and not has_company_mention and not has_own_cashtag:
+                    # The symbol is ALSO an ordinary word ("AI", "ON", "ALL",
+                    # "KEY"), the company is not named, and nothing writes
+                    # "$AI". The nearby-context escape below cannot help here:
+                    # it asks "are there financial keywords near this token?"
+                    # of a corpus that is entirely financial writing, so it is
+                    # satisfied by the background rather than by the signal.
+                    # MEASURED: 787 articles were filed under AI in one week;
+                    # 2 of them (0.3%) were about C3.ai.
+                    logger.debug(
+                        "[ticker_extractor] word-symbol %s rejected: no company mention, no cashtag", sym
+                    )
+                    tm.confidence = 0.10
+                elif not has_company_mention:
                     # Company name is not mentioned. Require strong nearby financial context to pass.
                     has_nearby_context = False
                     for m in re.finditer(rf"\b{re.escape(sym)}\b", full_text):
