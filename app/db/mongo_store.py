@@ -250,6 +250,14 @@ def ensure_indexes(session: Optional[Any] = None) -> None:
             logger.warning("[mongo_store] TTL drop on %s failed (non-fatal): %s", coll, e)
 
     # pipeline_events: read by cycle_id ordered by timestamp; id is the natural PK.
+    # price_history peer-session probe (`_trading_day_age`): its filter is a
+    # `$not/$regex` on ticker + a range on date, which the (ticker, date,
+    # source) natural key cannot serve — measured 2026-08-25 as a 24-28s FULL
+    # SCAN of 15.77M docs on EVERY get_market_data call (p50 20.9s, 24% of
+    # calls aborted at the 30s bridge deadline). A plain date index turns the
+    # same command into 0.01-0.04s. Declared here so a reseed/rebuild gets it
+    # back — an index created only by hand dies with the next backfill.
+    _try("price_history", [("date", pymongo.ASCENDING)], name="date_1")
     _try("pipeline_events", "id", unique=True)
     _try("pipeline_events", [("cycle_id", pymongo.ASCENDING), ("timestamp", pymongo.ASCENDING)])
 

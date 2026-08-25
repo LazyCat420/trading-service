@@ -39,12 +39,31 @@ async def get_market_data(ticker: str) -> str:
     )
     from app.services.api_rate_limiter import rate_limiter
 
-    # Still acquire yfinance semaphore just to be safe as it's the primary target
-    async with rate_limiter.acquire("yfinance"):
-        await fetch_price_history(ticker)
-        await fetch_fundamentals(ticker)
-        await fetch_financials(ticker)
-        await fetch_balance_sheet(ticker)
+    # READ-THROUGH, not fetch-then-read. These four sequential network calls
+    # ran on EVERY invocation and made this a 20.9s-median tool against a 30s
+    # bridge deadline (p95 36.0s, 24% of calls aborted). The cycle's precollect
+    # has normally just written price + fundamentals for this ticker.
+    from app.collectors.data_rotator import _is_missing_recent_session
+    from app.db import mongo_store as _ms
+    from app.tools.read_through import refresh_within_budget
+
+    # Freshness for a DAILY BAR is "is a session missing", not "how many hours
+    # old". A wall-clock threshold calls Monday's close stale by Tuesday
+    # pre-market and re-fetches a bar that does not exist yet — measured 30.1h
+    # "stale" for AAPL while its 08-24 bar was the newest session in existence.
+    # `_is_missing_recent_session` counts real sessions its market PEERS hold,
+    # so it is right across holidays and foreign exchanges, and it already
+    # guards the collector's own fallback chain.
+    _have_rows = bool(_ms.find_docs("price_history", {"ticker": ticker}, limit=1))
+    if not _have_rows or _is_missing_recent_session(ticker):
+        async def _refresh_market():
+            async with rate_limiter.acquire("yfinance"):
+                await fetch_price_history(ticker)
+                await fetch_fundamentals(ticker)
+                await fetch_financials(ticker)
+                await fetch_balance_sheet(ticker)
+
+        await refresh_within_budget(f"market_data:{ticker}", _refresh_market)
 
     sections = []
 
@@ -155,8 +174,7 @@ async def get_finnhub_news(ticker: str) -> str:
     from datetime import datetime, timezone, timedelta
     from app.db import mongo_store
 
-    async with rate_limiter.acquire("finnhub"):
-        await collect_finnhub_news(ticker)
+    from app.tools.read_through import refresh_within_budget, store_can_answer
 
     def _fetch(days: int):
         since = datetime.now(timezone.utc) - timedelta(days=days)
@@ -177,8 +195,23 @@ async def get_finnhub_news(ticker: str) -> str:
             for d in docs
         ]
 
+    # READ FIRST. During a cycle the precollect phase has already run this
+    # exact collector for this exact ticker, so the network trip below is
+    # usually redundant — and it was costing 36s at p50 / 65s at p95 against a
+    # 60s bridge deadline (16% of calls failed outright).
     window_days = 14
     rows = _fetch(window_days)
+
+    NEWS_MAX_AGE_H = 6.0
+    _newest = max((r[3] for r in rows if r[3]), default=None)
+    if not store_can_answer(_newest, NEWS_MAX_AGE_H, have_rows=len(rows) >= 3):
+        async def _collect():
+            async with rate_limiter.acquire("finnhub"):
+                await collect_finnhub_news(ticker)
+
+        await refresh_within_budget(f"finnhub_news:{ticker}", _collect)
+        rows = _fetch(window_days)
+
     if len(rows) < 3:
         window_days = 90
         rows = _fetch(window_days)

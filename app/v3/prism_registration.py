@@ -138,6 +138,14 @@ _V3_TOOL_POLICIES = [
 # having no way to see the difference — re-sends the identical call until
 # base_agent's 3-strike repeat check aborts the agent.
 #
+# Re-measured 2026-08-25 (7d): 51 of 194 calls still fail this way, and the 43
+# agent-runs where EVERY attempt failed are 41x deepseek-v4-flash — that model
+# cannot repair the shape from rule 8's description and re-sends until the
+# repeat check trips, costing +102s median (344s vs 242s) before the TEXT path
+# rescues the artifact anyway. Hence the ESCAPE HATCH line in rule 8: after a
+# second rejection the model is told to stop calling the tool and put the JSON
+# in its final message, which `_unwrap_structured_output` parses identically.
+#
 # The executor fix (parse a stringified payload; name truncation as the cause)
 # belongs in tools-service `/compute/synthetic-output`, which this project does
 # not own and must not modify. Until that lands upstream, the prompt is the
@@ -167,6 +175,10 @@ _V3_COMMON_GUIDELINES = """
    Re-sending the identical call fails identically and costs another turn; if
    you see that error, change the SHAPE. If your payload is long, shorten it:
    a truncated JSON string fails this way too.
+   ESCAPE HATCH: if emit_structured_output rejects you a SECOND time, STOP
+   calling it entirely. Write your complete JSON artifact directly as your
+   final message instead — that path is parsed identically and cannot be
+   rejected. Do not spend more turns on the tool.
 """
 
 

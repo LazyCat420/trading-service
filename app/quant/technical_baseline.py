@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import date
 from app.db import mongo_query
 
@@ -131,6 +132,13 @@ def has_price_history(ticker: str) -> bool:
     return count >= MIN_TRADEABLE_BARS
 
 
+# Peer-session probe cache — see the note inside _trading_day_age. Keyed by
+# (market suffix, this ticker's newest bar, as_of); every US ticker in a cycle
+# normally shares all three, so the 27.9s scan is paid once instead of per call.
+_PEER_SESSION_CACHE: dict[tuple, tuple[float, int]] = {}
+_PEER_SESSION_TTL_S = 300.0
+
+
 def _trading_day_age(ticker: str, as_of: date, latest: date) -> int | None:
     """Sessions strictly after `latest` up to `as_of`, from the data itself.
 
@@ -150,6 +158,21 @@ def _trading_day_age(ticker: str, as_of: date, latest: date) -> int | None:
 
     peer_query["date"] = {"$gt": latest, "$lte": as_of}
 
+    # MEASURED 2026-08-25: this distinct runs against 15.77M `price_history`
+    # documents whose only index is (ticker, date, source). A `$not/$regex` on
+    # ticker cannot use that index and `date` is not a prefix of it, so the
+    # command is a FULL COLLECTION SCAN — 27.9 SECONDS, and it was the entire
+    # runtime of get_market_data (p50 20.9s against a 30s bridge deadline, 24%
+    # of calls aborted). The answer is per-MARKET, not per-ticker: every US
+    # ticker sharing a `latest` asks the identical question, so a cycle paid it
+    # once per ticker per call. Memoised, a 9-ticker cycle pays it once.
+    #
+    # This is a mitigation, not the cure. The cure is an index on `date`.
+    cache_key = (suffix, latest, as_of)
+    hit = _PEER_SESSION_CACHE.get(cache_key)
+    if hit is not None and (time.monotonic() - hit[0]) < _PEER_SESSION_TTL_S:
+        return hit[1]
+
     try:
         # distinct_values, not distinct: mongo_store exports no `distinct`, so
         # this raised AttributeError into the except below on EVERY call and
@@ -157,7 +180,11 @@ def _trading_day_age(ticker: str, as_of: date, latest: date) -> int | None:
         # scored the whole universe at the 0.3x "unknown" multiplier and
         # per-market freshness measurement was dead in production.
         dates = mongo_store.distinct_values("price_history", "date", peer_query)
-        return len(dates)
+        age = len(dates)
+        _PEER_SESSION_CACHE[cache_key] = (time.monotonic(), age)
+        if len(_PEER_SESSION_CACHE) > 512:      # bounded: one entry per market/day
+            _PEER_SESSION_CACHE.pop(next(iter(_PEER_SESSION_CACHE)))
+        return age
     except Exception as e:  # noqa: BLE001 — grounding must never block a cycle
         logger.warning("[TechnicalBaseline] %s trading-day age failed: %s", ticker, e)
         return None
