@@ -140,6 +140,16 @@ PARAMETER_REGISTRY: dict[str, ParamSpec] = {
         description="Max prior-analysis age (h) for a zero-news glance skip.",
     ),
     # Research / watch budgets
+    "WATCH_DESK_ENABLED": ParamSpec(
+        default=1, min_value=0, max_value=1, direction=RISK_UP, kind="int",
+        tier=TIER_BOARD,
+        description=(
+            "Master switch for watch-desk wakes. 0 silences the desk entirely "
+            "— the operator lever that did not exist on 2026-08-25, when the "
+            "desk re-fired within minutes of every manual stop and the only "
+            "brake (MAX_WATCH_WAKES_PER_DAY) clamps at min 2."
+        ),
+    ),
     "MAX_WATCH_WAKES_PER_DAY": ParamSpec(
         default=6, min_value=2, max_value=12, direction=RISK_UP, kind="int",
         tier=TIER_BOARD,

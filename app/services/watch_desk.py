@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 # ── Energy guardrails ───────────────────────────────────────────────────────
 MAX_WATCH_WAKES_PER_DAY = 6        # hard ceiling on trigger-driven cycles/day
+HUMAN_STOP_QUIET_HOURS = 2.0       # a human STOP means quiet, not "desk is free"
 DEFAULT_COOLDOWN_MINUTES = 240      # per-watch debounce (4h)
 DEFAULT_EXPIRY_DAYS = 30            # hard TTL on a watch
 DEFAULT_STALENESS_DAYS = 10         # re-check backstop if nothing else trips
@@ -627,6 +628,38 @@ def _wakes_today() -> int:
     return sum(1 for cid in cycle_ids if cid not in skipped)
 
 
+
+def _human_stop_cooldown_active(now: datetime | None = None) -> bool:
+    """Was a cycle stopped BY A HUMAN within the quiet window?
+
+    `_enqueue_wake` holds only while a cycle is RUNNING — `stopped` counts as
+    free, so the desk re-fired within minutes of every manual stop (measured
+    2026-08-25: the operator stopped cycle-v3-1787638850 to deploy and
+    cycle-v3-1787640814 was enqueued before the deploy's preflight ran).
+    A `wd-` stop is the desk's own housekeeping and does not quiet anything;
+    every other prefix (job_ = dashboard, cmd- = CLI, sch- = scheduler ops)
+    is a person or an operator tool saying stop, and for HUMAN_STOP_QUIET_HOURS
+    afterwards the desk stays silent. Fails OPEN (False) on any store error —
+    an unreachable ledger must not permanently silence the desk.
+    """
+    now = now or datetime.now(timezone.utc)
+    try:
+        row = mongo_query.find_row(
+            'v3_system_commands',
+            {
+                'command_type': 'STOP_CYCLE',
+                'status': {'$in': ['completed', 'running']},
+                'id': {'$not': {'$regex': '^wd-'}},
+                'created_at': {'$gte': now - timedelta(hours=HUMAN_STOP_QUIET_HOURS)},
+            },
+            ['id', 'created_at'],
+            sort=[('created_at', -1)],
+        )
+        return row is not None
+    except Exception:
+        return False
+
+
 async def evaluate_watches() -> dict:
     """Evaluate all active watches with cheap code; enqueue targeted wakes on trips.
     Returns a small summary dict. Safe to call on a timer."""
@@ -634,6 +667,19 @@ async def evaluate_watches() -> dict:
 
     if cycle_control.is_paused or cycle_control.is_stopped:
         return {"status": "skipped", "reason": "paused/stopped"}
+
+    from app.services.parameter_store import get_param as _get_param
+
+    # The operator master switch. cycle_control above is a STUB (is_paused is
+    # hard-coded False, PAUSE_CYCLE answers "not_supported"), so before this
+    # param there was no way to quiet the desk short of a deploy.
+    if int(_get_param("WATCH_DESK_ENABLED")) == 0:
+        return {"status": "skipped", "reason": "watch desk disabled (WATCH_DESK_ENABLED=0)"}
+
+    if _human_stop_cooldown_active():
+        logger.info("[WatchDesk] holding all wakes — a human stopped a cycle "
+                    "within the last %.0fh", HUMAN_STOP_QUIET_HOURS)
+        return {"status": "skipped", "reason": "human stop cooldown"}
 
     now = datetime.now(timezone.utc)
     # Deactivate expired watches first.
@@ -649,7 +695,6 @@ async def evaluate_watches() -> dict:
     if not watches:
         return {"status": "ok", "watches": 0, "fired": 0}
 
-    from app.services.parameter_store import get_param as _get_param
     wake_budget = int(_get_param("MAX_WATCH_WAKES_PER_DAY"))
     budget_left = wake_budget - _wakes_today()
     fired_total = 0
