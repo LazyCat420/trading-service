@@ -1052,6 +1052,30 @@ class SchedulerService:
                     "[SCHEDULER] Failed to register flash briefings: %s", e
                 )
 
+            # ── Daily Pre-Market Morning Briefing (Mon-Fri 05:30 PT / 08:30 ET) ──
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_morning_briefing,
+                    trigger=CronTrigger(
+                        day_of_week="mon-fri",
+                        hour=5,
+                        minute=30,
+                        timezone=local_tz,
+                    ),
+                    id="morning_briefing_daily",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                logger.info(
+                    "[SCHEDULER] Registered daily morning briefing (Mon-Fri 05:30 %s / pre-market)",
+                    local_tz,
+                )
+            except Exception as e:
+                logger.warning(
+                    "[SCHEDULER] Failed to register morning briefing: %s", e
+                )
+
 
 
             # ── Background Ticker Validation ──
@@ -1768,6 +1792,18 @@ class SchedulerService:
             await generate_flash_briefing(report_type=report_type)
         except Exception as e:
             logger.error(f"[SCHEDULER] Flash briefing ({report_type or 'auto'}) generation failed: {e}")
+
+    @staticmethod
+    async def _run_morning_briefing():
+        """Generate a pre-market morning briefing."""
+        if cycle_control.is_paused:
+            logger.info("[SCHEDULER] Skipping morning briefing: System is PAUSED.")
+            return
+        try:
+            from app.services.morning_briefing import generate_morning_briefing
+            await generate_morning_briefing()
+        except Exception as e:
+            logger.error(f"[SCHEDULER] Morning briefing generation failed: {e}")
 
     @staticmethod
     async def _run_watchdesk_evaluation():
