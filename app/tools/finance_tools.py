@@ -199,6 +199,27 @@ async def get_finnhub_news(ticker: str) -> str:
     # exact collector for this exact ticker, so the network trip below is
     # usually redundant — and it was costing 36s at p50 / 65s at p95 against a
     # 60s bridge deadline (16% of calls failed outright).
+    def _order_for_reading(rows: list) -> list:
+        """Headline-named articles first, then recency.
+
+        `published_at DESC` alone made the newest passing mention the lead
+        item: NVDA's top article was an Asian market wrap, AAPL's an essay on
+        central banking (measured 2026-08-25 — only 19.7% of stored articles
+        name their ticker in the headline). Within each band recency still
+        rules, so nothing gets buried — off-topic rows just stop outranking
+        on-topic ones.
+        """
+        try:
+            from app.services.watch_desk import _title_names_ticker
+
+            return sorted(
+                rows,
+                key=lambda r: (not _title_names_ticker(ticker, r[1] or ""),
+                               -(r[3].timestamp() if r[3] else 0)),
+            )
+        except Exception:
+            return rows
+
     window_days = 14
     rows = _fetch(window_days)
 
@@ -255,6 +276,7 @@ async def get_finnhub_news(ticker: str) -> str:
         logger.warning("[news] grounded extraction unavailable: %s", e)
 
     display_rows = []
+    rows = _order_for_reading(rows)
     for r in rows:
         article_id, title, publisher, published_at, body = r
         if article_id in facts_by_id and render_facts_line is not None:

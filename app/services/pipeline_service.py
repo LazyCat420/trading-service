@@ -947,6 +947,34 @@ class PipelineService:
         from app.utils.trace import set_trace_id
         set_trace_id(cycle_id)
 
+        # ── LLM pre-flight ──
+        # A cycle is 10-40 minutes of wall-clock and 30+ agent calls; if the
+        # model cannot answer, every one of them fails identically. Measured
+        # 2026-08-21..24: the vLLM backend was down FOUR DAYS and 28 cycles ran
+        # to completion anyway (112x "All 5 attempts failed", 51/53 analyses
+        # DEGRADED at confidence 0), each burning a watch-desk wake. The probe
+        # is a tiny tool-less completion through the same route agents use;
+        # only POSITIVE proof of a dead endpoint aborts (probe machinery
+        # failures proceed — a broken probe must not block all trading).
+        try:
+            from app.services.llm_preflight import llm_can_answer
+
+            _llm_ok, _llm_detail = await llm_can_answer()
+        except Exception as _pf_err:  # noqa: BLE001
+            _llm_ok, _llm_detail = True, f"probe-skipped: {_pf_err}"
+        if not _llm_ok:
+            logger.error("[PipelineService] LLM pre-flight failed — aborting %s: %s",
+                         cycle_id, _llm_detail)
+            cls.emit("starting", "LLM_PREFLIGHT_FAILED",
+                     f"🛑 Cycle aborted before any agent ran: {_llm_detail}",
+                     status="error",
+                     data={"kind": "llm_preflight", "detail": _llm_detail})
+            cls._state.update({"status": "error",
+                               "progress": f"LLM unavailable — cycle aborted: {_llm_detail}"})
+            cls.save_state()
+            _persist_summary("error", [], error=f"llm_preflight_failed: {_llm_detail}")
+            return
+
         try:
             # ── Set prism_client.url ONCE for the entire cycle ──
             # This prevents a race condition where concurrent agent calls
@@ -2383,6 +2411,16 @@ class PipelineService:
             # cycle_run_summaries feeds the autoresearch audit and the
             # /autoresearch/run endpoint's "latest cycle" lookup.
             cycle_summary = _persist_summary("done", tickers, results, report_generated=report_written)
+
+            # A fully-DEGRADED cycle means every agent call failed after the
+            # pre-flight passed (partial outage). Two in a row pages the desk
+            # — see app/services/degraded_alert.py for the 4-day incident this
+            # exists to catch.
+            try:
+                from app.services.degraded_alert import maybe_alert_degraded_streak
+                await asyncio.to_thread(maybe_alert_degraded_streak)
+            except Exception as _da_err:  # noqa: BLE001
+                logger.warning("[PipelineService] degraded-streak check failed: %s", _da_err)
             try:
                 if cycle_summary:
                     import uuid as _uuid

@@ -463,7 +463,7 @@ def _recent_news(ticker: str, hours: int = 48) -> list[tuple]:
             {
                 "ticker": ticker,
                 "collected_at": {"$gte": datetime.now(timezone.utc) - timedelta(hours=int(hours))},
-                "ticker_attribution": {"$ne": "query_fallback"},
+                "ticker_attribution": {"$nin": ["query_fallback", "provider_unverified"]},
                 "quality_status": {"$ne": "discarded"},
             },
             ["title", "collected_at"],
@@ -497,6 +497,19 @@ def _title_names_ticker(ticker: str, title: str) -> bool:
     """
     if not ticker or not title:
         return False
+    # An analyst-action headline names the BANK as the actor, not the subject:
+    # "JP Morgan Maintains Overweight on Dick's Sporting Goods" woke the JPM
+    # watch on 2026-08-25, the first post-materiality wake — right company
+    # name, wrong company's news. The extraction layer already has the test
+    # (BAC/JPM/GS/MS/C/WFC + rating vocabulary near the mention); the wake
+    # path just never consulted it.
+    try:
+        from app.collectors.news_collector import _is_analyst_only_reference
+
+        if _is_analyst_only_reference(ticker, title):
+            return False
+    except Exception:
+        pass
     if re.search(rf"(?<!\w){re.escape(ticker)}(?!\w)", title):
         return True
     try:

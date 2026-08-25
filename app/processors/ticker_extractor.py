@@ -449,6 +449,8 @@ healthcare pharma pharmaceuticals motors electric power water gas oil gold silve
 mining products brands foods restaurants stores one two three united states usa north
 south east west central grand value growth income equity core total select advantage
 premier prime plus max pro home life care data digital network networks world
+bullish bearish rally surge momentum breakout dividend yield futures options
+hedge macro alpha beta delta gamma vega blue chip small mid large cap
 """.split())
 
 

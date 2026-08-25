@@ -333,9 +333,16 @@ def _is_analyst_only_reference(ticker: str, text: str) -> bool:
             
     # Check if all occurrences of the aliases/names are followed or preceded by analyst keywords
     analyst_kws = [
-        "analyst", "securities", "equity research", "strategist", "economist", 
-        "brokerage", "firm", "research", "note", "report", "index", "upgrades", 
-        "downgrades", "rating", "price target", "target price"
+        "analyst", "securities", "equity research", "strategist", "economist",
+        "brokerage", "firm", "research", "note", "report", "index", "upgrades",
+        "downgrades", "rating", "price target", "target price",
+        # Rating-ACTION verbs and grades. "JP Morgan Maintains Overweight on
+        # Dick's Sporting Goods" armed a JPM wake on 2026-08-25 because none
+        # of the words above appear within ±50 chars of the bank's name — the
+        # action vocabulary itself was missing. Safe against the bank's own
+        # news: the own-stock patterns short-circuit before this list is read.
+        "maintains", "reiterates", "initiates", "overweight", "underweight",
+        "outperform", "underperform", "upgraded", "downgraded", "sees upside",
     ]
     
     has_any_mention = False
@@ -594,7 +601,11 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
 
             res_items = []
             if detected_tickers:
-                for ticker in detected_tickers:
+                # Same cap-ordering fix as the per-ticker writers below: the
+                # RSS path fans one story out to every detected symbol, and the
+                # 5-per-URL cap must keep headline subjects, not a set's
+                # arbitrary first five.
+                for ticker in rank_tickers_for_fanout(detected_tickers, [], title):
                     ticker_article_id = _get_article_id(title, ticker)
                     res_items.append({
                         "id": ticker_article_id,
@@ -894,7 +905,16 @@ async def collect_finnhub_news(
             # Fallback attribution is recorded so wake triggers can refuse it
             # (see collect_finnhub_news for the measured ghost-wake case).
             if detected_tickers:
-                tickers_to_insert = list(detected_tickers)
+                # Ranked, not set-ordered: url_fanout_exceeded caps at 5 rows
+                # per URL, and iterating a set let an arbitrary five survive —
+                # measured 2026-08-25: in 15 of 60 fanned-out stories NO stored
+                # ticker was even named in the headline ("Why Is Newmont Stock
+                # Surging?" stored under BHP/JPM/BLSH..., NEM lost the coin
+                # flip). Ranking was wired into the rotator on 2026-07-27 and
+                # never into these writers.
+                tickers_to_insert = rank_tickers_for_fanout(
+                    detected_tickers, [ticker.upper()], headline
+                )
                 attribution = "detected"
             else:
                 tickers_to_insert = [ticker.upper()]
@@ -1037,7 +1057,16 @@ async def collect_yfinance_news(ticker: str, since: datetime.datetime | None = N
             # Fallback attribution is recorded so wake triggers can refuse it
             # (see collect_finnhub_news for the measured ghost-wake case).
             if detected_tickers:
-                tickers_to_insert = list(detected_tickers)
+                # Ranked, not set-ordered: url_fanout_exceeded caps at 5 rows
+                # per URL, and iterating a set let an arbitrary five survive —
+                # measured 2026-08-25: in 15 of 60 fanned-out stories NO stored
+                # ticker was even named in the headline ("Why Is Newmont Stock
+                # Surging?" stored under BHP/JPM/BLSH..., NEM lost the coin
+                # flip). Ranking was wired into the rotator on 2026-07-27 and
+                # never into these writers.
+                tickers_to_insert = rank_tickers_for_fanout(
+                    detected_tickers, [ticker.upper()], title
+                )
                 attribution = "detected"
             else:
                 tickers_to_insert = [ticker.upper()]

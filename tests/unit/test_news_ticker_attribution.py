@@ -358,15 +358,20 @@ def test_watch_desk_news_read_refuses_fallback_rows(monkeypatch):
         """Does this document satisfy the filter's attribution/quality parts?"""
         for field in ("ticker_attribution", "quality_status"):
             cond = q[field]
-            assert set(cond) == {"$ne"}, f"unexpected operator on {field}: {cond}"
-            # Mongo's $ne matches a MISSING or null field too — which is what
-            # makes it the exact translation of `(col IS NULL OR col != x)`.
-            if doc.get(field) is not None and doc.get(field) == cond["$ne"]:
+            # Both operators are null-tolerant, which is the property this
+            # guard exists to pin: $ne and $nin each match a MISSING or null
+            # field, i.e. the exact translation of `(col IS NULL OR col != x)`.
+            # $nin arrived 2026-08-25 when `provider_unverified` joined
+            # `query_fallback` on the refused list.
+            assert set(cond) <= {"$ne", "$nin"}, f"unexpected operator on {field}: {cond}"
+            refused = [cond["$ne"]] if "$ne" in cond else list(cond["$nin"])
+            if doc.get(field) is not None and doc.get(field) in refused:
                 return False
         return True
 
     # Refused.
     assert not matches({"ticker_attribution": "query_fallback"})
+    assert not matches({"ticker_attribution": "provider_unverified"})
     assert not matches({"quality_status": "discarded"})
     # Legacy NULLs and absent fields stay eligible — tightening these to
     # fail-closed would blind every watch on pre-2026-08-07 rows.

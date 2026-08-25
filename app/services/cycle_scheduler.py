@@ -915,6 +915,15 @@ class SchedulerService:
                     coalesce=True,
                 )
                 scheduler.add_job(
+                    SchedulerService._run_congress_collection,
+                    trigger=CronTrigger(hour=5, minute=0,
+                                        timezone=pytz.timezone("America/Los_Angeles")),
+                    id="congress_collection",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                scheduler.add_job(
                     SchedulerService._run_economic_calendar_collection,
                     trigger=IntervalTrigger(hours=12),
                     id="economic_calendar_collection",
@@ -1577,6 +1586,23 @@ class SchedulerService:
             logger.error("[SCHEDULER] Insider collection failed: %s", e)
 
     @staticmethod
+    async def _run_congress_collection():
+        """CapitolTrades sweep → congress_trades.
+
+        This job did not exist before 2026-08-25: `congress_collector.collect_all`
+        had NO caller anywhere (its docstring said "Schedule: Run daily" since it
+        was written), so the feed sat frozen at its last manual backfill —
+        newest disclosure 2026-07-03, 7 weeks stale — while build_alt_data_block
+        read a 90-day congress window for every desk."""
+        try:
+            from app.collectors.congress_collector import collect_all
+
+            result = await collect_all()
+            logger.info("[SCHEDULER] Congress trades collection: %s", result)
+        except Exception as e:
+            logger.error("[SCHEDULER] Congress collection failed: %s", e)
+
+    @staticmethod
     async def _run_economic_calendar_collection():
         """TradingEconomics calendar scrape → economic_calendar (read by
         the get_upcoming_events tool's macro section)."""
@@ -1734,7 +1760,7 @@ class SchedulerService:
                     f"({proven or 0} with positive proven 1y alpha); "
                     f"latest disclosure {latest}"
                 )
-                mongo_store.update_docs('discovered_tickers', {'ticker': ticker, 'source': source}, {'$set': {'score': score, 'context': context, 'discovered_at': datetime.now(timezone.utc)}}, upsert=True)
+                mongo_store.update_docs('discovered_tickers', {'ticker': ticker, 'source': source}, {'$set': {'score': score, 'context': context, 'discovered_at': datetime.now(timezone.utc)}, '$setOnInsert': {'validation_status': 'pending'}}, upsert=True)
                 written += 1
             return written
 

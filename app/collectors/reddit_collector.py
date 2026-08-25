@@ -454,7 +454,15 @@ async def run_reddit_purge_discovery(limit: int = 15, use_llm: bool = False) -> 
                 mongo_store.update_docs(
                     'discovered_tickers',
                     {'ticker': ticker, 'source': 'reddit-purge'},
-                    {'$set': {'score': confidence, 'context': f"Reddit Purge score: {score}", 'discovered_at': datetime.datetime.now(datetime.timezone.utc)}},
+                    # validation_status only on INSERT: background_validation
+                    # promotes pending→valid/rejected, and re-marking a valid
+                    # row pending would strip it from the discovery merge.
+                    # Under Postgres this was a column DEFAULT; no Mongo writer
+                    # supplied it, so the 5-min background_validation job
+                    # matched nothing and pipeline_service's
+                    # validation_status=="valid" merge returned 0 forever.
+                    {'$set': {'score': confidence, 'context': f"Reddit Purge score: {score}", 'discovered_at': datetime.datetime.now(datetime.timezone.utc)},
+                     '$setOnInsert': {'validation_status': 'pending'}},
                     upsert=True,
                 )
                 stored_tickers += 1

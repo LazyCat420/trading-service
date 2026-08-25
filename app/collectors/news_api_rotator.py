@@ -218,10 +218,30 @@ async def _persist_articles(
         # them would put an unverified vendor claim behind the same mark the
         # watch desk trusts to arm a trade-enabled wake.
         if article.tickers:
-            detected = rank_tickers_for_fanout(
-                article.tickers, requested_tickers, article.title
-            )
-            attribution = "provider"
+            # The vendor's entity tags, now VERIFIED against the text we
+            # actually stored. Measured 2026-08-25: only ~37-52% of
+            # provider-tagged rows name the company anywhere in title+body —
+            # the worst attribution class once our own extractor was fixed.
+            # Tags that pass the same relevance gate our extractor uses keep
+            # `provider`; the rest are stored under `provider_unverified` so
+            # every reader can choose to refuse them (the watch desk does).
+            from app.collectors.news_collector import _is_article_relevant_to_ticker
+
+            _vendor_text = f"{article.title} {summary}"
+            _verified = [
+                t for t in article.tickers
+                if _is_article_relevant_to_ticker(str(t).upper(), _vendor_text)
+            ]
+            if _verified:
+                detected = rank_tickers_for_fanout(
+                    _verified, requested_tickers, article.title
+                )
+                attribution = "provider"
+            else:
+                detected = rank_tickers_for_fanout(
+                    article.tickers, requested_tickers, article.title
+                )
+                attribution = "provider_unverified"
         else:
             full_text = f"{article.title} {summary}"
             detected = rank_tickers_for_fanout(
