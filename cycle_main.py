@@ -190,8 +190,12 @@ async def poll_system_commands(shutdown: asyncio.Event):
                         result = {"status": "not_supported", "message": f"{cmd_type} not supported in V3"}
                     elif cmd_type == "FLASH_BRIEFING":
                         from app.services.flash_briefing import generate_flash_briefing
-                        await generate_flash_briefing()
-                        result = {"status": "ok"}
+                        briefing_text = await generate_flash_briefing()
+                        result = {"status": "ok", "briefing": briefing_text}
+                    elif cmd_type in ("MORNING_BRIEFING", "GENERATE_MORNING_BRIEFING"):
+                        from app.services.morning_briefing import generate_morning_briefing
+                        briefing_text = await generate_morning_briefing()
+                        result = {"status": "ok", "briefing": briefing_text}
                     elif cmd_type == "DISCARD_CHECKPOINT":
                         # intentional no-op
                         result = {"status": "ok", "message": "No checkpoint system active"}
