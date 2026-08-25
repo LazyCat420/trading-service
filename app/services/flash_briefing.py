@@ -216,17 +216,9 @@ async def generate_flash_briefing(report_type: str | None = None) -> str | None:
         else:
             report_type = "after_hours"
             
-    logger.info(f"[FLASH] Generating flash briefing (type: {report_type})...")
+    logger.info(f"[FLASH] Generating live market update (type: {report_type})...")
 
-    # Fetch fresh articles before generating briefing
-    try:
-        from app.collectors.news_collector import collect_all
-        logger.info("[FLASH] Fetching fresh articles before generating briefing...")
-        await collect_all()
-    except ImportError:
-        logger.info("[FLASH] news_collector not available, skipping article fetch")
-
-    # Determine database interval and build context
+    # Determine database interval and build context from recent incoming articles
     news_cutoff = datetime.now(timezone.utc) - timedelta(
         hours=8 if report_type == "after_hours" else 4
     )
