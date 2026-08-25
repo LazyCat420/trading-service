@@ -350,6 +350,28 @@ def mock_llm():
 
 
 @pytest.fixture(autouse=True)
+def reset_peer_session_cache():
+    """The peer-session probe in technical_baseline memoises per (market,
+    latest, as_of) with a 5-minute TTL — correct in production, but a
+    process-global. Without this reset, one test's stubbed `distinct_values`
+    answer is served to the NEXT test asking for the same key: measured as 3
+    spurious failures in TestTradingDayAgeUsesPeers plus the freshness-seam
+    tests the day the cache shipped — shared state crossing test boundaries,
+    the same genus as the autouse fixture that handed back a cursor."""
+    try:
+        from app.quant import technical_baseline as _tb
+        getattr(_tb, "_PEER_SESSION_CACHE", {}).clear()
+    except Exception:
+        pass
+    yield
+    try:
+        from app.quant import technical_baseline as _tb
+        getattr(_tb, "_PEER_SESSION_CACHE", {}).clear()
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
 def patch_llm(mock_llm):
     """Patch the LLM singleton so all modules share the mock.
     
