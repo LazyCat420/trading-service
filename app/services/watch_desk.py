@@ -27,6 +27,7 @@ Trigger types (JSON, in `ticker_watches.triggers`):
   {"type":"staleness","max_days":10}                              # time backstop
 """
 
+import re
 import json
 import logging
 import uuid
@@ -472,6 +473,51 @@ def _recent_news(ticker: str, hours: int = 48) -> list[tuple]:
         return []
 
 
+def _title_names_ticker(ticker: str, title: str) -> bool:
+    """Does this headline actually NAME the watched company?
+
+    A wake is a trade-enabled cycle, so the bar is the headline, not the body.
+    The old test was `keyword in title.lower()` with no reference to the
+    ticker at all: any headline carrying a category word ("earnings",
+    "stake", "guidance") woke whichever watch happened to have the article
+    filed under it.
+
+    MEASURED 2026-08-24 over the 80 news wakes of the preceding 14 days:
+    **65 of them (81%) fired on a headline about a different company** — a C
+    wake on "CrowdStrike Stock (CRWD) Could Swing 9%", a JPM wake on "Seplat
+    leads as energy firms post N2.57tn revenue", an ALLY wake on "Berkshire
+    Hathaway Boosted Its Alphabet Stake 83%". All 15 that name the company in
+    the headline are genuinely about it, and the discrimination is exact on
+    the same ticker: this refuses the Berkshire/Alphabet story for ALLY and
+    keeps "Ally Financial (ALLY) Down 3.5% Since Last Earnings Report".
+
+    Company labels come from the registry through `label_is_usable`, so the
+    two corrupt rows that made "first" a name for FCF cannot re-open the hole.
+    """
+    if not ticker or not title:
+        return False
+    if re.search(rf"(?<!\w){re.escape(ticker)}(?!\w)", title):
+        return True
+    try:
+        from app.processors.ticker_extractor import get_registry, label_is_usable
+
+        company = get_registry().lookup_symbol(ticker)
+        if not company:
+            return False
+        labels = [company.name, *(company.aliases or [])]
+        low = title.lower()
+        for label in labels:
+            if not label or not label_is_usable(label):
+                continue
+            if re.search(rf"(?<!\w){re.escape(label.lower())}(?!\w)", low):
+                return True
+    except Exception:
+        # Registry unavailable: fall back to the symbol test already done
+        # above rather than failing open into a trade-enabled wake.
+        return False
+    return False
+
+
 # ─── Trigger evaluation ──────────────────────────────────────────────────────
 def _eval_trigger(trig: dict, ctx: dict, watch: dict, market_open: bool = True) -> tuple[bool, str, float | None]:
     """Return (fired, human_detail, value). Pure code, no LLM.
@@ -525,6 +571,15 @@ def _eval_trigger(trig: dict, ctx: dict, watch: dict, market_open: bool = True) 
             low = title.lower()
             for kw in kws:
                 if kw in low:
+                    # The category keyword says the story is material; it says
+                    # nothing about WHO it is material to. Require the headline
+                    # to name this company before arming a trade-enabled wake.
+                    if not _title_names_ticker(ctx["ticker"], title):
+                        logger.info(
+                            "[watch_desk] %s: '%s' matched category '%s' but does not name the company — no wake",
+                            ctx["ticker"], title[:90], kw,
+                        )
+                        break
                     return True, f"{ctx['ticker']} material news: “{title[:120]}”", None
     elif typ == "staleness":
         # Fires when the watch has gone max_days without any fire (backstop).
