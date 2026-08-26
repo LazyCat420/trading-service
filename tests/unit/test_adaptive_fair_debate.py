@@ -363,3 +363,33 @@ def test_a_tool_carrying_agent_never_has_a_single_turn_budget():
         "a tool-carrying agent needs one turn to call and one to answer: "
         + "; ".join(offenders)
     )
+
+
+def test_every_agents_numbered_rules_number_once():
+    """The judge's CRITICAL RULES ran 1-8 and then a second '5.' — a leftover
+    from inserting rules 5-8 without renumbering the tail (found by the
+    2026-08-26 behavioral audit). A duplicated number makes 'rule 5' ambiguous
+    to the model and to every prompt edit that cites it. Sweep all agents:
+    within any one numbered list, no leading integer may repeat."""
+    import importlib
+    import pkgutil
+    import re
+
+    import app.v3.agents as pkg
+
+    offenders = []
+    for mod_info in pkgutil.iter_modules(pkg.__path__):
+        module = importlib.import_module(f"app.v3.agents.{mod_info.name}")
+        prompt = getattr(module, "SYSTEM_PROMPT", "") or ""
+        seen: set[int] = set()
+        for line in prompt.splitlines():
+            m = re.match(r"^(\d+)\. ", line)
+            if not m:
+                continue
+            n = int(m.group(1))
+            if n in (0, 1):
+                seen = set()  # a fresh list restarts the numbering
+            if n in seen:
+                offenders.append(f"{mod_info.name}: rule number {n} repeats")
+            seen.add(n)
+    assert not offenders, "; ".join(offenders)

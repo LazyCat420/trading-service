@@ -455,6 +455,75 @@ async def _persist_quant_signals(desk: Any, cycle_id: str, artifact: dict) -> No
     )
 
 
+async def _persist_junior_market_context(desk: Any, cycle_id: str, artifact: dict) -> None:
+    """Post the junior's `market_context` section from its artifact, if absent.
+
+    Same failure shape as the quant's `signals` (see _persist_quant_signals):
+    the prompt calls the whiteboard write MANDATORY, but a model that emits its
+    final JSON without taking the tool step simply never writes it. Measured
+    2026-08-26: 0/48 desks before 08-19, 54/62 (87%) since — a residual ~1-in-8
+    miss on the one section every downstream desk is told to read.
+
+    Unlike the quant hook this one is a FALLBACK, not the primary writer: when
+    the agent did make its write, posting again would supersede the agent's own
+    words with a mechanical digest (write_section versions rather than
+    duplicates), so an existing section wins and this returns without writing.
+
+    The artifact reliably carries the promised content — `key_findings` is
+    "your 2-3 load-bearing findings" almost verbatim — so the derivation is a
+    selection, not a summary.
+    """
+    from app.agents.whiteboard import whiteboard
+
+    existing = await whiteboard.get_section(desk.ticker, cycle_id, "market_context")
+    if existing:
+        return
+
+    findings = [
+        str(f).strip()
+        for f in (artifact.get("key_findings") or [])
+        if isinstance(f, (str, int, float)) and str(f).strip()
+    ][:3]
+
+    catalyst = artifact.get("catalyst_call") or {}
+    catalyst_line = ""
+    if isinstance(catalyst, dict) and catalyst.get("catalyst"):
+        catalyst_line = (
+            f"Catalyst call: {catalyst.get('direction') or 'UNSTATED'} "
+            f"on {catalyst['catalyst']}"
+        )
+        if catalyst.get("already_priced_in"):
+            catalyst_line += " (already priced in)"
+        catalyst_line += "."
+
+    # No stub posts — an absent section reads as "the junior had nothing",
+    # an empty one reads as data. Same doctrine as the quant's signals guard.
+    if not findings and not catalyst_line:
+        logger.warning(
+            "[V3Runner] %s: junior artifact carried no key_findings or "
+            "catalyst_call — not posting a market_context stub",
+            desk.ticker,
+        )
+        return
+
+    text = " ".join(findings)
+    if catalyst_line:
+        text = f"{text} {catalyst_line}".strip()
+
+    await whiteboard.write_section(
+        ticker=desk.ticker,
+        cycle_id=cycle_id,
+        section="market_context",
+        content={"text": text, "derived_from_artifact": True},
+        author_agent="v3_junior_analyst",
+    )
+    logger.info(
+        "[V3Runner] %s: market_context derived from desk_note artifact "
+        "(agent skipped its mandatory whiteboard write)",
+        desk.ticker,
+    )
+
+
 def _scoped_to_the_agent(fn):
     """Open a (cycle, phase, ticker) scope around an agent run, and close it.
 
@@ -1869,6 +1938,17 @@ async def run_v3_agent(
             except Exception as e:
                 logger.warning(
                     "[V3Runner] quant signals whiteboard write failed for %s: %s: %s",
+                    desk.ticker, type(e).__name__, e,
+                )
+
+        # Same agent-name pin as the quant block above, for the same reason:
+        # this hook must never fire on another agent's artifact.
+        if agent_name == "v3_junior_analyst":
+            try:
+                await _persist_junior_market_context(desk, cycle_id, artifact)
+            except Exception as e:
+                logger.warning(
+                    "[V3Runner] junior market_context fallback failed for %s: %s: %s",
                     desk.ticker, type(e).__name__, e,
                 )
 

@@ -135,6 +135,41 @@ def test_no_v3_whitelist_is_empty():
         )
 
 
+async def test_registration_refuses_an_empty_whitelist(monkeypatch):
+    """The seam-side twin of test_no_v3_whitelist_is_empty: that test guards
+    the app/v3/agents directory, but any module reaching register_v3_agents
+    with an empty TOOL_WHITELIST would still register as UNSCOPED (prism
+    force-adds the core tool set). The registration itself must fail closed.
+
+    With PRISM_URL empty the url loop is a no-op and an unguarded module
+    would fall through to `results[module] = True` — so this test goes red
+    if the guard is removed, without any network mock.
+    """
+    import sys
+    import types
+
+    from app.config import settings
+    from app.v3 import prism_registration
+
+    fake_path = "app.v3.agents._fake_empty_whitelist_for_test"
+    fake = types.ModuleType(fake_path)
+    fake.AGENT_NAME = "v3_fake_empty"
+    fake.SYSTEM_PROMPT = "test-only module; never registered"
+    fake.TOOL_WHITELIST = []
+    monkeypatch.setitem(sys.modules, fake_path, fake)
+    monkeypatch.setattr(
+        prism_registration, "_discover_v3_agent_modules", lambda: [fake_path]
+    )
+    monkeypatch.setattr(settings, "PRISM_URL", "", raising=False)
+
+    results = await prism_registration.register_v3_agents()
+
+    assert results[fake_path] is False, (
+        "an empty TOOL_WHITELIST was accepted for registration — it would "
+        "register as unscoped"
+    )
+
+
 def test_agents_a_block_does_not_reach_keep_their_tools():
     """The refusals, pinned so a later pass does not 'finish the job'.
 

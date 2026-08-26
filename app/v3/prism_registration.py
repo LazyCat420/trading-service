@@ -224,6 +224,25 @@ async def register_v3_agents() -> dict[str, bool]:
             system_prompt = getattr(module, "SYSTEM_PROMPT", "You are an autonomous V3 trading agent. Your identity will be provided dynamically at runtime.")
             tool_whitelist = module.TOOL_WHITELIST
 
+            # Refuse an empty whitelist outright. `[]` does not mean "no
+            # tools" here: prism's resolver force-adds the whole core tool
+            # set to a custom agent (coreToolsLocked is dropped on register),
+            # so an emptied whitelist would register as UNSCOPED — the exact
+            # inversion test_no_v3_whitelist_is_empty guards against, but
+            # that test only covers app/v3/agents. This is the seam every
+            # registration passes through, so fail closed here too: skip the
+            # registration and leave the previously-registered persona (with
+            # its DENY policies) in place rather than widen it.
+            if not tool_whitelist:
+                logger.error(
+                    "[V3Prism] REFUSING to register %s: empty TOOL_WHITELIST "
+                    "would register as unscoped (prism force-adds core tools). "
+                    "Declare the minimal honest scope instead.",
+                    module_path,
+                )
+                results[module_path] = False
+                continue
+
             # V3 agents get ONLY their strict role-specific whitelists.
             # No dynamic tool discovery — discover_and_enable_tools caused
             # agents to pull in 766 tools and blow the 262k context limit.
