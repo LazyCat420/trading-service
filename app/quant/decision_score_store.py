@@ -19,12 +19,20 @@ def record_decision_score(cycle_id: str, ticker: str, score: dict) -> None:
         return
     try:
         rr = score.get("risk_reward") or {}
+        from datetime import datetime, timezone
+
         mongo_store.upsert_doc(
             'decision_scores',
             {'cycle_id': cycle_id, 'ticker': ticker.strip().upper()},
             {
                 'cycle_id': cycle_id,
                 'ticker': ticker.strip().upper(),
+                # The PG table stamped this via a column default the cutover
+                # dropped: 130 of 442 rows (every one since 2026-08-19) had
+                # no created_at, so every date-windowed read — including the
+                # attack1 measurement-window census — reported them absent.
+                'id': str(uuid.uuid4()),
+                'created_at': datetime.now(timezone.utc),
                 'score': score.get("score"),
                 'band': score.get("band", "NOT_SCOREABLE"),
                 'baseline_confidence': score.get("confidence"),
