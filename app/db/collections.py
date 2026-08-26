@@ -6,11 +6,12 @@ collection name and the migration flag key were the same string --
 
     _TABLE = "embeddings"  # flag key in MONGO_STORE_BACKEND and Mongo collection name
 
-Breaking that conflation is the whole design. Flags (`mongo_store._BACKENDS`),
-the write guard (`pg_write_guard._guarded_tables`), the ledger and the generated
-specs all keep keying on the POSTGRES TABLE NAME. Only the physical collection
-is renamed, and only here. So every existing call site keeps passing a table
-name and changes zero lines, while the stored collections get standardized
+Breaking that conflation is the whole design. The migration-era flag map and
+write guard are gone (2026-08-19), but the ledger, the generated specs and
+every call site still key on the POSTGRES TABLE NAME. Only the physical
+collection is renamed, and only here. So every existing call site keeps
+passing a table name and changes zero lines, while the stored collections get
+standardized
 names today rather than never.
 
 Why now: 145 of the 158 collections do not exist yet, because their tables are
