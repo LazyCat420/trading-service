@@ -179,6 +179,78 @@ def admit_gatekeeper_selection(
     return kept, dropped
 
 
+def register_discovery_leads(
+    all_pool: dict[str, dict] | None,
+    discoveries: list[dict] | None,
+) -> list[str]:
+    """Enter Discovery Mode leads into the gatekeeper's candidate pool.
+
+    Discovery Mode's output was shown to the gatekeeper but never entered
+    `all_pool`, and `admit_gatekeeper_selection` fail-closed drops any pick
+    outside the pool — so every lead it ever surfaced was unselectable
+    (audited 2026-08-25, ch.97: shown in the table, dropped on pick, the
+    drop visible only in a log). Registering here, at the same seam the
+    bear-substitute carry uses, is what makes a lead a real candidate.
+
+    Returns the tickers newly registered (existing pool entries are never
+    overwritten — a Watchlist or Trending label outranks a Discovery one).
+    """
+    if all_pool is None:
+        return []
+    added: list[str] = []
+    for d in discoveries or []:
+        tkr = str((d or {}).get("ticker") or "").upper().strip()
+        if not tkr or tkr in all_pool:
+            continue
+        all_pool[tkr] = {
+            "label": d.get("src") or "Discovery Mode",
+            "source_count": 1,
+            "total_mentions": max(1, int(d.get("score") or 1)),
+        }
+        added.append(tkr)
+    return added
+
+
+def build_gatekeeper_selected_event(
+    *,
+    selected: list[str],
+    rejected: list[str],
+    pool_size: int,
+    degraded: bool,
+    tier_unknown: list[str],
+    rationale: str = "",
+) -> dict:
+    """The event a SUCCESSFUL gatekeeper selection appends.
+
+    Until 2026-08-25 only the failure paths (DEGRADED / SKIPPED / explicit)
+    emitted events; a normal selection lived in a log file that dies with
+    the container. This one row answers, for any past cycle: what was
+    picked, what the model named but admission dropped, how big the pool
+    was, whether the pick was the model's or the scoring engine's fallback,
+    and which selected names the mega-cap cap could not see (missing
+    `market_cap_tier`).
+    """
+    return {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "phase": "gatekeeper",
+        "step": "GATEKEEPER_SELECTED",
+        "detail": (
+            f"Gatekeeper selected {len(selected)}: {selected}"
+            + (f" (admission dropped: {sorted(set(rejected))})" if rejected else "")
+            + (" [scoring-engine fallback]" if degraded else "")
+        ),
+        "status": "ok",
+        "data": {
+            "selected": list(selected),
+            "rejected_by_admission": sorted(set(rejected)),
+            "pool_size": int(pool_size),
+            "degraded": bool(degraded),
+            "tier_unknown": sorted(set(tier_unknown)),
+            "rationale": str(rationale or "")[:500],
+        },
+    }
+
+
 # no_trade_reason vocabulary. These strings are simultaneously (a) persisted
 # per-row in result_json, (b) control-flow keys (trigger registration), and
 # (c) counted by summarize_ticker_results — set and match them ONLY through
@@ -1164,47 +1236,18 @@ class PipelineService:
                     now_utc = datetime.now(timezone.utc)
                     since_24h = now_utc - timedelta(hours=24)
 
-                    news_trends, reddit_trends, youtube_trends = [], [], []
-                    try:
-                        news_trends = [
-                            (d["_id"], d["mentions"])
-                            for d in mongo_store.aggregate("news_articles", [
-                                {"$match": {"ticker": {"$ne": None}, "published_at": {"$gt": since_24h}}},
-                                {"$group": {"_id": "$ticker", "mentions": {"$sum": 1}}},
-                                {"$sort": {"mentions": -1}},
-                                {"$limit": 40},
-                            ])
-                        ]
-                    except Exception as me:
-                        mongo_store.handle_mongo_read_failure("news_articles", "discovery news", me)
+                    # One authority for the aggregation AND each source's time
+                    # axis — this exact query used to live inline five times
+                    # across two files (ch.97 consolidation).
+                    from app.services.trend_sources import trending_mentions
+                    news_trends = trending_mentions(
+                        "news_articles", since_24h, limit=40, context="discovery news")
+                    reddit_trends = trending_mentions(
+                        "reddit_posts", since_24h, limit=30, context="discovery reddit")
+                    youtube_trends = trending_mentions(
+                        "youtube_transcripts", since_24h, limit=15, context="discovery youtube")
 
-                    try:
-                        reddit_trends = [
-                            (d["_id"], d["mentions"])
-                            for d in mongo_store.aggregate("reddit_posts", [
-                                {"$match": {"ticker": {"$ne": None}, "created_utc": {"$gt": since_24h}}},
-                                {"$group": {"_id": "$ticker", "mentions": {"$sum": 1}}},
-                                {"$sort": {"mentions": -1}},
-                                {"$limit": 30},
-                            ])
-                        ]
-                    except Exception as me:
-                        mongo_store.handle_mongo_read_failure("reddit_posts", "discovery reddit", me)
 
-                    try:
-                        youtube_trends = [
-                            (d["_id"], d["mentions"])
-                            for d in mongo_store.aggregate("youtube_transcripts", [
-                                {"$match": {"ticker": {"$ne": None}, "published_at": {"$gt": since_24h}}},
-                                {"$group": {"_id": "$ticker", "mentions": {"$sum": 1}}},
-                                {"$sort": {"mentions": -1}},
-                                {"$limit": 15},
-                            ])
-                        ]
-                    except Exception as me:
-                        mongo_store.handle_mongo_read_failure("youtube_transcripts", "discovery youtube", me)
-
-                        
                     # 2. Phase 4A: Cross-reference — track source count per ticker
                     source_tracker: dict[str, dict] = {}  # ticker -> {"sources": set, "mentions": int}
                     for rows, source_label in [
@@ -1625,6 +1668,10 @@ class PipelineService:
                             )
                             if discoveries:
                                 eligible_stocks.extend(discoveries)
+                                # A lead the pool does not hold is a lead the
+                                # gatekeeper cannot pick — admission is
+                                # fail-closed against `all_pool` (ch.97).
+                                register_discovery_leads(all_pool, discoveries)
                                 logger.info("[PipelineService] Discovery Mode added %d leads: %s",
                                             len(discoveries), [d["ticker"] for d in discoveries])
                                 PipelineStateDB.append_events(cycle_id, [{
@@ -1658,7 +1705,15 @@ class PipelineService:
                             past_reason = (past['reason'][:100] + "...").replace('|', '') if past and past.get('reason') else "N/A"
                             inst_str = f"{s.get('inst_funds', 0)}" if s.get('inst_funds', 0) > 0 else "-"
                             freshness_str = s.get("freshness", "NEW")
-                            md_lines.append(f"| {s['ticker']} | {s.get('score', 0):.1f} | {s.get('src', 'N/A')} | {freshness_str} | ${s.get('price', 0):.2f} | {s.get('chg', 0):+.2f}% | {s.get('rvol', 0):.2f}x | {sma_rel:+.2f}% | {s.get('rsi', 50):.1f} | {inst_str} | {past_verdict} | {past_reason} |")
+                            if s.get("no_market_data"):
+                                # Discovery Mode leads bypass the screener, so
+                                # there is no price/RSI/volume to show. The old
+                                # row rendered fabricated neutrals ($0.00, RSI
+                                # 50.0) — numbers that mean "we didn't look"
+                                # presented as if we had (ch.97).
+                                md_lines.append(f"| {s['ticker']} | {s.get('score', 0):.1f} | {s.get('src', 'N/A')} | {freshness_str} | n/a | n/a | n/a | n/a | n/a | {inst_str} | {past_verdict} | {past_reason} |")
+                            else:
+                                md_lines.append(f"| {s['ticker']} | {s.get('score', 0):.1f} | {s.get('src', 'N/A')} | {freshness_str} | ${s.get('price', 0):.2f} | {s.get('chg', 0):+.2f}% | {s.get('rvol', 0):.2f}x | {sma_rel:+.2f}% | {s.get('rsi', 50):.1f} | {inst_str} | {past_verdict} | {past_reason} |")
                             
                         snapshot_table = "\n".join(md_lines)
                         # -----------------------
@@ -1828,6 +1883,12 @@ class PipelineService:
                     # Enforce the mega-cap rule in code (it was prompt-only —
                     # "MAXIMUM ONE MEGA-CAP" — with zero enforcement, and NVDA
                     # ran on 13 of 14 days). Keep the first mega, drop the rest.
+                    # A missing `market_cap_tier` makes a name INVISIBLE to
+                    # this cap (AAPL and TSLA both carried None on 2026-08-25);
+                    # the names it could not judge are surfaced on the
+                    # GATEKEEPER_SELECTED event below, and
+                    # scripts/backfill_market_cap_tier.py repairs the data.
+                    _tier_unknown: list[str] = []
                     if len(selected) > 1:
                         try:
                             from app.services.ticker_meta import get_ticker_meta
@@ -1839,6 +1900,16 @@ class PipelineService:
                                     if mega_seen > 1:
                                         continue
                                 kept.append(t)
+                            _tier_unknown = [
+                                t for t in kept
+                                if not (_sel_meta.get(t) or {}).get("tier")
+                            ]
+                            if _tier_unknown:
+                                logger.warning(
+                                    "[PipelineService] Mega-cap cap ran blind on %d "
+                                    "selected name(s) with no market_cap_tier: %s",
+                                    len(_tier_unknown), _tier_unknown,
+                                )
                             if len(kept) < len(selected):
                                 logger.warning(
                                     "[PipelineService] Mega-cap cap enforced: dropped %s",
@@ -1869,6 +1940,27 @@ class PipelineService:
                             )
                         tickers = selected
                         logger.info("[PipelineService] Gatekeeper selected: %s. Rationale: %s", tickers, rationale)
+                        # A successful selection must leave the same durable
+                        # trail its failure paths always had — logs die with
+                        # the container (ch.97: the debug log had been dead
+                        # since Jul 13; no past cycle could answer "picked vs
+                        # got").
+                        try:
+                            PipelineStateDB.append_events(cycle_id, [
+                                build_gatekeeper_selected_event(
+                                    selected=tickers,
+                                    rejected=_rejected,
+                                    pool_size=len(all_pool),
+                                    degraded=bool(result.get("degraded")),
+                                    tier_unknown=_tier_unknown,
+                                    rationale=rationale,
+                                )
+                            ])
+                        except Exception as _sel_evt_err:  # noqa: BLE001 — telemetry must not abort the cycle
+                            logger.warning(
+                                "[PipelineService] GATEKEEPER_SELECTED emit failed: %s",
+                                _sel_evt_err,
+                            )
                     else:
                         logger.info("[PipelineService] Gatekeeper chose 0 tickers. Ending cycle early. Rationale: %s", rationale)
                         PipelineStateDB.append_events(cycle_id, [{

@@ -13,6 +13,26 @@ from app.db import mongo_query, mongo_store
 logger = logging.getLogger(__name__)
 
 
+def tier_for_market_cap(market_cap: float | None) -> str | None:
+    """Map a raw market cap to the tier vocabulary the mega-cap gate reads.
+
+    One authority for the thresholds: the boot-time loader below and
+    scripts/backfill_market_cap_tier.py both call this, so the gate's
+    `tier == "mega"` test can never drift from the writer's buckets.
+    """
+    if not market_cap:
+        return None
+    if market_cap >= 200e9:
+        return "mega"
+    if market_cap >= 10e9:
+        return "large"
+    if market_cap >= 2e9:
+        return "mid"
+    if market_cap >= 300e6:
+        return "small"
+    return "micro"
+
+
 async def load_sp500_universe(enrich: bool = False):
     """
     Loads S&P 500 tickers from the hardcoded constituent list into ticker_metadata.
@@ -63,16 +83,7 @@ async def load_sp500_universe(enrich: bool = False):
                 name = info.get("shortName", name)
 
                 if market_cap:
-                    if market_cap >= 200e9:
-                        market_cap_tier = "mega"
-                    elif market_cap >= 10e9:
-                        market_cap_tier = "large"
-                    elif market_cap >= 2e9:
-                        market_cap_tier = "mid"
-                    elif market_cap >= 300e6:
-                        market_cap_tier = "small"
-                    else:
-                        market_cap_tier = "micro"
+                    market_cap_tier = tier_for_market_cap(market_cap)
             except Exception as e:
                 logger.debug("Failed to enrich %s via yfinance: %s", ticker, e)
 

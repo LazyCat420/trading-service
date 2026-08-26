@@ -17,6 +17,30 @@ logger = logging.getLogger(__name__)
 MAX_DISCOVERY_TICKERS = 10
 
 
+def _symbol_is_known(ticker: str) -> bool:
+    """True only if some store has actually seen this symbol.
+
+    The web-search fallback regexes 1-5 letter words out of prose, so "CEO"
+    and "IPO" are candidate tickers until proven otherwise. Format checks
+    cannot reject them (they are letters-only). Known = present in
+    company_registry, ticker_metadata, or a non-rejected discovered_tickers
+    row. Fail-closed: a store error keeps the symbol out.
+    """
+    try:
+        if mongo_store.count_docs("company_registry", {"symbol": ticker}):
+            return True
+        if mongo_store.count_docs("ticker_metadata", {"ticker": ticker}):
+            return True
+        if mongo_store.count_docs(
+            "discovered_tickers",
+            {"ticker": ticker, "validation_status": {"$ne": "rejected"}},
+        ):
+            return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[DiscoveryMode] symbol existence check failed for %s: %s", ticker, e)
+    return False
+
+
 async def run_discovery(
     existing_tickers: list[str],
     emit: object = None,
@@ -61,61 +85,30 @@ async def run_discovery(
     except Exception as e:
         logger.warning("[DiscoveryMode] discovered_tickers query failed: %s", e)
 
-    # ── Source 3: News articles (last 12h, 3+ mentions) ──
-    try:
-        cutoff_news = datetime.now(timezone.utc) - timedelta(hours=12)
-        pipeline_news = [
-            {"$match": {"ticker": {"$ne": None}, "published_at": {"$gt": cutoff_news}}},
-            {"$group": {"_id": "$ticker", "mentions": {"$sum": 1}}},
-            {"$match": {"mentions": {"$gte": 3}}},
-            {"$sort": {"mentions": -1}},
-            {"$limit": 15},
-        ]
-        news_docs = mongo_store.aggregate("news_articles", pipeline_news)
-        for doc in news_docs:
-            ticker = doc.get("_id")
-            mentions = doc.get("mentions", 0)
-            if not ticker:
-                continue
-            tkr = str(ticker).upper().strip()
-            if tkr in existing_set or tkr in FALSE_TICKERS:
-                continue
-            if tkr not in source_tracker:
-                source_tracker[tkr] = {"sources": set(), "mentions": 0}
-            source_tracker[tkr]["sources"].add("News")
-            source_tracker[tkr]["mentions"] += mentions
-        if news_docs:
-            logger.info("[DiscoveryMode] News articles: %d trending tickers", len(news_docs))
-    except Exception as e:
-        logger.warning("[DiscoveryMode] News query failed: %s", e)
+    # ── Sources 3+4: trending mentions, last 12h with a 3+ floor ──
+    # Same aggregation the cycle-level discovery sweep runs; one authority
+    # in app/services/trend_sources.py (ch.97 consolidation).
+    from app.services.trend_sources import trending_mentions
 
-    # ── Source 4: Reddit posts (last 12h, 3+ mentions) ──
-    try:
-        cutoff_reddit = datetime.now(timezone.utc) - timedelta(hours=12)
-        pipeline_reddit = [
-            {"$match": {"ticker": {"$ne": None}, "created_utc": {"$gt": cutoff_reddit}}},
-            {"$group": {"_id": "$ticker", "mentions": {"$sum": 1}}},
-            {"$match": {"mentions": {"$gte": 3}}},
-            {"$sort": {"mentions": -1}},
-            {"$limit": 15},
-        ]
-        reddit_docs = mongo_store.aggregate("reddit_posts", pipeline_reddit)
-        for doc in reddit_docs:
-            ticker = doc.get("_id")
-            mentions = doc.get("mentions", 0)
-            if not ticker:
-                continue
+    cutoff_12h = datetime.now(timezone.utc) - timedelta(hours=12)
+    for collection, source_label in (
+        ("news_articles", "News"),
+        ("reddit_posts", "Reddit"),
+    ):
+        rows_tm = trending_mentions(
+            collection, cutoff_12h, limit=15, min_mentions=3,
+            context=f"discovery_mode {source_label.lower()}",
+        )
+        for ticker, mentions in rows_tm:
             tkr = str(ticker).upper().strip()
             if tkr in existing_set or tkr in FALSE_TICKERS:
                 continue
             if tkr not in source_tracker:
                 source_tracker[tkr] = {"sources": set(), "mentions": 0}
-            source_tracker[tkr]["sources"].add("Reddit")
+            source_tracker[tkr]["sources"].add(source_label)
             source_tracker[tkr]["mentions"] += mentions
-        if reddit_docs:
-            logger.info("[DiscoveryMode] Reddit posts: %d trending tickers", len(reddit_docs))
-    except Exception as e:
-        logger.warning("[DiscoveryMode] Reddit query failed: %s", e)
+        if rows_tm:
+            logger.info("[DiscoveryMode] %s: %d trending tickers", source_label, len(rows_tm))
 
     # ── Source 5: Institutional consensus ──
     try:
@@ -169,6 +162,10 @@ async def run_discovery(
             "freshness": "NEW",
             "delta_score": 1.0,
             "freshness_reason": f"discovered via {source_label}",
+            # Discovery leads bypass the screener: there is no real
+            # price/RSI/volume here. The renderer shows n/a instead of the
+            # fabricated neutrals the gatekeeper used to be judged on (ch.97).
+            "no_market_data": True,
         })
 
     logger.info(
@@ -216,6 +213,14 @@ async def _web_search_fallback(
                 continue
             if t in seen or len(t) < 2:
                 continue
+            # Every 1-5 letter word in a search result matches the regex, and
+            # sources 1-5's US filter cannot help here (it is format-based, and
+            # these are all-letters by construction). Now that discovery leads
+            # enter `all_pool` — i.e. become genuinely selectable — an invented
+            # symbol must be stopped HERE: only symbols some store has actually
+            # seen may pass (ch.97).
+            if not _symbol_is_known(t):
+                continue
             seen.add(t)
             candidates.append({
                 "ticker": t,
@@ -231,6 +236,7 @@ async def _web_search_fallback(
                 "freshness": "NEW",
                 "delta_score": 1.0,
                 "freshness_reason": "discovered via web search",
+                "no_market_data": True,
             })
         return candidates[:5]
     except Exception as e:
