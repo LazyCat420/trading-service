@@ -1045,6 +1045,11 @@ class PipelineService:
                                "progress": f"LLM unavailable — cycle aborted: {_llm_detail}"})
             cls.save_state()
             _persist_summary("error", [], error=f"llm_preflight_failed: {_llm_detail}")
+            # An aborted cycle writes no analyses, so the DEGRADED streak
+            # never forms — a standing abort condition must page directly.
+            from app.services.degraded_alert import alert_preflight_abort
+
+            alert_preflight_abort(_llm_detail)
             return
 
         try:

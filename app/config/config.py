@@ -159,6 +159,15 @@ class Settings(BaseSettings):
     ANALYSIS_CONFIDENCE_THRESHOLD: int = 70  # minimum confidence (0-100) to execute trades
     MAX_POSITION_SIZE_PCT: float = 0.10  # hard cap on a single trade's cash fraction (agent sizing is clamped to this)
 
+    # The dgx_spark box is a shared resource: prism's memory jobs load other
+    # models onto it, and model resolution trusts whatever the box currently
+    # serves. 2026-08-25/26 it answered Qwen3.6-35B during trading cycles and
+    # 45 of 74 desks died at the regime engine ("All 5 attempts failed") with
+    # no page. Decision agents refuse any served model that does not match
+    # this case-insensitive substring; update it when the decision model is
+    # deliberately switched (last switch: gemma→deepseek, 2026-08-03).
+    DECISION_MODEL_PATTERN: str = "deepseek"
+
     # ── World Simulator ──
     EXECUTION_MODE: str = "production"  # "production" | "staging" | "simulation"
     SIMULATION_TREND: str = "bullish"  # "bullish" | "bearish" | "neutral" | "volatile"

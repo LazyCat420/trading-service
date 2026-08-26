@@ -44,7 +44,7 @@ async def get_watchlist_snapshots(ticker_data: list[dict]) -> tuple[str, list]:
         )
         
         if df.empty:
-            return "Failed to fetch data."
+            return "Failed to fetch data.", []
 
         results = []
         

@@ -23,6 +23,62 @@ STREAK_TO_ALERT = 2          # consecutive fully-DEGRADED cycles
 DEDUPE_WINDOW_HOURS = 12.0
 ALERT_TYPE = "llm_degraded_streak"
 
+# Desk-level mortality that a cycle-level streak cannot see: 2026-08-23..26,
+# 45 of 74 desks died as board_degraded_fallback while healthy cycles
+# interleaved with the dead ones, so the all-DEGRADED streak never formed and
+# nothing paged for four days.
+PARTIAL_ALERT_TYPE = "llm_degraded_partial"
+PARTIAL_WINDOW_HOURS = 24.0
+PARTIAL_MIN_ROWS = 5         # don't page a quiet day on one bad desk
+PARTIAL_FRACTION = 0.5
+
+PREFLIGHT_ALERT_TYPE = "llm_preflight_abort"
+
+
+def _recent_alert(alert_type: str, window_hours: float) -> bool:
+    from app.db import mongo_store
+
+    return bool(mongo_store.find_docs(
+        "fund_alerts",
+        {
+            "alert_type": alert_type,
+            "created_at": {"$gte": datetime.now(timezone.utc) - timedelta(hours=window_hours)},
+        },
+        limit=1,
+    ))
+
+
+def alert_preflight_abort(detail: str) -> bool:
+    """Page when a cycle is aborted before any agent ran. Never raises.
+
+    An aborted cycle writes only an error summary; with no analyses written,
+    the DEGRADED streak below never fires, so a standing abort condition (a
+    dead endpoint, or another workload holding the decision box — the
+    ModelContractError case) would stop all trading silently.
+    """
+    try:
+        if _recent_alert(PREFLIGHT_ALERT_TYPE, DEDUPE_WINDOW_HOURS):
+            return False
+        from app.services.alert_service import record_fund_alert
+
+        record_fund_alert(
+            alert_type=PREFLIGHT_ALERT_TYPE,
+            entity_name="V3 pipeline",
+            detail=f"Cycle aborted at LLM pre-flight: {detail}",
+            severity="critical",
+        )
+        try:
+            from app.services.logging.webhook_alerter import trigger_alert
+
+            trigger_alert("Cycle aborted at LLM pre-flight", {"detail": detail[:500]})
+        except Exception:  # noqa: BLE001 — webhook is best-effort
+            pass
+        logger.error("[degraded_alert] pre-flight abort paged: %s", detail)
+        return True
+    except Exception as exc:  # noqa: BLE001 — alerting must never hurt the cycle
+        logger.warning("[degraded_alert] preflight alert failed (non-fatal): %s", exc)
+        return False
+
 
 def maybe_alert_degraded_streak() -> bool:
     """True if an alert was recorded. Never raises."""
@@ -51,18 +107,10 @@ def maybe_alert_degraded_streak() -> bool:
             else:
                 break
         if streak < STREAK_TO_ALERT:
-            return False
+            return _maybe_alert_partial_degradation()
 
         # Dedupe: one page per outage, not one per cycle.
-        recent = mongo_store.find_docs(
-            "fund_alerts",
-            {
-                "alert_type": ALERT_TYPE,
-                "created_at": {"$gte": datetime.now(timezone.utc) - timedelta(hours=DEDUPE_WINDOW_HOURS)},
-            },
-            limit=1,
-        )
-        if recent:
+        if _recent_alert(ALERT_TYPE, DEDUPE_WINDOW_HOURS):
             return False
 
         detail = (
@@ -89,4 +137,53 @@ def maybe_alert_degraded_streak() -> bool:
         return True
     except Exception as exc:  # noqa: BLE001 — alerting must never hurt the cycle
         logger.warning("[degraded_alert] check failed (non-fatal): %s", exc)
+        return False
+
+
+def _maybe_alert_partial_degradation() -> bool:
+    """Page when a majority of recent desks are DEGRADED even though no
+    single cycle is fully degraded. Never raises."""
+    try:
+        from app.db import mongo_store
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=PARTIAL_WINDOW_HOURS)
+        docs = mongo_store.find_docs(
+            "analysis_results",
+            {"created_at": {"$gte": cutoff}},
+            sort=[("created_at", -1)], limit=120,
+        )
+        if len(docs) < PARTIAL_MIN_ROWS:
+            return False
+        degraded = sum(1 for d in docs if str(d.get("thesis_verdict")) == "DEGRADED")
+        frac = degraded / len(docs)
+        if frac < PARTIAL_FRACTION:
+            return False
+        if _recent_alert(PARTIAL_ALERT_TYPE, DEDUPE_WINDOW_HOURS):
+            return False
+
+        detail = (
+            f"{degraded} of {len(docs)} analyses in the last "
+            f"{PARTIAL_WINDOW_HOURS:.0f}h are DEGRADED ({frac:.0%}) with healthy "
+            f"cycles interleaved — desk-level mortality the fully-DEGRADED "
+            f"streak cannot see (45/74 desks died this way 08-23..26 unpaged). "
+            f"Check which agent is failing in v3_agent_telemetry."
+        )
+        from app.services.alert_service import record_fund_alert
+
+        record_fund_alert(
+            alert_type=PARTIAL_ALERT_TYPE,
+            entity_name="V3 pipeline",
+            detail=detail,
+            severity="critical",
+        )
+        try:
+            from app.services.logging.webhook_alerter import trigger_alert
+
+            trigger_alert("Agent LLM path partially degraded", {"degraded": degraded, "total": len(docs)})
+        except Exception:  # noqa: BLE001 — webhook is best-effort
+            pass
+        logger.error("[degraded_alert] %s", detail)
+        return True
+    except Exception as exc:  # noqa: BLE001 — alerting must never hurt the cycle
+        logger.warning("[degraded_alert] partial check failed (non-fatal): %s", exc)
         return False

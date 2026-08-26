@@ -43,7 +43,17 @@ async def llm_can_answer() -> tuple[bool, str]:
         )
 
         model, provider = await resolve_default_model_for_agent(PROBE_AGENT_NAME)
-    except Exception as exc:  # probe machinery broken — ambiguity, proceed
+    except Exception as exc:
+        # A ModelContractError is POSITIVE evidence, not ambiguity: the box
+        # answered and named a model the decision agents cannot use (the
+        # 08-25/26 Qwen3.6 incident killed 45 desks this way while this
+        # probe's "endpoint alive" check passed). Abort the cycle.
+        from app.services.prism_agent_caller import ModelContractError
+
+        if isinstance(exc, ModelContractError):
+            logger.error("[llm_preflight] %s", exc)
+            return False, f"model contract violated: {exc}"
+        # Anything else is probe machinery broken — ambiguity, proceed.
         logger.warning("[llm_preflight] resolver unavailable (%s) — proceeding", exc)
         return True, f"probe-skipped: resolver unavailable ({exc})"
 

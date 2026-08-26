@@ -243,6 +243,22 @@ ENDPOINT_PROVIDERS: dict[str, str] = {
 }
 
 
+class ModelContractError(RuntimeError):
+    """The decision box is serving a model the decision agents were not built
+    for. Raised by `resolve_default_model_for_agent` BEFORE any prompt is sent,
+    so the failure is one cheap resolution instead of a 24k-token call retried
+    five times.
+
+    2026-08-25/26: dgx_spark answered `cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit`
+    (prism's memory jobs had it loaded). Qwen replied to the 24k regime prompt
+    with a 10-token `{"regime": "NEUTRAL"}` that fails the artifact contract,
+    every follow-up iteration returned null, and 45 of 74 desks died as
+    `board_degraded_fallback` with no page — the stored error said only
+    "All 5 attempts failed [last_type=transient]". The pre-flight could not
+    catch it because the endpoint was alive.
+    """
+
+
 async def chat_toolless(
     *, provider: str, model: str, system_prompt: str, user_prompt: str,
     max_tokens: int, timeout_seconds: float,
@@ -394,6 +410,23 @@ async def resolve_default_model_for_agent(
         raise RuntimeError(f"VLLM endpoint '{endpoint_key}' has no configured URL.")
 
     discovered_model = await get_live_model_from_vllm(url, force_refresh=force_refresh)
+
+    # Decision agents run on dgx_spark only. The Jetson leg is exempt: its
+    # collector/janitor roles are model-agnostic by design, and the box
+    # legitimately serves non-decision models.
+    if endpoint_key == "dgx_spark":
+        from app.config.config import settings as _settings
+
+        pattern = (getattr(_settings, "DECISION_MODEL_PATTERN", "") or "").strip().lower()
+        if pattern and pattern not in str(discovered_model).lower():
+            raise ModelContractError(
+                f"dgx_spark is serving {discovered_model!r}, which does not match "
+                f"DECISION_MODEL_PATTERN={pattern!r}. Refusing to run {agent_name} "
+                f"against a model the decision agents were not built for — another "
+                f"workload has the box, or the decision model was switched without "
+                f"updating the pattern."
+            )
+
     return discovered_model, provider
 
 
