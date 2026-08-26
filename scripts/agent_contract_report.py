@@ -31,6 +31,15 @@ def _checks(desk: dict, wb_sections: set[str]) -> list[tuple[str, str, bool, str
     dt = td.get("dynamic_trigger") or {}
     pa = bear.get("preferred_alternative")
 
+    # The two debate skip gates (regime panic; unheld + unanimously bearish
+    # no-trade gate) route straight to the Board — no bull/bear/defense runs,
+    # and debate_judge holds only a "Debate SKIPPED" marker, so the debate
+    # contract checks are N/A, not failures (measured on
+    # cycle-v3-1787731591: DKS scored 8 false FAILs before this). The bull
+    # opens every real debate, so its artifact is the tell — the judge's is
+    # not, precisely because the skip path writes a marker there.
+    debate_ran = bool(bull or bear)
+
     out = [
         ("regime", "forward_call present", bool(rc.get("forward_call")), str(rc.get("forward_call"))),
         ("regime", "regime enum", rc.get("regime") in ("HIGH_VOLATILITY", "DEEP_DISCOUNT", "CONTRADICTORY"), str(rc.get("regime"))),
@@ -48,20 +57,29 @@ def _checks(desk: dict, wb_sections: set[str]) -> list[tuple[str, str, bool, str
         ("valuation", "verdict present", bool(vr.get("verdict")), str(vr.get("verdict"))),
         ("valuation", "what_would_change_my_mind", bool(vr.get("what_would_change_my_mind")), str(vr.get("what_would_change_my_mind"))),
         ("valuation", "doctrine_rules_applied", bool(vr.get("doctrine_rules_applied")), str(vr.get("doctrine_rules_applied"))),
-        ("bull", "invalidation in catalyst_timeline", bool((bull.get("catalyst_timeline") or {}).get("invalidation")), str((bull.get("catalyst_timeline") or {}).get("invalidation"))),
-        ("bear", "independent_risks list", isinstance(bear.get("independent_risks"), list), str(len(bear.get("independent_risks") or []))),
-        ("bear", "preferred_alternative shape", isinstance(pa, dict) and "ticker" in pa, str(pa)),
-        ("defense", "concessions present", "concessions" in bd, str(bd.get("concessions"))),
-        ("defense", "final_confidence <= bull confidence", (bd.get("final_confidence") or 0) <= (bull.get("confidence") or 100), f"{bd.get('final_confidence')} vs {bull.get('confidence')}"),
-        ("judge", "proposition_verdicts present", bool(dj.get("proposition_verdicts")), str(dj.get("proposition_verdicts"))),
-        ("judge", "weaknesses_of_winner present", bool(dj.get("weaknesses_of_winner")), str(dj.get("weaknesses_of_winner"))),
-        ("judge", "winner enum", dj.get("winner") in ("bull", "bear", "tie"), str(dj.get("winner"))),
-        ("board", "bear_verdict_response when debate had winner", bool(fd.get("bear_verdict_response")) if dj.get("winner") else True, str(fd.get("bear_verdict_response"))),
         ("board", "conviction_vector.data_quality", "data_quality" in (fd.get("conviction_vector") or {}), str((fd.get("conviction_vector") or {}).get("data_quality"))),
         ("synth", "signal_weights non-empty", bool(td.get("signal_weights")), str(td.get("signal_weights"))),
         ("synth", "internal_consensus_score present", td.get("internal_consensus_score") is not None, str(td.get("internal_consensus_score"))),
         ("synth", "dynamic_trigger has value when typed", (dt.get("value") is not None) if dt.get("type") else True, str(dt)),
     ]
+    if debate_ran:
+        out += [
+            ("bull", "invalidation in catalyst_timeline", bool((bull.get("catalyst_timeline") or {}).get("invalidation")), str((bull.get("catalyst_timeline") or {}).get("invalidation"))),
+            ("bear", "independent_risks list", isinstance(bear.get("independent_risks"), list), str(len(bear.get("independent_risks") or []))),
+            ("bear", "preferred_alternative shape", isinstance(pa, dict) and "ticker" in pa, str(pa)),
+            ("defense", "concessions present", "concessions" in bd, str(bd.get("concessions"))),
+            ("defense", "final_confidence <= bull confidence", (bd.get("final_confidence") or 0) <= (bull.get("confidence") or 100), f"{bd.get('final_confidence')} vs {bull.get('confidence')}"),
+            ("judge", "proposition_verdicts present", bool(dj.get("proposition_verdicts")), str(dj.get("proposition_verdicts"))),
+            ("judge", "weaknesses_of_winner present", bool(dj.get("weaknesses_of_winner")), str(dj.get("weaknesses_of_winner"))),
+            ("judge", "winner enum", dj.get("winner") in ("bull", "bear", "tie"), str(dj.get("winner"))),
+            ("board", "bear_verdict_response when debate had winner", bool(fd.get("bear_verdict_response")) if dj.get("winner") else True, str(fd.get("bear_verdict_response"))),
+        ]
+    else:
+        # The two debate skip gates (regime panic; unheld + unanimously
+        # bearish no-trade gate) route straight to the Board — the debate
+        # contracts are N/A, not broken (DKS on cycle-v3-1787731591 scored
+        # 8 false FAILs before this branch existed).
+        out.append(("debate", "skipped by gate (checks N/A)", True, "no bull/bear/judge artifacts"))
     return out
 
 
