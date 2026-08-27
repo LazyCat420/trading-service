@@ -34,6 +34,14 @@ PARTIAL_FRACTION = 0.5
 
 PREFLIGHT_ALERT_TYPE = "llm_preflight_abort"
 
+# A circuit-breaker abort kills one ticker's desk mid-cycle. Before 2026-08-26
+# it only wrote a log line and a HOLD@0 noop row — cycle-v3-1787786020/KSS
+# died this way (two MCP tool timeouts → empty-output spiral → phase failure)
+# and nothing paged. Per-desk, so a broad outage still relies on the partial
+# alert above; this one makes a SINGLE dead desk visible.
+PHASE_ABORT_ALERT_TYPE = "v3_phase_abort"
+PHASE_ABORT_DEDUPE_HOURS = 12.0
+
 
 def _recent_alert(alert_type: str, window_hours: float) -> bool:
     from app.db import mongo_store
@@ -77,6 +85,40 @@ def alert_preflight_abort(detail: str) -> bool:
         return True
     except Exception as exc:  # noqa: BLE001 — alerting must never hurt the cycle
         logger.warning("[degraded_alert] preflight alert failed (non-fatal): %s", exc)
+        return False
+
+
+def alert_phase_abort(cycle_id: str, ticker: str, phase: str, reason: str) -> bool:
+    """Page when a circuit-breaker (or timeout) abort kills one desk. Never raises.
+
+    Deduped like the pre-flight alert so a standing failure pages once per
+    window, not once per ticker per cycle.
+    """
+    try:
+        if _recent_alert(PHASE_ABORT_ALERT_TYPE, PHASE_ABORT_DEDUPE_HOURS):
+            return False
+        from app.services.alert_service import record_fund_alert
+
+        record_fund_alert(
+            alert_type=PHASE_ABORT_ALERT_TYPE,
+            entity_name="V3 pipeline",
+            detail=f"{ticker} desk aborted at phase '{phase}' ({cycle_id}): {reason}",
+            severity="warning",
+            ticker=ticker,
+        )
+        try:
+            from app.services.logging.webhook_alerter import trigger_alert
+
+            trigger_alert(
+                "V3 desk aborted",
+                {"ticker": ticker, "phase": phase, "cycle_id": cycle_id, "reason": reason[:500]},
+            )
+        except Exception:  # noqa: BLE001 — webhook is best-effort
+            pass
+        logger.error("[degraded_alert] phase abort paged: %s/%s: %s", ticker, phase, reason)
+        return True
+    except Exception as exc:  # noqa: BLE001 — alerting must never hurt the cycle
+        logger.warning("[degraded_alert] phase-abort alert failed (non-fatal): %s", exc)
         return False
 
 

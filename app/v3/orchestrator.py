@@ -3418,20 +3418,46 @@ def _check_abort(
     """
     ticker = desk.ticker
 
+    # Record BEFORE checking. Recording used to happen only on the survive
+    # path below, so every abort reason read "failed 0 time(s) with outcomes
+    # []" — the phase really had failed, the ledger just hadn't seen it
+    # (observed on cycle-v3-1787786020 and the 2026-08-05 KSS abort).
+    # should_abort() reads only retry counts, so the order change cannot
+    # alter which outcomes abort.
+    breaker.record_outcome(phase_name, outcome)
+
     if outcome in (PhaseOutcome.TIMED_OUT,):
         logger.error("[V3] %s: %s TIMED OUT — aborting pipeline", ticker, phase_name)
         desk.advance_phase(DeskPhase.ABORTED, outcome)
         save_desk(desk)
+        _page_phase_abort(desk, phase_name, f"{phase_name} timed out")
         return _build_noop_result(desk, reason=f"{phase_name} timed out")
 
     if breaker.should_abort(phase_name, outcome):
         logger.error("[V3] %s: Circuit breaker tripped on %s — aborting pipeline", ticker, phase_name)
         desk.advance_phase(DeskPhase.ABORTED, outcome)
         save_desk(desk)
-        return _build_noop_result(desk, reason=breaker.get_abort_reason(phase_name))
+        reason = breaker.get_abort_reason(phase_name)
+        _page_phase_abort(desk, phase_name, reason)
+        return _build_noop_result(desk, reason=reason)
 
-    breaker.record_outcome(phase_name, outcome)
     return None
+
+
+def _page_phase_abort(desk: SharedDesk, phase_name: str, reason: str) -> None:
+    """An aborted desk used to be invisible: a log line plus a HOLD@0 noop row
+    that reads like a quiet decision. Page it (deduped, never raises)."""
+    try:
+        from app.services.degraded_alert import alert_phase_abort
+
+        alert_phase_abort(
+            cycle_id=getattr(desk, "cycle_id", "") or "",
+            ticker=desk.ticker,
+            phase=phase_name,
+            reason=reason,
+        )
+    except Exception as exc:  # noqa: BLE001 — paging must never hurt the abort path
+        logger.warning("[V3] phase-abort paging failed (non-fatal): %s", exc)
 
 
 async def _run_agent_with_circuit_breaker(
@@ -3472,6 +3498,10 @@ async def _run_agent_with_circuit_breaker(
         # If failed and retryable, try once more
         if outcome not in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP):
             if breaker.should_retry(phase_name, outcome):
+                # Ledger the attempt we are retrying away from — otherwise the
+                # eventual abort reason undercounts ("failed 1 time" on a
+                # phase that failed twice).
+                breaker.record_outcome(phase_name, outcome)
                 logger.info(
                     "[V3] %s/%s: Retrying after %s",
                     desk.ticker, phase_name, outcome.value,
