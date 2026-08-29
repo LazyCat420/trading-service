@@ -30,8 +30,8 @@ def save_analysis_result(ticker: str, cycle_id: str, result: dict, snapshot: dic
         mongo_store.upsert_doc("analysis_results", {"cycle_id": cycle_id, "ticker": ticker}, {
             "id": result_id, "ticker": ticker, "cycle_id": cycle_id,
             "bot_id": result.get("bot_id", "cycle-backend"), "result_json": result,
-            "confidence": result.get("confidence", 0), "thesis_verdict": result.get("action", "HOLD"),
-            "thesis_confidence": result.get("confidence", 0), "thesis_summary": result.get("rationale", ""),
+            "confidence": result.get("confidence"), "thesis_verdict": result.get("action", "HOLD"),
+            "thesis_confidence": result.get("confidence"), "thesis_summary": result.get("rationale", ""),
             "thesis_unchanged": False,
             "created_at": _saved_at, "triage_tier": result.get("triage_tier", "standard"),
             "analysis_price": analysis_price, "analysis_rsi": analysis_rsi,

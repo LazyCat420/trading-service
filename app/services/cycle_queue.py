@@ -42,3 +42,17 @@ def enqueue_start_cycle(payload: dict, *, prefix: str) -> str:
         "created_at": datetime.now(timezone.utc),
     }])
     return cmd_id
+
+
+def enqueue_refresh_schedule(job_id: str, *, prefix: str = "sch-refresh") -> str:
+    """Queue a REFRESH_SCHEDULE command and return its id."""
+    cmd_id = f"{prefix}-{uuid.uuid4().hex[:8]}"
+    mongo_store.insert_docs(COMMAND_COLLECTION, [{
+        "id": cmd_id,
+        "command_type": "REFRESH_SCHEDULE",
+        "payload": json.dumps({"job_id": job_id}),
+        "status": "pending",
+        "progress": 0,
+        "created_at": datetime.now(timezone.utc),
+    }])
+    return cmd_id

@@ -115,6 +115,7 @@ def test_earnings_autoresolve_creates_once():
     run_at = datetime.now(timezone.utc) + timedelta(days=6)
     q, store = _mock_mongo()
     with patch.object(gov, "mongo_query", q), patch.object(gov, "mongo_store", store), \
+         patch("app.services.cycle_queue.mongo_store", store), \
          patch.object(gov, "_resolve_earnings_run_at", new=AsyncMock(return_value=run_at)):
         res = _run(gov.schedule_research(["NVDA"], when="", reason="Post-earnings drift check after Q2 beat"))
     assert res["status"] == "scheduled"
@@ -122,7 +123,7 @@ def test_earnings_autoresolve_creates_once():
     written = {c.args[0]: c.args[1][0] for c in store.insert_docs.call_args_list}
     assert "cycle_schedules" in written
     assert written["cycle_schedules"]["schedule_type"] == "once"
-    assert "system_commands" in written
+    assert "v3_system_commands" in written
 
 
 def test_no_earnings_found_rejected():
@@ -164,7 +165,8 @@ def test_cooldown_rejects_recent_ticker():
 
 def test_critical_bypasses_cooldown():
     q, store = _mock_mongo(recent_rows=[("NVDA",)])
-    with patch.object(gov, "mongo_query", q), patch.object(gov, "mongo_store", store):
+    with patch.object(gov, "mongo_query", q), patch.object(gov, "mongo_store", store), \
+         patch("app.services.cycle_queue.mongo_store", store):
         res = _run(gov.schedule_research(
             ["NVDA"], when=_future_iso(),
             reason="CEO resignation just hit the wire — reassess immediately", urgency="critical"))

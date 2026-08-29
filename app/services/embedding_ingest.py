@@ -61,9 +61,9 @@ def index_text(source_table: str, source_id: str, ticker, text: str) -> bool:
                 source_table, source_id, len(text), len(chunks),
                 getattr(embedder, "EMBED_CHAR_BUDGET", 3686),
             )
+        embs = embedder.embed_batch(chunks, show_progress=False)
         wrote = False
-        for i, chunk in enumerate(chunks):
-            emb = embedder.embed_text(chunk)
+        for i, (chunk, emb) in enumerate(zip(chunks, embs)):
             vector_store.store_embedding(
                 source_table=source_table,
                 source_id=str(source_id),

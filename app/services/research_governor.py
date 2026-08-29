@@ -25,7 +25,7 @@ from app.services.parameter_store import get_param
 from app.validation.schedule_validator import ScheduleValidator
 from app.db import mongo_query
 from app.db import mongo_store
-from app.services.cycle_queue import enqueue_start_cycle
+from app.services.cycle_queue import enqueue_start_cycle, enqueue_refresh_schedule
 
 logger = logging.getLogger(__name__)
 
@@ -326,7 +326,7 @@ async def schedule_research(
     expiry = (run_at + timedelta(days=2)).replace(tzinfo=None)
     name = f"Research: {', '.join(tickers)} ({reason[:60]})"
     mongo_store.insert_docs('cycle_schedules', [{'id': schedule_id, 'name': name, 'schedule_type': 'once', 'earliest_window': None, 'run_at': run_at.isoformat(), 'expiry_at': expiry.isoformat(), 'schedule_scope': "single_ticker" if len(tickers) == 1 else "watchlist_subset", 'review_intent': review_intent, 'urgency': urgency, 'reason_codes': json.dumps(reason_codes or [reason[:120]]), 'collect': True, 'analyze': True, 'trade': False, 'tickers': json.dumps(tickers), 'market_hours_only': False, 'is_active': True, 'job_type': 'user', 'run_count': 0, 'discovered_tickers': 0, 'created_at': datetime.now(timezone.utc), 'updated_at': datetime.now(timezone.utc)}])
-    mongo_store.insert_docs('system_commands', [{'id': f"cmd-{uuid.uuid4().hex[:8]}", 'command_type': "REFRESH_SCHEDULE", 'payload': json.dumps({"job_id": schedule_id}), 'status': 'pending', 'progress': 0, 'created_at': datetime.now(timezone.utc)}])
+    enqueue_refresh_schedule(schedule_id, prefix="cmd")
 
     logger.info(
         "[GOVERNOR] Research scheduled %s type=once run_at=%s tickers=%s",
@@ -408,6 +408,6 @@ def cancel_scheduled_research(schedule_id: str, reason: str = "") -> dict:
     if not row:
         return {"status": "rejected", "reason": f"Schedule {schedule_id} not found."}
     mongo_store.update_docs('cycle_schedules', {'id': schedule_id}, {'$set': {'is_active': False, 'next_run_at': None, 'last_status': f"cancelled: {reason[:120]}" if reason else "cancelled", 'updated_at': datetime.now(timezone.utc)}})
-    mongo_store.insert_docs('system_commands', [{'id': f"cmd-{uuid.uuid4().hex[:8]}", 'command_type': "REFRESH_SCHEDULE", 'payload': json.dumps({"job_id": schedule_id}), 'status': 'pending', 'progress': 0, 'created_at': datetime.now(timezone.utc)}])
+    enqueue_refresh_schedule(schedule_id, prefix="cmd")
     logger.info("[GOVERNOR] Schedule %s cancelled (%s)", schedule_id, reason)
     return {"status": "cancelled", "schedule_id": schedule_id}
