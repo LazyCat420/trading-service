@@ -167,6 +167,14 @@ def _mongo(schedule_row):
     return (
         patch("app.services.cycle_scheduler.mongo_query", query),
         patch("app.services.cycle_scheduler.mongo_store", store),
+        # The START_CYCLE insert itself moved out of cycle_scheduler and into
+        # app/services/cycle_queue.py (one writer for the command queue), so
+        # that module holds its own reference to mongo_store. Patching only the
+        # scheduler's would leave the real client to answer the write -- which
+        # is the identical mistake this file's header describes: a mock aimed
+        # at a seam the code no longer uses observes nothing and the dispatch
+        # goes somewhere real. Same MagicMock, so _dispatch_calls still sees it.
+        patch("app.services.cycle_queue.mongo_store", store),
         patch("app.validation.schedule_validator.mongo_query", vquery),
         query,
         store,
@@ -189,9 +197,9 @@ class TestScheduleClockBoundary:
         """When market_hours_only=True and outside hours, schedule skips."""
         from app.services.cycle_scheduler import SchedulerService
 
-        pq, ps, pv, query, store = _mongo(_schedule_row("sched-1"))
+        pq, ps, pqueue, pv, query, store = _mongo(_schedule_row("sched-1"))
         with patch.object(SchedulerService, "_is_market_hours", return_value=False), \
-             pq, ps, pv, \
+             pq, ps, pqueue, pv, \
              patch("app.services.cycle_scheduler.cycle_control") as mock_cc, \
              patch.object(SchedulerService, "_sync_next_run_to_db"):
             mock_cc.is_paused = False
@@ -207,9 +215,9 @@ class TestScheduleClockBoundary:
         """When market_hours_only=True and inside hours, schedule executes."""
         from app.services.cycle_scheduler import SchedulerService
 
-        pq, ps, pv, query, store = _mongo(_schedule_row("sched-2"))
+        pq, ps, pqueue, pv, query, store = _mongo(_schedule_row("sched-2"))
         with patch.object(SchedulerService, "_is_market_hours", return_value=True), \
-             pq, ps, pv, \
+             pq, ps, pqueue, pv, \
              patch("app.services.cycle_scheduler.cycle_control") as mock_cc, \
              patch.object(SchedulerService, "_sync_next_run_to_db"):
             mock_cc.is_paused = False
@@ -238,11 +246,11 @@ class TestPausedSystemSkipsSchedule:
         """Paused system should skip executing scheduled cycles and not call resume."""
         from app.services.cycle_scheduler import SchedulerService
 
-        pq, ps, pv, query, store = _mongo(
+        pq, ps, pqueue, pv, query, store = _mongo(
             _schedule_row("sched-paused", market_hours_only=False)
         )
         with patch("app.services.cycle_scheduler.cycle_control") as mock_cc, \
-             pq, ps, pv, \
+             pq, ps, pqueue, pv, \
              patch.object(SchedulerService, "_sync_next_run_to_db"):
             mock_cc.is_paused = True
             mock_cc.is_stopped = False
