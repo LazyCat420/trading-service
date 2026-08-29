@@ -152,11 +152,15 @@ class Settings(BaseSettings):
     # portfolio value falls this far below its recorded peak (0.25 = 25%).
     # SELLs are never blocked. 0 disables the breaker.
     MAX_PORTFOLIO_DRAWDOWN_PCT: float = 0.25
-    # 65 -> 70 (2026-07-26): BUYs below 70 underperform the always-long null by
-    # -4.78% (n=130, NW t=-5.49, bootstrap p=0.000, stable across both
-    # chronological halves). See parameter_store.py for the full derivation and
-    # scripts/calibration_report.py to re-fit.
-    ANALYSIS_CONFIDENCE_THRESHOLD: int = 70  # minimum confidence (0-100) to execute trades
+    # ANALYSIS_CONFIDENCE_THRESHOLD lived here as a Settings field with a 70
+    # default and ZERO readers -- every consumer goes through
+    # parameter_store.get_param("ANALYSIS_CONFIDENCE_THRESHOLD"), which is the
+    # tunable one. Removed 2026-08-28: a settings entry nobody reads is not
+    # inert, it is a dial that looks live, and editing it would have changed
+    # nothing while reading as a deliberate risk decision. The value, its
+    # derivation (65 -> 70 on 2026-07-26; BUYs below 70 underperform the
+    # always-long null by -4.78%, n=130, NW t=-5.49, bootstrap p=0.000) and the
+    # re-fit script all live in parameter_store.py.
     MAX_POSITION_SIZE_PCT: float = 0.10  # hard cap on a single trade's cash fraction (agent sizing is clamped to this)
 
     # The dgx_spark box is a shared resource: prism's memory jobs load other
@@ -249,12 +253,12 @@ class Settings(BaseSettings):
     LESSON_CONSOLIDATION_THRESHOLD: int = 50  # Consolidate when lessons exceed this
 
     # ── Database ──
-    DATABASE_URL: str = _config.get(
-        "DATABASE_URL", "postgresql://localhost:5432/trading_bot"
-    )
-    TEST_DATABASE_URL: str = _config.get(
-        "TEST_DATABASE_URL", f"postgresql://{_default_host}:5433/trading_bot_test"
-    )
+    # DATABASE_URL / TEST_DATABASE_URL removed 2026-08-28. Postgres was torn
+    # down on 2026-08-18 and psycopg is no longer in the image; these fields had
+    # no reader in app/, and the handful of migration-era scripts that still
+    # want a PG DSN read the ENVIRONMENT VARIABLE directly, not this setting.
+    # Advertising a live-looking postgresql:// default in the settings object
+    # invites exactly the wrong conclusion about where the data is.
 
     # ── Finnhub ──
     FINNHUB_API_KEY: str = ""

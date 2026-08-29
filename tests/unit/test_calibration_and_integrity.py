@@ -37,15 +37,26 @@ def test_confidence_floor_is_at_the_measured_cliff():
     assert 68 <= spec.default <= 72, "outside the measured plateau"
 
 
-def test_config_default_matches_the_parameter_store():
-    """Two sources of the same threshold. Drift between them means one path
-    enforces a floor the other does not — and pipeline_service reads one while
-    the policy gate reads the other."""
+def test_the_threshold_has_exactly_one_source():
+    """This used to assert that two sources of the confidence floor agreed:
+    a Settings field and the parameter-store default. The premise was already
+    stale -- BOTH consumers (pipeline_service's execution check and the policy
+    gate) read parameter_store.get_param -- so the Settings field was a dial
+    that looked live and controlled nothing. It was removed on 2026-08-28, and
+    the guard now protects the property that made the drift impossible rather
+    than re-checking the agreement.
+    """
     from app.config.config import Settings
     from app.services.parameter_store import PARAMETER_REGISTRY
 
-    assert Settings().ANALYSIS_CONFIDENCE_THRESHOLD == \
-        PARAMETER_REGISTRY["ANALYSIS_CONFIDENCE_THRESHOLD"].default
+    assert "ANALYSIS_CONFIDENCE_THRESHOLD" in PARAMETER_REGISTRY, (
+        "the parameter store must remain the one owner of the floor"
+    )
+    assert not hasattr(Settings(), "ANALYSIS_CONFIDENCE_THRESHOLD"), (
+        "the confidence floor is back in Settings as a second source. Every "
+        "consumer reads parameter_store.get_param, so a Settings field here "
+        "changes nothing while reading as a deliberate risk decision."
+    )
 
 
 def test_the_floor_still_blocks_below_it_and_permits_above():

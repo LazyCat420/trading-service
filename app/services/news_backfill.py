@@ -103,17 +103,6 @@ _BATCH_SLEEP_S = float(os.getenv("NEWS_BACKFILL_BATCH_SLEEP_S", "10"))
 # Newest first. News relevance decays, so the marginal article worth extracting
 # is the recent one an agent might still be asked about — not the oldest row in
 # a 90-day backlog.
-_SELECT_SQL = """
-    SELECT id, ticker, COALESCE(title, ''), summary
-    FROM news_articles
-    WHERE facts_extracted_at IS NULL
-      AND summary IS NOT NULL
-      AND length(summary) >= %s
-    ORDER BY collected_at DESC NULLS LAST
-    LIMIT %s
-"""
-
-
 def _cycle_is_running() -> bool:
     """True while a trading cycle is live in MongoDB."""
     try:
