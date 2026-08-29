@@ -107,11 +107,27 @@ mechanism that no longer exists.
 
 - **`START_CYCLE` had four copy-pasted writers** → `app/services/cycle_queue.py`.
   The queue *name* is the contract with the worker, and a copy-pasted writer is
-  how a producer ends up addressing a queue nothing drains. That is not
-  hypothetical: **trading-client writes to `system_commands` while
-  `cycle_main` drains `v3_system_commands`**, so its schedule-refresh,
-  analyze-ticker and sector-collection commands have been dispatching into a
-  void. (Client-side fix pending — that is Area 2.)
+  how a producer ends up addressing a queue whose drainer does not handle it.
+
+  That is not hypothetical — but the precise shape matters, because there are
+  **two legitimate queues**:
+
+  | Queue | Drained by | Handles |
+  |---|---|---|
+  | `v3_system_commands` | `cycle_main.poll_system_commands` | START_CYCLE, STOP_CYCLE, FORCE_RESET, PAUSE, RESUME, FLASH_BRIEFING, MORNING_BRIEFING, DISCARD/FORCE_CHECKPOINT |
+  | `system_commands` | `autoresearch/eval_worker.poll_system_commands` | AUTORESEARCH, ACTIVATE_BRAIN_GRAPH, RUN_FRED_COLLECTION, RUN_MARKET_COLLECTION, EVALUATE_STRATEGY |
+
+  trading-client writes to both, and mostly correctly: MORNING_BRIEFING and
+  FLASH_BRIEFING go to `v3_system_commands`; AUTORESEARCH, ACTIVATE_BRAIN_GRAPH
+  and EVALUATE_STRATEGY go to `system_commands`, whose worker handles them.
+
+  What is broken is the remainder, which land in `system_commands` where **no
+  drainer matches the command type**: `REFRESH_SCHEDULE`
+  (`app/routers/scheduler.py`), `ANALYZE_TICKER` (`app/routers/analysis.py`,
+  whose SSE endpoint then polls for a status that never changes) and
+  `DEPLOY_FIX`/`ROLLBACK_FIX` (`app/routers/autoresearch.py`, which have no
+  handler in either repo). The endpoints all return success. Client-side fix is
+  Area 2.
 - **`_finite` ×3 → `app/utils/numeric.finite`.** Only one copy rejected bools;
   the other two coerced them, so `float(True)` → 1.0 could land in a metric as a
   plausible ratio. The shared guard takes the strictest behaviour.
