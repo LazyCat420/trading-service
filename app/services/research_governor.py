@@ -25,6 +25,7 @@ from app.services.parameter_store import get_param
 from app.validation.schedule_validator import ScheduleValidator
 from app.db import mongo_query
 from app.db import mongo_store
+from app.services.cycle_queue import enqueue_start_cycle
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +156,6 @@ def request_research_now(tickers: list, reason: str, urgency: str = "medium") ->
     if rej:
         return {"status": "rejected", "reason": rej}
 
-    cmd_id = f"sch-rsrch-{uuid.uuid4().hex[:8]}"
     payload = {
         "tickers": tickers,
         "collect": True,
@@ -165,7 +165,7 @@ def request_research_now(tickers: list, reason: str, urgency: str = "medium") ->
         "research_request": True,
         "research_reason": (reason or "").strip()[:500],
     }
-    mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload), 'status': 'pending', 'progress': 0, 'created_at': datetime.now(timezone.utc)}])
+    cmd_id = enqueue_start_cycle(payload, prefix="sch-rsrch")
     logger.info("[GOVERNOR] Immediate research queued %s tickers=%s reason=%s", cmd_id, tickers, reason)
     return {
         "status": "queued",

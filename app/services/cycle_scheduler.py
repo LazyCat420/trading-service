@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 # Use local timezone
 from tzlocal import get_localzone
 from app.db import mongo_query, mongo_store
+from app.services.cycle_queue import enqueue_start_cycle
 
 # Suppress APScheduler execution INFO logs to prevent terminal spam
 logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
@@ -312,8 +313,7 @@ class SchedulerService:
             if state_row and state_row[0] not in ("idle", "done", "error", "stopped", "interrupted"):
                 raise HTTPException(409, f"Cycle already running: {state_row[0]}")
 
-            cmd_id = f"sch-cmd-{uuid.uuid4().hex[:8]}"
-            mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload), 'status': 'pending', 'progress': 0, 'created_at': datetime.now(timezone.utc)}])
+            cmd_id = enqueue_start_cycle(payload, prefix="sch-cmd")
             logger.info(
                 "[SCHEDULER] Successfully triggered cycle run for schedule %s.",
                 schedule_id,
@@ -1801,8 +1801,7 @@ class SchedulerService:
                 "trade": True,
                 "dynamic_selection_mode": True,
             }
-            cmd_id = f"sch-open-{uuid.uuid4().hex[:8]}"
-            mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload), 'status': 'pending', 'progress': 0, 'created_at': datetime.now(timezone.utc)}])
+            cmd_id = enqueue_start_cycle(payload, prefix="sch-open")
             logger.info("[SCHEDULER] Market-open trading cycle enqueued (START_CYCLE %s).", cmd_id)
         except Exception as e:
             logger.error("[SCHEDULER] Failed to enqueue market-open cycle: %s", e)

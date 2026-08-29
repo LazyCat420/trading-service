@@ -35,6 +35,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.utils.tz import ensure_aware
 from app.db import mongo_query, mongo_store
+from app.services.cycle_queue import enqueue_start_cycle
 
 logger = logging.getLogger(__name__)
 
@@ -843,8 +844,7 @@ async def _enqueue_wake(watch: dict, trig: dict, detail: str) -> str | None:
             "watch_trigger": {"type": trig["type"], "detail": detail},
             "research_reason": detail,
         }
-        cmd_id = f"wd-{uuid.uuid4().hex[:8]}"
-        mongo_store.insert_docs('v3_system_commands', [{'id': cmd_id, 'command_type': "START_CYCLE", 'payload': json.dumps(payload), 'status': 'pending', 'progress': 0, 'created_at': datetime.now(timezone.utc)}])
+        cmd_id = enqueue_start_cycle(payload, prefix="wd")
         logger.info("[WatchDesk] WAKE %s for %s — %s", cmd_id, ticker, detail)
         return cmd_id
     except Exception as e:
