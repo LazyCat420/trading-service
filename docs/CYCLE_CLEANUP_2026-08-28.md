@@ -58,6 +58,47 @@ null `policy_action` — but only 2 in the last 30 days, and **both are test row
 cites). The gates now populate `policy_action` reliably; the backstop is free
 and still guards live bypass paths. **Kept.**
 
+### 1.5 What the repaired check revealed (follow-up, not a regression)
+
+Verified live after deploy: the delegation works (the log line now comes from
+`app.services.startup_tasks`), and the boot refresh **ran** rather than skipped.
+That is the correct answer, and the reason is worth recording.
+
+The gate is an AND of two conditions. Measured at 2026-08-28:
+
+- `source=fred` newest **2026-08-28**, age 0d, threshold 2d → fresh
+- `source=fred AND indicator=CPI` newest **2026-07-01**, age 58d, threshold 45d → stale
+
+So the AND is False and it refreshes — exactly what the two-part check exists
+for ("a bare MAX(date) is dominated by the daily treasury series and says
+nothing about the monthly CPI/UNRATE lagging").
+
+> [!NOTE]
+> Today's observable behaviour is therefore UNCHANGED — it refreshed before the
+> fix too. What changed is that it now refreshes for the right reason instead of
+> because an exception forced `False`, and the skip branch is reachable at all.
+> The reachability is what `tests/unit/test_startup_task_ownership.py` proves,
+> since it fails against the previous boot_service.
+
+**Open follow-up.** FRED dates monthly series by PERIOD START, so a monthly
+indicator is between ~30 and ~60 days old at any moment. The 45-day CPI
+threshold splits that range, which means the boot refresh will skip or re-collect
+depending on where in the publication cycle the restart lands. Per-indicator ages
+on the same day:
+
+| Cadence | Indicators | Age |
+|---|---|---|
+| daily | INFLATION_EXPECT, TREASURY_3MO/2Y/10Y, VIX, HY_SPREAD | 0–1d |
+| weekly | INITIAL_CLAIMS, DOLLAR_INDEX | 6–7d |
+| monthly | CPI, PCE_CORE, PAYROLLS, UNEMPLOYMENT, FED_FUNDS, CONSUMER_SENT | 58d |
+| quarterly | GDP, REAL_GDP_GROWTH | 149d |
+
+The threshold was chosen while the check could never execute, so it has never
+actually been exercised. It should be re-derived from each series' publication
+cadence (or the gate keyed on the daily series with a separate, cadence-aware
+staleness alarm for the monthlies) rather than left at a single 45-day number.
+GDP at 149 days would fail ANY monthly-scaled threshold.
+
 ## 2. Deletions
 
 | What | Lines | Evidence |
