@@ -94,7 +94,12 @@ async def generate_morning_briefing() -> str:
                 action = result.get("action") or doc.get("action") or "UNKNOWN"
                 confidence = doc.get("confidence") or result.get("confidence") or "N/A"
                 rationale = result.get("rationale") or doc.get("thesis_summary") or ""
-                price = doc.get("price_at_analysis") or ""
+                # `price_at_analysis` is a Postgres-migration leftover that
+                # nothing writes -- non-null on ZERO of 5,277 analysis_results
+                # documents, measured 2026-08-28 -- so this line handed the
+                # briefing prompt an empty string for every ticker, every day.
+                # `analysis_price` is what result_saver actually stores.
+                price = doc.get("analysis_price") or ""
                 price_str = f" | Price: ${price:.2f}" if isinstance(price, (int, float)) else ""
 
                 context_parts.append(
