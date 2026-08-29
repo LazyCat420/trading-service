@@ -1152,10 +1152,51 @@ class PipelineService:
                 import json
                 
                 if tickers:
-                    # Explicit ticker request: honor it exactly. The discovery/
-                    # scoring/freshness/gatekeeper funnel below treats requested
-                    # tickers as mere candidates and can replace the whole list,
-                    # so it is skipped for explicit requests.
+                    # Explicit ticker request: honor it. The discovery/scoring/
+                    # freshness/gatekeeper funnel below treats requested tickers
+                    # as mere candidates and can replace the whole list, so it is
+                    # skipped -- an operator naming a ticker means that ticker.
+                    #
+                    # "Skip the funnel" is not "skip validation", though. These
+                    # two checks are the funnel's SANITY filters, not its
+                    # selection logic, and the funnel applies both to every
+                    # discovered candidate (see the discovery merge below).
+                    # Without them a typo or a model-invented symbol reached the
+                    # analysts, which then spent a full desk on a ticker that
+                    # cannot be priced or traded. The US Ticker Gate at cycle
+                    # entry already resolved foreign listings, and
+                    # _preflight_price_history still runs per ticker downstream.
+                    from app.processors.ticker_extractor import FALSE_TICKERS
+
+                    requested = list(tickers)
+                    tickers = [
+                        t for t in requested
+                        if t not in FALSE_TICKERS and is_us_tradeable(t)
+                    ]
+                    rejected = [t for t in requested if t not in tickers]
+                    if rejected:
+                        logger.warning(
+                            "[PipelineService] explicit tickers rejected as "
+                            "untradeable/known-false: %s", rejected,
+                        )
+                        emit(
+                            "gatekeeper", "explicit_tickers_rejected",
+                            f"⚠️ Rejected {rejected} — not US-tradeable or a known false ticker",
+                            status="error" if not tickers else "ok",
+                        )
+                    if not tickers:
+                        # Fail loudly. Silently continuing here would fall
+                        # through into discovery and analyse a DIFFERENT set of
+                        # tickers than the operator asked for.
+                        emit(
+                            "gatekeeper", "explicit_tickers",
+                            f"❌ Every requested ticker was rejected: {requested}",
+                            status="error",
+                        )
+                        raise ValueError(
+                            f"No valid tickers in explicit request {requested}"
+                        )
+
                     if max_tickers:
                         tickers = list(tickers)[:max_tickers]
                     emit(
