@@ -412,7 +412,17 @@ KNOWN_UNPINNED_MONGO: dict[str, int] = {
     # construction (a duplicate vendor row cannot change a distinct set).
     "app/quant/technical_baseline.py": 2,
     "app/routers/market_router.py": 2,
-    "app/services/boot_service.py": 2,
+    # 2 -> 1 on 2026-08-28: NOT a fix. BootService carried duplicate copies of
+    # the FRED/market/SP500 startup tasks; they were consolidated into their
+    # one owner, app/services/startup_tasks.py, and the SP500 seed's
+    # price_history existence COUNT moved with the code. The entry below for
+    # startup_tasks.py is that same read, not a new one -- the repo-wide total
+    # is unchanged. (The read is `count` over all of price_history, asking only
+    # "is there any price data at all"; like the `distinct_values` case noted
+    # above it cannot be changed by a duplicate vendor row, but the scanner
+    # reads text, not intent.)
+    "app/services/boot_service.py": 1,
+    "app/services/startup_tasks.py": 1,
     "app/tools/market_tools.py": 1,
     "app/trading/backtest_data.py": 1,
     "app/trading/paper_trader.py": 3,
