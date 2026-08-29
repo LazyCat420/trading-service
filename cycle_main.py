@@ -334,45 +334,55 @@ async def start_health_server(shutdown_event: asyncio.Event):
         from app.services.pipeline_service import PipelineService
         return PipelineService.get_current_state(summary_only=summary_only)
 
-    try:
-        from app.routers.vllm_router import router as vllm_router
-        from app.routers.agent_persona_router import router as agent_persona_router
-        from app.routers.agent_tools_router import router as agent_tools_router
-        from app.routers.chat_router import router as chat_router
-        from app.routers.debug_router import router as debug_router
-        from app.routers.diagnostics_router import router as diagnostics_router
-        from app.routers.node_health_router import router as node_health_router
-        from app.routers.verdict_router import router as verdict_router
-        from app.routers.chart_router import router as chart_router
-        from app.routers.market_router import router as market_router
-        from app.routers.cycle_replay_router import router as cycle_replay_router
-        from app.routers.challenger_router import router as challenger_router
-        from app.routers.eval_trust_router import router as eval_trust_router
-        from app.routers.component_health_router import router as component_health_router
-        from app.routers.research_firm_router import router as research_firm_router
-        # The scraper was extracted back into the standalone scraper-service (:8001);
-        # trading-service no longer SERVES /scrape, /collect, /stream. Its own
-        # scraping now goes out over HTTP via app.services.scraper_client. The
-        # app.scraper source still lives here only so scraper-service can build-copy
-        # it — it is not imported or run in this process anymore.
+    # Mounted one at a time, on purpose. These used to share a single
+    # try/except: one bad import anywhere in the block aborted the whole
+    # sequence, mounted NOTHING, and logged one line -- while /health and
+    # /status (declared above) kept answering, so the container stayed
+    # "healthy" with its entire API missing. Now a broken router costs only
+    # itself and says so by name.
+    #
+    # The scraper was extracted back into the standalone scraper-service
+    # (:8001); trading-service no longer SERVES /scrape, /collect, /stream.
+    # Its own scraping goes out over HTTP via app.services.scraper_client. The
+    # app.scraper source still lives here only so scraper-service can
+    # build-copy it -- it is not imported or run in this process.
+    _ROUTER_MODULES = (
+        "vllm_router",
+        "agent_persona_router",
+        "agent_tools_router",
+        "chat_router",
+        "debug_router",
+        "diagnostics_router",
+        "node_health_router",
+        "verdict_router",
+        "chart_router",
+        "market_router",
+        "cycle_replay_router",
+        "challenger_router",
+        "eval_trust_router",
+        "component_health_router",
+        "research_firm_router",
+    )
 
-        app.include_router(vllm_router)
-        app.include_router(agent_persona_router)
-        app.include_router(agent_tools_router)
-        app.include_router(chat_router)
-        app.include_router(debug_router)
-        app.include_router(diagnostics_router)
-        app.include_router(node_health_router)
-        app.include_router(verdict_router)
-        app.include_router(chart_router)
-        app.include_router(market_router)
-        app.include_router(cycle_replay_router)
-        app.include_router(challenger_router)
-        app.include_router(eval_trust_router)
-        app.include_router(component_health_router)
-        app.include_router(research_firm_router)
-    except Exception as e:
-        logger.error(f"Failed to include routers: {e}")
+    import importlib
+
+    _mounted, _failed = [], []
+    for _name in _ROUTER_MODULES:
+        try:
+            _module = importlib.import_module(f"app.routers.{_name}")
+            app.include_router(_module.router)
+            _mounted.append(_name)
+        except Exception as e:  # noqa: BLE001
+            _failed.append(_name)
+            logger.error("Failed to mount router %s: %s", _name, e, exc_info=True)
+
+    if _failed:
+        logger.error(
+            "API mounted %d/%d routers -- MISSING: %s",
+            len(_mounted), len(_ROUTER_MODULES), ", ".join(_failed),
+        )
+    else:
+        logger.info("API mounted all %d routers", len(_mounted))
 
     config = uvicorn.Config(app, host="0.0.0.0", port=8080, log_level="error")
     server = uvicorn.Server(config)
