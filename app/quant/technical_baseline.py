@@ -28,6 +28,7 @@ import re
 import time
 from datetime import date
 from app.db import mongo_query
+from app.utils.numeric import finite as _finite
 
 logger = logging.getLogger(__name__)
 
@@ -223,19 +224,6 @@ _RELATIVE_TOLERANCE_FIELDS = {
     "predicted_vol_annualized_pct": 0.02,
     "vol_prediction_premium": 0.05,
 }
-
-
-def _finite(val) -> float | None:
-    """None unless `val` is a real, finite number.
-
-    NaN survives a `NOT NULL` check and compares false against every
-    threshold, so an unfiltered one lands in risk_metrics looking like data.
-    """
-    try:
-        out = float(val)
-    except (TypeError, ValueError):
-        return None
-    return out if out == out and out not in (float("inf"), float("-inf")) else None
 
 
 def mark_conclusion_stale(

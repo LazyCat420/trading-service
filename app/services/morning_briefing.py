@@ -4,7 +4,6 @@ Produces pre-market cross-analysis of active portfolio holdings and watchlist ti
 Compares recent theses, verdicts, confidence levels, and highlights actionable insights.
 """
 
-import json
 import logging
 from datetime import datetime, timezone, timedelta
 
@@ -12,6 +11,7 @@ from app.services.prism_agent_caller import llm, Priority, call_prism_agent
 from app.db import mongo_query, mongo_store
 from app.utils.tz import utc_iso
 from app.utils.pg_arrays import as_list
+from app.utils.json_utils import parse_json_field as _parse_result_json
 
 logger = logging.getLogger(__name__)
 
@@ -37,17 +37,6 @@ def _morning_briefing_doc(report_content: str, tickers_evaluated: list) -> dict:
         'report_content': report_content,
         'tickers_evaluated': tickers_evaluated,
     }
-
-
-def _parse_result_json(val) -> dict:
-    if isinstance(val, dict):
-        return val
-    if isinstance(val, str) and val.strip():
-        try:
-            return json.loads(val)
-        except Exception:
-            return {}
-    return {}
 
 
 async def generate_morning_briefing() -> str:

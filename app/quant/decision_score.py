@@ -100,6 +100,7 @@ import math
 import numpy as np
 from itertools import pairwise
 from typing import Any
+from app.utils.numeric import finite as _finite
 
 logger = logging.getLogger(__name__)
 
@@ -236,23 +237,6 @@ _MAX_TARGET_UPSIDE = 2.00
 # duplicating that here would double-count one fact.
 _STALE_TECH_DAYS = 3
 _STALE_FUNDAMENTAL_DAYS = 45
-
-
-def _finite(v: Any) -> float | None:
-    """Coerce to a finite float, or None.
-
-    NaN compares false against every threshold, so an unguarded one does not
-    fail a band — it silently declines to score while looking scored. This is
-    the same guard `technical_baseline.compute_technical_baseline` applies at
-    the point of consumption, for the same reason.
-    """
-    if v is None or isinstance(v, bool):
-        return None
-    try:
-        f = float(v)
-    except (TypeError, ValueError):
-        return None
-    return f if math.isfinite(f) else None
 
 
 def _as_fraction(v: float | None) -> float | None:

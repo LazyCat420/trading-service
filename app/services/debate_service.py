@@ -4,9 +4,9 @@ Debate Service — persistent, DB-backed rich debate access.
 Provides the Civilization Council Debate reports.
 """
 
-import json
 import logging
 from app.db import mongo_store
+from app.utils.json_utils import parse_json_field as _parse_result_json
 
 logger = logging.getLogger(__name__)
 
@@ -107,12 +107,3 @@ def _extract_transcript(result: dict) -> list[dict]:
     # Assuming debate_result was saved in result_json under 'debate_transcript'
     return result.get("debate_transcript", [])
 
-def _parse_result_json(raw) -> dict:
-    if not raw:
-        return {}
-    if isinstance(raw, dict):
-        return raw
-    try:
-        return json.loads(raw)
-    except Exception:
-        return {}

@@ -5,11 +5,11 @@ Provides deduplicated verdict views across cycles, unlike the ephemeral
 cycleStatus.results which resets on every new cycle.
 """
 
-import json
 import logging
 from datetime import datetime, timezone
 
 from app.db import mongo_store
+from app.utils.json_utils import parse_json_field as _parse_result_json
 
 logger = logging.getLogger(__name__)
 
@@ -101,13 +101,3 @@ def get_verdict_history(ticker: str, limit: int = 20) -> list[dict]:
     return history
 
 
-def _parse_result_json(raw) -> dict:
-    """Safely parse result_json field."""
-    if not raw:
-        return {}
-    if isinstance(raw, dict):
-        return raw
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return {}

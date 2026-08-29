@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import math
 from app.db import mongo_query
+from app.utils.numeric import finite as _finite
 
 logger = logging.getLogger(__name__)
 
@@ -44,17 +45,6 @@ _SECTORS = [
 # ~6 months of trading days — enough for a stable VIX z-score without reaching
 # back into a different volatility regime.
 _ZSCORE_LOOKBACK = 126
-
-
-def _finite(val) -> float | None:
-    """asset_prices carries NaN for symbols a vendor returned empty (the
-    market_regime table is full of them). NaN compares false everywhere and
-    would silently poison every derived number."""
-    try:
-        out = float(val)
-    except (TypeError, ValueError):
-        return None
-    return out if math.isfinite(out) else None
 
 
 def _load_series(symbols: list[str], lookback: int) -> dict[str, list[float]]:
