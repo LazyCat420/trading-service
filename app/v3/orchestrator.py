@@ -20,7 +20,6 @@ from typing import Any, Callable
 
 from app.v3.shared_desk import (
     SharedDesk, DeskPhase, PhaseOutcome, DecisionProvenance,
-    tournament_debate_mode, TOURNAMENT_MODE_SHADOW,
 )
 from app.v3.guardrails import CircuitBreaker, research_degraded
 from app.services.adaptive_concurrency import concurrency_controller
@@ -928,7 +927,6 @@ async def run_v3_pipeline(
         "debate_judge": 0,
         "board_of_directors": 0,
         "decision_synthesizer": 0,
-        "tournament_debate": 0,
     }
 
     # UNCLASSIFIED, not CONTRADICTORY (open item 2, 2026-08-05): an engine
@@ -938,17 +936,18 @@ async def run_v3_pipeline(
     # the artifact trail and logs no longer manufacture a real-looking regime.
     regime = "UNCLASSIFIED"
     fa_skipped = False  # set when the Regime Engine recommends skipping FA
-    # Dispatch-once latches for the decision layer. Peer-requested analyst
-    # re-runs (request_peer_analysis) re-write the research sections, which
-    # would otherwise re-fire the whole debate→board→synth chain every time
-    # (observed live: 1 ticker → tournament×2, board×2, synth×2, ~2x compute).
+    # Dispatch-once latches for the decision layer. Any analyst re-run that
+    # re-writes a research section would otherwise re-fire the whole
+    # debate→board→synth chain (observed live: 1 ticker → tournament×2,
+    # board×2, synth×2, ~2x compute). The mechanism that produced those
+    # re-runs -- peer requests -- was removed on 2026-08-28, but an agent can
+    # still run up to MAX_RUNS_PER_AGENT times, so the latches stay.
     # The debate consumes a SNAPSHOT of research; re-running analysts after it
     # has started cannot change a verdict already rendered, so we latch each
     # decision-layer stage to a single dispatch.
     debate_dispatched = False
     board_dispatched = False
     synth_dispatched = False
-    peer_drop_logged = False
     research_tier_dispatched = False
 
     def _queue_agent(name: str, module: Any, query: str = "", parent: str = ""):
@@ -1069,7 +1068,7 @@ async def run_v3_pipeline(
 
         elif sec == "desk_note":  # junior_analyst completed
             # Latch, same pattern as debate_dispatched. A desk_note RE-write is
-            # the JA answering a peer request, not a new research phase — but
+            # a repeat of work already done, not a new research phase — but
             # this branch used to process it as one, re-queueing FA+QA+VA whose
             # runs were already complete (_queue_agent dedupes only against
             # PENDING tasks). Measured in cycle-v3-1785504601: 4 of 6 tickers
@@ -1266,9 +1265,9 @@ async def run_v3_pipeline(
 
     def _queue_debate_phase():
         nonlocal debate_dispatched, board_dispatched
-        # Latch: the debate runs once on a research snapshot. A peer-requested
-        # analyst re-run that re-writes fundamental_report/quant_report must
-        # NOT re-queue the (expensive, ~8min) tournament.
+        # Latch: the debate runs once on a research snapshot. An analyst
+        # re-run that re-writes fundamental_report/quant_report must NOT
+        # re-queue the debate.
         if debate_dispatched:
             return
         debate_dispatched = True
@@ -1418,480 +1417,24 @@ async def run_v3_pipeline(
                 _queue_agent("board_of_directors", None, parent="quant_analyst")
             return
 
-        # DEBATE_ENGINE=3 — no debate. This belongs HERE, beside the regime-skip
-        # and no-trade gates above, not inside _execute_tournament_debate.
+        # The desk gets an adversarial pass: bull argues, bear rebuts, and the
+        # judge chains the Board through the same whiteboard subscriber the
+        # tournament used (`elif sec in ("debate_judge", "tournament_result")`).
         #
-        # Returning early from the executor skipped the whiteboard write at
-        # `tournament_result`, and that write is what the subscriber uses to
-        # chain the Board (`elif sec in ("debate_judge", "tournament_result")`).
-        # The Board was therefore never dispatched and the desk stalled at
-        # RESEARCH_DONE with no decision — observed live on NVDA in
-        # cycle-observe-1785396275, 7 agents run and nothing decided.
+        # The 4-persona pitch/h2h/jury tournament that used to run here was
+        # retired on measurement (~30% of pipeline spend, and its jury veto
+        # blocked ZERO decisions ever) and is now deleted. It had in fact been
+        # dormant far longer than the retirement flag suggested: TOURNAMENT_MODE
+        # defaulted True and routed every debate to the tournament, leaving the
+        # bull/bear branch unreachable, so 987 of 1340 desks carry
+        # `bull_argument: null` and the last desk with real bull text is
+        # 2026-07-12. Running bull/bear here is the RESTORATION of that path.
         #
-        # Both sibling gates solve this the same way and so does this one:
-        # append a SKIPPED marker (not a synthesized verdict — winning_side
-        # stays "skipped", confidence 0) and dispatch the Board explicitly.
-        # The marker is what lets scoring tell "no debate ran" apart from "the
-        # debate returned nothing".
-        try:
-            from app.services.parameter_store import get_param as _get_engine
-            _engine_sel = int(_get_engine("DEBATE_ENGINE"))
-        except Exception as _e:  # noqa: BLE001 — fail open to the default
-            logger.warning("[V3] DEBATE_ENGINE lookup failed (%s) — no debate", _e)
-            _engine_sel = 3
-
-        if _engine_sel == 3:
-            # 3 = NO TOURNAMENT, but the desk still gets an adversarial pass.
-            #
-            # The measurement that retired the tournament (see the DEBATE_ENGINE
-            # block in app/services/parameter_store.py) condemned the 4-persona
-            # pitch/h2h/jury machine at ~30% of pipeline spend. It said NOTHING
-            # about bull/bear/judge, which is a different and far smaller
-            # mechanism — and turning that off too was scope I had not earned.
-            #
-            # Note what the data actually shows: bull/bear have been dormant
-            # since 2026-07-12 regardless, because TOURNAMENT_MODE defaults True
-            # and routes the debate to the tournament, leaving the else-branch
-            # below unreachable. 987 of 1340 desks carry `bull_argument: null`;
-            # the last desk with real bull text is 2026-07-12. So this is a
-            # RESTORATION, not a rollback.
-            #
-            # No skip marker and no explicit Board dispatch here: bull_argument
-            # + bear_rebuttal chain debate_judge, and debate_judge chains the
-            # Board through the same subscriber the tournament used. Adding a
-            # second dispatch would fight the latch.
-            logger.info(
-                "[V3] %s: tournament disabled (DEBATE_ENGINE=3) — running the "
-                "bull/bear debate instead", ticker,
-            )
-            desk.cycle_metadata["tournament_skipped_by_engine"] = True
-            _queue_agent("bull_argument", bull_agent, parent="quant_analyst")
-            _queue_agent("bear_rebuttal", bear_agent, parent="quant_analyst")
-            return
-
-        if _cog_settings.TOURNAMENT_MODE:
-            _queue_agent("tournament_debate", None, parent="quant_analyst")
-        else:
-            _queue_agent("bull_argument", bull_agent, parent="quant_analyst")
-            _queue_agent("bear_rebuttal", bear_agent, parent="quant_analyst")
-
-    async def _has_pending_peer_requests() -> bool:
-        # Peer requests are a RESEARCH-phase mechanism: an analyst asking a
-        # sibling for a specific data point before the debate. Once the debate
-        # has been dispatched, a late request cannot inform the verdict — and
-        # honoring it re-runs an analyst whose output nothing downstream reads.
-        if debate_dispatched:
-            return False
-        try:
-            task_section = await whiteboard.get_section(ticker=ticker, cycle_id=cycle_id, section="task_queue")
-            if task_section and isinstance(task_section.get("content"), dict):
-                tasks_list = task_section["content"].get("tasks", [])
-                return any(t.get("status") == "pending" for t in tasks_list)
-        except Exception as e:
-            logger.warning("[V3] Error checking pending peer requests: %s", e)
-        return False
-
-    async def _process_peer_requests():
-        nonlocal peer_drop_logged
-        # Do not spawn analyst re-runs once the debate has moved on (see
-        # _has_pending_peer_requests). Pending requests are left as-is —
-        # but say so ONCE, or the requesting agent's ask vanishes untraceably.
-        # (One-shot: this runs every scheduler iteration after dispatch, and
-        # each check is a whiteboard DB read.)
-        if debate_dispatched:
-            if not peer_drop_logged:
-                peer_drop_logged = True
-                try:
-                    task_section = await whiteboard.get_section(
-                        ticker=ticker, cycle_id=cycle_id, section="task_queue"
-                    )
-                    if task_section and isinstance(task_section.get("content"), dict):
-                        dropped = [
-                            t for t in task_section["content"].get("tasks", [])
-                            if t.get("status") == "pending"
-                        ]
-                        if dropped:
-                            logger.info(
-                                "[V3] %s: %d peer request(s) dropped — debate already "
-                                "dispatched (targets: %s)",
-                                ticker, len(dropped),
-                                ", ".join(str(t.get("target_agent")) for t in dropped),
-                            )
-                except Exception:
-                    pass
-            return
-        try:
-            task_section = await whiteboard.get_section(ticker=ticker, cycle_id=cycle_id, section="task_queue")
-            if task_section and isinstance(task_section.get("content"), dict):
-                tasks_list = task_section["content"].get("tasks", [])
-                updated = False
-                for t in tasks_list:
-                    if t.get("status") == "pending":
-                        target = t.get("target_agent")
-                        query_text = t.get("query")
-                        requester = t.get("requested_by")
-                        
-                        target_mod = {
-                            "junior_analyst": junior_analyst,
-                            "fundamental_analyst": fundamental_analyst,
-                            "quant_analyst": quant_analyst
-                        }.get(target)
-
-                        if target_mod and run_counts.get(target, 0) > 0:
-                            # An already-run analyst's sections are on the
-                            # whiteboard; re-running it duplicates the work
-                            # after its consumers have moved on (measured:
-                            # FA exhausted its loop budget, re-tasked the
-                            # junior, and the 43s/22k-token re-run's answer
-                            # arrived after FA's artifact was final).
-                            logger.info(
-                                "[V3] Peer request for %s dropped — already ran "
-                                "%d time(s) this desk (requester=%s).",
-                                target, run_counts[target], requester,
-                            )
-                            t["status"] = "dropped_already_ran"
-                            updated = True
-                        elif target_mod:
-                            _queue_agent(target, target_mod, query=query_text, parent=requester)
-                            t["status"] = "running"
-                            updated = True
-                        else:
-                            logger.warning("[V3] Peer request target agent '%s' not recognized.", target)
-                            t["status"] = "failed"
-                            updated = True
-                            
-                if updated:
-                    await whiteboard.write_section(
-                        ticker=ticker,
-                        cycle_id=cycle_id,
-                        section="task_queue",
-                        content={"tasks": tasks_list},
-                        author_agent="system"
-                    )
-        except Exception as e:
-            logger.warning("[V3] Process peer requests failed: %s", e)
-
-    async def _execute_tournament_debate(parent: str):
-        # Resolve the engine BEFORE emitting anything. The skip has to happen
-        # above the "starting" event or the office UI is left holding a
-        # `running` node that never gets its terminal `ok`.
-        #
-        # Fail-open to the DEFAULT engine, which is now 3 (no debate). This
-        # previously fell back to 0; with the default at 3 that would let a
-        # transient parameter-store hiccup silently resurrect 28.2% of pipeline
-        # spend. A fallback must land on the chosen behaviour, not the most
-        # expensive one.
-        try:
-            from app.services.parameter_store import get_param as _get_engine
-            _engine = int(_get_engine("DEBATE_ENGINE"))
-        except Exception as _e:  # noqa: BLE001
-            logger.warning("[V3] DEBATE_ENGINE lookup failed (%s) — no debate", _e)
-            _engine = 3
-
-        if _engine == 3:
-            # Defensive only. Engine 3 is gated upstream in _queue_debate_phase,
-            # which appends the SKIPPED marker and dispatches the Board; the
-            # tournament is never queued. Reaching here means something queued
-            # it anyway, so record the skip and return WITHOUT touching the
-            # Board dispatch — the upstream gate owns that, and duplicating it
-            # here is what stalled NVDA at RESEARCH_DONE.
-            logger.warning(
-                "[V3] %s: tournament queued despite DEBATE_ENGINE=3 — skipping",
-                ticker,
-            )
-            desk.record_agent_telemetry({
-                "agent_name": "v3_tournament_debate",
-                "ticker": ticker,
-                "elapsed_ms": 0,
-                "loops_used": 0,
-                "token_usage": 0,
-                "artifact_size_bytes": 0,
-                "outcome": "SKIPPED",
-                "phase": desk.phase.value,
-                "quality_score": -1,
-            })
-            return
-
-        emit(
-            "analyzing", f"v3_tournament_{ticker}",
-            f"🏆 {ticker}: Tournament Debate starting (4-stage pipeline)",
-            status="running",
-            data={"parent": parent} if parent else None
-        )
-        t_tournament = time.monotonic()
-        try:
-            from app.cognition.debate.tournament import run_tournament_debate
-            from app.cognition.contracts.evidence import EvidencePacket
-            from app.cognition.contracts.retrieval import StructuredFact
-
-            # fact_type names are chosen to hit PERSONA_EVIDENCE_FILTER keywords
-            # ("fundamental"/"technical"/"news"/"macro"). The old names
-            # (desk_note/quant_report) matched NO Technical or Macro keyword, so
-            # filter_packet_for_persona fell back to the FULL packet for 3 of 4
-            # pitch personas — every persona anchored on the same quant thesis
-            # and the tournament produced 4 near-identical pitches.
-            # fact_type names are chosen to hit exactly ONE PERSONA_EVIDENCE_FILTER
-            # category each — that mapping is the partition, and a fact reachable
-            # from two categories means two analysts are not independent.
-            #
-            # Widened 2026-07-29 for the probabilistic panel: valuation_report was
-            # never in the packet at all (the debate could not see the valuation
-            # desk), and positioning had no fact of its own, so the 4th analyst
-            # would have shared the macro slice.
-            facts = []
-            for artifact_name, fact_type in (
-                ("fundamental_report", "fundamental_report"),
-                ("valuation_report", "fundamental_valuation_note"),
-                ("quant_report", "technical_quant_report"),
-                ("desk_note", "positioning_news_desk_note"),
-                ("regime_classification", "macro_regime_note"),
-            ):
-                artifact = getattr(desk, artifact_name, None)
-                if artifact and isinstance(artifact, dict):
-                    summary = artifact.get("summary") or artifact.get("rationale") or ""
-                    if artifact_name == "regime_classification" and artifact.get("regime"):
-                        summary = f"Regime: {artifact['regime']}. {summary}"
-                    if summary:
-                        facts.append(
-                            StructuredFact(
-                                fact_type=fact_type,
-                                value=summary[:2000],
-                                timestamp=datetime.now(timezone.utc),
-                            )
-                        )
-
-            packet = EvidencePacket(
-                entity_id=ticker,
-                structured_facts=facts,
-                claims=[],
-            )
-
-            # `_engine` was resolved at the top of this function, above the
-            # first emit, so engine 3 could return without orphaning a `running`
-            # event. Reaching here means 0, 1 or 2 — exactly one runs per ticker.
-            #
-            # DEBATE_ENGINE gates the CALL, not the rendering. The older
-            # TOURNAMENT_DEBATE_MODE shadow branch was measured to save ZERO
-            # tokens — run_tournament_debate is invoked unconditionally there
-            # and only the prompt section is filtered — so the experiment cost
-            # the same either way. That flag is moot at the default engine (3),
-            # where nothing runs to shadow.
-            if _engine in (1, 2):
-                from app.cognition.debate.probabilistic_panel import (
-                    run_probabilistic_panel,
-                )
-                tournament_result = await run_probabilistic_panel(
-                    ticker=ticker,
-                    packet=packet,
-                    cycle_id=cycle_id,
-                    bot_id=bot_id,
-                    shared_evidence=(_engine == 2),
-                )
-                logger.info(
-                    "[V3] %s: panel P=%.2f spread=%.2f partitioned=%s (%d/%d analysts)",
-                    ticker, tournament_result.get("probability", 0.5),
-                    tournament_result.get("disagreement", 0.0),
-                    tournament_result.get("partitioned"),
-                    tournament_result.get("analysts_responded", 0),
-                    tournament_result.get("analysts_expected", 0),
-                )
-            else:
-                tournament_result = await run_tournament_debate(
-                    ticker=ticker,
-                    packet=packet,
-                    cycle_id=cycle_id,
-                    bot_id=bot_id,
-                    position_context=None,
-                )
-
-            desk.append_artifact("tournament_result", {
-                "summary": tournament_result.get("rationale", "Tournament complete"),
-                "action": tournament_result.get("action", "HOLD"),
-                "confidence": tournament_result.get("confidence", 0),
-                "winning_side": tournament_result.get("winning_side", "split"),
-                "pitches": tournament_result.get("pitches", []),
-                "survivors": tournament_result.get("survivors", []),
-                # h2h carries each thesis's attack_points — the debate nuance
-                # the board needs for sizing/stop calibration. Without it the
-                # board only ever saw the one-line rationale.
-                "h2h": tournament_result.get("h2h", {}),
-                "jury_verdict": tournament_result.get("jury_verdict", {}),
-                # Read the engine's own `vetoed` first. The tournament reports it
-                # inside jury_verdict; the panel has no jury and reports it at the
-                # top level, and reading only the nested path would silently drop
-                # it to False for any engine that does not have a jury.
-                "vetoed": bool(
-                    tournament_result.get(
-                        "vetoed",
-                        (tournament_result.get("jury_verdict") or {}).get("vetoed", False),
-                    )
-                ),
-                "risk_flags": tournament_result.get("risk_flags", []),
-                "total_tokens": tournament_result.get("total_tokens", 0),
-                # ── probabilistic panel fields (absent for the tournament) ──
-                # `probability` is the real signal; `confidence` above is derived
-                # from it for backward compatibility. `partitioned` records
-                # whether the run actually held information asymmetry — a run
-                # where the partition collapsed is N agents reading one packet,
-                # and scripts/score_panel.py voids it rather than averaging it in.
-                **({"engine": tournament_result["engine"]}
-                   if tournament_result.get("engine") else {}),
-                **({"probability": tournament_result["probability"]}
-                   if tournament_result.get("probability") is not None else {}),
-                **({"disagreement": tournament_result.get("disagreement", 0.0),
-                    "partitioned": tournament_result.get("partitioned"),
-                    "partition_fallbacks": tournament_result.get("partition_fallbacks", {}),
-                    "shared_evidence_control": tournament_result.get("shared_evidence_control", False),
-                    "views": tournament_result.get("views", []),
-                    "analysts_responded": tournament_result.get("analysts_responded", 0),
-                    "degraded": tournament_result.get("degraded", False)}
-                   if tournament_result.get("engine") == "probabilistic_panel" else {}),
-                # Stamped so a later analysis can split realized P&L into
-                # cycles where the verdict reached the Board and cycles where
-                # it did not. Without this field the shadow experiment is
-                # unfalsifiable — the artifact looks identical either way.
-                "shadow_mode": tournament_debate_mode() == TOURNAMENT_MODE_SHADOW,
-            })
-
-            desk.append_artifact("debate_judge", {
-                "summary": tournament_result.get("rationale", ""),
-                "action": tournament_result.get("action", "HOLD"),
-                "confidence": tournament_result.get("confidence", 0),
-                "winning_side": tournament_result.get("winning_side", "split"),
-                "source": "tournament_debate",
-            })
-
-            # Write tournament_result to whiteboard so subscriber chains board_of_directors
-            await whiteboard.write_section(
-                ticker=ticker, cycle_id=cycle_id,
-                section="tournament_result",
-                content=desk.tournament_result,
-                author_agent="tournament_debate"
-            )
-
-            # ── Structured debate events for the 3D office ──
-            # The tournament is otherwise a black box (only start/done reach the
-            # office). Replay its stages as discrete, `kind`-tagged events so the
-            # War Room can animate pitches → head-to-head clash → jury votes →
-            # verdict. Purely additive; never allowed to break the cycle.
-            try:
-                jury = tournament_result.get("jury_verdict", {}) or {}
-                for i, pitch in enumerate(tournament_result.get("pitches", []) or []):
-                    persona = pitch.get("persona") or f"pitch_{i}"
-                    claim = (pitch.get("claim") or "")[:180]
-                    emit(
-                        "analyzing", f"v3_debate_pitch_{i}_{ticker}",
-                        f"💬 {ticker} debate — {persona}: {claim}",
-                        status="running",
-                        data={"kind": "debate_pitch", "ticker": ticker,
-                              "persona": persona, "claim": claim, "index": i},
-                    )
-                h2h = tournament_result.get("h2h", {}) or {}
-                if h2h:
-                    ta = h2h.get("thesis_a", {}) or {}
-                    tb = h2h.get("thesis_b", {}) or {}
-                    emit(
-                        "analyzing", f"v3_debate_clash_{ticker}",
-                        f"⚔️ {ticker} head-to-head: "
-                        f"{ta.get('persona', 'A')} vs {tb.get('persona', 'B')}",
-                        status="running",
-                        data={"kind": "debate_clash", "ticker": ticker,
-                              "bull": ta, "bear": tb},
-                    )
-                for juror_name, verdict in (jury.get("jury_results") or {}).items():
-                    if not isinstance(verdict, dict):
-                        continue
-                    winner = verdict.get("winner", "?")
-                    score = verdict.get("score", 0)
-                    veto = bool(verdict.get("veto", False))
-                    emit(
-                        "analyzing", f"v3_debate_vote_{juror_name}_{ticker}",
-                        f"🗳️ {ticker}: {juror_name} → {winner} "
-                        f"({score}/10){' VETO' if veto else ''}",
-                        status="running",
-                        data={"kind": "debate_vote", "ticker": ticker,
-                              "juror": juror_name, "winner": winner,
-                              "score": score, "veto": veto},
-                    )
-                emit(
-                    "analyzing", f"v3_debate_verdict_{ticker}",
-                    f"⚖️ {ticker} verdict: {tournament_result.get('action', 'HOLD')} "
-                    f"@ {tournament_result.get('confidence', 0)}% "
-                    f"(winner: {tournament_result.get('winning_side', 'split')})",
-                    status="ok",
-                    data={"kind": "debate_verdict", "ticker": ticker,
-                          "action": tournament_result.get("action", "HOLD"),
-                          "confidence": tournament_result.get("confidence", 0),
-                          "winning_side": tournament_result.get("winning_side", "split"),
-                          "vetoed": tournament_result.get("vetoed", False),
-                          "votes": jury.get("votes", {})},
-                )
-            except Exception as dbg_emit_err:
-                logger.warning("[V3] %s: debate event emit failed: %s", ticker, dbg_emit_err)
-
-            emit(
-                "analyzing", f"v3_tournament_done_{ticker}",
-                f"🏆 {ticker}: Tournament complete → {tournament_result.get('action', 'HOLD')} "
-                f"@ {tournament_result.get('confidence', 0)}% "
-                f"(winner: {tournament_result.get('winning_side', 'split')})",
-                status="ok",
-            )
-            # The tournament bypasses run_v3_agent, so without this it leaves no
-            # v3_agent_telemetry row — which drops its node from the replay flow
-            # graph and severs the analyst→board edges (the "islands" bug).
-            #
-            # Bypassing run_v3_agent also meant bypassing score_artifact, so this
-            # was hardcoded to -1: the single most expensive stage in the pipeline
-            # (~264s/ticker, ~1.2M tokens per 5-ticker cycle, a third of all agent
-            # time) was the only one with no quality signal at all. Score it here
-            # instead, so "is the debate worth its cost?" is an answerable question.
-            try:
-                from app.v3.quality_scorer import score_artifact
-
-                tournament_quality = score_artifact(
-                    "tournament_debate", tournament_result
-                ).get("quality_score", -1)
-            except Exception as score_err:  # noqa: BLE001 — never block the cycle
-                logger.warning("[V3] %s: tournament scoring failed: %s", ticker, score_err)
-                tournament_quality = -1
-
-            # Size the artifact like every other agent does. Left unset it
-            # defaulted to 0, so the single most expensive stage in the cycle
-            # (245-305s per ticker in cycle-v3-1785137616, ~30% of per-ticker
-            # wall clock) was the one row that could not be checked for
-            # "expensive AND empty" — the exact question its own cost invites.
-            try:
-                _t_bytes = len(json.dumps(tournament_result, default=str))
-            except Exception:
-                _t_bytes = 0
-
-            desk.record_agent_telemetry({
-                "agent_name": "v3_tournament_debate",
-                "ticker": ticker,
-                "elapsed_ms": int((time.monotonic() - t_tournament) * 1000),
-                "loops_used": 1,
-                "token_usage": int(tournament_result.get("total_tokens", 0) or 0),
-                "artifact_size_bytes": _t_bytes,
-                "outcome": "SUCCESS",
-                "phase": desk.phase.value,
-                "quality_score": tournament_quality,
-            })
-        except Exception as tournament_err:
-            logger.error("[V3] %s: Tournament debate failed: %s", ticker, tournament_err, exc_info=True)
-            logger.info("[V3] Falling back to classic debate agents (Bull/Bear).")
-            desk.record_agent_telemetry({
-                "agent_name": "v3_tournament_debate",
-                "ticker": ticker,
-                "elapsed_ms": int((time.monotonic() - t_tournament) * 1000),
-                "loops_used": 1,
-                "token_usage": 0,
-                "outcome": "AGENT_ERROR",
-                "phase": desk.phase.value,
-                "quality_score": -1,
-            })
-            _queue_agent("bull_argument", bull_agent, parent="tournament_debate")
-            _queue_agent("bear_rebuttal", bear_agent, parent="tournament_debate")
-
+        # No skip marker and no explicit Board dispatch: bull_argument +
+        # bear_rebuttal chain debate_judge, which chains the Board. A second
+        # dispatch would fight the latch.
+        _queue_agent("bull_argument", bull_agent, parent="quant_analyst")
+        _queue_agent("bear_rebuttal", bear_agent, parent="quant_analyst")
 
     # Subscribe live whiteboard triggers
     from app.agents.whiteboard import whiteboard
@@ -1980,12 +1523,8 @@ async def run_v3_pipeline(
         iteration_log: list[dict] = []
         desk.cycle_metadata["pipeline_iteration_log"] = iteration_log
 
-        while (tasks_to_run or await _has_pending_peer_requests()) and loop_counter < MAX_LOOP_ITERATIONS:
+        while tasks_to_run and loop_counter < MAX_LOOP_ITERATIONS:
             loop_counter += 1
-            await _process_peer_requests()
-
-            if not tasks_to_run:
-                break
 
             task = tasks_to_run.pop(0)
             name = task["name"]
@@ -2199,9 +1738,6 @@ async def run_v3_pipeline(
                         content=desk.debate_judge,
                         author_agent="v3_debate_judge"
                     )
-                
-            elif name == "tournament_debate":
-                await _execute_tournament_debate(parent=parent)
                 
             elif name == "board_of_directors":
                 if desk.phase == DeskPhase.RESEARCH_DONE:
@@ -3326,26 +2862,18 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
 
     tournament = getattr(desk, "tournament_result", None) or {}
 
-    # Jury-majority veto is binding by default. The board may override it
-    # ONLY with an explicit written justification (plan 3.3) — the veto then
-    # degrades to a standing risk flag, which still demands full mitigation.
-    veto_overridden = False
-    if tournament.get("vetoed"):
-        justification = str(board.get("override_justification") or "").strip()
-        if board.get("overrides_veto") and justification:
-            veto_overridden = True
-            logger.warning(
-                "[V3] %s: Board overrides jury-majority veto — justification: %s",
-                desk.ticker, justification[:300],
-            )
-        else:
-            return _record_gate(desk, "HOLD_POLICY_BLOCKED_JURY_VETO", action=action)
+    # NOTE: `tournament_result` outlived the tournament. It is now written ONLY
+    # by the two debate-skip markers in _queue_debate_phase (regime panic, and
+    # no-trade-available), both of which set `risk_flags` precisely so the gate
+    # below fires. The jury-majority veto that used to read `vetoed` here is
+    # gone with the tournament: it blocked ZERO decisions in its lifetime, and
+    # since both surviving writers hardcode `"vetoed": False` the branch could
+    # not fire again.
 
-    # A solo juror veto is a standing risk flag: the board may trade through
-    # it ONLY with explicit mitigation — a defined stop-loss, a dynamic
-    # trigger, and its own reasoned position size. Anything less holds.
-    # An overridden jury veto is held to the same standard.
-    if tournament.get("risk_flags") or veto_overridden:
+    # A standing risk flag: the board may trade through it ONLY with explicit
+    # mitigation — a defined stop-loss, a dynamic trigger, and its own reasoned
+    # position size. Anything less holds.
+    if tournament.get("risk_flags"):
         mitigation = {**(desk.final_decision or {}), **(desk.trade_decision or {})}
         has_stop = isinstance(mitigation.get("stop_loss"), (int, float))
         has_trigger = bool(mitigation.get("dynamic_trigger"))
@@ -3355,7 +2883,6 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
                 desk, "HOLD_POLICY_BLOCKED_UNMITIGATED_RISK",
                 action=action, has_stop=has_stop,
                 has_trigger=has_trigger, has_size=has_size,
-                veto_overridden=veto_overridden,
             )
 
     # LAST gate before execution, deliberately. No price history at all is not

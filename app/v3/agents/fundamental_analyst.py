@@ -38,7 +38,6 @@ TOOL_WHITELIST = [
     "whiteboard_read",
     "whiteboard_write",
     "whiteboard_annotate",
-    "request_peer_analysis",
     # Research sniping: earnings dates are this desk's home turf — schedule a
     # one-shot research cycle to land on the fresh numbers (governor-capped).
     # KEPT despite zero calls in 60 days: the SYSTEM_PROMPT explicitly directs

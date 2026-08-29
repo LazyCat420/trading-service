@@ -70,7 +70,6 @@ logger = logging.getLogger(__name__)
 #:   remove_from_watchlist,
 #:   watch_ticker                     mutate persistent watch state
 #:   escalate_to_pm                   a workflow action, not a lookup
-#:   request_peer_analysis            spawns another agent
 #:   save_trading_chart               persists an artifact
 #:   run_equation, run_backtest       compute that persists results
 REPAIRABLE_TICKER_TOOLS = frozenset({

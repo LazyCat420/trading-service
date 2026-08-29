@@ -1,14 +1,18 @@
 """
-Tests for the enforced policy gates and jury vote normalization.
+Tests for the enforced policy gates.
 
 2026-07-15 audit findings pinned here:
   - policy_action used to be decorative (no consumer) — it is now binding in
     pipeline_service, so the gate logic itself must be correct.
-  - A jury-majority veto is binding; a solo veto is a risk flag the board can
-    only trade through with explicit mitigation (stop-loss + trigger + size).
-  - validate_jury_score normalizes the new "winner" side vote.
+  - A risk flag on `tournament_result` is something the board may only trade
+    through with explicit mitigation (stop-loss + trigger + size).
+
+The jury-veto tests and the validate_jury_score normalization tests were
+deleted with the tournament on 2026-08-28. The `tournament_result` artifact
+itself survives: it is now written ONLY by the two debate-skip markers in
+_queue_debate_phase, which set `risk_flags` so the mitigation gate below still
+fires, and hardcode `"vetoed": False`.
 """
-from app.cognition.debate.format_validator import validate_jury_score
 from app.v3.orchestrator import _apply_policy_gates
 from app.v3.shared_desk import SharedDesk
 
@@ -29,25 +33,6 @@ def _desk(**overrides) -> SharedDesk:
 
 
 # ── Jury winner-vote normalization ──────────────────────────────────
-
-def test_jury_winner_normalized():
-    ok, parsed, _ = validate_jury_score(
-        '{"winner": "Thesis A", "score": 7, "reasoning": "solid"}'
-    )
-    assert ok and parsed["winner"] == "A"
-
-
-def test_jury_winner_missing_means_abstain():
-    ok, parsed, _ = validate_jury_score('{"score": 6, "reasoning": "meh"}')
-    assert ok and "winner" not in parsed
-
-
-def test_jury_winner_ambiguous_dropped():
-    ok, parsed, _ = validate_jury_score(
-        '{"winner": "A and B", "score": 6, "reasoning": "torn"}'
-    )
-    assert ok and "winner" not in parsed
-
 
 # ── Policy gates ─────────────────────────────────────────────────────
 
@@ -186,12 +171,7 @@ def test_gate_blocks_missing_regime():
     assert _apply_policy_gates(desk) == "HOLD_POLICY_BLOCKED_MISSING_REGIME"
 
 
-def test_jury_majority_veto_is_binding():
-    desk = _desk(tournament_result={"vetoed": True, "risk_flags": []})
-    assert _apply_policy_gates(desk) == "HOLD_POLICY_BLOCKED_JURY_VETO"
-
-
-def test_solo_veto_blocks_unmitigated_trade():
+def test_risk_flag_blocks_unmitigated_trade():
     desk = _desk(
         tournament_result={
             "vetoed": False,
@@ -202,7 +182,7 @@ def test_solo_veto_blocks_unmitigated_trade():
     assert _apply_policy_gates(desk) == "HOLD_POLICY_BLOCKED_UNMITIGATED_RISK"
 
 
-def test_solo_veto_allows_fully_mitigated_trade():
+def test_risk_flag_allows_fully_mitigated_trade():
     desk = _desk(
         tournament_result={
             "vetoed": False,
@@ -254,32 +234,6 @@ def test_healthy_conviction_vector_passes():
     desk = _desk()
     desk.final_decision["conviction_vector"] = {"data_quality": 75, "consensus_strength": 60}
     assert _apply_policy_gates(desk) == "EXECUTE_BUY"
-
-
-def test_board_may_override_jury_veto_with_justification_and_mitigation():
-    desk = _desk(tournament_result={"vetoed": True, "risk_flags": []})
-    desk.final_decision["overrides_veto"] = True
-    desk.final_decision["override_justification"] = (
-        "Veto was driven by a stale filing; fresh 8-K contradicts it. "
-        "Position halved, hard stop at support."
-    )
-    # _desk() already carries stop_loss + dynamic_trigger + position_size_pct
-    assert _apply_policy_gates(desk) == "EXECUTE_BUY"
-
-
-def test_veto_override_without_justification_still_blocks():
-    desk = _desk(tournament_result={"vetoed": True, "risk_flags": []})
-    desk.final_decision["overrides_veto"] = True
-    desk.final_decision["override_justification"] = "   "
-    assert _apply_policy_gates(desk) == "HOLD_POLICY_BLOCKED_JURY_VETO"
-
-
-def test_veto_override_without_mitigation_blocks_as_unmitigated():
-    desk = _desk(tournament_result={"vetoed": True, "risk_flags": []})
-    desk.final_decision["overrides_veto"] = True
-    desk.final_decision["override_justification"] = "Stale filing, fresh 8-K contradicts."
-    desk.final_decision.pop("stop_loss")
-    assert _apply_policy_gates(desk) == "HOLD_POLICY_BLOCKED_UNMITIGATED_RISK"
 
 
 # ── The confidence floor boundary, pinned exactly ────────────────────

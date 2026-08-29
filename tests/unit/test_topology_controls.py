@@ -63,8 +63,6 @@ def test_research_agents_have_collaboration_tools():
     assert "whiteboard_read" in junior_analyst.TOOL_WHITELIST
     assert "whiteboard_read" in fundamental_analyst.TOOL_WHITELIST
     assert "whiteboard_read" in quant_analyst.TOOL_WHITELIST
-    assert "request_peer_analysis" in fundamental_analyst.TOOL_WHITELIST
-    assert "request_peer_analysis" in quant_analyst.TOOL_WHITELIST
 
 
 def test_debate_agents_have_small_verification_toolset():

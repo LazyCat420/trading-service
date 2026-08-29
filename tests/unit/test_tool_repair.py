@@ -111,7 +111,7 @@ def test_replaces_a_blank_ticker(blank):
 @pytest.mark.parametrize("tool", [
     "buy_stock", "sell_stock",              # place orders
     "add_to_watchlist", "remove_from_watchlist", "watch_ticker",
-    "escalate_to_pm", "request_peer_analysis",
+    "escalate_to_pm",
     "save_trading_chart", "run_equation", "run_backtest",
 ])
 def test_never_repairs_a_state_changing_tool(tool):
@@ -307,7 +307,7 @@ def test_no_state_changing_tool_is_allow_listed():
     forbidden = {
         "buy_stock", "sell_stock",
         "add_to_watchlist", "remove_from_watchlist", "watch_ticker",
-        "escalate_to_pm", "request_peer_analysis",
+        "escalate_to_pm",
         "save_trading_chart", "run_equation", "run_backtest",
     }
     assert not (REPAIRABLE_TICKER_TOOLS & forbidden)

@@ -18,8 +18,6 @@ from enum import Enum
 from typing import Any
 logger = logging.getLogger(__name__)
 
-TOURNAMENT_MODE_ACTIVE = "active"
-TOURNAMENT_MODE_SHADOW = "shadow"
 
 
 #: Severity prefixes a producer may stamp on a data_gaps entry. Introduced
@@ -75,21 +73,6 @@ def render_stale_conclusion(artifact: dict | None) -> str:
         f"since been corrected; weigh the verified metrics above, not the call. "
         f"({reason})"
     )
-
-
-def tournament_debate_mode() -> str:
-    """Resolve TOURNAMENT_DEBATE_MODE to "active" or "shadow".
-
-    Fail-open: the shadow branch REMOVES evidence from the Board, so any
-    failure to read the parameter must land on today's behaviour rather than
-    silently blinding the decision. Only an explicit, honest 1 flips it.
-    """
-    try:
-        from app.services.parameter_store import get_param
-        return TOURNAMENT_MODE_SHADOW if int(get_param("TOURNAMENT_DEBATE_MODE")) == 1 else TOURNAMENT_MODE_ACTIVE
-    except Exception as e:  # noqa: BLE001 — a param miss must never blind the Board
-        logger.warning("[V3] TOURNAMENT_DEBATE_MODE lookup failed (%s) — staying active", e)
-        return TOURNAMENT_MODE_ACTIVE
 
 
 class DeskPhase(str, Enum):
@@ -669,19 +652,12 @@ class SharedDesk:
 
         # Debate artifacts (only if requested, and only in "active" mode).
         #
-        # Shadow mode gates RENDERING, not execution: the debate still ran and
-        # tournament_result is still on the desk, so the jury veto in
-        # _apply_policy_gates (which reads desk.tournament_result directly, not
-        # this string) fires identically either way. What shadow removes is the
-        # winner's influence on the Board — measured at t = -0.17 against
-        # realized P&L for 31% of pipeline spend. It gates the VERDICT sections
-        # only: bull/bear/defense prose stays visible, because blinding the
-        # BEAR to the bull it is rebutting is not part of the experiment (the
-        # whiteboard summary already keeps bull/bear visible in shadow — this
-        # matches that behavior).
+        # Verdict sections track the debate sections. These were once split by
+        # a TOURNAMENT_DEBATE_MODE "shadow" branch that withheld the winner's
+        # verdict from the Board while leaving bull/bear prose visible; it was
+        # measured to change nothing (the shed it was meant to buy was zero
+        # tokens) and went with the tournament.
         include_verdicts = include_debate
-        if include_debate and tournament_debate_mode() == TOURNAMENT_MODE_SHADOW:
-            include_verdicts = False
 
         if include_debate:
             if self.bull_argument:

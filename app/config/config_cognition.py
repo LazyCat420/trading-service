@@ -26,30 +26,6 @@ class CognitionSettings(BaseSettings):
     FAST_DEBATE_MODE: bool = True  # Halve debate latency with capped prompt sizes
     MAX_DEBATE_HISTORY_AGE_HOURS: int = 4  # Don't use debates older than this for context
     CONFIRMATION_LOOP_THRESHOLD: int = 3  # Force skepticism if N+ consecutive same verdicts
-    TOURNAMENT_MODE: bool = True  # 4-stage tournament debate (pitch → backtest → h2h → jury)
-    # Tournament cost controls (T4/T5). Both default OFF so behavior is unchanged
-    # until explicitly enabled.
-    #   FAST_MODE: drop pitch personas 4→2 (Value+Momentum) and jury 3→1 (Risk
-    #   Manager) for non-core tickers — ~half the tournament LLM calls.
-    TOURNAMENT_FAST_MODE: bool = False
-
-    #   JURY_ROUTING: which box scores the jury. Replaces the old boolean
-    #   TOURNAMENT_JURY_ON_JETSON (2026-08-04), which could only move ALL
-    #   jurors to Jetson — and did so by renaming the agent to contain
-    #   "consensus", so the two arms landed under different role labels and
-    #   could never be compared as the same job.
-    #     "off"    — every juror on Gold Spark (unchanged behaviour).
-    #     "jetson" — every juror on Jetson. Exercises the box; produces NO
-    #                cross-model comparison, since nothing scores the same
-    #                bracket on Gold Spark.
-    #     "split"  — jurors alternate across the two boxes WITHIN a tournament,
-    #                so both models score a byte-identical bracket. This is the
-    #                only mode that can answer "which model is better at jury
-    #                scoring". The split is keyed on cycle_id so a given juror
-    #                persona lands on both boxes across cycles — otherwise
-    #                persona and model stay confounded at a finer grain.
-    TOURNAMENT_JURY_ROUTING: str = "off"
-
     #   MODEL_SHADOW_AGENTS: comma-separated agent names whose prompt is ALSO
     #   sent to MODEL_SHADOW_ENDPOINT after the primary call returns, purely to
     #   benchmark that box. The shadow answer is recorded in model_shadow_runs

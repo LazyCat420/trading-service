@@ -17,7 +17,7 @@ from app.cognition.evolution.repair_scope import (
     "app/v3/orchestrator.py",
     "app/v3/agent_runner.py",
     "app/collectors/yfinance_collector.py",
-    "app/cognition/debate/debate_coordinator.py",
+    "app/cognition/debate/equation_library.py",
     "app/services/pipeline_service.py",
     "app/trading/scoring_engine.py",
     "app/autoresearch/eval_engine.py",
@@ -84,7 +84,7 @@ def test_non_source_suffixes_refused(path):
 def test_deny_beats_allow():
     """A denied path inside an allowed prefix stays denied."""
     # app/cognition/ is allowed; app/cognition/evolution/ is carved back out.
-    assert is_patchable("app/cognition/debate/thesis_agent.py")[0] is True
+    assert is_patchable("app/cognition/debate/equation_library.py")[0] is True
     assert is_patchable("app/cognition/evolution/deployer.py")[0] is False
 
 

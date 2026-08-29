@@ -180,102 +180,31 @@ PARAMETER_REGISTRY: dict[str, ParamSpec] = {
     ),
     # Debate
     #
-    # 0 = active (today's behaviour), 1 = shadow. In shadow mode the tournament
-    # debate STILL RUNS and still writes its tournament_result artifact — the
-    # jury veto, the risk flags and every telemetry row are untouched — but its
-    # WINNER is no longer rendered into the context the Board reads, so it can
-    # no longer move the decision.
+    # TOURNAMENT_DEBATE_MODE and DEBATE_ENGINE both lived here and are gone
+    # with the tournament they switched (2026-08-28). Keeping the measurement
+    # that retired it, because it is the reason not to rebuild it:
     #
-    # Measured over 14 days, the tournament is the single largest cost centre in
-    # the pipeline: 239,028 tokens and 191s per ticker, 31% of ALL pipeline
-    # spend. What that buys is not measurable in P&L. Splitting resolved
-    # decisions by which side won the debate:
+    # Over 14 days the tournament was the single largest cost centre in the
+    # pipeline — 239,028 tokens and 191s per ticker, 31% of ALL pipeline spend.
+    # What that bought was not measurable in P&L. Splitting resolved decisions
+    # by which side won the debate:
     #
     #   bull-won: n=57  mean -0.18%
     #   bear-won: n=67  mean -0.03%
     #   difference -0.15%, t = -0.17
     #
-    # That is indistinguishable from noise. It is NOT a wiring bug — the winner
-    # reaches the Board and visibly moves it (bull-won -> 65% BUY, bear-won ->
-    # 21% BUY). The signal it carries simply has no predictive content.
+    # Indistinguishable from noise, and NOT a wiring bug: the winner reached
+    # the Board and visibly moved it (bull-won -> 65% BUY, bear-won -> 21% BUY).
+    # The signal simply had no predictive content.
     #
-    # The veto is the reason this is a shadow switch and not a deletion: it
-    # fired 12 times in 14 days (HOLD_POLICY_BLOCKED_JURY_VETO) and is evaluated
-    # from the artifact in _apply_policy_gates, downstream of any rendering.
-    # Flipping this parameter must not change that path at all.
+    # The jury veto was the one reason the first pass made this a shadow switch
+    # rather than a deletion. It has blocked nothing since the tournament went
+    # dormant on 2026-07-12, and both surviving writers of `tournament_result`
+    # (the two debate-skip markers) hardcode `"vetoed": False`, so the gate
+    # could not fire again. It is deleted too.
     #
-    # Default stays 0. Flip to 1 to run the experiment, then split realized P&L
-    # on tournament_result.shadow_mode to see whether the 31% bought anything.
-    "TOURNAMENT_DEBATE_MODE": ParamSpec(
-        default=0, min_value=0, max_value=1, direction=RISK_NEUTRAL, kind="int",
-        tier=TIER_BOARD,
-        description="0=active (debate winner reaches the Board), 1=shadow "
-                    "(debate still runs, still writes its artifact and still "
-                    "vetoes, but no longer informs the Board's decision).",
-    ),
-    # Debate engine selection.
-    #
-    # 0 = tournament (today), 1 = probabilistic panel, 2 = panel with shared
-    # evidence (the rho=1.0 control that shows whether information asymmetry is
-    # doing the work rather than plain ensembling).
-    #
-    # This gates the CALL, not the rendering. TOURNAMENT_DEBATE_MODE's shadow
-    # branch was measured to save ZERO tokens because run_tournament_debate is
-    # invoked unconditionally and only the prompt section is filtered — so the
-    # experiment cost the same either way. Only one engine runs per ticker here.
-    #
-    # 3 = NO DEBATE, and it is now the default. The tournament was retired on
-    # measurement 2026-07-29, not on preference. Its cost is certain and large:
-    # 77.7M of 275.9M pipeline tokens (28.2%) over 347 runs, 374 s/ticker.
-    # Against that, every benefit channel was tested and none survived:
-    #
-    #   * jury veto ......... blocked ZERO decisions, ever
-    #                        (docs/JURY_VETO_SCORECARD_2026-07-29.md)
-    #   * own calibration ... Brier 0.3090 vs base rate 0.2266 and a constant
-    #                        0.5 at 0.2500 — worse than useless as a probability
-    #                        (scripts/score_panel.py, n=98)
-    #   * selection ........ on desks the board traded, tourn-bull vs -bear
-    #                        separates realized P&L by -0.822pp (p=0.34). The
-    #                        FREE quant thesis_direction separates it by
-    #                        -0.771pp (p=0.35) — statistically indistinguishable,
-    #                        at zero marginal cost (n=137, degraded excluded)
-    #   * removal .......... where parameter_store says all the value is, the
-    #                        free signal is 6.5x better: quant-BEARISH desks the
-    #                        board held returned -1.85% (n=14) vs -0.29% (n=29)
-    #                        for tournament-bear
-    #   * incrementality ... within quant=BEARISH, bear vs bull is +0.33pp
-    #                        (p=0.84). It adds nothing where the desk already
-    #                        has a direction
-    #   * redundancy ....... winning_side is strongly dependent on the quant's
-    #                        thesis_direction, chi2=16.63 p<0.0001. It largely
-    #                        re-derives a signal already on the desk
-    #
-    # The earlier "directionally discriminating at p=3.2e-09" result measured
-    # the association between winning_side and the BOARD'S ACTION — i.e. that
-    # the board listens to it — not that it is right. That is the redundancy
-    # channel, not evidence of edge.
-    #
-    # Honest limit: at n=137 this cannot prove the tournament is HARMFUL. It
-    # shows no measurable benefit against a certain, large, measured cost, which
-    # is the standard being applied. Engines 0-2 remain selectable to re-run the
-    # comparison; flip DEBATE_ENGINE back to 0 to restore the old behaviour.
-    #
-    # Engine 3 does NOT synthesize a verdict. Fabricating a winning_side from
-    # the quant would hand the board a derived number dressed as a debate
-    # outcome — the same failure as the 171-of-305 invented RSIs. It appends no
-    # tournament_result and no debate_judge; every consumer is None-safe
-    # (`getattr(desk, "tournament_result", None) or {}` in _apply_policy_gates,
-    # `if tournament:` in shared_desk). Bull/bear/defense are a SEPARATE phase
-    # (_queue_debate_phase) and still run.
-    "DEBATE_ENGINE": ParamSpec(
-        default=3, min_value=0, max_value=3, direction=RISK_NEUTRAL, kind="int",
-        tier=TIER_BOARD,
-        description="0=tournament, 1=probabilistic panel, 2=panel with shared "
-                    "evidence (asymmetry-off control), 3=bull/bear debate, no "
-                    "tournament (default; the tournament did not beat the free "
-                    "quant signal, but bull/bear was never measured and keeps "
-                    "an adversarial pass on the desk). Gates which engine RUNS.",
-    ),
+    # What survives is the bull/bear/judge debate, which is a different and far
+    # smaller mechanism and was never the thing measured here.
     # HMM regime shadow.
     #
     # 0 = active: the desk-path fit runs and the shadow line is rendered into

@@ -322,35 +322,3 @@ def test_the_tool_no_longer_advertises_sections_nothing_writes():
     assert "'consensus'" not in desc and "'trade_plan'" not in desc
 
 
-@pytest.mark.asyncio
-async def test_the_tournament_shadow_gate_survived_the_rewrite():
-    """Pinned BEHAVIOURALLY, because this rewrite is exactly when a gate gets
-    dropped by accident.
-
-    The existing check in `test_tournament_shadow_mode.py` asserts the string
-    `tournament_debate_mode` appears in this method's source. That stays green
-    when the gate is replaced by `if False:`, because the import line above it
-    still carries the name. A check that passes in both states is not a check —
-    so this one runs the gate and reads the output.
-    """
-    from app.v3.shared_desk import TOURNAMENT_MODE_SHADOW
-
-    board = [
-        _entry(1, "tournament_result", "TOURNAMENT VERDICT TEXT"),
-        _entry(2, "debate_judge", "JUDGE VERDICT TEXT"),
-        _entry(3, "market_context", "MANDATORY HANDOFF"),
-    ]
-    with patch("app.v3.shared_desk.tournament_debate_mode",
-               return_value=TOURNAMENT_MODE_SHADOW):
-        out = await _summarize(board, for_agent_prompt=False)
-
-    assert "TOURNAMENT VERDICT TEXT" not in out, (
-        "the tournament verdict reaches every agent's prompt in shadow mode — "
-        "the experiment measures nothing"
-    )
-    assert "JUDGE VERDICT TEXT" not in out, (
-        "debate_judge is a copy of the same verdict under another name"
-    )
-    assert "MANDATORY HANDOFF" in out, (
-        "shadow mode suppresses two sections, not the whole board"
-    )

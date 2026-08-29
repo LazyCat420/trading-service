@@ -34,8 +34,8 @@ TOOL_WHITELIST = [
     # NOT dropped, despite also being at zero: calculate_stop_loss and
     # save_equation (used within 30d — last week was almost all HOLDs, and the
     # stop/entry tools go quiet without being dead), and
-    # get_portfolio_covariance / request_peer_analysis, which step 5 and the
-    # uncertainty rule name explicitly as conditional escape hatches. Deleting
+    # get_portfolio_covariance, which step 5 names explicitly as a
+    # conditional escape hatch. Deleting
     # a tool the prompt still instructs turns a live instruction into a dead
     # end — pinned by test_no_prompt_names_a_tool_the_agent_cannot_call.
     "calculate_stop_loss",
@@ -69,9 +69,6 @@ TOOL_WHITELIST = [
     # the call; the auto-post covers the legitimate case.
     "whiteboard_read",
     "whiteboard_annotate",
-    # Zero calls in 60d but the uncertainty rule names it ("At most one
-    # `request_peer_analysis`") — a capped escape hatch, not dead weight.
-    "request_peer_analysis",
     "search_equations",
     "save_equation",
     "run_equation",
@@ -103,7 +100,7 @@ If the baseline is marked STALE, say so in data_gaps and treat levels as indicat
 8. Emit the JSON. Its `overlays` field is MANDATORY — put every support/resistance zone and trendline you identified there (see OUTPUT). The desk renders those on the ticker chart automatically.
 
 ## RULES
-- Uncertainty is stated, never silently neutral. At most one `request_peer_analysis` (qualitative facts you can't compute) — and only to an agent that has NOT already run this desk; requests to already-run agents are dropped, so prefer `sub_analyses_requested`. Unresolved quantitative questions go in `sub_analyses_requested` — the Board treats them as open uncertainty.
+- Uncertainty is stated, never silently neutral. Unresolved questions — quantitative or qualitative — go in `sub_analyses_requested`; the Board treats them as open uncertainty.
 
 ## WHAT `confidence` MEANS (one scale, firm-wide)
 Your probability, 0-100, that `thesis_direction` is directionally right over the next ~7 sessions. A forecast that is scored, not a mood. 80-90: the signals agree, the inputs are current, and you can name what would have to be wrong; 70-79: the read holds with ordinary gaps (the normal band for a read worth acting on); 55-69: genuinely mixed — indicators contest each other or a key input is stale; below 55: you cannot tell — say so. A gap in a figure the read does not rest on is not a reason to drop a band. Do not anchor on the example number; if every ticker gets the same confidence the number carries no information.

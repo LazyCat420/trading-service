@@ -47,11 +47,14 @@ SCRAPER_MAP: dict[str, str] = {
 
 PROMPT_MAP: dict[str, str] = {
     # Debate / analysis agent prompts
-    "debate": "app/cognition/debate/debate_coordinator.py",
-    "debate_coordinator": "app/cognition/debate/debate_coordinator.py",
-    "debate_judge": "app/cognition/debate/debate_judge.py",
-    "thesis_agent": "app/cognition/debate/thesis_agent.py",
-    "specialized_agents": "app/cognition/debate/specialized_agents.py",
+    #
+    # debate / debate_coordinator / thesis_agent / specialized_agents removed
+    # 2026-08-28 with the tournament, for the reason the collectors comment
+    # above gives: a repair target pointing at a file nothing runs sends the
+    # self-healer to fix code that cannot fail. `debate_judge` now points at
+    # the judge that actually runs -- the v3 agent, not the deleted
+    # cognition/debate copy.
+    "debate_judge": "app/v3/agents/debate_judge.py",
     # Decision / trading prompts
     "decision_engine": "app/services/pipeline_service.py",
     "trading_phase": "app/services/pipeline_service.py",
@@ -62,7 +65,8 @@ PROMPT_MAP: dict[str, str] = {
     "hermes_research": "app/services/web_search.py",
     "data_janitor": "app/services/data_flag_service.py",
     # Memory / RAG
-    "memory_briefing": "app/services/memory/briefing.py",
+    # memory_briefing removed 2026-08-28: app/services/memory/briefing.py had
+    # no importer and was deleted; this entry was the only reference to it.
     # Evaluation
     "judge_agent": "app/cognition/evaluation/judge_agent.py",
     "strategy_auditor": "app/cognition/evaluation/strategy_auditor.py",

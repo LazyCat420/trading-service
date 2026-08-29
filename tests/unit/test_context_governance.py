@@ -96,32 +96,6 @@ class TestContextBudget:
         assert budget.model_id == "org/big-model-v2"
 
 
-# ── Phase 4: Debate Prompt Capping ──────────────────────────────────
-
-
-class TestDebatePromptCapping:
-    """Tests for debate_coordinator._cap_debate_text."""
-
-    def test_short_text_unchanged(self):
-        """Text within max_chars should pass through unchanged."""
-        from app.cognition.debate.debate_coordinator import _cap_debate_text
-
-        short = "Bull argument"
-        result = _cap_debate_text(short, 1000, "test")
-        assert result == short
-
-    def test_long_text_truncated_with_label(self):
-        """Long text should be truncated with a labeled marker."""
-        from app.cognition.debate.debate_coordinator import _cap_debate_text
-
-        long = "x" * 5000
-        result = _cap_debate_text(long, 3000, "bull_t1_quote")
-        assert len(result) > 3000  # Marker adds some chars
-        assert len(result) < 5000  # But much less than original
-        assert "bull_t1_quote" in result
-        assert "truncated" in result.lower()
-
-
 # ── End-to-End Context Sizing ──────────────────────────────────────
 
 

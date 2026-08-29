@@ -1146,8 +1146,8 @@ class TestMockTradingCycleMongoE2E:
         cleared_n = checkpoint_manager.clear_cycle(cycle_id)
         assert cleared_n >= 1
 
-        # 36. Constitution & Memory Repository in MongoDB
-        from app.db.constitution import format_constitution_for_prompt
+        # 36. Memory Repository in MongoDB (the constitution module went
+        #     with thesis_agent, its only caller, on 2026-08-28)
         from app.db.memory_repo import (
             upsert_canonical_memories,
             get_active_canonical_memories,
@@ -1155,18 +1155,6 @@ class TestMockTradingCycleMongoE2E:
             mark_observations_promoted,
             get_unpromoted_observations,
         )
-
-        mongo_store.insert_docs("trading_constitution", [{
-            "id": 1,
-            "rule_category": "risk",
-            "rule_text": "Never risk more than 2% of capital on a single position.",
-            "rule_params": "{}",
-            "is_active": True,
-        }])
-
-        const_prompt = format_constitution_for_prompt()
-        assert "[RISK]" in const_prompt
-        assert "Never risk more than 2%" in const_prompt
 
         upsert_canonical_memories([{
             "id": "mem-001",

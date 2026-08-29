@@ -265,13 +265,6 @@ class Whiteboard:
             sec = ann.get("section", "")
             ann_by_section.setdefault(sec, []).append((ann.get("author_agent"), ann.get("note")))
 
-        try:
-            from app.v3.shared_desk import tournament_debate_mode, TOURNAMENT_MODE_SHADOW
-            if tournament_debate_mode() == TOURNAMENT_MODE_SHADOW:
-                docs = [d for d in docs if d.get("section") not in ("tournament_result", "debate_judge")]
-        except Exception as mode_err:
-            logger.warning("[Whiteboard] debate-mode gate skipped: %s", mode_err)
-
         if not docs:
             return ""
 
