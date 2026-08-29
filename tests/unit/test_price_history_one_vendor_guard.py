@@ -108,7 +108,6 @@ KNOWN_UNPINNED: dict[str, int] = {
     # source filter out explicitly. Ratchet lowered, per this test's own
     # instruction — do not raise it again.
     "app/services/cycle_scheduler.py": 0,
-    "scripts/confidence_audit.py": 1,
     # cycle_healthcheck left this list on 2026-08-19 with its Mongo port: the
     # SQL freshness probe became a distinct-ticker count, which is
     # vendor-immune by construction rather than merely out of the SQL
@@ -227,7 +226,8 @@ def test_the_scanner_actually_finds_queries():
     # scan (a find_rows/join_rows on "price_history" that neither filters
     # `source` nor routes through keep_dominant_source) before the last SQL
     # reader leaves.
-    assert total >= 18, (
+    # Floor lowered 18 → 17 on 2026-08-29: confidence_audit.py ported to MongoDB.
+    assert total >= 17, (
         f"scanner found only {total} price_history reads — it is broken, "
         "not the codebase that is clean"
     )

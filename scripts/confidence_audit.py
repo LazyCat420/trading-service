@@ -86,35 +86,41 @@ _PX: dict[tuple, float | None] = {}
 
 
 def _prime(rows: list[tuple], horizon: int) -> None:
-    """Resolve forward returns once, in a single connection."""
-    from scripts.migration.pg_connection import get_db
+    """Resolve forward returns once via MongoDB."""
+    from app.db import mongo_store
+    from app.quant.returns import _one_vendor
 
     need = {(r[0], str(r[1])[:10]) for r in rows}
-    with get_db() as db:
-        for ticker, day in need:
-            key = (ticker, day, horizon)
-            if key in _PX:
-                continue
-            try:
-                row = db.execute(
-                    """
-                    WITH e AS (SELECT close FROM price_history
-                                WHERE ticker = %s AND date <= %s
-                                ORDER BY date DESC LIMIT 1),
-                         x AS (SELECT close FROM price_history
-                                WHERE ticker = %s AND date >  %s
-                                ORDER BY date ASC OFFSET %s LIMIT 1)
-                    SELECT (SELECT close FROM e), (SELECT close FROM x)
-                    """,
-                    [ticker, day, ticker, day, max(horizon - 1, 0)],
-                ).fetchone()
-            except Exception:
+    for ticker, day in need:
+        key = (ticker, day, horizon)
+        if key in _PX:
+            continue
+        try:
+            e_docs = mongo_store.find_docs(
+                "price_history",
+                _one_vendor(ticker, {"ticker": ticker, "date": {"$lte": day}}),
+                sort=[("date", -1)],
+                projection={"close": 1},
+                limit=1,
+            )
+            x_docs = mongo_store.find_docs(
+                "price_history",
+                _one_vendor(ticker, {"ticker": ticker, "date": {"$gt": day}}),
+                sort=[("date", 1)],
+                projection={"close": 1},
+                limit=max(horizon, 1),
+            )
+            if not e_docs or len(x_docs) < max(horizon, 1):
                 _PX[key] = None
                 continue
-            _PX[key] = (
-                100.0 * (float(row[1]) - float(row[0])) / float(row[0])
-                if row and row[0] and row[1] and float(row[0]) > 0 else None
-            )
+            e_close = float(e_docs[0].get("close") or 0)
+            x_close = float(x_docs[-1].get("close") or 0)
+            if e_close > 0:
+                _PX[key] = 100.0 * (x_close - e_close) / e_close
+            else:
+                _PX[key] = None
+        except Exception:
+            _PX[key] = None
 
 
 def _signed(ticker, day, horizon: int, action: str) -> float | None:
@@ -126,18 +132,17 @@ def _signed(ticker, day, horizon: int, action: str) -> float | None:
 
 
 def load_decisions(since: str) -> list[tuple]:
-    from scripts.migration.pg_connection import get_db
+    from app.db import mongo_query
 
-    with get_db() as db:
-        return db.execute(
-            """
-            SELECT ticker, created_at::date, action, confidence
-            FROM trade_results
-            WHERE created_at >= %s AND action IN ('BUY','SELL')
-              AND confidence IS NOT NULL
-            """,
-            [since],
-        ).fetchall()
+    return mongo_query.find_rows(
+        "trade_results",
+        {
+            "created_at": {"$gte": since},
+            "action": {"$in": ["BUY", "SELL"]},
+            "confidence": {"$ne": None},
+        },
+        ["ticker", "created_at", "action", "confidence"],
+    )
 
 
 def q1_horizons(since: str) -> dict:
@@ -164,13 +169,13 @@ def q1_horizons(since: str) -> dict:
 def q2_synth(since: str, horizon: int) -> dict:
     import json as _json
 
-    from scripts.migration.pg_connection import get_db
+    from app.db import mongo_query
 
-    with get_db() as db:
-        desks = db.execute(
-            "SELECT ticker, created_at::date, desk_data FROM shared_desk "
-            "WHERE created_at >= %s", [since],
-        ).fetchall()
+    desks = mongo_query.find_rows(
+        "shared_desk",
+        {"created_at": {"$gte": since}},
+        ["ticker", "created_at", "desk_data"],
+    )
 
     parsed = []
     for tk, day, d in desks:

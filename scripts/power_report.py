@@ -44,7 +44,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts.migration.pg_connection import get_db  # noqa: E402
+from typing import Any
 
 Z_ALPHA_2 = 1.959964  # two-sided 0.05
 Z_POWER = 0.8416212  # 80%
@@ -134,34 +134,31 @@ def effective_n(clusters: list[list[float]], rho: float) -> float:
 
 def fetch(include_degraded: bool) -> tuple[list[dict], int, int]:
     """Resolved outcomes, plus (degraded_count, fills_count)."""
-    where = ["resolved_at IS NOT NULL", "pnl_pct IS NOT NULL"]
-    if not include_degraded:
-        # DEGRADED_ARTIFACT rows are pipeline failures scored as trades. They
-        # are hypothetical — measured 2026-07-30, they carry ZERO fills — so
-        # including them measures the pipeline's crash rate, not its judgement.
-        #
-        # Excluded BY DEFAULT since 2026-07-31. It was opt-in behind
-        # --executable-only, which meant the default invocation quietly
-        # reported the contaminated number and every other consumer that
-        # copied this file's logic inherited the wrong default.
-        where.append("outcome <> 'DEGRADED_ARTIFACT'")
+    from app.db import mongo_query, mongo_store
 
-    with get_db() as db:
-        rows = [
-            {"pnl_pct": float(r[0]), "created_at": r[1], "action": r[2], "outcome": r[3]}
-            for r in db.execute(
-                f"SELECT pnl_pct, created_at, action, outcome FROM decision_outcomes "
-                f"WHERE {' AND '.join(where)}"
-            ).fetchall()
-            if r[0] is not None
-        ]
-        degraded = db.execute(
-            "SELECT count(*) FROM decision_outcomes WHERE outcome = 'DEGRADED_ARTIFACT'"
-        ).fetchone()[0]
-        try:
-            fills = db.execute("SELECT count(*) FROM trade_fills").fetchone()[0]
-        except Exception:  # noqa: BLE001 — table may not exist in a bare DB
-            fills = -1
+    query: dict[str, Any] = {
+        "resolved_at": {"$ne": None},
+        "pnl_pct": {"$ne": None},
+    }
+    if not include_degraded:
+        # DEGRADED_ARTIFACT rows are pipeline failures scored as trades.
+        query["outcome"] = {"$ne": "DEGRADED_ARTIFACT"}
+
+    raw_rows = mongo_query.find_rows(
+        "decision_outcomes",
+        query,
+        ["pnl_pct", "created_at", "action", "outcome"],
+    )
+    rows = [
+        {"pnl_pct": float(r[0]), "created_at": r[1], "action": r[2], "outcome": r[3]}
+        for r in raw_rows
+        if r[0] is not None
+    ]
+    degraded = mongo_store.count_docs("decision_outcomes", {"outcome": "DEGRADED_ARTIFACT"})
+    try:
+        fills = mongo_store.count_docs("trade_fills", {})
+    except Exception:
+        fills = -1
     return rows, degraded, fills
 
 
