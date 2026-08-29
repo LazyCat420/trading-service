@@ -21,7 +21,7 @@ import asyncio
 import logging
 import time
 from app.db import mongo_query, mongo_store
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -329,16 +329,28 @@ class BootService:
         except Exception as e:
             logger.warning("[startup] vLLM model discovery failed: %s", e)
 
+        # These three live in app/services/startup_tasks.py, which is the one
+        # owner. BootService used to carry its own copies; they had drifted --
+        # the FRED copy passed SQL WHERE strings to a Mongo helper that takes a
+        # dict (swallowed by a bare except, so the "already fresh" skip could
+        # never fire and every restart re-collected), and the market copy
+        # skipped the correlation/breadth compute entirely.
+        from app.services.startup_tasks import (
+            startup_fred_refresh,
+            startup_market_collect,
+            startup_sp500_seed,
+        )
+
         try:
-            await cls._startup_fred_refresh()
+            await startup_fred_refresh(cls._is_shutting_down)
         except Exception as e:
             logger.warning("[startup] FRED task failed: %s", e)
         try:
-            await cls._startup_market_collect()
+            await startup_market_collect(cls._is_shutting_down)
         except Exception as e:
             logger.warning("[startup] Market task failed: %s", e)
         try:
-            await cls._startup_sp500_seed()
+            await startup_sp500_seed(cls._is_shutting_down)
         except Exception as e:
             logger.warning("[startup] SP500 task failed: %s", e)
 
@@ -381,121 +393,6 @@ class BootService:
             logger.warning("[startup] Audit worker failed to start (non-fatal): %s", e)
 
     @classmethod
-    async def _startup_fred_refresh(cls):
-        # Delegates to the canonical collector (batch executemany + DO UPDATE
-        # for FRED revisions) — this used to carry a row-by-row DO NOTHING copy.
-        # The daily 5 PM PT scheduler job is the primary refresh; boot only
-        # backfills when the data is actually stale.
-        await asyncio.sleep(3)  # let server fully boot first
-        from app.services.startup_tasks import _is_data_fresh
-
-        if (_is_data_fresh("macro_indicators", "source = 'fred'", 2)
-                and _is_data_fresh(
-                    "macro_indicators",
-                    "source = 'fred' AND indicator = 'CPI'", 45)):
-            logger.info("[startup] FRED data already fresh, skipping refresh")
-            return
-        logger.info("[startup] Refreshing FRED macro indicators (background thread)...")
-        try:
-            from app.collectors.fred_collector import sync_collect_fred
-            total = await asyncio.to_thread(sync_collect_fred, lambda: False)
-            logger.info("[startup] FRED refresh complete: %d total rows", total)
-        except Exception as e:
-            logger.warning("[startup] FRED refresh failed (non-fatal): %s", e)
-
-    @classmethod
-    async def _startup_market_collect(cls):
-        """Background: collect market regime data (indexes, VIX, yields, ETFs)."""
-        recent = mongo_query.agg_row('asset_prices', {'date': {'$gte': (datetime.now(timezone.utc) - timedelta(days=1))}}, [('count', None)])[0]
-        if recent > 50:
-            logger.info(
-                "[startup] Market data already fresh (%d recent rows), skipping",
-                recent,
-            )
-            return
-        logger.info("[startup] Collecting market regime data (background)...")
-        try:
-            from app.collectors.market_regime_collector import collect_market_data
-
-            result = await collect_market_data(period="6mo")
-            logger.info(
-                "[startup] Market data collected: %s", result.get("total", 0)
-            )
-            # Compute regime + breadth
-            from app.data.market_regime_engine import (
-                compute_market_regime,
-                compute_sector_breadth,
-            )
-
-            await compute_market_regime()
-            await compute_sector_breadth()
-        except Exception as e:
-            logger.warning("[startup] Market collect failed (non-fatal): %s", e)
-
-    @classmethod
-    async def _startup_sp500_seed(cls):
-        """Background: seed SP500 universe + prices if DB is empty."""
-        sp500_count = mongo_query.agg_row('ticker_metadata', {'sp500': True}, [('count', None)])[0]
-        if sp500_count > 400:
-            logger.info(
-                "[startup] SP500 universe already loaded (%d tickers)", sp500_count
-            )
-            # Check if price data exists
-            price_count = mongo_query.agg_row('price_history', {}, [('count', None)])[0]
-            if price_count == 0:
-                logger.info(
-                    "[startup] No price data — collecting SP500 prices (background)..."
-                )
-                try:
-                    from app.data.sp500_price_collector import collect_sp500_prices
-
-                    price_result = await collect_sp500_prices(period="6mo")
-                    logger.info(
-                        "[startup] SP500 prices collected: %s",
-                        price_result.get("total", 0),
-                    )
-                except Exception as e:
-                    logger.warning("[startup] Price collection failed: %s", e)
-            # Compute sector analytics if missing
-            perf_count = mongo_query.agg_row('sector_performance', {}, [('count', None)])[0]
-            if perf_count == 0:
-                logger.info("[startup] Computing sector analytics...")
-                try:
-                    from app.data.sector_aggregator import (
-                        compute_sector_performance,
-                        backfill_sector_performance,
-                    )
-
-                    await backfill_sector_performance()
-                    await compute_sector_performance()
-                except Exception as e:
-                    logger.warning("[startup] Sector compute failed: %s", e)
-            return
-        logger.info("[startup] Seeding SP500 universe (background)...")
-        try:
-            from app.data.sp500_universe import load_sp500_universe
-
-            result = await load_sp500_universe(enrich=False)
-            logger.info("[startup] SP500 universe loaded: %s", result)
-            # Collect prices in background
-            from app.data.sp500_price_collector import collect_sp500_prices
-
-            price_result = await collect_sp500_prices(period="6mo")
-            logger.info(
-                "[startup] SP500 prices collected: %s", price_result.get("total", 0)
-            )
-            # Compute sector analytics
-            from app.data.sector_aggregator import (
-                compute_sector_performance,
-                backfill_sector_performance,
-            )
-
-            await backfill_sector_performance()
-            await compute_sector_performance()
-        except Exception as e:
-            logger.warning("[startup] SP500 seed failed (non-fatal): %s", e)
-
-    @classmethod
     async def _sp500_full_refresh(cls, period: str):
         """One shot: top up price_history for all S&P 500 tickers + recompute sector aggregates."""
         from app.data.sp500_price_collector import collect_sp500_prices
@@ -515,7 +412,7 @@ class BootService:
     async def _sp500_daily_refresh_loop(cls):
         """Recurring background task: keep the ANALYSED universe's prices fresh.
 
-        _startup_sp500_seed only ever runs once (when price_history is empty
+        startup_sp500_seed only ever runs once (when price_history is empty
         at boot). After that, only the active trading cycle's small watchlist
         writes new rows, so most of the universe silently goes stale.
         This loop tops up once after boot, then again daily after market close.

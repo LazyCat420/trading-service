@@ -192,9 +192,14 @@ async def startup_market_collect(is_shutting_down: Callable[[], bool]):
         logger.warning("[startup] Market compute failed (non-fatal): %s", e)
 
 async def startup_sp500_seed(is_shutting_down: Callable[[], bool]):
-    """Background: seed SP500 universe from hardcoded list if DB is empty.
+    """Background: seed SP500 universe from the hardcoded list if the DB is
+    empty, and make sure the derived price/sector data exists either way.
 
-    Uses app/data/sp500_constituents.py — no network required.
+    Uses app/data/sp500_constituents.py — no network required for the universe
+    itself. The already-loaded branch still has work to do: a universe row does
+    not imply price_history or sector_performance rows, and a boot that seeded
+    the universe on an earlier run but never collected prices leaves the market
+    map empty with no error anywhere.
     """
     if is_shutting_down():
         return
@@ -204,6 +209,42 @@ async def startup_sp500_seed(is_shutting_down: Callable[[], bool]):
         logger.info(
             "[startup] SP500 universe already loaded (%d tickers)", sp500_count
         )
+        price_count = mongo_query.agg_row('price_history', {}, [('count', None)])[0]
+        if price_count == 0:
+            logger.info(
+                "[startup] No price data — collecting SP500 prices (background)..."
+            )
+            try:
+                from app.data.sp500_price_collector import collect_sp500_prices
+
+                price_result = await collect_sp500_prices(period="6mo")
+                logger.info(
+                    "[startup] SP500 prices collected: %s",
+                    (price_result or {}).get("total", 0),
+                )
+            except asyncio.CancelledError:
+                logger.info("[startup] SP500 price collection cancelled.")
+                return
+            except Exception as e:
+                logger.warning("[startup] Price collection failed: %s", e)
+
+        if is_shutting_down():
+            return
+        perf_count = mongo_query.agg_row('sector_performance', {}, [('count', None)])[0]
+        if perf_count == 0:
+            logger.info("[startup] Computing sector analytics...")
+            try:
+                from app.data.sector_aggregator import (
+                    compute_sector_performance,
+                    backfill_sector_performance,
+                )
+
+                await backfill_sector_performance()
+                await compute_sector_performance()
+            except asyncio.CancelledError:
+                logger.info("[startup] Sector compute cancelled.")
+            except Exception as e:
+                logger.warning("[startup] Sector compute failed: %s", e)
         return
 
     logger.info(
@@ -214,11 +255,27 @@ async def startup_sp500_seed(is_shutting_down: Callable[[], bool]):
         from app.data.sp500_universe import load_sp500_universe
 
         result = await load_sp500_universe(enrich=False)
-        logger.info("[startup] SP500 universe loaded: %d tickers", result)
+        logger.info("[startup] SP500 universe loaded: %s", result)
+
+        from app.data.sp500_price_collector import collect_sp500_prices
+
+        price_result = await collect_sp500_prices(period="6mo")
+        logger.info(
+            "[startup] SP500 prices collected: %s", (price_result or {}).get("total", 0)
+        )
+
+        from app.data.sector_aggregator import (
+            compute_sector_performance,
+            backfill_sector_performance,
+        )
+
+        await backfill_sector_performance()
+        await compute_sector_performance()
     except asyncio.CancelledError:
         logger.info("[startup] SP500 seed cancelled.")
     except Exception as e:
         logger.warning("[startup] SP500 seed failed (non-fatal): %s", e)
+
 
 async def startup_embedding_backfill(is_shutting_down: Callable[[], bool]):
     """Background: index recent news/analysis rows lacking an embedding so the
@@ -235,23 +292,3 @@ async def startup_embedding_backfill(is_shutting_down: Callable[[], bool]):
         logger.info("[startup] Embedding backfill cancelled.")
     except Exception as e:
         logger.warning("[startup] Embedding backfill failed (non-fatal): %s", e)
-
-
-async def startup_all(is_shutting_down: Callable[[], bool]):
-    """Run all startup data tasks sequentially.
-
-    Tasks are run in sequence to avoid overwhelming external APIs
-    during startup.
-    """
-    try:
-        await startup_fred_refresh(is_shutting_down)
-    except Exception as e:
-        logger.error("[startup] FRED task failed: %s", e, exc_info=True)
-    try:
-        await startup_market_collect(is_shutting_down)
-    except Exception as e:
-        logger.error("[startup] Market task failed: %s", e, exc_info=True)
-    try:
-        await startup_sp500_seed(is_shutting_down)
-    except Exception as e:
-        logger.error("[startup] SP500 task failed: %s", e, exc_info=True)
