@@ -1415,18 +1415,27 @@ class PipelineService:
                         
                     # 4. Fetch Last Analysis Date for all
                     if all_pool:
+                        # Deliberately NOT gated on mongo_store.reads_mongo():
+                        # aggregate() always hits Mongo (the per-table backend
+                        # flags never reached the store itself) and Postgres is
+                        # gone, so the gate could only ever subtract. With
+                        # MONGO_STORE_BACKEND unset -- any local run, any
+                        # container that missed deploy.sh's env resolution --
+                        # backend_for() fell back to its "pg" default, this read
+                        # was skipped, last_analysis_map came out empty, and
+                        # every ticker silently scored as never-analysed: no
+                        # recency penalty, no freshness baseline, no error.
                         last_analysis_rows = None
                         try:
                             from app.db import mongo_store
-                            if mongo_store.reads_mongo("analysis_results"):
-                                last_analysis_rows = [
-                                    (d["_id"], d.get("last_date"))
-                                    for d in mongo_store.aggregate("analysis_results", [
-                                        {"$match": {"ticker": {"$in": list(all_pool.keys())}}},
-                                        {"$group": {"_id": "$ticker",
-                                                    "last_date": {"$max": "$created_at"}}},
-                                    ])
-                                ]
+                            last_analysis_rows = [
+                                (d["_id"], d.get("last_date"))
+                                for d in mongo_store.aggregate("analysis_results", [
+                                    {"$match": {"ticker": {"$in": list(all_pool.keys())}}},
+                                    {"$group": {"_id": "$ticker",
+                                                "last_date": {"$max": "$created_at"}}},
+                                ])
+                            ]
                         except Exception as me:
                             handle_mongo_read_failure("analysis_results", "[PipelineService] mongo last-analysis read", me)
                             last_analysis_rows = None
