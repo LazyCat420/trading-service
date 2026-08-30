@@ -12,12 +12,19 @@ through the same route agents use (`chat_toolless` — tool-less `/chat`, so
 the probe costs a handful of tokens, not the ~21k-token MCP catalog that
 `/agent` attaches server-side).
 
-Fail-open on AMBIGUITY, fail-closed on PROOF: only a clean "the endpoint
-answered wrongly / refused N times" verdict aborts the cycle. If the probe
-machinery itself breaks (import error, resolver down), the cycle proceeds —
-a broken probe must not become the thing that blocks all trading
+Fail-open on AMBIGUITY, fail-closed on PROOF. Three verdicts abort: the
+endpoint refused N completions, it named a model the decision agents cannot
+use (ModelContractError), or it has no servable model at all
+(ModelUnavailableError). If the probe machinery itself breaks (import error,
+endpoint not configured), the cycle proceeds — a broken probe must not become
+the thing that blocks all trading
 ([[a-cross-target-gate-fails-for-toolchain-reasons]]: a false red costs
 authority like a false green).
+
+"Resolver down" is NOT machinery breaking, and reading it that way is what
+this module got wrong from 2026-08-28 to 08-30. The resolver reaching the box
+and being told there is no model is the same verdict as the completion probe
+failing twice — it just arrives one step earlier and costs less.
 """
 
 from __future__ import annotations
@@ -44,16 +51,37 @@ async def llm_can_answer() -> tuple[bool, str]:
 
         model, provider = await resolve_default_model_for_agent(PROBE_AGENT_NAME)
     except Exception as exc:
-        # A ModelContractError is POSITIVE evidence, not ambiguity: the box
-        # answered and named a model the decision agents cannot use (the
-        # 08-25/26 Qwen3.6 incident killed 45 desks this way while this
-        # probe's "endpoint alive" check passed). Abort the cycle.
-        from app.services.prism_agent_caller import ModelContractError
+        # Two resolver failures are POSITIVE evidence, not ambiguity.
+        #
+        # A ModelContractError: the box answered and named a model the
+        # decision agents cannot use (the 08-25/26 Qwen3.6 incident killed 45
+        # desks this way while this probe's "endpoint alive" check passed).
+        #
+        # A ModelUnavailableError: we reached the box, asked `/v1/models`
+        # twice, got nothing usable, and had no cached id to fall back on.
+        # That IS the dead-endpoint verdict this module exists to reach — it
+        # arrives one step EARLIER than the completion probe, which is why it
+        # used to be misread as our own machinery breaking. Measured
+        # 2026-08-28..30: the resolver raised `VLLM endpoint offline: HTTP 502
+        # with no usable model list`, this function returned ok=True, and 33
+        # desks died at the regime engine (66 calls, 75-102s each) across
+        # three days with zero decisions and no page — the exact four-day
+        # failure in this module's docstring, recurring one layer up.
+        from app.services.prism_agent_caller import (
+            ModelContractError,
+            ModelUnavailableError,
+        )
 
         if isinstance(exc, ModelContractError):
             logger.error("[llm_preflight] %s", exc)
             return False, f"model contract violated: {exc}"
-        # Anything else is probe machinery broken — ambiguity, proceed.
+        if isinstance(exc, ModelUnavailableError):
+            logger.error("[llm_preflight] %s", exc)
+            return False, f"no servable model: {exc}"
+        # Anything else is probe machinery broken — ambiguity, proceed. The
+        # config RuntimeErrors beside these two ("endpoint not configured or
+        # disabled", "no configured URL") land here on purpose: they say
+        # nothing about whether the box is alive.
         logger.warning("[llm_preflight] resolver unavailable (%s) — proceeding", exc)
         return True, f"probe-skipped: resolver unavailable ({exc})"
 

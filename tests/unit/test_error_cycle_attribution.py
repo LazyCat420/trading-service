@@ -184,11 +184,24 @@ class TestCycleStampsItsId:
 
         fake_prism.cleanup_all_sessions.side_effect = _probe
 
+        # The probe hooks `cleanup_all_sessions`, which runs AFTER the LLM
+        # pre-flight. Left unstubbed, the pre-flight resolves a model over the
+        # network: this test then passes or fails on whether the vLLM box is up,
+        # and when it is down the cycle aborts before the probe ever fires. That
+        # is a live dependency in a unit test, and it is not what this test is
+        # about — `set_trace_id(cycle_id)` runs ABOVE the pre-flight, so the
+        # behaviour under test is unchanged either way. Stub the probe to GO so
+        # the assertion below measures trace-id stamping and nothing else.
+        async def _preflight_ok():
+            return True, "stubbed: this test is about the trace id"
+
         with patch.dict(
             "sys.modules",
             {"lazycat.llm": MagicMock(prism_client=fake_prism)},
         ), patch.object(PipelineService, "save_state"), patch.object(
             PipelineService, "_state", {}
+        ), patch(
+            "app.services.llm_preflight.llm_can_answer", _preflight_ok
         ):
             await PipelineService._run_all_v3("cycle-v3-probe", ["AAPL"])
 

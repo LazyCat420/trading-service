@@ -78,6 +78,66 @@ class TestLlmPreflight:
         ok, detail = await pf.llm_can_answer()
         assert ok is True and "probe-skipped" in detail
 
+    @pytest.mark.asyncio
+    async def test_no_servable_model_aborts(self, monkeypatch):
+        """MEASURED 2026-08-28..30. The resolver reached gold-spark, got
+        `HTTP 502 with no usable model list` twice, and had no cached id — and
+        this function returned ok=True because everything that was not a
+        ModelContractError was filed as "probe machinery broken". 33 desks
+        died at the regime engine (66 calls, 75-102s each) over three days:
+        zero decisions, zero pages. Reaching the box and being told there is
+        no model is the dead-endpoint verdict, not ambiguity about our probe.
+        """
+        from app.services import llm_preflight as pf
+        import app.services.prism_agent_caller as pac
+
+        async def offline_resolver(agent):
+            raise pac.ModelUnavailableError(
+                "VLLM endpoint offline: http://10.0.0.16:5591/vllm-shim/gold-spark "
+                "(RuntimeError: HTTP 502 with no usable model list)"
+            )
+
+        monkeypatch.setattr(pac, "resolve_default_model_for_agent", offline_resolver)
+        ok, detail = await pf.llm_can_answer()
+        assert ok is False
+        assert "no servable model" in detail
+
+    @pytest.mark.asyncio
+    async def test_a_config_runtimeerror_still_fails_open(self, monkeypatch):
+        """The boundary this fix must NOT cross. `resolve_default_model_for_agent`
+        raises bare RuntimeErrors for *configuration* faults ("endpoint not
+        configured or disabled", "no configured URL"). Those say nothing about
+        whether the box is alive, so they stay fail-open — otherwise one bad
+        env var blocks all trading, which is the false red this module's own
+        docstring refuses. Only the typed ModelUnavailableError aborts.
+        """
+        from app.services import llm_preflight as pf
+        import app.services.prism_agent_caller as pac
+
+        async def misconfigured(agent):
+            raise RuntimeError("VLLM endpoint 'dgx_spark' is not configured or disabled.")
+
+        monkeypatch.setattr(pac, "resolve_default_model_for_agent", misconfigured)
+        ok, detail = await pf.llm_can_answer()
+        assert ok is True and "probe-skipped" in detail
+
+    def test_the_resolver_raises_the_typed_error_when_it_gives_up(self):
+        """Pin the seam: the abort above is only reachable if the resolver
+        actually raises the typed error at BOTH exhaustion sites. A plain
+        RuntimeError there re-opens the three-day hole with a green test.
+        """
+        import inspect
+        import app.services.prism_agent_caller as pac
+
+        src = inspect.getsource(pac.get_live_model_from_vllm)
+        assert "raise RuntimeError(" not in src, (
+            "the exhaustion raises must be ModelUnavailableError, not RuntimeError"
+        )
+        assert src.count("raise ModelUnavailableError(") == 2
+        assert issubclass(pac.ModelUnavailableError, RuntimeError), (
+            "must stay a RuntimeError subclass so existing handlers keep working"
+        )
+
     def test_the_cycle_entry_consults_the_probe(self):
         """Wiring assertion: _run_all_v3 aborts on a failed probe BEFORE the
         discovery/agent machinery (the 28-zero-value-cycle incident)."""

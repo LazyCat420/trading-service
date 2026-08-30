@@ -163,6 +163,26 @@ def _extract_token_usage(resp: Any, response_text: str) -> int:
 _STALE_MODEL_GRACE_S = 3600
 
 
+class ModelUnavailableError(RuntimeError):
+    """The box was reached and has no servable model — POSITIVE evidence that
+    the LLM path is dead, not ambiguity about our own probe machinery.
+
+    Raised only when `get_live_model_from_vllm` has exhausted both attempts
+    AND has no cached id to degrade to: we asked `/v1/models` and the box
+    answered with nothing usable (or refused to answer at all).
+
+    It exists so callers can tell this apart from the *config* RuntimeErrors
+    next to it ("endpoint not configured or disabled", "no configured URL"),
+    which say nothing about whether the box is alive. `llm_preflight` makes
+    exactly that distinction: 2026-08-28..30, the resolver raised
+    `VLLM endpoint offline: .../gold-spark (RuntimeError: HTTP 502 with no
+    usable model list)` and the pre-flight classified it as probe machinery
+    breaking and PROCEEDED — 33 desks, 66 regime-engine calls at 75-102s
+    each, zero decisions, no page. A RuntimeError subclass so every existing
+    `except RuntimeError` keeps working unchanged.
+    """
+
+
 async def get_live_model_from_vllm(url: str, force_refresh: bool = False) -> str:
     """Resolve the model a vLLM box is serving. Cached 5 min; degrades to stale.
 
@@ -227,8 +247,8 @@ async def get_live_model_from_vllm(url: str, force_refresh: bool = False) -> str
         return cached[0]
 
     if last_error is None:
-        raise RuntimeError(f"No models found at vLLM endpoint: {url}")
-    raise RuntimeError(
+        raise ModelUnavailableError(f"No models found at vLLM endpoint: {url}")
+    raise ModelUnavailableError(
         f"VLLM endpoint offline: {url} "
         f"({type(last_error).__name__}: {str(last_error) or '<no message>'})"
     )
