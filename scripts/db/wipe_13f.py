@@ -28,30 +28,32 @@ import sys
 # Run as a script from anywhere, the way the sibling db/ scripts did.
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from scripts.migration.pg_connection import get_db  # noqa: E402 — must follow the path bootstrap
+from app.db import mongo_store  # noqa: E402 — must follow the path bootstrap
 
 
 def wipe_13f(*, dry_run: bool) -> int:
     """Delete all 13F holdings. Returns the number of holdings removed."""
-    with get_db() as db:
-        holdings = db.execute("SELECT count(*) FROM sec_13f_holdings").fetchone()[0]
-        filers = db.execute(
-            "SELECT count(*) FROM sec_13f_filers WHERE latest_quarter IS NOT NULL"
-        ).fetchone()[0]
+    holdings = mongo_store.count_docs("sec_13f_holdings", {})
+    # `latest_quarter IS NOT NULL` -> $nin [None]. A missing field and an
+    # explicit null both mean "no quarter set", and $ne: None matches neither,
+    # so the count has to be written as the presence test it actually is.
+    filers = mongo_store.count_docs("sec_13f_filers",
+                                    {"latest_quarter": {"$nin": [None]}})
 
-        if dry_run:
-            print(f"[dry-run] would delete {holdings} row(s) from sec_13f_holdings")
-            print(f"[dry-run] would reset metadata on {filers} filer(s)")
-            print("[dry-run] nothing was changed")
-            return holdings
-
-        db.execute("DELETE FROM sec_13f_holdings")
-        print(f"[db] Deleted {holdings} row(s) from sec_13f_holdings")
-        db.execute(
-            "UPDATE sec_13f_filers SET latest_quarter = NULL, next_expected_filing = NULL"
-        )
-        print(f"[db] Reset metadata on {filers} filer(s)")
+    if dry_run:
+        print(f"[dry-run] would delete {holdings} row(s) from sec_13f_holdings")
+        print(f"[dry-run] would reset metadata on {filers} filer(s)")
+        print("[dry-run] nothing was changed")
         return holdings
+
+    mongo_store.delete_docs("sec_13f_holdings", {})
+    print(f"[db] Deleted {holdings} row(s) from sec_13f_holdings")
+    mongo_store.update_docs(
+        "sec_13f_filers", {},
+        {"$set": {"latest_quarter": None, "next_expected_filing": None}},
+    )
+    print(f"[db] Reset metadata on {filers} filer(s)")
+    return holdings
 
 
 def main(argv: list[str] | None = None) -> int:

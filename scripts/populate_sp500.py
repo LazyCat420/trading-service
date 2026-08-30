@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 # Add parent dir to path so we can import app modules
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from scripts.migration.pg_connection import get_db
+from app.db import mongo_store
 
 def fetch_sp500_tickers():
     print("Fetching S&P 500 ticker list from Wikipedia...")
@@ -88,34 +88,25 @@ def main():
 
     print(f"Finished fetching data for {len(results)} tickers successfully. Writing to database...")
     
-    with get_db() as db:
-        # Upsert into ticker_metadata
-        for r in results:
-            db.execute("""
-                INSERT INTO ticker_metadata (ticker, sector, market_cap, sp500)
-                VALUES (%s, %s, %s, TRUE)
-                ON CONFLICT (ticker) DO UPDATE SET 
-                    sector = EXCLUDED.sector,
-                    market_cap = EXCLUDED.market_cap,
-                    sp500 = TRUE
-            """, (r['ticker'], r['sector'], r['market_cap']))
-            
-            # Upsert into price_history
-            for p in r['prices']:
-                db.execute("""
-                    INSERT INTO price_history (ticker, date, open, close, high, low, volume, source)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'yfinance')
-                    ON CONFLICT (ticker, date, source) DO UPDATE SET 
-                        open = EXCLUDED.open,
-                        close = EXCLUDED.close,
-                        high = EXCLUDED.high,
-                        low = EXCLUDED.low,
-                        volume = EXCLUDED.volume
-                """, (r['ticker'], p['date'], p['open'], p['close'], p['high'], p['low'], p['volume']))
-                
-        db.commit()
-    
-    print("Database population complete!")
+    # ON CONFLICT (ticker) DO UPDATE -> $set upsert keyed on ticker. Only the
+    # three columns the old INSERT listed are written, so name / industry /
+    # market_cap_tier on an existing row survive untouched ($set does not
+    # remove unlisted fields) — the same guarantee EXCLUDED gave here.
+    meta = [{"ticker": r["ticker"], "sector": r["sector"],
+             "market_cap": r["market_cap"], "sp500": True} for r in results]
+    mongo_store.bulk_upsert("ticker_metadata", meta, key_field="ticker")
+
+    # ON CONFLICT (ticker, date, source) -> the COMPOSITE key bulk_upsert
+    # already supports. One bulk write for every bar of every ticker, rather
+    # than a round-trip per bar: 500 tickers x ~250 bars was 125k statements.
+    bars = [{"ticker": r["ticker"], "date": p["date"], "source": "yfinance",
+             "open": p["open"], "close": p["close"], "high": p["high"],
+             "low": p["low"], "volume": p["volume"]}
+            for r in results for p in r["prices"]]
+    mongo_store.bulk_upsert("price_history", bars,
+                            key_field=("ticker", "date", "source"))
+
+    print(f"Database population complete! {len(meta)} tickers, {len(bars)} bars.")
 
 if __name__ == "__main__":
     main()
