@@ -154,3 +154,93 @@ Two traps hit while probing, recorded so the next reader does not repeat them:
 top level returns 0 across all 2,036 desks, inside `desk_data` it is 426; and
 `whiteboard_entries` only retains 08-17..08-27, so any "pre-fix" rate computed
 outside that window is a retention artifact, not a behaviour.
+
+---
+
+# Addendum — the measurement shelf is bound to a frozen store (2026-08-30)
+
+Follow-on from the same session. Where the audit above asked "did the cycle
+run", this asks "can we still measure it". Answer: mostly no, and the two
+failure modes look nothing alike.
+
+## The frozen archive is still up, and still answering
+
+The Mongo cutover happened 2026-08-19. The Postgres archive was never taken
+down, and it still serves:
+
+| table | frozen PG | newest row | live Mongo |
+|---|---|---|---|
+| `shared_desk` | 1,762 | **2026-08-19 22:54** | 2,036 (current) |
+| `decision_scores` | 312 | — | 508 |
+| `trade_results` | 1,084 | — | 1,155 |
+| `whiteboard_entries` | 2,666 | — | 1,226 |
+
+Anything reading it gets an answer that stops 11 days ago, with no error and
+no staleness marker.
+
+## 91 scripts are still bound to it, and they split two ways
+
+- **~70 fail loudly.** They reach the DSN through `settings.DATABASE_URL`, a
+  pydantic attribute that no longer exists, so they raise
+  `AttributeError: 'Settings' object has no attribute 'DATABASE_URL'`.
+  Verified on `decision_score_report.py`, `calibration_report.py`,
+  `agent_scorecard.py`; `calibrate_confidence_floor.py` dies one step earlier
+  on `KeyError: 'SIM_DSN'`.
+- **19 answer silently.** They call `load_dotenv()` and then
+  `os.getenv("DATABASE_URL")`, which resolves fine from `.env` — so they
+  connect to the archive and report pre-cutover data as current.
+
+**This is the dangerous half.** `scripts/shadow_report.py` — the
+contradiction-shadow aggregate, the empirical input for deciding whether to
+promote the shadow into a real gate — runs clean today and prints rows dated
+**2026-07-29** citing `tournament_result`, a subsystem deleted on 08-28. It
+does not say the data is a month old. `scripts/simplification_baseline.py` is
+in the same set, which is consistent with `.simplification_baselines/*` still
+naming `tournament.py`.
+
+Also in the silent set and worth its own look: `clear_db.py`, a destructive
+script still pointed at the archive rather than at Mongo.
+
+## Why this matters to the audit series
+
+ch.102 closed with "`confidence_audit.py` still reads the frozen Postgres
+archive — every future calibration question needs the Mongo port first", and
+`ba9db6d` ported `confidence_audit` and `power_report`. **That was 2 of ~30.**
+The rest of the calibration shelf — `decision_score_report`,
+`calibration_report`, `calibrate_confidence_floor`, `gate_ablation`,
+`agent_scorecard`, `grade_regime_calls`, `self_consistency_bench` — cannot
+run at all. The measurement window that ch.100 and ch.102 are both waiting on
+is being judged by instruments that are either dead or frozen.
+
+`scripts/verify_shipped.py` has the same defect and it is the one that hides
+best: it catches the `DATABASE_URL` AttributeError and downgrades it to a
+WARN, then prints `0 pass, 0 fail, 3 warn` and exits 0. A broken instrument
+reporting as a warning is how a shelf rots quietly.
+
+## A related correction
+
+`decision_scores` is NOT a decision ledger. It is a quant score written in the
+context-injection layer before any agent runs, so it has a row for every desk
+including the ones that die. Measured: **161 of 508 rows (31.7%) belong to
+desks that never produced a decision**, each carrying a `band`, a `score`, a
+`percentile` and a `baseline_confidence` — e.g. JPM `cycle-v3-1788074145`,
+`score 66.1 / percentile 92.6 / baseline_confidence 72`, on a desk that died
+at the regime engine. `decision_score_report.py` is aware of this and counts
+them ("desks that never reached a verdict. NOT the same as a HOLD") — but it
+is one of the scripts that can no longer run. Any new calibration join must
+filter on decision provenance, not on the presence of a score row.
+
+ch.100's backfill item is **closed**: 508 of 508 `decision_scores` rows carry
+a proper BSON date `created_at`, none missing, none string-typed. Note the
+backfill script's own vacuity check is capped by its `limit=1`, so it always
+prints "collection holds 1 sample row(s)" when non-empty — misleading wording,
+verified harmless.
+
+## Open
+
+- Port or retire the 19 silent readers first (they are the ones that can
+  mislead), then the loud-dead calibration shelf.
+- `verify_shipped.py`: the `DATABASE_URL` read, and the WSL container probe
+  that reports `sudo: docker: command not found` as a warning.
+- `scripts/ops/full-suite.sh` — the landing queue's runner duty names this
+  script and it does not exist in the repo.
