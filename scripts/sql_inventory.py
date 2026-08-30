@@ -42,12 +42,22 @@ import sys
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Sequence
 
 import sqlglot
 from sqlglot import exp
 
 REPO = Path(__file__).resolve().parents[1]
 APP = REPO / "app"
+
+# Which trees to scan. `app/` was the whole subject while the application was
+# being converted; it now holds no SQL at all, so a default-argument run of
+# this file — and of scripts/verify_translations.py, which consumes its
+# artifact — judges an EMPTY set and still prints a percentage. The remaining
+# Postgres readers live under scripts/ and tests/, so the root has to be an
+# argument rather than a constant. Default stays `app` so every existing
+# caller is unchanged.
+DEFAULT_ROOTS = ("app",)
 
 # Files that exist to build the Postgres schema. They do not get converted;
 # they get retired once nothing reads Postgres.
@@ -129,44 +139,60 @@ def classify(sql: str) -> tuple[str, str, list[str], list[str]]:
     return kind, verb, tables, features
 
 
-def scan() -> list[Site]:
+def scan(roots: Sequence[str] = DEFAULT_ROOTS) -> list[Site]:
     sites: list[Site] = []
-    for path in sorted(APP.rglob("*.py")):
-        rel = str(path.relative_to(REPO))
-        try:
-            tree = ast.parse(path.read_text())
-        except Exception:
+    seen: set[Path] = set()
+    for root in roots:
+        base = (REPO / root).resolve()
+        if not base.exists():
+            print(f"sql_inventory: no such root {root!r}", file=sys.stderr)
             continue
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
+        paths = [base] if base.is_file() else sorted(base.rglob("*.py"))
+        for path in paths:
+            if path in seen:
                 continue
-            f = node.func
-            if not (isinstance(f, ast.Attribute)
-                    and f.attr in ("execute", "executemany")):
-                continue
-            sql, shape = extract_sql(node)
-            if sql is None:
-                sites.append(Site(rel, node.lineno, "dynamic", "?",
-                                  sql=f"<{shape}>", schema_file=rel in SCHEMA_FILES))
-                continue
-            kind, verb, tables, features = classify(sql)
-            if shape == "f-string" and kind == "mechanical":
-                # The skeleton parsed, but a value we blanked could carry a
-                # join or a subquery. Do not claim it as mechanical.
-                kind = "dynamic"
-                features = features + ["f-string"]
-            # WHOLE statement, not a preview. This used to store the first 220
-            # characters, which is fine for a printed table and wrong for an
-            # artifact: scripts/verify_translations.py translates and EXECUTES
-            # `sql` from this file, so 330 of 1,274 sites — 26 of the sweep's
-            # mechanical SELECTs — were judged on a mutilated statement. Five
-            # died as `UndefinedColumn: column "reso" does not exist` and were
-            # scored ERROR against the translator; the other 21 parsed anyway,
-            # with a clause missing, and their row counts were compared as if
-            # they meant something. Truncation belongs in the PRINTER (main()
-            # already does it), never in the record.
-            sites.append(Site(rel, node.lineno, kind, verb, tables, features,
-                              " ".join(sql.split()), rel in SCHEMA_FILES))
+            seen.add(path)
+            sites.extend(_scan_file(path))
+    return sites
+
+
+def _scan_file(path: Path) -> list[Site]:
+    sites: list[Site] = []
+    rel = str(path.relative_to(REPO))
+    try:
+        tree = ast.parse(path.read_text())
+    except Exception:
+        return sites
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        if not (isinstance(f, ast.Attribute)
+                and f.attr in ("execute", "executemany")):
+            continue
+        sql, shape = extract_sql(node)
+        if sql is None:
+            sites.append(Site(rel, node.lineno, "dynamic", "?",
+                              sql=f"<{shape}>", schema_file=rel in SCHEMA_FILES))
+            continue
+        kind, verb, tables, features = classify(sql)
+        if shape == "f-string" and kind == "mechanical":
+            # The skeleton parsed, but a value we blanked could carry a
+            # join or a subquery. Do not claim it as mechanical.
+            kind = "dynamic"
+            features = features + ["f-string"]
+        # WHOLE statement, not a preview. This used to store the first 220
+        # characters, which is fine for a printed table and wrong for an
+        # artifact: scripts/verify_translations.py translates and EXECUTES
+        # `sql` from this file, so 330 of 1,274 sites — 26 of the sweep's
+        # mechanical SELECTs — were judged on a mutilated statement. Five
+        # died as `UndefinedColumn: column "reso" does not exist` and were
+        # scored ERROR against the translator; the other 21 parsed anyway,
+        # with a clause missing, and their row counts were compared as if
+        # they meant something. Truncation belongs in the PRINTER (main()
+        # already does it), never in the record.
+        sites.append(Site(rel, node.lineno, kind, verb, tables, features,
+                          " ".join(sql.split()), rel in SCHEMA_FILES))
     return sites
 
 
@@ -175,13 +201,17 @@ def main() -> int:
     ap.add_argument("--json", type=Path, help="write the full inventory here")
     ap.add_argument("--show", help="print sites of this kind")
     ap.add_argument("--limit", type=int, default=25)
+    ap.add_argument("--root", action="append", metavar="DIR",
+                    help="repo-relative tree (or file) to scan; repeatable. "
+                         "Default: app")
     args = ap.parse_args()
 
-    sites = scan()
+    roots = tuple(args.root) if args.root else DEFAULT_ROOTS
+    sites = scan(roots)
     app_sites = [s for s in sites if not s.schema_file]
     schema_sites = [s for s in sites if s.schema_file]
 
-    print(f"{len(sites)} SQL call sites in app/")
+    print(f"{len(sites)} SQL call sites in {', '.join(roots)}")
     print(f"  {len(schema_sites)} in schema-building files "
           f"({', '.join(sorted(SCHEMA_FILES))}) — retired, not converted")
     print(f"  {len(app_sites)} in application code\n")
