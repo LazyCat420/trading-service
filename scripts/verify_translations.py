@@ -160,15 +160,39 @@ def as_row_list(result, returns: str) -> list:
 
 
 def compare(pg_cols, pg_rows, mongo_docs) -> tuple[str, str]:
-    if len(pg_rows) != len(mongo_docs):
-        return "DIFFER", f"row count pg={len(pg_rows)} mongo={len(mongo_docs)}"
-    if not pg_rows:
+    """MATCH / SUPERSET / DIFFER.
+
+    Postgres has been frozen since the 2026-08-19 cutover and Mongo has been
+    taking every write since, so on any live collection Mongo legitimately
+    holds rows Postgres never will. A bare row-count comparison scores that as
+    DIFFER and buries the real bugs: the first run of this sweep over scripts/
+    reported 17 DIFFER, and 13 of them were nothing but the month of live
+    trading Postgres missed.
+
+    The direction is what carries the meaning:
+
+      pg - mongo   Mongo is MISSING a row the archive has. Either the
+                   translation drops rows or the backfill did — a real defect
+                   either way, and the one this instrument exists to catch.
+      mongo - pg   rows written after the cutover. Expected, and on a live
+                   collection its ABSENCE is the suspicious result.
+
+    So a result where nothing is only-in-pg is SUPERSET, not DIFFER, and it is
+    reported separately rather than folded into the pass rate.
+    """
+    if not pg_rows and not mongo_docs:
         return "MATCH", "both empty"
     # `SELECT 1 FROM t WHERE ...` is an existence probe: Postgres names the
     # literal `?column?`, the caller never reads it, and Mongo has no such
     # field. Only the row count carries meaning, and it already matched.
-    if all(c in ("?column?", "1") for c in pg_cols):
-        return "MATCH", f"{len(pg_rows)} rows (existence probe, count only)"
+    if pg_cols and all(c in ("?column?", "1") for c in pg_cols):
+        if len(pg_rows) == len(mongo_docs):
+            return "MATCH", f"{len(pg_rows)} rows (existence probe, count only)"
+        if len(mongo_docs) > len(pg_rows):
+            return "SUPERSET", (f"existence probe, count only: pg={len(pg_rows)} "
+                                f"mongo={len(mongo_docs)} (+{len(mongo_docs) - len(pg_rows)} post-cutover)")
+        return "DIFFER", (f"existence probe: mongo has FEWER rows than the "
+                          f"archive, pg={len(pg_rows)} mongo={len(mongo_docs)}")
     pg_set = Counter(tuple(sorted((c, v) for c, v in zip(pg_cols, r))) for r in pg_rows)
     mg_set = Counter()
     for d in mongo_docs:
@@ -196,6 +220,9 @@ def compare(pg_cols, pg_rows, mongo_docs) -> tuple[str, str]:
         return "MATCH", f"{len(pg_rows)} rows"
     only_pg = sum((pg_set - mg_set).values())
     only_mg = sum((mg_set - pg_set).values())
+    if only_pg == 0:
+        return "SUPERSET", (f"every one of the archive's {len(pg_rows)} rows is "
+                            f"in Mongo, plus {only_mg} written after the cutover")
     return "DIFFER", f"{only_pg} rows only in pg, {only_mg} only in mongo"
 
 
@@ -204,6 +231,13 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--json", type=Path)
     ap.add_argument("--show-differ", action="store_true")
+    ap.add_argument("--show-all", action="store_true",
+                    help="print every verdict, not just DIFFER/ERROR")
+    # One script at a time is how this gets used during the port: run it
+    # BEFORE the edit to learn what the statement really answers, and AFTER to
+    # confirm the Mongo side still agrees with the archive.
+    ap.add_argument("--file", action="append", metavar="SUBSTR",
+                    help="only judge sites whose path contains this; repeatable")
     # The default inventory is the CURRENT tree's, which on this branch holds
     # almost no SQL left to judge — app/ is converted. The sweep's subject is
     # the SQL the conversion started from, so point it at the master-era
@@ -216,6 +250,13 @@ def main() -> int:
     selects = [s for s in inv["sites"]
                if not s["schema_file"] and s["kind"] == "mechanical"
                and s["verb"].upper() == "SELECT"]
+    if args.file:
+        selects = [s for s in selects
+                   if any(f in s["file"] for f in args.file)]
+        if not selects:
+            print(f"no mechanical SELECTs match {args.file}; "
+                  f"nothing for this oracle to judge here")
+            return 0
 
     results, verdicts = [], Counter()
     seeded: dict[str, bool | None] = {}
@@ -257,19 +298,25 @@ def main() -> int:
 
     total = len(results)
     print(f"checked {total} translated SELECTs against live Postgres + Mongo\n")
-    for v in ("MATCH", "DIFFER", "UNTESTED", "NOT_SEEDED", "ERROR"):
+    for v in ("MATCH", "SUPERSET", "DIFFER", "UNTESTED", "NOT_SEEDED", "ERROR"):
         n = verdicts[v]
         print(f"  {v:<9} {n:>4}   {100*n/total:.1f}%" if total else f"  {v:<9} {n:>4}")
-    tested = verdicts["MATCH"] + verdicts["DIFFER"]
+    tested = verdicts["MATCH"] + verdicts["SUPERSET"] + verdicts["DIFFER"]
     if tested:
+        agree = verdicts["MATCH"] + verdicts["SUPERSET"]
         print(f"\nof the {tested} actually comparable: "
-              f"{100*verdicts['MATCH']/tested:.1f}% match")
-    print("\nUNTESTED and ERROR are NOT passes — they are statements this run "
-          "could not judge.")
+              f"{100*agree/tested:.1f}% agree "
+              f"({verdicts['MATCH']} identical, {verdicts['SUPERSET']} "
+              f"Mongo-superset)")
+    print("\nSUPERSET means every archive row is in Mongo plus rows written "
+          "after the 2026-08-19 cutover — expected on a live collection, and "
+          "its absence is the suspicious result.")
+    print("UNTESTED, NOT_SEEDED and ERROR are NOT passes — they are statements "
+          "this run could not judge.")
 
-    if args.show_differ:
+    if args.show_differ or args.show_all:
         for r in results:
-            if r["verdict"] in ("DIFFER", "ERROR"):
+            if args.show_all or r["verdict"] in ("DIFFER", "ERROR"):
                 print(f"\n{r['verdict']} {r['file']}:{r['line']}  ({r['detail']})")
                 print(f"   SQL  {r['sql']}")
                 print(f"   CALL {r['call']}")
