@@ -1,0 +1,781 @@
+{
+  "note": "Column DEFAULTs the Postgres archive supplied on INSERT. Mongo supplies none of them; a converted writer that named only the SQL's columns dropped them silently. Read by scripts/mongo_default_gaps.py, which needs no Postgres.",
+  "source": "information_schema.columns, schema public, column_default IS NOT NULL",
+  "tables": {
+    "agent_audit_log": {
+      "agent_name": "''::text",
+      "circuit_breaker_open": "false",
+      "context_build_ms": "0",
+      "created_at": "CURRENT_TIMESTAMP",
+      "cycle_id": "''::text",
+      "detail": "''::text",
+      "endpoint": "''::text",
+      "fallback_triggered": "false",
+      "inference_ms": "0",
+      "is_truncated": "false",
+      "model_used": "''::text",
+      "status": "'ok'::text",
+      "system_prompt_hash": "''::text",
+      "ticker": "''::text",
+      "tokens_input": "0",
+      "tokens_output": "0",
+      "tokens_total": "0"
+    },
+    "agent_directives": {
+      "author": "'operator'::text",
+      "created_at": "now()",
+      "status": "'pending'::text"
+    },
+    "agent_experiences": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "success_score": "1.0"
+    },
+    "agent_loop_stats": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "agent_registry": {
+      "assigned_tickers": "'[]'::jsonb",
+      "created_at": "now()",
+      "cycle_count": "0",
+      "memory_json": "'{}'::jsonb",
+      "status": "'idle'::text"
+    },
+    "agent_skills": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "status": "'active'::text",
+      "version": "1"
+    },
+    "agent_tool_optimization": {
+      "status": "'active'::text",
+      "unused_count": "0",
+      "updated_at": "CURRENT_TIMESTAMP"
+    },
+    "agent_tool_telemetry": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "elapsed_ms": "0",
+      "success": "true",
+      "was_blocked": "false"
+    },
+    "agent_traces": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "service_source": "'trading-service'::text"
+    },
+    "analysis_results": {
+      "analysis_fund_count": "0",
+      "thesis_unchanged": "false"
+    },
+    "asset_prices": {
+      "currency": "'USD'::text",
+      "exchange": "''::text",
+      "source": "'openbb'::text"
+    },
+    "autoresearch_cycle_summaries": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "autoresearch_reports": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "ban_patterns": {
+      "auto_filter": "true",
+      "created_at": "CURRENT_TIMESTAMP",
+      "source_bans": "0",
+      "updated_at": "CURRENT_TIMESTAMP"
+    },
+    "best_per_ticker": {
+      "updated_at": "CURRENT_TIMESTAMP"
+    },
+    "bots": {
+      "cash_balance": "100000.0",
+      "description": "''::text",
+      "is_active": "true",
+      "starting_cash": "100000.0",
+      "status": "'idle'::text",
+      "total_pnl": "0.0",
+      "total_trades": "0",
+      "win_rate": "0.0"
+    },
+    "box_benchmark_runs": {
+      "created_at": "now()"
+    },
+    "challenger_decisions": {
+      "created_at": "now()"
+    },
+    "chat_history": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "chat_sessions": {
+      "is_active": "false",
+      "message_count": "0",
+      "title": "'New Chat'::text"
+    },
+    "company_narratives": {
+      "updated_at": "CURRENT_TIMESTAMP"
+    },
+    "company_registry": {
+      "is_sp500": "false",
+      "market_cap": "0",
+      "rejected": "false",
+      "source": "'sp500_load'::text",
+      "updated_at": "CURRENT_TIMESTAMP",
+      "verified": "false"
+    },
+    "component_health_reports": {
+      "evaluated_at": "CURRENT_TIMESTAMP"
+    },
+    "congress_members": {
+      "collected_at": "CURRENT_TIMESTAMP"
+    },
+    "context_blobs": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "critic_feedback": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "cross_asset_correlations": {
+      "computed_at": "CURRENT_TIMESTAMP"
+    },
+    "cycle_context": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "cycle_directives": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "expires_after": "5",
+      "severity": "'info'::text",
+      "status": "'active'::text"
+    },
+    "cycle_resume_state": {
+      "checkpoint_ts": "CURRENT_TIMESTAMP",
+      "completed_phases": "'[]'::jsonb",
+      "completed_tickers": "'{}'::jsonb",
+      "cycle_config": "'{}'::jsonb",
+      "status": "'interrupted'::text"
+    },
+    "cycle_run_summaries": {
+      "analysis_results_count": "0",
+      "buy_count": "0",
+      "collector_error": "0",
+      "collector_ok": "0",
+      "collector_skipped": "0",
+      "hold_count": "0",
+      "report_generated": "false",
+      "report_published": "false",
+      "review_count": "0",
+      "sell_count": "0",
+      "trade_attempted": "0",
+      "trade_executed": "0",
+      "trade_failed": "0",
+      "trigger_type": "'manual'::text"
+    },
+    "cycle_schedules": {
+      "analyze": "true",
+      "collect": "true",
+      "created_at": "CURRENT_TIMESTAMP",
+      "discovered_tickers": "0",
+      "is_active": "true",
+      "job_type": "'user'::text",
+      "market_hours_only": "false",
+      "run_count": "0",
+      "updated_at": "CURRENT_TIMESTAMP"
+    },
+    "cycle_summaries": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "data_archive": {
+      "archived_at": "CURRENT_TIMESTAMP"
+    },
+    "data_flags": {
+      "flagged_at": "CURRENT_TIMESTAMP",
+      "flagged_by": "'user'::text"
+    },
+    "data_source_status": {
+      "rows_fetched": "0"
+    },
+    "debate_history": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "debate_tool_cache": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "decision_evaluations": {
+      "discrepancy_trigger": "false"
+    },
+    "decision_outcomes": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "decision_scores": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "deleted_data": {
+      "deleted_at": "CURRENT_TIMESTAMP",
+      "reason": "'user_delete'::text"
+    },
+    "discovered_channels": {
+      "discovery_count": "1",
+      "first_seen": "CURRENT_TIMESTAMP",
+      "last_seen": "CURRENT_TIMESTAMP",
+      "status": "'pending'::text"
+    },
+    "discovered_tickers": {
+      "rate_limited_count": "0",
+      "validation_status": "'pending'::text"
+    },
+    "dossier_question_log": {
+      "ask_count": "1",
+      "first_asked_at": "CURRENT_TIMESTAMP",
+      "last_asked_at": "CURRENT_TIMESTAMP",
+      "status": "'open'::text"
+    },
+    "economic_calendar": {
+      "collected_at": "CURRENT_TIMESTAMP",
+      "source": "'tradingeconomics'::text"
+    },
+    "episodic_memory": {
+      "timestamp": "CURRENT_TIMESTAMP"
+    },
+    "episodic_observations": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "promoted_to_memory": "false"
+    },
+    "etf_metadata": {
+      "collected_at": "CURRENT_TIMESTAMP"
+    },
+    "eval_scores": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "evolution_attempts": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "evolution_dead_ends": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "evolution_lessons_archive": {
+      "archived_at": "CURRENT_TIMESTAMP",
+      "round": "0"
+    },
+    "evolution_repair_queue": {
+      "attempts": "0",
+      "created_at": "CURRENT_TIMESTAMP",
+      "status": "'queued'::text"
+    },
+    "execution_errors": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "failure_buckets": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "flash_briefings": {
+      "article_count": "0",
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "freshness_gate_config": {
+      "updated_at": "now()",
+      "updated_by": "'system'::character varying",
+      "weight": "1.0"
+    },
+    "fund_alerts": {
+      "is_read": "false"
+    },
+    "fundamentals": {
+      "source": "'yfinance'::text"
+    },
+    "generated_agent_prompts": {
+      "active": "true",
+      "created_at": "CURRENT_TIMESTAMP",
+      "created_by": "'meta_agent'::text",
+      "lens_type": "'custom'::text",
+      "performance_score": "0.0",
+      "total_trades": "0",
+      "win_rate": "0.0"
+    },
+    "graph_node_events": {
+      "consumed": "false",
+      "created_at": "CURRENT_TIMESTAMP",
+      "weight": "0.5"
+    },
+    "hallucination_audit": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "hallucination_log": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "insider_trades": {
+      "collected_at": "CURRENT_TIMESTAMP",
+      "source": "'openinsider'::text"
+    },
+    "janitor_run_log": {
+      "run_time": "CURRENT_TIMESTAMP"
+    },
+    "layout_presets": {
+      "is_active": "false",
+      "updated_at": "CURRENT_TIMESTAMP"
+    },
+    "lens_scorecard": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "llm_attention_weights": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "llm_audit_logs": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "macro_indicators": {
+      "country": "'US'::text",
+      "source": "'openbb'::text"
+    },
+    "market_regime": {
+      "computed_at": "CURRENT_TIMESTAMP"
+    },
+    "market_snapshots": {
+      "fetched_at": "CURRENT_TIMESTAMP"
+    },
+    "model_shadow_runs": {
+      "created_at": "now()",
+      "primary_elapsed_ms": "0",
+      "primary_loops": "0",
+      "primary_tokens": "0",
+      "shadow_elapsed_ms": "0",
+      "shadow_loops": "0",
+      "shadow_tokens": "0"
+    },
+    "monitored_subreddits": {
+      "added_by": "'system'::text",
+      "created_at": "CURRENT_TIMESTAMP",
+      "is_active": "true"
+    },
+    "morning_briefings": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "news_articles": {
+      "analysis_count": "0",
+      "collected_at": "CURRENT_TIMESTAMP",
+      "max_analyses": "5"
+    },
+    "ontology_edges": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "evidence_count": "1",
+      "updated_at": "CURRENT_TIMESTAMP"
+    },
+    "ontology_nodes": {
+      "activation": "0.0",
+      "contradicted_count": "0",
+      "created_at": "CURRENT_TIMESTAMP",
+      "disproven": "false",
+      "updated_at": "CURRENT_TIMESTAMP",
+      "validated_count": "0"
+    },
+    "pending_approvals": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "status": "'pending'::text"
+    },
+    "pending_evolution_fixes": {
+      "attempt_count": "0",
+      "created_at": "CURRENT_TIMESTAMP",
+      "status": "'pending'::text"
+    },
+    "pipeline_profiler": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "pipeline_state": {
+      "agent_locale": "'default'::text",
+      "dynamic_selection_mode": "false",
+      "updated_at": "CURRENT_TIMESTAMP"
+    },
+    "position_lots": {
+      "is_legacy": "false",
+      "status": "'open'::text"
+    },
+    "positions": {
+      "stop_loss_pct": "0.08"
+    },
+    "price_backfill_progress": {
+      "attempted_at": "CURRENT_TIMESTAMP",
+      "rows_written": "0"
+    },
+    "price_triggers": {
+      "action": "'SELL'::text",
+      "active": "true",
+      "created_by": "'bot'::text",
+      "qty_pct": "1.0"
+    },
+    "procedural_memory": {
+      "failure_count": "0",
+      "success_count": "0",
+      "success_rate": "0.0"
+    },
+    "prompt_templates": {
+      "action_type": "'BUY'::text",
+      "avg_pnl_pct": "0.0",
+      "created_at": "CURRENT_TIMESTAMP",
+      "created_by": "'seed'::text",
+      "generation": "0",
+      "losses": "0",
+      "status": "'candidate'::text",
+      "total_trades": "0",
+      "win_rate": "0.0",
+      "wins": "0"
+    },
+    "prospective_memory": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "put_call_ratio": {
+      "symbol": "'SPY'::text"
+    },
+    "quant_equation_library": {
+      "author_agent": "'unknown'::text",
+      "avg_pnl_pct": "0.0",
+      "backtest_results": "'{}'::jsonb",
+      "created_at": "CURRENT_TIMESTAMP",
+      "description": "''::text",
+      "parameters": "'{}'::jsonb",
+      "sharpe_ratio": "0.0",
+      "ticker_origin": "''::text",
+      "updated_at": "CURRENT_TIMESTAMP",
+      "usage_count": "0",
+      "win_rate_pct": "0.0"
+    },
+    "rag_ab_results": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "reddit_posts": {
+      "analysis_count": "0",
+      "collected_at": "CURRENT_TIMESTAMP",
+      "max_analyses": "5"
+    },
+    "regime_hmm_posteriors": {
+      "computed_at": "CURRENT_TIMESTAMP"
+    },
+    "rejected_skill_edits": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "research_trials": {
+      "first_run_at": "CURRENT_TIMESTAMP",
+      "last_run_at": "CURRENT_TIMESTAMP",
+      "run_count": "1"
+    },
+    "rss_feeds": {
+      "added_by": "'system'::text",
+      "created_at": "CURRENT_TIMESTAMP",
+      "is_active": "true"
+    },
+    "runtime_parameters": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "status": "'active'::text"
+    },
+    "scraper_queue": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "max_retries": "3",
+      "priority": "5",
+      "retry_count": "0",
+      "status": "'PENDING'::text"
+    },
+    "scraper_scripts": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "fail_count": "0",
+      "status": "'active'::text",
+      "success_count": "0"
+    },
+    "sec_13f_filers": {
+      "is_active": "true",
+      "last_checked": "CURRENT_TIMESTAMP"
+    },
+    "sec_13f_holdings": {
+      "collected_at": "CURRENT_TIMESTAMP",
+      "source": "'edgar'::text"
+    },
+    "sec_13f_performance": {
+      "last_calculated_at": "CURRENT_TIMESTAMP"
+    },
+    "sector_breadth": {
+      "computed_at": "CURRENT_TIMESTAMP"
+    },
+    "sector_correlations": {
+      "computed_at": "CURRENT_TIMESTAMP"
+    },
+    "sector_performance": {
+      "computed_at": "CURRENT_TIMESTAMP"
+    },
+    "sector_rotation_signals": {
+      "detected_at": "CURRENT_TIMESTAMP"
+    },
+    "semantic_memory": {
+      "access_count": "0",
+      "confidence": "0.5",
+      "created_at": "CURRENT_TIMESTAMP",
+      "last_accessed_at": "CURRENT_TIMESTAMP"
+    },
+    "shared_desk": {
+      "created_at": "now()",
+      "desk_data": "'{}'::jsonb",
+      "phase": "'INIT'::text",
+      "updated_at": "now()"
+    },
+    "shkreli_opinions": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "simulation_transcripts": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "smart_money_performance": {
+      "computed_at": "CURRENT_TIMESTAMP",
+      "rankable": "false"
+    },
+    "smart_money_trade_scores": {
+      "computed_at": "CURRENT_TIMESTAMP"
+    },
+    "social_posts": {
+      "collected_at": "CURRENT_TIMESTAMP",
+      "is_repost": "false",
+      "like_count": "0",
+      "reply_count": "0",
+      "repost_count": "0",
+      "view_count": "0"
+    },
+    "source_quality_scores": {
+      "avg_content_len": "0",
+      "discard_pct": "0.0",
+      "discarded_count": "0",
+      "is_banned": "false",
+      "last_updated": "now()",
+      "total_articles": "0"
+    },
+    "source_trust": {
+      "flag_rate": "0.0",
+      "last_updated": "CURRENT_TIMESTAMP",
+      "quality_wins": "0",
+      "total_flags": "0",
+      "total_items": "0",
+      "trust_score": "1.0",
+      "win_rate": "0.0"
+    },
+    "stable_harnesses": {
+      "marked_at": "CURRENT_TIMESTAMP"
+    },
+    "stock_commodity_correlations": {
+      "computed_at": "CURRENT_TIMESTAMP"
+    },
+    "strategy_candidates": {
+      "confidence_score": "0",
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "strategy_evaluations": {
+      "timestamp": "CURRENT_TIMESTAMP"
+    },
+    "strategy_performance": {
+      "active": "true",
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "sub_task_queue": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "status": "'pending'::character varying",
+      "updated_at": "CURRENT_TIMESTAMP"
+    },
+    "subsystem_benchmarks": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "swarm_scorecards": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "system_commands": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "payload": "'{}'::jsonb",
+      "progress": "0",
+      "status": "'pending'::text"
+    },
+    "taskboard_findings": {
+      "confidence": "75",
+      "created_at": "CURRENT_TIMESTAMP",
+      "responses": "'[]'::jsonb"
+    },
+    "taskboard_investigations": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "status": "'open'::text"
+    },
+    "ticker_attention": {
+      "consecutive_holds": "0",
+      "consecutive_skips": "0",
+      "created_at": "CURRENT_TIMESTAMP",
+      "days_since_deep": "0",
+      "neglect_flagged": "false",
+      "recent_decisions": "'[]'::jsonb",
+      "updated_at": "CURRENT_TIMESTAMP"
+    },
+    "ticker_bans": {
+      "ban_type": "'manual'::text",
+      "banned_at": "CURRENT_TIMESTAMP",
+      "banned_by": "'user'::text"
+    },
+    "ticker_collection_watermarks": {
+      "last_collected": "now()"
+    },
+    "ticker_consensus": {
+      "last_updated": "CURRENT_TIMESTAMP"
+    },
+    "ticker_correlations": {
+      "computed_at": "CURRENT_TIMESTAMP"
+    },
+    "ticker_dossiers": {
+      "attached_artifact_ids": "'[]'::jsonb",
+      "canonical_thesis": "'{}'::jsonb",
+      "created_at": "CURRENT_TIMESTAMP",
+      "decision_history": "'[]'::jsonb",
+      "hold_spec": "'{}'::jsonb",
+      "lifecycle_state": "'NEW'::text",
+      "monitoring_triggers": "'{}'::jsonb",
+      "open_questions": "'[]'::jsonb",
+      "updated_at": "CURRENT_TIMESTAMP"
+    },
+    "ticker_health": {
+      "avg_confidence": "0",
+      "buy_count": "0",
+      "collection_failures": "0",
+      "health_score": "50",
+      "health_tier": "'new'::text",
+      "hold_streak": "0",
+      "last_confidence": "0",
+      "news_article_count": "0",
+      "reddit_post_count": "0",
+      "sell_count": "0",
+      "total_analyses": "0",
+      "total_cycles": "0",
+      "updated_at": "CURRENT_TIMESTAMP",
+      "youtube_count": "0",
+      "zero_news_streak": "0"
+    },
+    "ticker_metadata": {
+      "sp500": "false",
+      "updated_at": "CURRENT_TIMESTAMP"
+    },
+    "ticker_quarantine": {
+      "quarantined_at": "CURRENT_TIMESTAMP"
+    },
+    "ticker_reports": {
+      "created_at": "now()",
+      "is_summary": "false"
+    },
+    "ticker_user_notes": {
+      "updated_at": "now()"
+    },
+    "ticker_watches": {
+      "cooldown_minutes": "240",
+      "created_at": "CURRENT_TIMESTAMP",
+      "fire_count": "0",
+      "is_active": "true",
+      "updated_at": "CURRENT_TIMESTAMP"
+    },
+    "tool_playbook": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "tool_usage_stats": {
+      "agent_name": "''::text",
+      "called_at": "CURRENT_TIMESTAMP",
+      "cycle_id": "''::text",
+      "execution_ms": "0",
+      "service_source": "'trading-service'::text",
+      "success": "true",
+      "ticker": "''::text"
+    },
+    "trade_fills": {
+      "fees": "0.0",
+      "source": "'pipeline'::text"
+    },
+    "trade_results": {
+      "confidence": "0",
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "trading_constitution": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "is_active": "true",
+      "performance_data": "'{}'::jsonb",
+      "rule_params": "'{}'::jsonb",
+      "version": "1"
+    },
+    "user_constraints": {
+      "is_active": "true"
+    },
+    "user_feedback": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "is_active": "true"
+    },
+    "user_intents": {
+      "created_at": "now()",
+      "source": "'chat'::text"
+    },
+    "user_notes": {
+      "is_active": "true"
+    },
+    "v3_agent_telemetry": {
+      "artifact_size_bytes": "0",
+      "cached_tokens": "0",
+      "created_at": "now()",
+      "elapsed_ms": "0",
+      "loops_used": "0",
+      "prompt_tokens": "0",
+      "quality_score": "'-1'::integer",
+      "sys_prompt_chars": "0",
+      "token_usage": "0",
+      "user_prompt_chars": "0"
+    },
+    "v3_guardrail_firings": {
+      "created_at": "now()"
+    },
+    "v3_invariant_violations": {
+      "created_at": "now()"
+    },
+    "v3_research_queues": {
+      "attempts": "0",
+      "created_at": "CURRENT_TIMESTAMP",
+      "payload": "'{}'::jsonb",
+      "priority": "0",
+      "status": "'pending'::text",
+      "updated_at": "CURRENT_TIMESTAMP"
+    },
+    "v3_system_commands": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "payload": "'{}'::jsonb",
+      "progress": "0",
+      "status": "'pending'::text"
+    },
+    "variance_runs": {
+      "created_at": "now()",
+      "status": "'done'::text"
+    },
+    "watch_events": {
+      "fired_at": "CURRENT_TIMESTAMP"
+    },
+    "watchlist": {
+      "health_score": "50",
+      "status": "'active'::text"
+    },
+    "watchlist_curation_log": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "whiteboard_annotations": {
+      "created_at": "CURRENT_TIMESTAMP"
+    },
+    "whiteboard_entries": {
+      "content": "'{}'::jsonb",
+      "created_at": "CURRENT_TIMESTAMP",
+      "edited_by": "'{}'::text[]",
+      "version": "1"
+    },
+    "worklist_shadow_runs": {
+      "created_at": "CURRENT_TIMESTAMP",
+      "free_tickers": "'[]'::jsonb",
+      "live_tickers": "'[]'::jsonb",
+      "queue_depth": "'{}'::jsonb",
+      "queue_empty": "true",
+      "queue_tickers": "'[]'::jsonb"
+    },
+    "youtube_channels": {
+      "added_at": "CURRENT_TIMESTAMP",
+      "added_by": "'system'::text",
+      "is_active": "true",
+      "total_videos": "0"
+    },
+    "youtube_transcripts": {
+      "analysis_count": "0",
+      "collected_at": "CURRENT_TIMESTAMP",
+      "max_analyses": "5"
+    }
+  }
+}
