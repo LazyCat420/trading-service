@@ -24,7 +24,9 @@ import asyncio
 import logging
 import time
 
-from scripts.migration.pg_connection import get_db
+from datetime import datetime, timezone
+
+from app.db import mongo_store
 from app.collectors.explicit_fetch_guard import is_blocked_for_explicit_fetch
 from app.collectors.yfinance_collector import collect_price_history
 
@@ -51,18 +53,12 @@ TERMINAL_STATUSES = ("done", "empty", "blocked")
 
 
 def _ensure_progress_table():
-    with get_db() as db:
-        db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS price_backfill_progress (
-                ticker       TEXT PRIMARY KEY,
-                status       TEXT NOT NULL,
-                rows_written INTEGER DEFAULT 0,
-                error        TEXT,
-                attempted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
+    """Mongo creates the collection on first write, so only the key needs
+    declaring — and it has to be declared, because `ticker` was the PRIMARY KEY
+    and _record below relies on it to upsert rather than duplicate."""
+    mongo_store.get_doc_db()["price_backfill_progress"].create_index(
+        "ticker", unique=True
+    )
 
 
 def _load_universe(limit: int | None) -> list[str]:
@@ -71,63 +67,41 @@ def _load_universe(limit: int | None) -> list[str]:
     Ordering matters for a resumable job: if it dies halfway, the tickers that
     carry the most disclosure weight are already done.
     """
-    with get_db() as db:
-        rows = db.execute(
-            """
-            WITH universe AS (
-                SELECT ticker, COUNT(*) AS weight
-                FROM congress_trades
-                WHERE ticker IS NOT NULL
-                GROUP BY ticker
-                UNION ALL
-                SELECT ticker, COUNT(*) AS weight
-                FROM sec_13f_holdings
-                WHERE ticker IS NOT NULL
-                GROUP BY ticker
-            )
-            SELECT ticker, SUM(weight) AS weight
-            FROM universe
-            -- Plain US equity symbols only. The disclosure feeds carry a little
-            -- debris (option OCC symbols, foreign listings like MSTY.PA, 'N/A');
-            -- yfinance can't price those and they'd just burn rate limit.
-            WHERE ticker ~ '^[A-Z]{1,5}$'
-            GROUP BY ticker
-            ORDER BY weight DESC
-            """
-        ).fetchall()
+    # Plain US equity symbols only. The disclosure feeds carry a little debris
+    # (option OCC symbols, foreign listings like MSTY.PA, 'N/A'); yfinance
+    # can't price those and they'd just burn rate limit.
+    plain_symbol = {"ticker": {"$regex": "^[A-Z]{1,5}$"}}
+    # UNION ALL of two per-collection counts -> $unionWith, so this stays one
+    # round-trip instead of two scans stitched together in Python.
+    rows = mongo_store.aggregate("congress_trades", [
+        {"$match": {"ticker": {"$nin": [None]}, **plain_symbol}},
+        {"$group": {"_id": "$ticker", "weight": {"$sum": 1}}},
+        {"$unionWith": {"coll": "sec_13f_holdings", "pipeline": [
+            {"$match": {"ticker": {"$nin": [None]}, **plain_symbol}},
+            {"$group": {"_id": "$ticker", "weight": {"$sum": 1}}},
+        ]}},
+        {"$group": {"_id": "$_id", "weight": {"$sum": "$weight"}}},
+        {"$sort": {"weight": -1}},
+    ])
 
-    tickers = [r[0] for r in rows]
+    tickers = [r["_id"] for r in rows]
     return tickers[:limit] if limit else tickers
 
 
 def _already_done(retry_failed: bool) -> set[str]:
-    with get_db() as db:
-        if retry_failed:
-            rows = db.execute(
-                "SELECT ticker FROM price_backfill_progress WHERE status = 'done'"
-            ).fetchall()
-        else:
-            rows = db.execute(
-                "SELECT ticker FROM price_backfill_progress WHERE status = ANY(%s)",
-                (list(TERMINAL_STATUSES),),
-            ).fetchall()
-    return {r[0] for r in rows}
+    # status = ANY(list) -> $in. retry_failed narrows "already done" to the
+    # successes so the failures get another attempt.
+    q = ({"status": "done"} if retry_failed
+         else {"status": {"$in": list(TERMINAL_STATUSES)}})
+    return set(mongo_store.distinct_values("price_backfill_progress", "ticker", q))
 
 
 def _record(ticker: str, status: str, rows_written: int = 0, error: str | None = None):
-    with get_db() as db:
-        db.execute(
-            """
-            INSERT INTO price_backfill_progress (ticker, status, rows_written, error, attempted_at)
-            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
-            ON CONFLICT (ticker) DO UPDATE SET
-                status       = EXCLUDED.status,
-                rows_written = EXCLUDED.rows_written,
-                error        = EXCLUDED.error,
-                attempted_at = EXCLUDED.attempted_at
-            """,
-            (ticker, status, rows_written, error),
-        )
+    mongo_store.upsert_doc(
+        "price_backfill_progress", {"ticker": ticker},
+        {"ticker": ticker, "status": status, "rows_written": rows_written,
+         "error": error, "attempted_at": datetime.now(timezone.utc)},
+    )
 
 
 async def backfill(limit: int | None = None, retry_failed: bool = False,
