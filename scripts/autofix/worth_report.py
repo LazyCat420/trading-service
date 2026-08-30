@@ -34,31 +34,47 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.migration.pg_connection import get_db          # noqa: E402
+from datetime import datetime, timedelta, timezone      # noqa: E402
+
+from app.db import mongo_store                          # noqa: E402
 
 
-def _rows(db, sql: str, params: list) -> list:
-    return db.execute(sql, params).fetchall() or []
+def _since(days: int) -> datetime:
+    """`now() - make_interval(days => N)`."""
+    return datetime.now(timezone.utc) - timedelta(days=days)
 
 
-def fuel(db, days: int) -> None:
+def _count_if(cond: dict) -> dict:
+    """`count(*) FILTER (WHERE cond)` as an aggregation accumulator."""
+    return {"$sum": {"$cond": [cond, 1, 0]}}
+
+
+#: `coalesce(col,'') <> ''` — true only when the field is present, non-null and
+#: not the empty string. Written as an $and so a MISSING field fails it too,
+#: which is what coalesce-to-empty did.
+def _nonempty(field: str) -> dict:
+    return {"$and": [{"$ne": [{"$ifNull": [f"${field}", ""]}, ""]}]}
+
+
+def fuel(days: int) -> None:
     """What arrived that could even be attempted."""
     print("\nFUEL — is there anything to repair?")
     print("-" * 62)
 
-    q = _rows(db, """
-        SELECT count(*) total,
-               count(*) FILTER (WHERE coalesce(traceback_text,'') <> '') with_tb,
-               count(*) FILTER (WHERE coalesce(repro_test,'') <> '')     with_repro
-        FROM evolution_repair_queue
-        WHERE created_at > now() - make_interval(days => %s)
-    """, [days])
-    total, with_tb, with_repro = (q[0] if q else (0, 0, 0))
-    usable = _rows(db, """
-        SELECT count(*) FROM evolution_repair_queue
-        WHERE created_at > now() - make_interval(days => %s)
-          AND (coalesce(traceback_text,'') <> '' OR coalesce(repro_test,'') <> '')
-    """, [days])[0][0]
+    cutoff = _since(days)
+    q = mongo_store.aggregate("evolution_repair_queue", [
+        {"$match": {"created_at": {"$gt": cutoff}}},
+        {"$group": {"_id": None, "total": {"$sum": 1},
+                    "with_tb": _count_if(_nonempty("traceback_text")),
+                    "with_repro": _count_if(_nonempty("repro_test")),
+                    "usable": _count_if({"$or": [_nonempty("traceback_text"),
+                                                 _nonempty("repro_test")]})}},
+    ])
+    r = q[0] if q else {}
+    total = r.get("total", 0)
+    with_tb = r.get("with_tb", 0)
+    with_repro = r.get("with_repro", 0)
+    usable = r.get("usable", 0)
 
     print(f"  repair queue, last {days}d ....... {total} row(s)")
     print(f"    with a traceback .............. {with_tb}")
@@ -69,35 +85,38 @@ def fuel(db, days: int) -> None:
         print("      The watchdog reads pipeline_state.error (a message string),")
         print("      so nothing here carries a stack frame to reproduce.")
 
-    errs = _rows(db, """
-        SELECT count(*) total,
-               count(*) FILTER (WHERE stack_trace IS NOT NULL
-                                 AND length(stack_trace) > 50) with_tb
-        FROM execution_errors
-        WHERE created_at > now() - make_interval(days => %s)
-    """, [days])
-    e_total, e_tb = (errs[0] if errs else (0, 0))
+    errs = mongo_store.aggregate("execution_errors", [
+        {"$match": {"created_at": {"$gt": cutoff}}},
+        {"$group": {"_id": None, "total": {"$sum": 1},
+                    "with_tb": _count_if(
+                        {"$gt": [{"$strLenCP": {"$ifNull": ["$stack_trace", ""]}}, 50]})}},
+    ])
+    e = errs[0] if errs else {}
+    e_total, e_tb = e.get("total", 0), e.get("with_tb", 0)
     print(f"  execution_errors, last {days}d ... {e_total} row(s), "
           f"{e_tb} with a stack trace")
 
 
-def yield_(db, days: int) -> None:
+def yield_(days: int) -> None:
     """What the loop produced, and what a human did with it."""
     print("\nYIELD — what came out, and what was accepted?")
     print("-" * 62)
-    rows = _rows(db, """
-        SELECT count(*) runs,
-               count(*) FILTER (WHERE score >= 1.0)                green,
-               count(*) FILTER (WHERE pushed_at IS NOT NULL)       pushed,
-               count(*) FILTER (WHERE human_verdict = 'merged')    merged,
-               count(*) FILTER (WHERE human_verdict = 'rejected')  rejected,
-               count(*) FILTER (WHERE human_verdict = 'pending'
-                                  AND pushed_at IS NOT NULL)       waiting
-        FROM autofix_runs
-        WHERE created_at > now() - make_interval(days => %s)
-    """, [days])
+    cutoff = _since(days)
+    pushed_set = {"$ne": [{"$ifNull": ["$pushed_at", None]}, None]}
+    agg = mongo_store.aggregate("autofix_runs", [
+        {"$match": {"created_at": {"$gt": cutoff}}},
+        {"$group": {"_id": None, "runs": {"$sum": 1},
+                    "green": _count_if({"$gte": [{"$ifNull": ["$score", -1]}, 1.0]}),
+                    "pushed": _count_if(pushed_set),
+                    "merged": _count_if({"$eq": ["$human_verdict", "merged"]}),
+                    "rejected": _count_if({"$eq": ["$human_verdict", "rejected"]}),
+                    "waiting": _count_if({"$and": [
+                        {"$eq": ["$human_verdict", "pending"]}, pushed_set]})}},
+    ])
+    a = agg[0] if agg else {}
     runs, green, pushed, merged, rejected, waiting = (
-        rows[0] if rows else (0, 0, 0, 0, 0, 0))
+        a.get("runs", 0), a.get("green", 0), a.get("pushed", 0),
+        a.get("merged", 0), a.get("rejected", 0), a.get("waiting", 0))
 
     print(f"  runs attempted ................. {runs}")
     print(f"  graded 1.00 .................... {green}")
@@ -118,11 +137,11 @@ def yield_(db, days: int) -> None:
     else:
         print("\n  Nothing reviewed yet, so there is no acceptance rate.")
 
-    scores = _rows(db, """
-        SELECT score, count(*) FROM autofix_runs
-        WHERE created_at > now() - make_interval(days => %s) AND score IS NOT NULL
-        GROUP BY score ORDER BY score
-    """, [days])
+    scores = [(d["_id"], d["n"]) for d in mongo_store.aggregate("autofix_runs", [
+        {"$match": {"created_at": {"$gt": cutoff}, "score": {"$nin": [None]}}},
+        {"$group": {"_id": "$score", "n": {"$sum": 1}}},
+        {"$sort": {"_id": 1}},
+    ])]
     if scores:
         print("\n  score ladder:")
         ladder = {0.0: "did not apply / does not compile",
@@ -133,22 +152,29 @@ def yield_(db, days: int) -> None:
             print(f"    {float(score):.2f}  {n:>3}   {ladder.get(float(score), '')}")
 
 
-def holding(db, days: int) -> None:
+def holding(days: int) -> None:
     """Did a merged fix actually stop the failure coming back?"""
     print("\nHOLDING — did merged fixes hold?")
     print("-" * 62)
-    rows = _rows(db, """
-        SELECT r.target_path, r.target_symbol, r.verdict_at,
-               (SELECT count(*) FROM evolution_repair_queue q
-                 WHERE q.target_path = r.target_path
-                   AND coalesce(q.target_symbol,'') = coalesce(r.target_symbol,'')
-                   AND q.created_at > r.verdict_at) AS recurrences
-        FROM autofix_runs r
-        WHERE r.human_verdict = 'merged'
-          AND r.verdict_at IS NOT NULL
-          AND r.verdict_at > now() - make_interval(days => %s)
-        ORDER BY r.verdict_at DESC
-    """, [days])
+    merged_runs = mongo_store.find_docs(
+        "autofix_runs",
+        {"human_verdict": "merged", "verdict_at": {"$gt": _since(days)}},
+        sort=[("verdict_at", -1)],
+    )
+    # The correlated subquery, one lookup per merged fix: how many repair jobs
+    # for the same target arrived AFTER the merge. `coalesce(target_symbol,'')`
+    # on both sides means a null symbol matches a null symbol.
+    rows = []
+    for r in merged_runs:
+        sym = r.get("target_symbol") or ""
+        rec = mongo_store.count_docs("evolution_repair_queue", {
+            "target_path": r.get("target_path"),
+            "$or": [{"target_symbol": sym},
+                    *([{"target_symbol": {"$in": [None, ""]}}] if sym == "" else [])],
+            "created_at": {"$gt": r["verdict_at"]},
+        })
+        rows.append((r.get("target_path"), r.get("target_symbol"),
+                     r.get("verdict_at"), rec))
     if not rows:
         print("  no merged fixes in this window — nothing to check yet.")
         return
@@ -161,18 +187,23 @@ def holding(db, days: int) -> None:
         print(f"    {str(when)[:16]}  {path}::{sym}  — {mark}")
 
 
-def cost(db, days: int) -> None:
+def cost(days: int) -> None:
     print("\nCOST — what did it take?")
     print("-" * 62)
-    rows = _rows(db, """
-        SELECT count(*), sum(wall_clock_s), avg(wall_clock_s),
-               sum(wall_clock_s) FILTER (WHERE human_verdict = 'merged'),
-               count(*) FILTER (WHERE human_verdict = 'merged')
-        FROM autofix_runs
-        WHERE created_at > now() - make_interval(days => %s)
-          AND wall_clock_s IS NOT NULL
-    """, [days])
-    n, total_s, avg_s, merged_s, merged_n = (rows[0] if rows else (0,) * 5)
+    agg = mongo_store.aggregate("autofix_runs", [
+        {"$match": {"created_at": {"$gt": _since(days)},
+                    "wall_clock_s": {"$nin": [None]}}},
+        {"$group": {"_id": None, "n": {"$sum": 1},
+                    "total_s": {"$sum": "$wall_clock_s"},
+                    "avg_s": {"$avg": "$wall_clock_s"},
+                    "merged_s": {"$sum": {"$cond": [
+                        {"$eq": ["$human_verdict", "merged"]}, "$wall_clock_s", 0]}},
+                    "merged_n": _count_if({"$eq": ["$human_verdict", "merged"]})}},
+    ])
+    c = agg[0] if agg else {}
+    n, total_s, avg_s, merged_s, merged_n = (
+        c.get("n", 0), c.get("total_s", 0), c.get("avg_s", 0),
+        c.get("merged_s", 0), c.get("merged_n", 0))
     if not n:
         print("  no timed runs in this window.")
         return
@@ -195,11 +226,10 @@ def main() -> int:
     print("=" * 62)
     print(f"  AUTOFIX WORTH REPORT — last {args.days} days")
     print("=" * 62)
-    with get_db() as db:
-        fuel(db, args.days)
-        yield_(db, args.days)
-        holding(db, args.days)
-        cost(db, args.days)
+    fuel(args.days)
+    yield_(args.days)
+    holding(args.days)
+    cost(args.days)
     print("\n" + "=" * 62)
     print("  No P&L verdict appears here on purpose: the desk's MDE is")
     print("  8.84-11.63pp on 46 lifetime fills, so patch-level trading")

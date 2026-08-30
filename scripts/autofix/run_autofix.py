@@ -50,6 +50,7 @@ import subprocess
 import sys
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -67,7 +68,7 @@ from app.cognition.evolution.coral.worktree import (        # noqa: E402
 from app.cognition.evolution.repair_scope import (              # noqa: E402
     ALLOWED_PREFIXES, is_patchable,
 )
-from scripts.migration.pg_connection import get_db                            # noqa: E402
+from app.db import mongo_query, mongo_store                                   # noqa: E402
 
 logger = logging.getLogger("run_autofix")
 
@@ -91,13 +92,11 @@ class Refused(RuntimeError):
 
 
 def load_job(job_id: str) -> dict:
-    with get_db() as db:
-        row = db.execute(
-            "SELECT id, cycle_id, error_message, traceback_text, target_path, "
-            "target_symbol, repro_test, status, attempts "
-            "FROM evolution_repair_queue WHERE id = %s",
-            [job_id],
-        ).fetchone()
+    row = mongo_query.find_row(
+        "evolution_repair_queue", {"id": job_id},
+        ["id", "cycle_id", "error_message", "traceback_text", "target_path",
+         "target_symbol", "repro_test", "status", "attempts"],
+    )
     if not row:
         raise Refused(f"no queue row with id {job_id}")
     keys = ("id", "cycle_id", "error_message", "traceback_text", "target_path",
@@ -266,33 +265,36 @@ def record_run(*, job_id: str, job: dict, model: str, branch: str | None,
                bundle: dict | None, changed: list[str], wall_clock_s: float,
                pushed: bool, note: str = "") -> str:
     run_id = str(uuid.uuid4())
-    with get_db() as db:
-        db.execute(
-            """
-            INSERT INTO autofix_runs
-                (id, job_id, target_path, target_symbol, model, harness, branch,
-                 commit_hash, compare_url, score, bundle, changed_files,
-                 wall_clock_s, pushed_at, human_verdict, verdict_reason)
-            VALUES (%s, %s, %s, %s, %s, 'omp', %s, %s, %s, %s, %s, %s, %s,
-                    CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE NULL END,
-                    %s, %s)
-            """,
-            [run_id, job_id, job.get("target_path"), job.get("target_symbol"),
-             model, branch, commit_hash, url, score,
-             json.dumps(bundle) if bundle else None,
-             json.dumps(changed), wall_clock_s, pushed,
-             "pending" if pushed else "not_pushed", note[:2000]],
-        )
+    now = datetime.now(timezone.utc)
+    mongo_store.insert_docs("autofix_runs", [{
+        "id": run_id,
+        "job_id": job_id,
+        "target_path": job.get("target_path"),
+        "target_symbol": job.get("target_symbol"),
+        "model": model,
+        "harness": "omp",
+        "branch": branch,
+        "commit_hash": commit_hash,
+        "compare_url": url,
+        "score": score,
+        # bundle/changed_files were json.dumps'd for a JSONB column. Mongo
+        # stores the structures directly — dumping them here would bury the
+        # run's evidence inside a string that no query can reach into.
+        "bundle": bundle or None,
+        "changed_files": changed,
+        "wall_clock_s": wall_clock_s,
+        # CASE WHEN pushed THEN CURRENT_TIMESTAMP ELSE NULL END
+        "pushed_at": now if pushed else None,
+        "human_verdict": "pending" if pushed else "not_pushed",
+        "verdict_reason": note[:2000],
+        "created_at": now,
+    }])
     return run_id
 
 
 def pushes_today() -> int:
-    with get_db() as db:
-        row = db.execute(
-            "SELECT count(*) FROM autofix_runs "
-            "WHERE pushed_at > CURRENT_TIMESTAMP - interval '1 day'"
-        ).fetchone()
-    return int(row[0]) if row else 0
+    cutoff = datetime.now(timezone.utc) - timedelta(days=1)
+    return mongo_store.count_docs("autofix_runs", {"pushed_at": {"$gt": cutoff}})
 
 
 # ── The run ─────────────────────────────────────────────────────────────────
@@ -468,12 +470,13 @@ def list_jobs() -> int:
         return 0
     print(f"{len(jobs)} open job(s):\n")
     for j in jobs:
-        with get_db() as db:
-            row = db.execute(
-                "SELECT coalesce(traceback_text,''), coalesce(repro_test,'') "
-                "FROM evolution_repair_queue WHERE id = %s", [j.id],
-            ).fetchone()
-        tb, repro = (row or ("", ""))
+        row = mongo_query.find_row(
+            "evolution_repair_queue", {"id": j.id},
+            ["traceback_text", "repro_test"],
+        )
+        # coalesce(...,'') -- a missing field comes back as None, and the
+        # usable check below does .strip() on it.
+        tb, repro = ((row[0] or ""), (row[1] or "")) if row else ("", "")
         usable = bool((tb or "").strip() or (repro or "").strip())
         flag = "OK      " if usable else "REFUSED "
         print(f"  {flag} {j.id[:8]}  {j.target_path}::{j.target_symbol}")
