@@ -244,3 +244,80 @@ verified harmless.
   that reports `sudo: docker: command not found` as a warning.
 - `scripts/ops/full-suite.sh` — the landing queue's runner duty names this
   script and it does not exist in the repo.
+
+---
+
+# Correction — the archive is not trading's to retire (2026-08-30)
+
+The addendum above said "the Postgres archive was never taken down". That is
+true but incomplete, and the missing half changes what to do about it. Asked
+directly *"why do we still have Postgres if we migrated to Mongo?"*, the
+measured answer is: **the trading migration IS complete; the database was never
+trading's alone.**
+
+## The trading half is genuinely done
+
+The application image carries **no Postgres driver at all**. `app/db/connection.py`
+moved to `scripts/migration/pg_connection.py` at teardown and psycopg was split
+into `requirements-migration.in`;
+`tests/unit/test_app_image_has_no_pg_driver.py` enforces both halves with an
+AST scan and a negative control. The cycle reads and writes Mongo only. Nothing
+below is a cycle regression.
+
+## The `trading_bot` database has another live tenant
+
+`deploy-kit/.env.deploy` sets, verbatim:
+
+```
+DATABASE_URL=postgresql+asyncpg://trader:***@10.0.0.16:5433/trading_bot
+```
+
+— and that is **treesearch-service's production DSN**. Its ORM
+(`treesearch-service/src/models/orm.py`) declares 14 tables, and they live
+inside `trading_bot`:
+
+| table | rows | newest |
+|---|---|---|
+| `genomic_samples` | 650 | **2026-08-26 21:16** |
+| `canonical_strains` | 471 | 2026-08-16 21:25 |
+| `chemical_profiles` | 258 | (no timestamp column) |
+
+plus `strain_aliases`, `breeders`, `genetic_relationships`,
+`source_genomics_records`, `observations`, `observation_images` and the
+`glass_*` set. Written eight days after the trading cutover. **The database
+cannot be dropped: a live service is inside it.**
+
+The server at `10.0.0.16:5433` hosts five databases — `trading_bot` (4,278 MB),
+`trading_bot_test` (18 MB), `treesearch_test` (8 MB), `smartgarden` (8 MB, with
+two live connections), `postgres` — so the *box* is shared infrastructure too.
+
+## What IS still wrong
+
+- **`box_benchmark_runs` is split-brain.** 136 rows in Postgres, newest
+  **2026-08-27 01:40**; 113 rows in Mongo. `scripts/jetson_benchmark.py:486`
+  writes the PG side with raw SQL. It is a script, not the image, so the driver
+  guard never fires — but benchmark history now exists in two stores that
+  disagree. It was one of the four tables ch.67 recorded as OUTSIDE the
+  migration manifest, and it is the one still being written.
+- **`autofix_runs` does not exist in Mongo at all**, and `agent_tasks` exists
+  with 0 rows — consistent with the purge's empty gate having dropped them.
+- **Three connections have been idle in `ROLLBACK;` since 2026-08-26 20:49**,
+  from a docker bridge address. Four days, never reaped.
+- **198 tables** remain in `trading_bot` (ch.63 measured 197 after the
+  drop-and-reboot cycle; the count has not gone down).
+
+## A measurement caveat for the next reader
+
+`pg_stat_user_tables.n_live_tup` on this database is **useless** — the stats
+were reset at some point, so `shared_desk` reports 0 live tuples while
+`SELECT count(*)` returns 1,762. Count rows; do not trust the planner stats
+here. The same reset is why the write-activity counters show only ~23 rows
+across the whole database.
+
+## So: what would actually retire the archive
+
+Not a drop. In order: port or retire the 19 silent PG readers; move
+`jetson_benchmark.py` to Mongo so `box_benchmark_runs` stops splitting; give
+treesearch its own database (it already has `treesearch_test` next door);
+reap the leaked connections; and only then is what remains in `trading_bot`
+purely a trading archive that can be snapshotted and dropped.
