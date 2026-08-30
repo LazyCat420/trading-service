@@ -49,10 +49,14 @@ INSTRUMENTS = (
     "scripts/deploy_preflight.py",
 )
 
-# Measured 2026-08-19 after the control-plane four were converted (427 before).
+# Measured 2026-08-19 after the control-plane four were converted (427 before),
+# and RE-BASELINED 2026-08-30. It had sat at 408 while the tree was at 279 —
+# 129 couplings of unearned headroom, i.e. a third of everything the migration
+# removed could have come back without this failing. A ratchet that is not
+# re-measured when work lands is a ratchet with the teeth filed off.
 # Lower it whenever a script is converted, moved under scripts/migration/, or
 # deleted; never raise it.
-SCRIPTS_RATCHET = 408
+SCRIPTS_RATCHET = 279
 
 
 @pytest.mark.parametrize("rel", INSTRUMENTS)

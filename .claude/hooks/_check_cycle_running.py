@@ -3,9 +3,15 @@
 Reads `pipeline_state` from MONGO. It used to read Postgres with `psycopg2`,
 which was wrong twice over:
 
-  1. `psycopg2` is not installed (the repo uses psycopg3, and since the
-     2026-08-18 teardown no Postgres driver is in the app image at all), so the
-     import raised on every single call; and
+  1. the app image carries no Postgres driver at all since the 2026-08-18
+     teardown, and the repo uses psycopg3 rather than psycopg2, so the import
+     raised on every single call from inside the container; and
+
+     (⚠ corrected 2026-08-30: this used to read "psycopg2 is not installed",
+     full stop. `psycopg2 2.9.12` IS installed in this checkout's `.venv` and
+     in the system python — it is pinned in no requirements file, which is why
+     nobody noticed. The claim was true of the IMAGE and false of the BOX, and
+     a hook two directories away was quietly relying on the false half.)
   2. `pipeline_state` is staged at `:mongo` in deploy-kit/.env.deploy, so the
      Postgres row stops being written from the next deploy onward.
 

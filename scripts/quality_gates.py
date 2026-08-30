@@ -45,31 +45,51 @@ from dataclasses import dataclass, field
 # ---------------------------------------------------------------------------
 FOREIGN_OWNERS = {
     "treesearch-service": {
-        "observations",
-        "observation_images",
+        # Derived from treesearch-service/src/models/orm.py __tablename__.
+        # Kept in sorted order so a diff reads as one line per table.
+        "breeders",
         "canonical_strains",
-        "genomic_samples",
         "chemical_profiles",
-        "strain_aliases",
-        "source_genomics_records",
-        "source_strain_records",
+        "genetic_relationships",
+        "genomic_samples",
         "glass_artists",
         "glass_collaborations",
-        "glass_submissions",
-        "glass_ratings",
         "glass_favorites",
-        "glass_votes",
+        "glass_ratings",
+        "glass_submissions",
+        "observation_images",
+        "observations",
+        "source_genomics_records",
+        "strain_aliases",
     },
 }
 
-FOREIGN_TABLES = frozenset(t for tables in FOREIGN_OWNERS.values() for t in tables)
+# Tables a foreign project used to declare and no longer does. They may still
+# exist in the database, so they stay excluded from trading's gates — but they
+# are listed APART from the live set so the drift test can tell "treesearch
+# retired a table" from "someone quietly added a trading table to the
+# allowlist". Every entry needs a reason.
+FOREIGN_RETIRED = {
+    "treesearch-service": {
+        # 0 rows; treesearch-service/docs/data_cleanup.sql already DROPs it.
+        "source_strain_records",
+    },
+}
+
+FOREIGN_TABLES = frozenset(
+    t
+    for mapping in (FOREIGN_OWNERS, FOREIGN_RETIRED)
+    for tables in mapping.values()
+    for t in tables
+)
 
 
 def owner_of(table: str) -> str | None:
     """Which foreign project owns `table`, or None if it is trading-owned."""
-    for owner, tables in FOREIGN_OWNERS.items():
-        if table in tables:
-            return owner
+    for mapping in (FOREIGN_OWNERS, FOREIGN_RETIRED):
+        for owner, tables in mapping.items():
+            if table in tables:
+                return owner
     return None
 
 

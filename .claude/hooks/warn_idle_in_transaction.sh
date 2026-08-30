@@ -17,7 +17,10 @@ set -uo pipefail
 # is worse than no hook.
 PAYLOAD="$(cat)"
 CMD="$(printf '%s' "$PAYLOAD" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("tool_input",{}).get("command",""))' 2>/dev/null)"
-case "$CMD" in *psycopg2*|*DATABASE_URL*|*get_db*) ;; *) exit 0 ;; esac
+# `*get_db*` was dropped 2026-08-30: no code under app/ has had a get_db
+# since the cutover, so that arm only ever matched PROSE and greps — and
+# each match opened a Postgres connection to answer a question nobody had.
+case "$CMD" in *psycopg2*|*psycopg*|*PG_ARCHIVE_URL*|*DATABASE_URL*) ;; *) exit 0 ;; esac
 
 cd "$(dirname "$0")/../.." || exit 0
 [ -x .venv/bin/python ] || exit 0

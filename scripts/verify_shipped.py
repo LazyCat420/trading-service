@@ -290,24 +290,42 @@ def _median(xs: list[int]) -> int:
 
 # ── 3. What has the database recorded? ─────────────────────────────────────
 def check_database(rep: Report) -> None:
-    from scripts.migration.pg_connection import get_db
+    """Read the two ledgers this report grades, from Mongo.
+
+    Until 2026-08-30 this opened `scripts.migration.pg_connection.get_db` — the
+    FROZEN Postgres archive. Since `settings.DATABASE_URL` was removed on 08-28
+    that import raised `AttributeError`, and the bare `except Exception` below
+    turned it into a WARN and let the script exit 0: a shipped-verification tool
+    that reported "database unreadable" and passed. Before 08-28 it was worse —
+    it answered, from a store the cycle stopped writing on 08-19.
+
+    So the except is narrow now. A query that fails is a FAIL, not a warning:
+    this function exists to grade the deploy, and a grader that cannot read is
+    not a grader.
+    """
+    from app.db import mongo_query
 
     try:
-        with get_db() as db:
-            db.execute(
-                "SELECT agent_name, shadow_outcome, count(*) FROM model_shadow_runs "
-                "GROUP BY 1, 2 ORDER BY 1, 2"
-            )
-            shadow = db.fetchall()
-            # Same predicate jetson_benchmark's inventory uses, so the two
-            # tools cannot disagree about what counts as local-box traffic.
-            db.execute(
-                "SELECT max(created_at) FROM llm_audit_logs "
-                "WHERE endpoint_name ILIKE '%%jetson%%' OR endpoint_name = 'vllm'"
-            )
-            last_jetson = (db.fetchone() or [None])[0]
+        # SELECT agent_name, shadow_outcome, count(*) FROM model_shadow_runs
+        # GROUP BY 1, 2 ORDER BY 1, 2
+        shadow = mongo_query.group_rows(
+            "model_shadow_runs", {},
+            keys=["agent_name", "shadow_outcome"],
+            aggs=[("count", None)],
+            select=[("key", "agent_name"), ("key", "shadow_outcome"), ("agg", 0)],
+            sort=[("agent_name", 1), ("shadow_outcome", 1)],
+        )
+        # Same predicate jetson_benchmark's inventory uses, so the two
+        # tools cannot disagree about what counts as local-box traffic.
+        # `ILIKE '%jetson%' OR = 'vllm'` → a case-insensitive $regex in an $or.
+        last_jetson = mongo_query.agg_row(
+            "llm_audit_logs",
+            {"$or": [{"endpoint_name": {"$regex": "jetson", "$options": "i"}},
+                     {"endpoint_name": "vllm"}]},
+            [("max", "created_at")],
+        )[0]
     except Exception as e:  # noqa: BLE001
-        rep.add("Database state", WARN, f"unreadable: {e}")
+        rep.add("Database state", FAIL, f"unreadable: {e!r}")
         return
 
     rows = {(a, o): c for a, o, c in shadow}
