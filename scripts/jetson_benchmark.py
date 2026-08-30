@@ -152,31 +152,38 @@ def _db_attribution() -> dict:
     only, model_shadow_runs is the off-critical-path bench. A box with rows in
     only one of them is doing exactly one kind of work.
     """
-    from scripts.migration.pg_connection import get_db
+    from app.db import mongo_store
 
     out: dict = {}
-    with get_db() as db:
-        db.execute(
-            """
-            SELECT count(*), min(created_at)::date, max(created_at)::date
-            FROM llm_audit_logs WHERE endpoint_name ILIKE '%jetson%' OR endpoint_name = 'vllm'
-            """
-        )
-        row = db.fetchall()[0]
-        out["llm_audit_logs"] = {"calls": row[0], "first": str(row[1]), "last": str(row[2])}
 
-        db.execute("SELECT count(*) FROM v3_agent_telemetry WHERE provider = 'vllm'")
-        out["v3_agent_telemetry"] = {"calls": db.fetchall()[0][0]}
+    # ILIKE '%jetson%' OR = 'vllm' -> a case-insensitive regex plus the exact
+    # value. Both halves are needed: the endpoint has been spelled both ways.
+    jetson_calls = {"$or": [{"endpoint_name": {"$regex": "jetson", "$options": "i"}},
+                            {"endpoint_name": "vllm"}]}
+    agg = mongo_store.aggregate("llm_audit_logs", [
+        {"$match": jetson_calls},
+        {"$group": {"_id": None, "calls": {"$sum": 1},
+                    "first": {"$min": "$created_at"}, "last": {"$max": "$created_at"}}},
+    ])
+    if agg:
+        r = agg[0]
+        out["llm_audit_logs"] = {"calls": r["calls"],
+                                 "first": str(r["first"])[:10], "last": str(r["last"])[:10]}
+    else:
+        out["llm_audit_logs"] = {"calls": 0, "first": "None", "last": "None"}
 
-        db.execute(
-            """
-            SELECT shadow_outcome, count(*), round(avg(shadow_elapsed_ms))
-            FROM model_shadow_runs WHERE endpoint = 'jetson' GROUP BY 1
-            """
-        )
-        out["model_shadow_runs"] = {
-            r[0]: {"n": r[1], "avg_ms": int(r[2] or 0)} for r in db.fetchall()
-        }
+    out["v3_agent_telemetry"] = {
+        "calls": mongo_store.count_docs("v3_agent_telemetry", {"provider": "vllm"})
+    }
+
+    shadow = mongo_store.aggregate("model_shadow_runs", [
+        {"$match": {"endpoint": "jetson"}},
+        {"$group": {"_id": "$shadow_outcome", "n": {"$sum": 1},
+                    "avg_ms": {"$avg": "$shadow_elapsed_ms"}}},
+    ])
+    out["model_shadow_runs"] = {
+        r["_id"]: {"n": r["n"], "avg_ms": int(r["avg_ms"] or 0)} for r in shadow
+    }
     return out
 
 
@@ -212,22 +219,23 @@ def load_corpus(limit: int) -> list[dict]:
     fixture would measure a distribution the desk does not have — and the point
     of this benchmark is to predict live behaviour, not fixture behaviour.
     """
-    from scripts.migration.pg_connection import get_db
+    from app.db import mongo_store
 
     rows: list[dict] = []
-    with get_db() as db:
-        db.execute(
-            """
-            SELECT agent_name, system_prompt, user_prompt
-            FROM model_shadow_runs
-            WHERE system_prompt IS NOT NULL AND user_prompt IS NOT NULL
-              AND length(user_prompt) > 200
-            ORDER BY created_at DESC LIMIT %s
-            """,
-            (limit,),
-        )
-        for name, sysp, userp in db.fetchall():
-            rows.append({"agent_name": name, "system_prompt": sysp, "user_prompt": userp})
+    # length(user_prompt) > 200 -> $strLenCP, so the filter stays in the
+    # database rather than pulling every shadow run back to count characters.
+    docs = mongo_store.aggregate("model_shadow_runs", [
+        {"$match": {"system_prompt": {"$nin": [None, ""]},
+                    "user_prompt": {"$nin": [None, ""]},
+                    "$expr": {"$gt": [{"$strLenCP": {"$ifNull": ["$user_prompt", ""]}}, 200]}}},
+        {"$sort": {"created_at": -1}},
+        {"$limit": int(limit)},
+        {"$project": {"agent_name": 1, "system_prompt": 1, "user_prompt": 1}},
+    ])
+    for d in docs:
+        rows.append({"agent_name": d.get("agent_name"),
+                     "system_prompt": d.get("system_prompt"),
+                     "user_prompt": d.get("user_prompt")})
     return rows
 
 
@@ -420,13 +428,12 @@ def _summarize(arm: str, rs: list[CallResult]) -> dict:
 def cycle_is_running() -> tuple[bool, str]:
     """A stress test against the box the desk is using degrades production."""
     try:
-        from scripts.migration.pg_connection import get_db
-        with get_db() as db:
-            db.execute("SELECT cycle_id, status FROM pipeline_state ORDER BY updated_at DESC LIMIT 1")
-            rows = db.fetchall()
-        if not rows:
+        from app.db import mongo_query
+        row = mongo_query.find_row("pipeline_state", {}, ["cycle_id", "status"],
+                                   sort=[("updated_at", -1)])
+        if not row:
             return False, "no pipeline_state row"
-        cycle_id, status = rows[0]
+        cycle_id, status = row
         return (status or "").lower() in ("running", "starting", "analyzing"), f"{cycle_id} status={status}"
     except Exception as e:  # noqa: BLE001 — fail CLOSED: unknown state blocks
         return True, f"could not read pipeline_state ({e}) — refusing to stress"
@@ -462,32 +469,26 @@ async def phase_concurrency(model: str, provider: str, corpus: list[dict],
 # ── Persistence ─────────────────────────────────────────────────────────────
 def persist(report: dict) -> None:
     """A JSON file cannot answer 'is it slower than last month'."""
-    from scripts.migration.pg_connection import get_db
+    from datetime import datetime, timezone
 
+    from app.db import mongo_store
+
+    # `id` used to be a Postgres SERIAL. Mongo has no sequence, and the stored
+    # rows carry it as a STRING ("113"), so continue the same numbering off the
+    # current max rather than inventing a second id shape in one collection.
     try:
-        with get_db() as db:
-            db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS box_benchmark_runs (
-                    id SERIAL PRIMARY KEY,
-                    box TEXT NOT NULL,
-                    model TEXT,
-                    phase TEXT NOT NULL,
-                    report_json JSONB NOT NULL,
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-                )
-                """
-            )
-            db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_box_benchmark_box_time "
-                "ON box_benchmark_runs (box, created_at)"
-            )
-            db.execute(
-                "INSERT INTO box_benchmark_runs (box, model, phase, report_json) VALUES (%s,%s,%s,%s)",
-                (report.get("box"), report.get("model"), report.get("phase"),
-                 json.dumps(report)),
-            )
-        print("persisted to box_benchmark_runs")
+        prev = mongo_store.find_docs("box_benchmark_runs", {}, projection={"id": 1})
+        next_id = str(max((int(d["id"]) for d in prev
+                           if str(d.get("id", "")).isdigit()), default=0) + 1)
+        mongo_store.insert_docs("box_benchmark_runs", [{
+            "id": next_id,
+            "box": report.get("box"),
+            "model": report.get("model"),
+            "phase": report.get("phase"),
+            "report_json": report,
+            "created_at": datetime.now(timezone.utc),
+        }])
+        print(f"persisted to box_benchmark_runs (id={next_id})")
     except Exception as e:  # noqa: BLE001 — never lose the run over a DB blip
         print(f"WARNING: could not persist ({e}); JSON output still valid")
 

@@ -1,25 +1,19 @@
-import psycopg
+"""Canary: trigger one cycle, watch it, and grade the desk it produces.
+
+Converted off Postgres 2026-08-30. The INSERT below used to land on the frozen
+archive, i.e. on a queue `cycle_main.poll_system_commands` does not drain, so
+the canary could never have fired — it would have timed out waiting for a
+cycle_id that nothing was ever going to write. Enqueue now goes through
+`app.services.cycle_queue`, the one writer.
+"""
 import json
 import time
-import uuid
-import os
 
-from dotenv import load_dotenv
+from app.db import mongo_query
+from app.services.cycle_queue import enqueue_start_cycle
 
-load_dotenv()
-
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    DATABASE_URL = os.environ["DATABASE_URL"]
 
 def trigger_canary():
-    job_id = f"canary_{uuid.uuid4().hex[:8]}"
-    print(f"Triggering canary cycle under job ID: {job_id}")
-    
-    conn = psycopg.connect(DATABASE_URL)
-    conn.autocommit = True
-    cur = conn.cursor()
-    
     payload = {
         "trade": False,
         "analyze": True,
@@ -29,20 +23,19 @@ def trigger_canary():
         "start_fresh": True,
         "pipeline_version": "v3"
     }
-    
-    cur.execute(
-        "INSERT INTO v3_system_commands (id, command_type, payload) VALUES (%s, %s, %s);",
-        (job_id, "START_V3_CYCLE", json.dumps(payload))
-    )
-    
-    print("Command inserted. Waiting for cycle_id...")
+    job_id = enqueue_start_cycle(payload, prefix="canary")
+    print(f"Triggering canary cycle under job ID: {job_id}")
+
+    print("Command queued. Waiting for cycle_id...")
     
     max_wait = 120
     cycle_id = None
     for i in range(max_wait):
         time.sleep(10)
-        cur.execute("SELECT status, result, error_message FROM v3_system_commands WHERE id = %s;", (job_id,))
-        row = cur.fetchone()
+        row = mongo_query.find_row(
+            "v3_system_commands", {"id": job_id},
+            ["status", "result", "error_message"],
+        )
         if not row:
             continue
         status, result_val, err_msg = row
@@ -53,8 +46,11 @@ def trigger_canary():
             result = json.loads(result_val) if isinstance(result_val, str) else result_val
             if result and result.get("status") == "deduplicated":
                 print("Cycle deduplicated. Fetching currently running cycle...")
-                cur.execute("SELECT cycle_id FROM pipeline_state WHERE singleton_id = 'current' AND status IN ('running', 'blocked');")
-                running_row = cur.fetchone()
+                running_row = mongo_query.find_row(
+                    "pipeline_state",
+                    {"singleton_id": "current", "status": {"$in": ["running", "blocked"]}},
+                    ["cycle_id"],
+                )
                 if running_row and running_row[0]:
                     cycle_id = running_row[0]
                     print(f"Monitoring existing cycle: {cycle_id}")
@@ -75,8 +71,10 @@ def trigger_canary():
     desk_data = None
     while time.time() - start_time < 3600: # 60 mins
         time.sleep(5)
-        cur.execute("SELECT phase, desk_data FROM shared_desk WHERE cycle_id = %s AND ticker = 'AAPL';", (cycle_id,))
-        row = cur.fetchone()
+        row = mongo_query.find_row(
+            "shared_desk", {"cycle_id": cycle_id, "ticker": "AAPL"},
+            ["phase", "desk_data"],
+        )
         if not row:
             continue
         phase, data_val = row
@@ -87,7 +85,7 @@ def trigger_canary():
             break
             
     if not desk_data:
-        print("FAILED: No SharedDesk appears in postgres within 5 minutes")
+        print("FAILED: no SharedDesk document appeared in Mongo within the wait window")
         return
         
     desk_phase = desk_data.get("phase")
