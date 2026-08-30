@@ -17,8 +17,14 @@ _DROP_LOG_EVERY = 50
 class DbLoggingHandler(logging.Handler):
     """
     Standard logging handler that writes log messages with level WARNING or higher
-    directly into the PostgreSQL 'execution_errors' and 'cycle_audit_log' tables.
+    into the Mongo `execution_errors` and `cycle_audit_log` collections.
     Designed with zero-crash propagation — DB failures will not interrupt execution.
+
+    Said "PostgreSQL" until 2026-08-30, six weeks after the writer moved to
+    `mongo_store.insert_docs`. A stale docstring on the ONE logging handler in
+    `app/` is worth correcting precisely because it is what a PG-writer audit
+    trips over first: the sentence was the only reason this file appeared in
+    the sweep at all.
 
     Failures inside the handler are COUNTED and reported to stderr (never via
     logging — that would recurse into this handler). Before this counter, the
