@@ -159,21 +159,86 @@ def test_a_non_deploy_command_is_not_touched(hook):
     assert result.returncode == 0
 
 
-def test_neither_hook_still_reads_postgres():
-    """The probes must not import a Postgres driver.
+def _pg_driver_imports(source: str) -> list[str]:
+    """Postgres driver imports, by AST.
 
-    `psycopg2` was never installed, so its ImportError became `unknown|` on
-    every call; `psycopg` is gone from the image entirely as of teardown. A
-    probe that reaches for either is reading a store that is not there.
+    This was a line grep — `"psycopg" in ln and "import" in ln` — until
+    2026-08-30, when a docstring sentence explaining *why the old psycopg2
+    import failed* turned it red. A text scan cannot tell an import from the
+    prose describing one, which is the exact distinction these guards exist to
+    make; `test_app_image_has_no_pg_driver.py` says so in its own docstring and
+    was already doing it correctly.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    roots = {"psycopg", "psycopg2", "psycopg_pool", "asyncpg", "pgvector"}
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found += [a.name for a in node.names if a.name.split(".")[0] in roots]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if node.module.split(".")[0] in roots:
+                found.append(node.module)
+    return found
+
+
+def test_neither_hook_still_reads_postgres():
+    """The cycle probes must not import a Postgres driver.
+
+    `pipeline_state` is in Mongo. A probe that reaches for Postgres reads a
+    store that stopped being written on 2026-08-19 — and both of these hooks
+    fail OPEN, so what it reads decides whether a deploy is allowed to kill a
+    live cycle.
+
+    NOT covered here on purpose: `.claude/hooks/_check_idle_txn.py`. That one
+    reports leaked `idle in transaction` sessions, which is a Postgres concept
+    about a server that is still up and still shared with treesearch-service —
+    it SHOULD hold a driver. It is guarded differently: it must name the DSN it
+    uses (PG_ARCHIVE_URL) and must not fail silently.
     """
     for path in (GUARD_DEPLOY,
                  REPO / ".claude" / "hooks" / "_check_cycle_running.py"):
         source = path.read_text(encoding="utf-8")
-        code_lines = [
-            ln for ln in source.splitlines()
-            if ("psycopg" in ln and "import" in ln and not ln.lstrip().startswith("#"))
-        ]
-        assert not code_lines, (
-            f"{path.name} still imports a Postgres driver: {code_lines}"
+        assert not _pg_driver_imports(source), (
+            f"{path.name} still imports a Postgres driver: "
+            f"{_pg_driver_imports(source)}"
         )
         assert "pymongo" in source, f"{path.name} does not read Mongo"
+
+
+def test_the_driver_scanner_can_tell_an_import_from_prose():
+    """NEGATIVE CONTROL, both directions — the half that was missing.
+
+    The old line grep had neither, and its false positive (a docstring) is what
+    made the suite red while every hook was correct.
+    """
+    assert _pg_driver_imports("import psycopg2\n") == ["psycopg2"]
+    assert _pg_driver_imports("from psycopg.rows import dict_row\n") == ["psycopg.rows"]
+    assert _pg_driver_imports(
+        '"""the repo uses psycopg3, so the import raised on every call."""\n'
+        "# import psycopg2  -- what this replaced\n"
+        "x = 1\n"
+    ) == []
+
+
+def test_the_idle_txn_probe_names_its_dsn_and_cannot_fail_silently():
+    """The one hook that legitimately opens Postgres.
+
+    It used to `load_dotenv(); psycopg2.connect(os.environ["DATABASE_URL"])` and
+    wrap the whole thing in `except Exception: sys.exit(0)` — so "no DSN", "no
+    driver" and a real error were the same silence. On the day the archive DSN
+    moves out of `.env`, that silence is indistinguishable from a clean
+    database.
+    """
+    source = (REPO / ".claude" / "hooks" / "_check_idle_txn.py").read_text(encoding="utf-8")
+    assert "PG_ARCHIVE_URL" in source, (
+        "the probe must ask for the archive DSN by name, not inherit whatever "
+        "DATABASE_URL happens to be in the ambient environment"
+    )
+    assert "skipped" in source and "could not run" in source, (
+        "it must report that it could not check, rather than exiting silently"
+    )

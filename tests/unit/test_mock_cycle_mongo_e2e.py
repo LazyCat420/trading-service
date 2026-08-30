@@ -295,6 +295,51 @@ def mock_mongo_db(monkeypatch):
     return collections
 
 
+@pytest.fixture(autouse=True)
+def offline_side_services():
+    """Cut the two live services this "unit" test was reaching for.
+
+    MEASURED 2026-08-30. This file's contract is "MongoDB is the sole
+    persistence authority" — the store, not the sidecars. But the paths it
+    exercises call out to two boxes:
+
+      * `app.services.embedding_service.embedder` -> prism at 10.0.0.16:5591,
+        once per lesson/memory stored AND once per retrieval;
+      * `app.services.scraper_client.ScraperServiceClient.collect` ->
+        10.0.0.16:8001, via discovery mode's web-search extraction.
+
+    Both were unmocked. With the endpoints healthy that is slow; with them
+    unhealthy it is unbounded — this test and one other are why a full `pytest`
+    sat at 96%% and never returned. Blocking outbound TCP made the whole test
+    run in 1.2s and fail at exactly one assertion (`retrieve_lessons` -> 0),
+    which is the measurement that identified this.
+
+    The embedder is replaced with a deterministic hash-derived unit vector, not
+    a MagicMock: `vector_store` refuses to store a zero/empty embedding (by
+    design), and cosine retrieval has to actually rank, so the stub must behave
+    like an embedding rather than merely return one.
+    """
+    import hashlib
+
+    def _vec(text: str, dim: int = 8) -> list[float]:
+        digest = hashlib.sha256((text or "").encode()).digest()
+        raw = [((digest[i % len(digest)] / 255.0) - 0.5) or 0.01 for i in range(dim)]
+        norm = sum(v * v for v in raw) ** 0.5
+        return [v / norm for v in raw]
+
+    from app.services import embedding_service, scraper_client
+
+    with patch.object(embedding_service.embedder, "embed_text",
+                      side_effect=lambda text, prefix="": _vec(text)), \
+         patch.object(embedding_service.embedder, "embed_batch",
+                      side_effect=lambda texts, *a, **k: [_vec(t) for t in texts]), \
+         patch.object(scraper_client.ScraperServiceClient, "collect",
+                      new=AsyncMock(return_value=[])), \
+         patch.object(scraper_client.ScraperServiceClient, "scrape",
+                      new=AsyncMock(return_value=None)):
+        yield
+
+
 class TestMockTradingCycleMongoE2E:
     """Simulates a full trading cycle execution against MongoDB with zero Postgres."""
 
@@ -1441,7 +1486,18 @@ class TestMockTradingCycleMongoE2E:
         mkt_data = await get_market_data("AAPL")
         assert "Quarterly Financials" in mkt_data or "Fundamentals" in mkt_data
 
-        news_out = await get_finnhub_news("AAPL")
+        # Third stub of the same kind as the two above, added 2026-08-30.
+        # `get_finnhub_news` is read-through: when the newest stored article is
+        # older than NEWS_MAX_AGE_H it calls `collect_finnhub_news`, which is a
+        # LIVE fetch plus a body upgrade through the scraper service. The seeded
+        # article here is deliberately old, so that branch fired on every run —
+        # an open socket to 10.0.0.16:8001 was visible in `ss` while a full
+        # suite sat at 96%, and this was one of the tests that never finished.
+        # The contract under test is that the tool serves the row MongoDB
+        # already holds; the refresh is not part of it.
+        with patch("app.collectors.news_collector.collect_finnhub_news",
+                   new=AsyncMock(return_value=0)):
+            news_out = await get_finnhub_news("AAPL")
         assert "Apple" in news_out or "AAPL" in news_out
 
         # 47. Evolution Lesson Store in MongoDB

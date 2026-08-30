@@ -121,7 +121,6 @@ KNOWN_UNPINNED: dict[str, int] = {
     # below and needs no budget there either.
     "scripts/mine_shkreli_doctrine.py": 0,
     "scripts/residual_alpha_report.py": 2,
-    "scripts/score_tournament_ranker.py": 1,
     "scripts/simulate_freshness_thresholds.py": 3,
 }
 
@@ -232,11 +231,16 @@ def test_the_scanner_actually_finds_queries():
     # `source` nor routes through keep_dominant_source) before the last SQL
     # reader leaves.
     # Floor lowered 18 → 17 on 2026-08-29: confidence_audit.py ported to MongoDB.
-    # 17 → 16 on 2026-08-30: mine_shkreli_doctrine.py ported. The NOTE above is
-    # now the operative one — this floor is three ports away from 0, and at 0
-    # every SQL-side test here goes green while checking nothing. The Mongo
-    # scan below is what still has teeth.
-    assert total >= 16, (
+    # 17 → 16 on 2026-08-30: mine_shkreli_doctrine.py ported.
+    # 16 → 15 on 2026-08-30: score_tournament_ranker.py DELETED — the tournament
+    # debate it ranked was removed in 1cf3c0b, so the reader outlived its
+    # subsystem. Note the difference from the two above: a PORT moves the read
+    # to the Mongo scan below, a DELETE removes it from both. This floor now
+    # measures a shrinking population for two different reasons at once, which
+    # is the last argument for the NOTE above: the SQL-side floor is TWO ports
+    # from 0, and at 0 every SQL test in this file goes green while checking
+    # nothing. The Mongo scan below is what still has teeth.
+    assert total >= 15, (
         f"scanner found only {total} price_history reads — it is broken, "
         "not the codebase that is clean"
     )
