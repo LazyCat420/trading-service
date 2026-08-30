@@ -1,0 +1,13 @@
+# Test-time only. NEVER installed into the image — Dockerfile installs
+# requirements.txt, and tests/unit/test_app_image_has_no_pg_driver.py checks
+# that file, not this one.
+#
+# These were previously undeclared: pytest and its plugins were simply whatever
+# the shared sun-level .venv happened to have, which is how a `-n 8` flake got
+# recorded against a checkout whose venv had no xdist at all.
+pytest
+pytest-asyncio
+pytest-xdist          # -n <N>; the suite is ~5,500 tests
+pytest-timeout        # per-test wall-clock bound, see pytest.ini
+pytest-rerunfailures
+pytest-repeat

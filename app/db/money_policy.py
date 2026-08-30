@@ -77,9 +77,12 @@ def uses_decimal128(table: str) -> bool:
 # boundary. Share counts are excluded for the same reason — `qty` is a
 # multiplicand, not an amount, and it is float on both sides of the migration.
 #
-# Each entry is a column whose PG type is DOUBLE PRECISION in
-# scripts/migration/schema_pg.sql (or added by pg_migrations.py) and whose
-# meaning is a rate, not a sum.
+# Each entry is a column whose PG type was DOUBLE PRECISION and whose meaning
+# is a rate, not a sum. (The schema file this used to name,
+# scripts/migration/schema_pg.sql, was deleted at the cutover — it was the
+# zombie DDL that resurrected dropped tables. The provenance of these
+# entries is the migration ledger and the trading-service copy of this
+# policy, which tests/unit/test_money_reads_as_decimal.py holds identical.)
 _NON_MONEY_COLUMNS: frozenset[str] = frozenset({
     # Risk parameters — fractions of a price, e.g. 0.08 == 8%.
     "positions.stop_loss_pct",
@@ -102,8 +105,9 @@ _QUANTITY_COLUMNS: frozenset[str] = frozenset({
 })
 
 
-# The numeric columns of each money table, from scripts/migration/schema_pg.sql
-# plus the columns pg_migrations.py adds. A money table is mostly NOT money:
+# The numeric columns of each money table, as the pre-cutover Postgres schema
+# declared them (see the note above: schema_pg.sql itself is gone).
+# A money table is mostly NOT money:
 # `bots` carries a bot_id, a name and timestamps alongside its four numbers.
 #
 # This is an allow-list rather than a deny-list because the two directions fail

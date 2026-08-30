@@ -40,6 +40,18 @@ PRE_BUILD() {
       unset MONGO_STORE_BACKEND
     fi
   fi
+
+  # Same file, same problem, different variable: .env.deploy line 26 holds
+  # treesearch-service's asyncpg DSN for the SHARED trading_bot database,
+  # and sourcing it above put a live Postgres DSN into this deploy shell —
+  # and into anything run from it afterwards. Nothing in this image reads
+  # one (no driver since 2026-08-18), and a DSN lying around in the ambient
+  # environment is precisely how legacy scripts kept answering from the
+  # frozen archive. Dropped for the rest of this shell.
+  if [ -n "${DATABASE_URL:-}" ]; then
+    warn "dropping DATABASE_URL inherited from deploy-kit/.env.deploy — this image has no Postgres driver"
+    unset DATABASE_URL
+  fi
 }
 
 # Resolve the per-table Mongo backend map into MONGO_STORE_BACKEND.

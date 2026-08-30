@@ -76,7 +76,8 @@ docker compose restart trading-cycle-backend
 |----------|---------|-------------|
 | `CYCLE_TICKERS` | auto-select | Comma-separated ticker override |
 | `CYCLE_ONCE` | `false` | Set to `true` for single-shot mode |
-| `DATABASE_URL` | — | PostgreSQL connection string |
+| `PRISM_MONGO_URI` | — | MongoDB connection string (the store) |
+| `PG_ARCHIVE_URL` | unset | Postgres ARCHIVE, migration/parity tooling only — see `.env.migration.example`. Deliberately absent from `.env`. |
 
 ## Debugging
 
@@ -93,7 +94,7 @@ docker compose run --rm trading-cycle-backend \
 
 # Check if the cycle is writing to the database
 docker compose exec trading-cycle-backend \
-    python -c "from app.db.connection import get_db; db=get_db().__enter__(); print(db.execute('SELECT COUNT(*) FROM news_articles').fetchone())"
+    python -c "from app.db import mongo_query; print(mongo_query.count('news_articles'))"
 ```
 
 ## vLLM Multi-Endpoint Routing

@@ -120,7 +120,10 @@ async def test_hook_is_on_the_path_v3_precollect_actually_uses(monkeypatch):
     hook had been deleted outright (2026-07-25 audit). This one calls the
     real precollect path and asserts the recompute actually fires.
     """
+    import app.collectors.news_collector as newsc
+    import app.collectors.reddit_collector as redditc
     import app.collectors.yfinance_collector as yfc
+    import app.collectors.youtube_collector as ytc
     import app.v3.data_report as dr
 
     called: list[str] = []
@@ -131,11 +134,27 @@ async def test_hook_is_on_the_path_v3_precollect_actually_uses(monkeypatch):
         called.append(ticker)
         return 1
 
+    async def _noop(*a, **k):
+        return None
+
     # Patched on the SOURCE module: data_report imports the name inside the
     # function body, so it resolves at call time from yfinance_collector.
     # Patching data_report's namespace would silently miss and the test would
     # pass for the wrong reason.
     monkeypatch.setattr(yfc, "collect_price_history", _fake_collect)
+
+    # And the OTHER four, for a different reason. `build_ticker_data_report`
+    # fans out to fundamentals, Finnhub, Reddit and YouTube in parallel, and
+    # only the price call is under test — but they are real network calls with
+    # no bound. Left unpatched (as this test was until 2026-08-30) a plain
+    # `pytest` run opened a socket to the live scraper service at
+    # 10.0.0.16:8001 and sat there; with `pytest-timeout` absent, nothing ended
+    # it. The assertion below already passed by then; the run just never
+    # finished. Stub what is not being asserted.
+    monkeypatch.setattr(yfc, "collect_fundamentals", _noop)
+    monkeypatch.setattr(newsc, "collect_finnhub_news", _noop)
+    monkeypatch.setattr(redditc, "collect_for_ticker", _noop)
+    monkeypatch.setattr(ytc, "collect_for_ticker", _noop)
 
     try:
         await dr.build_ticker_data_report("MSFT")

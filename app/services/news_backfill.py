@@ -154,10 +154,13 @@ def backlog_size() -> int:
 async def backfill_once(limit: int = _BATCH) -> dict[str, Any]:
     """Extract one batch on the pinned box. Returns counts; never raises.
 
-    Every DB call goes through `asyncio.to_thread` because `get_db` is blocking
-    psycopg — a long-lived async loop doing sync I/O on the event loop stalls
-    the health check, which reads as an unhealthy container rather than as a
-    busy backfill.
+    Every DB call goes through `asyncio.to_thread` because pymongo is a
+    BLOCKING driver — a long-lived async loop doing sync I/O on the event loop
+    stalls the health check, which reads as an unhealthy container rather than
+    as a busy backfill. (This used to say "`get_db` is blocking psycopg". The
+    driver changed at the 2026-08-19 cutover; the reason to_thread is here did
+    not, and the client hit the same trap again on 2026-08-26 with /health
+    measuring 11.2s.)
     """
     out = {"selected": 0, "extracted": 0, "facts": 0, "failed": 0, "yielded": False}
     if not (ENABLED and _EXTRACTION_ENABLED):

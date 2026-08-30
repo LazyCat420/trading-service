@@ -56,7 +56,7 @@ INSTRUMENTS = (
 # re-measured when work lands is a ratchet with the teeth filed off.
 # Lower it whenever a script is converted, moved under scripts/migration/, or
 # deleted; never raise it.
-SCRIPTS_RATCHET = 279
+SCRIPTS_RATCHET = 241
 
 
 @pytest.mark.parametrize("rel", INSTRUMENTS)
