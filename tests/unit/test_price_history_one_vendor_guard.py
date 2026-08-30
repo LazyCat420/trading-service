@@ -205,18 +205,31 @@ def _python_files() -> list[Path]:
     return [f for f in files if "__pycache__" not in f.parts]
 
 
-def test_the_scanner_actually_finds_queries():
-    """A guard that silently matches nothing passes forever.
-
-    If the AST walk or the regexes break, every other test in this file goes
-    green while checking nothing. Pin a floor on what the scan must see.
-    """
-    total = sum(
+def _sql_literal_read_count() -> int:
+    return sum(
         1
         for f in _python_files()
         for _, text in _sql_literals(f)
         if _reads_price_history(text)
     )
+
+
+def test_the_scanner_actually_finds_queries():
+    """A guard that silently matches nothing passes forever.
+
+    If the AST walk or the regexes break, every other test in this file goes
+    green while checking nothing. Pin a floor on what the scan must see.
+
+    The floor is on the COMBINED population — SQL literals plus Mongo call
+    sites — for the reason the note below spent four revisions arriving at:
+    a PORT does not remove a read, it moves it from one scanner to the other.
+    A floor on the SQL half alone therefore falls every time the migration
+    makes progress, and it reached 15 with the last three SQL readers of
+    price_history sitting inside one script that was about to be converted.
+    Counting both halves at once means only a DELETION can lower it, which is
+    the event a ratchet is supposed to notice.
+    """
+    total = _sql_literal_read_count()
     # Floor lowered 25 → 18 on 2026-08-18: the Mongo port moved real reads
     # (returns_engine, sector_aggregator) out of SQL literals and into
     # mongo_query calls, so the SQL-literal count fell to 19 legitimately. The
@@ -240,9 +253,22 @@ def test_the_scanner_actually_finds_queries():
     # is the last argument for the NOTE above: the SQL-side floor is TWO ports
     # from 0, and at 0 every SQL test in this file goes green while checking
     # nothing. The Mongo scan below is what still has teeth.
-    assert total >= 15, (
-        f"scanner found only {total} price_history reads — it is broken, "
-        "not the codebase that is clean"
+    # 15 -> a combined floor on 2026-08-30. The SQL half was exactly AT its
+    # floor with three of its fifteen reads inside
+    # scripts/simulate_freshness_thresholds.py, one of the eight scripts in the
+    # current porting batch: the next legitimate port would have turned this
+    # assertion red for doing the work correctly, and the obvious repair —
+    # lowering the number again — is the fifth consecutive lowering of a
+    # measure that only ever decays. Combined, the number moves only when a
+    # read is deleted.
+    combined = total + _mongo_call_site_count()
+    assert combined >= COMBINED_READ_FLOOR, (
+        f"the two scanners together see only {combined} price_history reads "
+        f"({total} SQL literal, {combined - total} Mongo call sites), floor "
+        f"{COMBINED_READ_FLOOR}. A port MOVES a read between the two counts "
+        "and must not change this total; only a deletion may lower it, and "
+        "then only with the reason written into COMBINED_READ_FLOOR. If "
+        "nothing was deleted, a scanner is broken — not the codebase clean."
     )
 
 
@@ -390,6 +416,40 @@ def _unpinned_mongo_reads(path: Path) -> list[tuple[int, str]]:
     return sorted(bad)
 
 
+def _mongo_call_site_count() -> int:
+    """EVERY mongo_query/mongo_store call naming the price_history collection.
+
+    Pinned or not, read or write — this counts the population, not the debt.
+    It is the other half of the non-vacuity floor: when a Postgres reader is
+    ported, its SQL literals disappear from `_sql_literal_read_count()` and
+    reappear here, so the sum is unchanged and the ratchet stays honest.
+    """
+    total = 0
+    for f in _python_files():
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            continue
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id in ("mongo_query", "mongo_store")
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and node.args[0].value == "price_history"):
+                total += 1
+    return total
+
+
+#: The two scanners' combined population, measured 2026-08-30: 15 SQL literals
+#: + 61 Mongo call sites. LOWER IT ONLY FOR A DELETION, and say which read went
+#: and why. Porting a reader from Postgres to Mongo must leave this unchanged —
+#: if your port lowers it, you collapsed several statements into fewer calls,
+#: which is fine, but write that down here rather than editing the number.
+COMBINED_READ_FLOOR = 76
+
+
 # Measured 2026-08-18 by this scanner. Same ratchet contract as KNOWN_UNPINNED:
 # a file may only ever get BETTER, and reaching 0 means deleting the entry.
 #
@@ -455,19 +515,8 @@ def test_the_mongo_scanner_actually_finds_reads():
     This is the check that would have caught the decay: when nine files went to
     a 0 SQL budget, the collection was still being read 36 times.
     """
-    total = sum(len(_unpinned_mongo_reads(f)) + 0 for f in _python_files())
-    found = sum(
-        1
-        for f in _python_files()
-        for node in ast.walk(ast.parse(f.read_text(encoding="utf-8")))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id in ("mongo_query", "mongo_store")
-        and node.args
-        and isinstance(node.args[0], ast.Constant)
-        and node.args[0].value == "price_history"
-    )
+    total = sum(len(_unpinned_mongo_reads(f)) for f in _python_files())
+    found = _mongo_call_site_count()
     assert found >= 30, (
         f"scanner found only {found} price_history Mongo calls — it is broken, "
         "not the codebase that is clean"
@@ -530,4 +579,43 @@ def test_every_mongo_price_history_read_pins_one_vendor(path: Path):
         f"{rel} now has {len(bad)} unpinned Mongo read(s) but "
         f"KNOWN_UNPINNED_MONGO still budgets {budget}. Lower it to {len(bad)} "
         f"({'or delete the entry' if not bad else 'to lock the fix in'})."
+    )
+
+
+def test_the_combined_floor_counts_both_halves_and_can_reach_zero(monkeypatch, tmp_path):
+    """The floor's own negative control.
+
+    A population floor is only worth having if it can fall — the previous one
+    could not tell "the scanner broke" from "the migration progressed", which
+    is why it had been lowered four times in twelve days. Pin both properties
+    here: each half counts what it claims to, and an empty tree drives the
+    combined number to 0 rather than quietly matching nothing.
+    """
+    sql_reader = tmp_path / "sql_side.py"
+    sql_reader.write_text(
+        "def f(db, t):\n"
+        "    return db.execute(\n"
+        "        'SELECT close FROM price_history WHERE ticker = %s', [t])\n"
+    )
+    mongo_reader = tmp_path / "mongo_side.py"
+    mongo_reader.write_text(
+        "from app.db import mongo_query\n"
+        "def f(t):\n"
+        "    return mongo_query.find_rows('price_history', {'ticker': t},\n"
+        "                                 ['close'])\n"
+    )
+
+    monkeypatch.setattr(__name__ and globals()["__name__"] and
+                        __import__("sys").modules[__name__], "_python_files",
+                        lambda: [sql_reader, mongo_reader])
+    assert _sql_literal_read_count() == 1
+    assert _mongo_call_site_count() == 1
+
+    monkeypatch.setattr(__import__("sys").modules[__name__],
+                        "_python_files", lambda: [])
+    assert _sql_literal_read_count() == 0
+    assert _mongo_call_site_count() == 0
+    assert 0 < COMBINED_READ_FLOOR, (
+        "a floor of 0 would pass on an empty scan, which is the failure this "
+        "whole test exists to make impossible"
     )
