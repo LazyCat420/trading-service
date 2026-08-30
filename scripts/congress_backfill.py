@@ -1,11 +1,18 @@
+"""Backfill congress_trades from the House and Senate stock-watcher feeds.
+
+Converted off Postgres 2026-08-30. The two INSERTs below wrote to the frozen
+archive, so a re-run would have populated a store the cycle does not read while
+appearing to succeed. `ON CONFLICT (id) DO NOTHING` is preserved exactly, via
+`bulk_upsert(insert_only=True)`: the id is a content hash of
+politician+ticker+date+type, and the row deliberately keeps the FIRST
+disclosure seen rather than the latest re-scrape.
+"""
 import urllib.request
 import json
-import psycopg
-import os
 import hashlib
 from datetime import datetime
 
-DB_URL = os.environ.get("DATABASE_URL", "postgres://admin:admin_password@db:5432/trading_db")
+from app.db import mongo_store
 
 def parse_date(date_str):
     if not date_str or date_str == "--":
@@ -24,10 +31,20 @@ def parse_type(type_str):
         return "sell"
     return "exchange"
 
+def _trade_doc(pol, party, chamber, state, ticker, t_type, amount, t_date, d_date):
+    """One congress_trades row. The id is content-addressed, which is what makes
+    the whole backfill safe to re-run."""
+    trade_id = hashlib.md5(f"{pol}{ticker}{t_date}{t_type}".encode()).hexdigest()
+    return {
+        "id": trade_id, "politician": pol, "party": party, "chamber": chamber,
+        "state": state, "ticker": ticker, "transaction_type": t_type,
+        "amount_range": amount, "trade_date": t_date,
+        "disclosure_date": d_date, "days_to_disclose": 0,
+    }
+
+
 def backfill():
-    conn = psycopg.connect(DB_URL, autocommit=True)
-    db = conn.cursor()
-    
+    docs: list[dict] = []
     total = 0
 
     print("Fetching House data...")
@@ -49,19 +66,8 @@ def backfill():
         chamber = "House"
         state = row.get("district", "")
 
-        trade_id = hashlib.md5(f"{pol}{ticker}{t_date}{t_type}".encode()).hexdigest()
-        
-        db.execute(
-            """
-            INSERT INTO congress_trades 
-            (id, politician, party, chamber, state, ticker, 
-             transaction_type, amount_range, trade_date, 
-             disclosure_date, days_to_disclose) 
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO NOTHING
-            """,
-            [trade_id, pol, party, chamber, state, ticker, t_type, amount, t_date, d_date, 0]
-        )
+        docs.append(_trade_doc(pol, party, chamber, state, ticker,
+                               t_type, amount, t_date, d_date))
         total += 1
 
     print("Fetching Senate data...")
@@ -83,22 +89,14 @@ def backfill():
         chamber = "Senate"
         state = ""
 
-        trade_id = hashlib.md5(f"{pol}{ticker}{t_date}{t_type}".encode()).hexdigest()
-        
-        db.execute(
-            """
-            INSERT INTO congress_trades 
-            (id, politician, party, chamber, state, ticker, 
-             transaction_type, amount_range, trade_date, 
-             disclosure_date, days_to_disclose) 
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO NOTHING
-            """,
-            [trade_id, pol, party, chamber, state, ticker, t_type, amount, t_date, d_date, 0]
-        )
+        docs.append(_trade_doc(pol, party, chamber, state, ticker,
+                               t_type, amount, t_date, d_date))
         total += 1
 
-    print(f"Backfill complete! Processed {total} trades.")
+    # One round-trip instead of ~30k. insert_only mirrors DO NOTHING.
+    written = mongo_store.bulk_upsert("congress_trades", docs, key_field="id",
+                                      insert_only=True)
+    print(f"Backfill complete! Processed {total} trades, submitted {written}.")
 
 if __name__ == "__main__":
     backfill()

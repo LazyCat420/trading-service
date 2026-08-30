@@ -372,7 +372,8 @@ def upsert_doc(collection: str, key: dict[str, Any], doc: dict[str, Any],
 
 
 def bulk_upsert(collection: str, docs: list[dict[str, Any]],
-                key_field: "str | Sequence[str]" = "id") -> int:
+                key_field: "str | Sequence[str]" = "id",
+                insert_only: bool = False) -> int:
     """Upsert many docs in ONE round-trip, keyed on `key_field`. Orders of
     magnitude faster than per-doc upsert — use for backfills / big tables.
     Returns the number of docs submitted.
@@ -383,14 +384,23 @@ def bulk_upsert(collection: str, docs: list[dict[str, Any]],
     single-field version pushed those callers back to per-document upserts:
     technical_processor was issuing 287 round-trips to write one ticker's
     indicators, which is the 22.6s/ticker shape its own test exists to pin.
+
+    `insert_only=True` is PG's ON CONFLICT DO NOTHING, the bulk counterpart of
+    `upsert_doc(insert_only=True)`: an existing doc is left exactly as it is.
+    Without it the only bulk path was $set, i.e. DO UPDATE, which silently
+    changes the semantics of any DO NOTHING writer being converted — and a
+    content-addressed row like `congress_trades` (id = md5 of
+    politician+ticker+date+type) deliberately keeps the FIRST disclosure it
+    saw rather than the latest re-scrape.
     """
     if not docs:
         return 0
     ensure_indexes()
     docs = date_fields.coerce_docs(collection, docs)
     keys = [key_field] if isinstance(key_field, str) else list(key_field)
+    op = "$setOnInsert" if insert_only else "$set"
     ops = [
-        pymongo.UpdateOne({k: d[k] for k in keys}, {"$set": d}, upsert=True)
+        pymongo.UpdateOne({k: d[k] for k in keys}, {op: d}, upsert=True)
         for d in docs
     ]
     _coll(collection).bulk_write(ops, ordered=False)

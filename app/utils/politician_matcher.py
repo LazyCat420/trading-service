@@ -20,7 +20,7 @@ def clean_politician_name(name: str) -> str:
     cleaned = re.split(r",\s*(Jr\.|Sr\.|III|II|IV)\b", cleaned, flags=re.IGNORECASE)[0]
     return cleaned.strip()
 
-def _load_members_cache(db) -> Dict[str, dict]:
+def _load_members_cache() -> Dict[str, dict]:
     global _members_cache
     if _members_cache is not None:
         return _members_cache
@@ -38,8 +38,14 @@ def _load_members_cache(db) -> Dict[str, dict]:
     _members_cache = cache
     return _members_cache
 
-def resolve_bioguide_id(db, raw_name: str) -> Optional[str]:
-    """Matches a raw politician name against congress_members and returns a bioguide_id."""
+def resolve_bioguide_id(raw_name: str) -> Optional[str]:
+    """Match a raw politician name against congress_members -> bioguide_id.
+
+    Took a `db` handle until 2026-08-30. The cutover moved the lookup to
+    `mongo_query.find_rows` and the argument stopped being read, but stayed in
+    the signature — the live caller was already passing None, which is what
+    proved it dead.
+    """
     if not raw_name:
         return None
         
@@ -47,7 +53,7 @@ def resolve_bioguide_id(db, raw_name: str) -> Optional[str]:
     if not cleaned:
         return None
         
-    cache = _load_members_cache(db)
+    cache = _load_members_cache()
     
     # 1. Direct exact match on full_name
     for bio_id, m in cache.items():

@@ -1,56 +1,24 @@
+"""Populate congress_members from the HISTORICAL legislators feed.
+
+Only members whose latest term ended on or after 2018-01-01 — older ones cannot
+appear in the disclosure feeds this database joins against. Converted off
+Postgres 2026-08-30; parsing and storage are shared with the current populator.
+"""
 import requests
 import yaml
-import os
-import psycopg
 
-DB_URL = os.environ.get("DATABASE_URL", "postgres://admin:admin_password@db:5432/trading_db")
+from scripts.congress_members_common import HISTORICAL_URL, store_members
+
+#: Anyone whose last term ended before this cannot show up in congress_trades.
+MIN_TERM_END = "2018-01-01"
+
 
 def populate_historical():
     print("Fetching historical legislators...")
-    r = requests.get("https://raw.githubusercontent.com/unitedstates/congress-legislators/main/legislators-historical.yaml")
-    historical = yaml.safe_load(r.text)
-    
-    with psycopg.connect(DB_URL) as conn:
-        with conn.cursor() as cur:
-            for p in historical:
-                bio_id = p["id"].get("bioguide")
-                if not bio_id:
-                    continue
-                
-                name = p["name"]
-                full_name = f"{name.get('first', '')} {name.get('last', '')}".strip()
-                last_name = name.get('last', '')
-                
-                terms = p.get("terms", [])
-                if not terms:
-                    continue
-                
-                latest_term = terms[-1]
-                # Only care if they were active relatively recently (e.g., term end > 2018)
-                end = latest_term.get("end", "")
-                if end < "2018-01-01":
-                    continue
+    historical = yaml.safe_load(requests.get(HISTORICAL_URL).text)
+    n = store_members(historical, min_term_end=MIN_TERM_END)
+    print(f"Successfully populated historical members ({n} rows).")
 
-                party = latest_term.get("party", "")
-                chamber = latest_term.get("type", "")
-                if chamber == "rep":
-                    chamber = "House"
-                elif chamber == "sen":
-                    chamber = "Senate"
-                state = latest_term.get("state", "")
-                
-                cur.execute("""
-                    INSERT INTO congress_members (bioguide_id, full_name, last_name, party, chamber, state)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (bioguide_id) DO UPDATE SET
-                        full_name = EXCLUDED.full_name,
-                        last_name = EXCLUDED.last_name,
-                        party = EXCLUDED.party,
-                        chamber = EXCLUDED.chamber,
-                        state = EXCLUDED.state
-                """, (bio_id, full_name, last_name, party, chamber, state))
-        conn.commit()
-    print("Successfully populated historical members.")
 
 if __name__ == "__main__":
     populate_historical()

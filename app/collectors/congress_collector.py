@@ -161,7 +161,7 @@ async def collect_trades(
 
             # Resolve bioguide ID
             from app.utils.politician_matcher import resolve_bioguide_id
-            bio_id = resolve_bioguide_id(None, trade["politician"])
+            bio_id = resolve_bioguide_id(trade["politician"])
 
             mongo_store.upsert_doc('congress_trades', {'id': trade_id}, {'id': trade_id, 'politician': trade["politician"], 'party': trade["party"], 'chamber': trade["chamber"], 'state': trade["state"], 'ticker': trade["ticker"], 'transaction_type': trade["transaction_type"], 'amount_range': trade["amount_range"], 'trade_date': trade["trade_date"], 'disclosure_date': trade["disclosure_date"], 'days_to_disclose': trade["days_to_disclose"], 'bioguide_id': bio_id}, insert_only=True)
             total_count += 1
