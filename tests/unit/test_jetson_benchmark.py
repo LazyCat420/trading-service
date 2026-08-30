@@ -88,14 +88,31 @@ class TestConcurrencyIsGatedOnAnIdleCycle:
     cycle degrades the desk it is supposed to be measuring."""
 
     def test_unreadable_pipeline_state_fails_closed(self, monkeypatch):
-        # Poisoning the module makes `from scripts.migration.pg_connection import get_db`
-        # raise, which is the only way to reach the except branch.
-        monkeypatch.setitem(sys.modules, "scripts.migration.pg_connection", None)
+        # Make the pipeline_state READ raise. That is the only way to reach the
+        # except branch, and since 2026-08-30 the read is mongo_query.find_row,
+        # not scripts.migration.pg_connection.get_db.
+        from app.db import mongo_query
+
+        def _boom(*a, **k):
+            raise RuntimeError("pipeline_state unreadable")
+
+        monkeypatch.setattr(mongo_query, "find_row", _boom)
         busy, why = jb.cycle_is_running()
         assert busy is True, "an unreadable pipeline_state must block the stress phase"
         # Strict: must be the REFUSAL message, not a successful status read.
         # Accepting either would pass whether or not the guard exists.
         assert "refusing to stress" in why
+
+    def test_no_pipeline_state_row_is_not_busy(self, monkeypatch):
+        """A missing row is a KNOWN idle state, not an unreadable one — it must
+        not take the fail-closed path, or the stress phase can never run on a
+        fresh database."""
+        from app.db import mongo_query
+
+        monkeypatch.setattr(mongo_query, "find_row", lambda *a, **k: None)
+        busy, why = jb.cycle_is_running()
+        assert busy is False
+        assert "no pipeline_state row" in why
 
     @pytest.mark.parametrize("status,expected", [
         ("running", True), ("starting", True), ("analyzing", True),
@@ -104,17 +121,10 @@ class TestConcurrencyIsGatedOnAnIdleCycle:
     def test_each_status_is_classified(self, status, expected, monkeypatch):
         """Pinned per-value: 'analyzing' is a live cycle and reads as safe to
         anything that only checks for the literal 'running'."""
-        class _DB:
-            def execute(self, *a, **k): pass
-            def fetchall(self): return [("cycle-x", status)]
+        from app.db import mongo_query
 
-        class _Ctx:
-            def __enter__(self): return _DB()
-            def __exit__(self, *a): return False
-
-        mod = type(sys)("scripts.migration.pg_connection")
-        mod.get_db = lambda: _Ctx()
-        monkeypatch.setitem(sys.modules, "scripts.migration.pg_connection", mod)
+        monkeypatch.setattr(mongo_query, "find_row",
+                            lambda *a, **k: ("cycle-x", status))
         busy, _ = jb.cycle_is_running()
         assert busy is expected
 

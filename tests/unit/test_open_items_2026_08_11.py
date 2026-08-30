@@ -102,48 +102,39 @@ def test_the_wipe_refuses_without_an_explicit_yes():
     assert "--yes" in (r.stderr + r.stdout)
 
 
-def test_dry_run_reports_and_changes_nothing():
+def _mongo_spy(monkeypatch, count: int):
+    """Record every mutating mongo_store call wipe_13f makes, and answer its
+    two counts with `count`. Returns the call log."""
+    from app.db import mongo_store
+
+    calls = []
+    monkeypatch.setattr(mongo_store, "count_docs", lambda *a, **k: count)
+    monkeypatch.setattr(mongo_store, "delete_docs",
+                        lambda coll, q, *a, **k: calls.append(("delete", coll, q)))
+    monkeypatch.setattr(mongo_store, "update_docs",
+                        lambda coll, q, u, *a, **k: calls.append(("update", coll, q, u)))
+    return calls
+
+
+def test_dry_run_reports_and_changes_nothing(monkeypatch):
     from scripts.db import wipe_13f  # noqa: PLC0415 — import must follow the guard test
 
-    executed = []
-
-    class _Cur:
-        def execute(self, sql, *a):
-            executed.append(sql)
-            return self
-        def fetchone(self):
-            return (7,)
-
-    class _Ctx:
-        def __enter__(self): return _Cur()
-        def __exit__(self, *a): return False
-
-    with patch("scripts.db.wipe_13f.get_db", lambda: _Ctx()):
-        assert wipe_13f.wipe_13f(dry_run=True) == 7
-
-    assert not any("DELETE" in s.upper() or "UPDATE" in s.upper() for s in executed), \
-        f"dry-run must not mutate, ran: {executed}"
+    calls = _mongo_spy(monkeypatch, 7)
+    assert wipe_13f.wipe_13f(dry_run=True) == 7
+    assert not calls, f"dry-run must not mutate, called: {calls}"
 
 
-def test_a_confirmed_wipe_does_delete():
+def test_a_confirmed_wipe_does_delete(monkeypatch):
     """The counterpart — the guard must not have disabled the tool."""
     from scripts.db import wipe_13f
 
-    executed = []
+    calls = _mongo_spy(monkeypatch, 3)
+    wipe_13f.wipe_13f(dry_run=False)
 
-    class _Cur:
-        def execute(self, sql, *a):
-            executed.append(sql)
-            return self
-        def fetchone(self):
-            return (3,)
-
-    class _Ctx:
-        def __enter__(self): return _Cur()
-        def __exit__(self, *a): return False
-
-    with patch("scripts.db.wipe_13f.get_db", lambda: _Ctx()):
-        wipe_13f.wipe_13f(dry_run=False)
-
-    assert any("DELETE FROM sec_13f_holdings" in s for s in executed)
-    assert any("UPDATE sec_13f_filers" in s for s in executed)
+    kinds = {(c[0], c[1]) for c in calls}
+    assert ("delete", "sec_13f_holdings") in kinds, calls
+    assert ("update", "sec_13f_filers") in kinds, calls
+    # The reset must clear BOTH metadata columns, not just the one that made
+    # the old SQL assertion pass.
+    upd = next(c for c in calls if c[0] == "update")[3]
+    assert upd["$set"] == {"latest_quarter": None, "next_expected_filing": None}

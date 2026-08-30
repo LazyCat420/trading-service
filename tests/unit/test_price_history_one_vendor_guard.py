@@ -114,7 +114,12 @@ KNOWN_UNPINNED: dict[str, int] = {
     # scanner's sight (the Mongo scan checks the same file).
     "scripts/factor_backtest.py": 1,
     "scripts/gate_ablation.py": 1,
-    "scripts/mine_shkreli_doctrine.py": 1,
+    # 0 as of 2026-08-30: the SQL `SELECT ticker FROM fundamentals UNION SELECT
+    # ticker FROM price_history` became two distinct_values calls. A
+    # distinct-ticker list is vendor-immune by construction — the same reason
+    # cycle_healthcheck left this list — so the read moves to the Mongo scan
+    # below and needs no budget there either.
+    "scripts/mine_shkreli_doctrine.py": 0,
     "scripts/residual_alpha_report.py": 2,
     "scripts/score_tournament_ranker.py": 1,
     "scripts/simulate_freshness_thresholds.py": 3,
@@ -227,7 +232,11 @@ def test_the_scanner_actually_finds_queries():
     # `source` nor routes through keep_dominant_source) before the last SQL
     # reader leaves.
     # Floor lowered 18 → 17 on 2026-08-29: confidence_audit.py ported to MongoDB.
-    assert total >= 17, (
+    # 17 → 16 on 2026-08-30: mine_shkreli_doctrine.py ported. The NOTE above is
+    # now the operative one — this floor is three ports away from 0, and at 0
+    # every SQL-side test here goes green while checking nothing. The Mongo
+    # scan below is what still has teeth.
+    assert total >= 16, (
         f"scanner found only {total} price_history reads — it is broken, "
         "not the codebase that is clean"
     )
