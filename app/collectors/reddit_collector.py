@@ -462,7 +462,7 @@ async def run_reddit_purge_discovery(limit: int = 15, use_llm: bool = False) -> 
                     # matched nothing and pipeline_service's
                     # validation_status=="valid" merge returned 0 forever.
                     {'$set': {'score': confidence, 'context': f"Reddit Purge score: {score}", 'discovered_at': datetime.datetime.now(datetime.timezone.utc)},
-                     '$setOnInsert': {'validation_status': 'pending'}},
+                     '$setOnInsert': {'validation_status': 'pending', 'rate_limited_count': 0}},
                     upsert=True,
                 )
                 stored_tickers += 1

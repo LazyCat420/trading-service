@@ -287,7 +287,7 @@ async def _process_video(
         # insert_only, so validation_status starts 'pending' exactly once and the
         # background_validation job owns it from there (see reddit_collector for
         # why the field was missing under Mongo).
-        mongo_store.upsert_doc('discovered_tickers', {'ticker': t, 'source': 'youtube'}, {'ticker': t, 'source': 'youtube', 'context': f"{channel}: {title[:60]}", 'score': 0.80, 'discovered_at': published_at or datetime.datetime.now(datetime.UTC), 'validation_status': 'pending'}, insert_only=True)
+        mongo_store.upsert_doc('discovered_tickers', {'ticker': t, 'source': 'youtube'}, {'ticker': t, 'source': 'youtube', 'context': f"{channel}: {title[:60]}", 'score': 0.80, 'discovered_at': published_at or datetime.datetime.now(datetime.UTC), 'validation_status': 'pending', 'rate_limited_count': 0}, insert_only=True)
 
     logger.info(
         f"[youtube]   stored: '{title[:80]}' ({len(raw_transcript)} chars, ticker={primary_ticker})"

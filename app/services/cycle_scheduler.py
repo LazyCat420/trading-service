@@ -1760,7 +1760,7 @@ class SchedulerService:
                     f"({proven or 0} with positive proven 1y alpha); "
                     f"latest disclosure {latest}"
                 )
-                mongo_store.update_docs('discovered_tickers', {'ticker': ticker, 'source': source}, {'$set': {'score': score, 'context': context, 'discovered_at': datetime.now(timezone.utc)}, '$setOnInsert': {'validation_status': 'pending'}}, upsert=True)
+                mongo_store.update_docs('discovered_tickers', {'ticker': ticker, 'source': source}, {'$set': {'score': score, 'context': context, 'discovered_at': datetime.now(timezone.utc)}, '$setOnInsert': {'validation_status': 'pending', 'rate_limited_count': 0}}, upsert=True)
                 written += 1
             return written
 
