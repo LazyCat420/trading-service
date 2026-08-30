@@ -3,6 +3,13 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+# Every other .env variant too. `.env.migration` carries the Postgres
+# ARCHIVE DSN — the one credential the retirement work still needs and the
+# one that has never been rotated — and nothing was stopping it from being
+# committed. The .example files stay tracked; they hold placeholders.
+.env.*
+!.env.example
+!.env.migration.example
 .venv/
 venv/
 .pytest_cache/
