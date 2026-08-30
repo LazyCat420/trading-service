@@ -60,14 +60,14 @@ def _is_poisoned(text: str) -> bool:
 def scrub_evolution_lessons(dry_run: bool = True) -> int:
     """Remove poisoned entries from evolution_lessons table."""
     try:
-        from scripts.migration.pg_connection import get_db
+        from datetime import datetime, timezone
 
-        with get_db() as db:
-            rows = db.execute(
-                "SELECT id, lesson_text FROM evolution_lessons"
-            ).fetchall()
+        from app.db import mongo_store
 
-            poisoned = [(r[0], r[1]) for r in rows if _is_poisoned(r[1])]
+        if True:
+            rows = mongo_store.find_docs("evolution_lessons", {})
+            poisoned = [(r.get("id"), r.get("lesson_text") or "")
+                        for r in rows if _is_poisoned(r.get("lesson_text") or "")]
 
             if not poisoned:
                 logger.info("[SCRUB] evolution_lessons: No poisoned entries found")
@@ -80,40 +80,40 @@ def scrub_evolution_lessons(dry_run: bool = True) -> int:
                 logger.info("  → [%s] %s", row_id[:8], text[:100])
 
             if not dry_run:
+                by_id = {r.get("id"): r for r in rows}
                 for row_id, text in poisoned:
-                    # Archive before deleting
+                    # Archive before deleting. INSERT ... SELECT becomes a read
+                    # of the row we already hold plus one write, carrying the
+                    # same columns and the same 'scrubbed_poison' status.
                     try:
-                        db.execute(
-                            "INSERT INTO evolution_lessons_archive "
-                            "(id, session_id, round, score, status, lesson_text, timestamp, archived_at) "
-                            "SELECT id, session_id, round, score, 'scrubbed_poison', lesson_text, timestamp, CURRENT_TIMESTAMP "
-                            "FROM evolution_lessons WHERE id = %s",
-                            [row_id],
+                        src = by_id.get(row_id) or {}
+                        mongo_store.upsert_doc(
+                            "evolution_lessons_archive", {"id": row_id},
+                            {"id": row_id,
+                             "session_id": src.get("session_id"),
+                             "round": src.get("round"),
+                             "score": src.get("score"),
+                             "status": "scrubbed_poison",
+                             "lesson_text": src.get("lesson_text"),
+                             "timestamp": src.get("timestamp"),
+                             "archived_at": datetime.now(timezone.utc)},
+                            insert_only=True,
                         )
                     except Exception:
-                        pass  # Archive table might not exist or row may already be archived
+                        pass  # already archived is not an error
 
-                    db.execute(
-                        "DELETE FROM evolution_lessons WHERE id = %s", [row_id]
-                    )
+                    mongo_store.delete_docs("evolution_lessons", {"id": row_id})
 
-                    # Also remove stale embeddings — from whichever store is
-                    # authoritative. embeddings is at backend `mongo` since
-                    # 2026-07-23: a PG-only DELETE here scrubbed a store nobody
-                    # reads and left the live Mongo docs poisoned.
+                    # Also remove stale embeddings. The comment that used to sit
+                    # here recorded that a PG-only DELETE "scrubbed a store
+                    # nobody reads and left the live Mongo docs poisoned" — the
+                    # same was true of the lesson rows above until 2026-08-30.
                     try:
-                        from app.db import mongo_store
-
-                        if mongo_store.reads_mongo("embeddings"):
-                            mongo_store.get_doc_db()["embeddings"].delete_many(
-                                {"source_table": "evolution_lessons",
-                                 "source_id": {"$in": [row_id, str(row_id)]}}
-                            )
-                        if mongo_store.writes_pg("embeddings"):
-                            db.execute(
-                                "DELETE FROM embeddings WHERE source_table = 'evolution_lessons' AND source_id = %s",
-                                [row_id],
-                            )
+                        mongo_store.delete_docs(
+                            "embeddings",
+                            {"source_table": "evolution_lessons",
+                             "source_id": {"$in": [row_id, str(row_id)]}},
+                        )
                     except Exception:
                         logger.warning(
                             "[SCRUB] embeddings cleanup failed for id=%s", row_id
@@ -134,14 +134,12 @@ def scrub_evolution_lessons(dry_run: bool = True) -> int:
 def scrub_cycle_context(dry_run: bool = True) -> int:
     """Remove poisoned entries from cycle_context table (claims/summaries)."""
     try:
-        from scripts.migration.pg_connection import get_db
+        from app.db import mongo_store
 
-        with get_db() as db:
-            rows = db.execute(
-                "SELECT id, summary, signal FROM cycle_context"
-            ).fetchall()
-
-            poisoned = [r[0] for r in rows if _is_poisoned(r[1] or "")]
+        if True:
+            rows = mongo_store.find_docs("cycle_context", {})
+            poisoned = [r.get("id") for r in rows
+                        if _is_poisoned(r.get("summary") or "")]
 
             if not poisoned:
                 logger.info("[SCRUB] cycle_context: No poisoned entries found")
@@ -153,9 +151,7 @@ def scrub_cycle_context(dry_run: bool = True) -> int:
 
             if not dry_run:
                 for row_id in poisoned:
-                    db.execute(
-                        "DELETE FROM cycle_context WHERE id = %s", [row_id]
-                    )
+                    mongo_store.delete_docs("cycle_context", {"id": row_id})
                 logger.info(
                     "[SCRUB] cycle_context: Deleted %d poisoned entries",
                     len(poisoned),

@@ -30,18 +30,42 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts.migration.pg_connection import get_db  # noqa: E402
+from app.db import mongo_store  # noqa: E402
 
-SELECT = """
-SELECT d.id, d.cycle_id, d.ticker, d.action, d.confidence,
-       d.overridden_from, d.outcome, d.pnl_pct, g.guardrail
-FROM decision_outcomes d
-JOIN v3_guardrail_firings g
-  ON g.cycle_id = d.cycle_id AND g.ticker = d.ticker
-WHERE g.guardrail LIKE 'HOLD_POLICY_BLOCKED%%'
-  AND d.overridden_from IS NULL
-ORDER BY d.created_at
-"""
+def _unlabelled() -> list[dict]:
+    """decision_outcomes JOIN v3_guardrail_firings on (cycle_id, ticker), for
+    policy blocks that carry no label yet.
+
+    Two-column join, so it is stitched here rather than through
+    mongo_query.join_rows (one equality key by design). LIKE
+    'HOLD_POLICY_BLOCKED%' becomes an anchored $regex; `overridden_from IS
+    NULL` becomes $in [None] so a MISSING field counts as unlabelled too,
+    which is what IS NULL meant on a column that was often never written.
+    """
+    firings = {}
+    for g in mongo_store.find_docs(
+        "v3_guardrail_firings",
+        {"guardrail": {"$regex": "^HOLD_POLICY_BLOCKED"}},
+    ):
+        firings.setdefault((g.get("cycle_id"), g.get("ticker")), g)
+
+    out = []
+    for d in mongo_store.find_docs(
+        "decision_outcomes", {"overridden_from": {"$in": [None]}},
+        sort=[("created_at", 1)],
+    ):
+        g = firings.get((d.get("cycle_id"), d.get("ticker")))
+        if g is None:
+            continue  # no match, no row -- INNER JOIN
+        out.append({
+            "id": d.get("id"), "cycle_id": d.get("cycle_id"),
+            "ticker": d.get("ticker"), "action": d.get("action"),
+            "confidence": d.get("confidence"),
+            "overridden_from": d.get("overridden_from"),
+            "outcome": d.get("outcome"), "pnl_pct": d.get("pnl_pct"),
+            "guardrail": g.get("guardrail"),
+        })
+    return out
 
 UNDO_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -56,11 +80,8 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    with get_db() as db:
-        rows = db.execute(SELECT).fetchall()
-        cols = ["id", "cycle_id", "ticker", "action", "confidence",
-                "overridden_from", "outcome", "pnl_pct", "guardrail"]
-        found = [dict(zip(cols, r)) for r in rows]
+    if True:
+        found = _unlabelled()
 
         if not found:
             print("Nothing to backfill — every policy block is labelled.")
@@ -82,15 +103,19 @@ def main() -> int:
             json.dump(found, fh, indent=2, default=str)
         print(f"\nUndo snapshot written to {UNDO_PATH}")
 
+        # `SET overridden_from = action` copies one column into another, which
+        # a plain $set cannot express. Each row's own action is already in
+        # `found`, so write it per id rather than reaching for a pipeline
+        # update — same result, and it stays one round-trip.
         ids = [r["id"] for r in found]
-        db.execute(
-            "UPDATE decision_outcomes SET overridden_from = action "
-            "WHERE id = ANY(%s)",
-            [ids],
+        mongo_store.bulk_upsert(
+            "decision_outcomes",
+            [{"id": r["id"], "overridden_from": r["action"]} for r in found],
+            key_field="id",
         )
         print(f"Labelled {len(ids)} row(s). action/outcome/pnl_pct untouched.")
 
-        left = db.execute(SELECT).fetchall()
+        left = _unlabelled()
         print(f"Remaining unlabelled policy blocks: {len(left)}")
         return 0 if not left else 1
 

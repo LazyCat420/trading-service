@@ -902,14 +902,15 @@ def _known_tickers() -> set[str]:
     because a hallucinated ticker appears in neither (verified: VKTX, correctly
     dropped, has 0 rows in both).
     """
-    from scripts.migration.pg_connection import get_db
+    from app.db import mongo_store
 
-    with get_db() as db:
-        rows = db.execute(
-            "SELECT ticker FROM fundamentals "
-            "UNION SELECT ticker FROM price_history"
-        ).fetchall()
-    return {r[0].strip().upper() for r in rows if r and r[0]}
+    # SELECT ticker FROM fundamentals UNION SELECT ticker FROM price_history.
+    # SQL UNION de-duplicates, and so does the set below, so two distincts are
+    # exactly equivalent here — and far cheaper than scanning 15.7M price rows
+    # to build a list we immediately collapse.
+    tickers = set(mongo_store.distinct_values("fundamentals", "ticker"))
+    tickers |= set(mongo_store.distinct_values("price_history", "ticker"))
+    return {t.strip().upper() for t in tickers if t}
 
 
 _DATE_IN_TITLE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2})\b")
@@ -1031,7 +1032,7 @@ async def _opinion_card(sem, video: dict, known: set[str]) -> dict | None:
 
 
 def stage_opinions(limit: int | None) -> None:
-    from scripts.migration.pg_connection import get_db
+    from app.db import mongo_store
 
     docs = _load_jsonl(TRANSCRIPTS)
     if not docs:
@@ -1042,30 +1043,25 @@ def stage_opinions(limit: int | None) -> None:
     logger.info("%d transcripts, %d tickers in the desk universe",
                 len(docs), len(known))
 
-    with get_db() as db:
-        seen = {r[0] for r in db.execute(
-            "SELECT DISTINCT video_id FROM shkreli_opinions").fetchall()}
+    seen = set(mongo_store.distinct_values("shkreli_opinions", "video_id"))
     todo = [d for d in docs if d["video_id"] not in seen]
     if limit:
         todo = todo[:limit]
     logger.info("%d already carded, %d to go", len(seen), len(todo))
 
     def _store(c: dict) -> None:
-        with get_db() as db:
-            db.execute(
-                """
-                INSERT INTO shkreli_opinions (
-                    ticker, video_id, recorded_on, company_name, stance, thesis,
-                    valuation_view, likes, dislikes, price_context,
-                    source_title, confidence
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                ON CONFLICT (ticker, video_id) DO NOTHING
-                """,
-                [c["ticker"], c["video_id"], c["recorded_on"], c["company_name"],
-                 c["stance"], c["thesis"], c["valuation_view"], c["likes"],
-                 c["dislikes"], c["price_context"], c["source_title"],
-                 c["confidence"]],
-            )
+        # ON CONFLICT (ticker, video_id) DO NOTHING -> upsert_doc(insert_only)
+        # on the same composite natural key. DO NOTHING matters here: a re-run
+        # must not overwrite a card a human has since corrected.
+        mongo_store.upsert_doc(
+            "shkreli_opinions",
+            {"ticker": c["ticker"], "video_id": c["video_id"]},
+            {k: c[k] for k in (
+                "ticker", "video_id", "recorded_on", "company_name", "stance",
+                "thesis", "valuation_view", "likes", "dislikes",
+                "price_context", "source_title", "confidence")},
+            insert_only=True,
+        )
 
     async def run() -> list[dict]:
         # Persist AS EACH CARD LANDS, not after gathering all of them.
