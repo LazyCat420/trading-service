@@ -44,20 +44,25 @@ def main() -> int:
     ap.add_argument("--since", default="2026-07-01")
     args = ap.parse_args()
 
-    from scripts.migration.pg_connection import get_db
+    from app.db import mongo_store
 
-    with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT d.desk_id, d.cycle_id, d.ticker, d.desk_data,
-                   t.action, t.confidence, t.position_size_pct, t.reasoning
-            FROM shared_desk d
-            JOIN trade_results t
-              ON t.cycle_id = d.cycle_id AND t.ticker = d.ticker
-            WHERE d.created_at > %s
-            """,
-            [args.since],
-        ).fetchall()
+    # INNER JOIN on (cycle_id, ticker). mongo_query.join_rows deliberately
+    # supports ONE equality key, so a two-column join is stitched here — and
+    # stitched the same way join_rows does it (index the right side, emit only
+    # matched left rows) rather than with $lookup, whose left-outer semantics
+    # would turn this filter into a pass-through.
+    trades = {}
+    for t in mongo_store.find_docs("trade_results", {}):
+        trades[(t.get("cycle_id"), t.get("ticker"))] = t
+
+    rows = []
+    for d in mongo_store.find_docs("shared_desk", {"created_at": {"$gt": args.since}}):
+        t = trades.get((d.get("cycle_id"), d.get("ticker")))
+        if t is None:
+            continue  # no match, no row — INNER JOIN
+        rows.append((d.get("desk_id"), d.get("cycle_id"), d.get("ticker"),
+                     d.get("desk_data"), t.get("action"), t.get("confidence"),
+                     t.get("position_size_pct"), t.get("reasoning")))
 
     repairs = []
     for desk_id, cycle_id, ticker, desk_data, action, conf, size, reasoning in rows:
@@ -89,7 +94,7 @@ def main() -> int:
 
     now = datetime.now(timezone.utc).isoformat()
     written = 0
-    with get_db() as db:
+    if True:
         for r in repairs:
             artifact = {
                 "summary": (
@@ -107,16 +112,27 @@ def main() -> int:
                 "_artifact_type": "final_decision",
                 "risk_flags": ["backfilled_decision"],
             }
-            db.execute(
-                """
-                UPDATE shared_desk
-                SET desk_data = jsonb_set(
-                        desk_data::jsonb, '{final_decision}', %s::jsonb, true
-                    )::json,
-                    updated_at = NOW()
-                WHERE desk_id = %s
-                """,
-                [json.dumps(artifact, default=str), r["desk_id"]],
+            # jsonb_set(desk_data, '{final_decision}', ...) has NO Mongo
+            # equivalent here, because `desk_data` is stored as JSON *TEXT*,
+            # not as a sub-document. `$set: {"desk_data.final_decision": ...}`
+            # would silently create a dotted field beside the string and leave
+            # the real artifact untouched. Read, patch, re-serialise.
+            doc = mongo_store.find_docs(
+                "shared_desk", {"desk_id": r["desk_id"]}, limit=1)
+            if not doc:
+                continue
+            raw = doc[0].get("desk_data")
+            data = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            data["final_decision"] = artifact
+            mongo_store.update_docs(
+                "shared_desk", {"desk_id": r["desk_id"]},
+                {"$set": {
+                    # written back in the SAME shape it was read in, so this
+                    # script cannot be the thing that changes desk_data's type
+                    "desk_data": (json.dumps(data, default=str)
+                                  if isinstance(raw, str) else data),
+                    "updated_at": datetime.now(timezone.utc),
+                }},
             )
             written += 1
 
