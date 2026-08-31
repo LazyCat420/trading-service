@@ -1229,14 +1229,19 @@ class PipelineService:
                         except Exception as sys_log_err:
                             logger.warning(f"[PipelineService] Failed to send system log: {sys_log_err}")
                         
-                        try:
-                            cls._state.update({
-                                "progress": f"[DISCOVERY] {detail}",
-                                "phase": "discovery"
-                            })
-                            cls.save_state()
-                        except Exception:
-                            pass
+                        if step != "news_scraped":
+                            # Rider on f881a63: one save_state() per ARTICLE is
+                            # needless IO — the event stream already carries
+                            # every article; the state singleton needs only
+                            # feed progress and phase changes.
+                            try:
+                                cls._state.update({
+                                    "progress": f"[DISCOVERY] {detail}",
+                                    "phase": "discovery"
+                                })
+                                cls.save_state()
+                            except Exception:
+                                pass
                         
                     async def run_scraper_sync():
                         try:

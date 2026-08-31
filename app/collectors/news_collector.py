@@ -222,16 +222,27 @@ async def _scrape_article_body_via_service(url: str, max_chars: int = 15000) -> 
     return ""
 
 
-async def _scrape_with_timeout(url: str, fallback_summary: str, timeout: float = 4.0) -> str:
-    """Scrape article body with a strict timeout, falling back to the API summary."""
+async def _scrape_with_timeout(url: str, fallback_summary: str, timeout: float = 4.0,
+                               stats: dict | None = None) -> str:
+    """Scrape article body with a strict timeout, falling back to the API summary.
+
+    Per-URL lines stay at debug (the 4s cap fires often by design), but the
+    RATE must stay visible: f881a63 cut the timeout 15s->4s and demoted the
+    warning in the same commit, hiding the fallback rate the new cap inflates.
+    `stats` lets collect_feed log one scraped/fallback summary per feed.
+    """
     try:
         body = await asyncio.wait_for(_scrape_article_body_via_service(url), timeout=timeout)
         if body:
+            if stats is not None:
+                stats["scraped"] = stats.get("scraped", 0) + 1
             return body
     except asyncio.TimeoutError:
         logger.debug("[news] Scrape timeout (%.1fs) for URL: %s, using API summary", timeout, url)
     except Exception as e:
         logger.debug("[news] Scrape failed for URL %s: %s, using API summary", url, e)
+    if stats is not None:
+        stats["fallback"] = stats.get("fallback", 0) + 1
     return fallback_summary
 
 
@@ -553,6 +564,8 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
             }
         )
 
+        scrape_stats: dict = {}
+
         async def process_rss_article(article):
             nonlocal count
             title = article.get("title", "").strip()
@@ -570,21 +583,28 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
                     summary = await _translate_foreign_text(summary, publisher)
 
             pub_val = article.get("published_at")
+            published_at_estimated = False
             if isinstance(pub_val, str):
                 try:
                     published_at = datetime.datetime.fromisoformat(pub_val)
                     if published_at.tzinfo is None:
                         published_at = published_at.replace(tzinfo=datetime.UTC)
                 except Exception:
+                    # f881a63 made an unparsable date silently become now(),
+                    # corrupting freshness. Keep the row usable but MARK it.
+                    logger.warning("[news] %s: unparsable published_at %r for '%s' — stamping now() as ESTIMATE",
+                                   feed_name, pub_val, title[:60])
                     published_at = datetime.datetime.now(datetime.UTC)
+                    published_at_estimated = True
             else:
                 published_at = datetime.datetime.now(datetime.UTC)
+                published_at_estimated = pub_val is not None
 
             # STRICT QUALITY GATE & BODY SCRAPING (fast timeout to avoid stalling feed)
             api_summary = summary
             summary = ""
             if url and (len(api_summary) < 150 or "..." in api_summary):
-                body = await _scrape_with_timeout(url, api_summary, timeout=4.0)
+                body = await _scrape_with_timeout(url, api_summary, timeout=4.0, stats=scrape_stats)
                 if body and len(body) >= 150:
                     summary = body
 
@@ -631,6 +651,7 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
                         "published_at": published_at,
                         "summary": summary,
                         "content_hash": content_hash,
+                        "published_at_estimated": published_at_estimated,
                         "is_general": False,
                         "tickers_list": list(detected_tickers),
                     })
@@ -645,6 +666,7 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
                     "published_at": published_at,
                     "summary": summary,
                     "content_hash": content_hash,
+                    "published_at_estimated": published_at_estimated,
                     "is_general": True,
                     "tickers_list": [],
                 })
@@ -668,6 +690,7 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
                         "publisher": item["publisher"],
                         "url": item["url"],
                         "published_at": item["published_at"],
+                        "published_at_estimated": item.get("published_at_estimated", False),
                         "summary": item["summary"],
                         "source": "rss",
                         "content_hash": item["content_hash"],
@@ -705,6 +728,13 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
         # Process up to 15 items in parallel to speed up RSS sweeps
         tasks = [process_rss_article(art) for art in items[:15]]
         await asyncio.gather(*tasks)
+
+        if scrape_stats:
+            _scraped = scrape_stats.get("scraped", 0)
+            _fellback = scrape_stats.get("fallback", 0)
+            _log = logger.warning if _fellback > _scraped else logger.info
+            _log("[news] %s: article bodies scraped %d, API-summary fallbacks %d (%.0fs cap)",
+                 feed_name, _scraped, _fellback, 4.0)
 
     except Exception as e:
         logger.error(f"[news] {feed_name} FAILED: {type(e).__name__}: {e}", exc_info=True)
