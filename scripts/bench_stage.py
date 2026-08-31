@@ -402,6 +402,62 @@ def build_registry() -> dict[str, Stage]:
     add(Stage("fundamental", "compute", _fundamental, _nonempty(40, "fundamental"),
               blurb="precomputed fundamental snapshot"))
 
+    # ── Memory + whiteboard: the two prompt channels the registry missed ──
+    # (2026-08-31: the memory seam was silently dead 08-18..08-31 — a ghost
+    # import raised on every retrieve and nothing off the live path exercised
+    # it. A stage that RUNS the real retriever turns that class of break red.)
+    def _memory_retrieval(c: Ctx):
+        from app.services.memory.retriever import MemoryRetriever
+        from app.services.retrieval_context import build_memory_addenda
+        results = MemoryRetriever.retrieve(ticker=c.ticker)
+        brief = ""
+        if results:
+            brief = MemoryRetriever.build_memory_brief(results).get("brief_text", "")
+        addenda = build_memory_addenda(c.ticker)
+        combined = "\n\n".join(b for b in (brief, addenda) if b)
+        c.notes.append(
+            f"memory: {len(results or [])} canonical candidates, {len(combined)} chars injected")
+        return combined
+
+    def _memory_contract(out) -> str:
+        # Empty is legal (a ticker may have no memories); an exception is the
+        # failure mode this stage exists to catch, and Stage machinery already
+        # fails on raise. Only the shape is asserted here.
+        return "" if isinstance(out, str) else f"expected str, got {type(out).__name__}"
+
+    add(Stage("memory_retrieval", "context", _memory_retrieval, _memory_contract,
+              blurb="canonical brief + episodic/working-memory addenda (the real retriever)"))
+
+    async def _whiteboard_build(c: Ctx):
+        from app.db import mongo_store
+        from app.agents.whiteboard import whiteboard
+        # A bench cycle writes no board, so replay delivery for the most recent
+        # REAL cycle that has entries for this ticker — summarize() is exactly
+        # what agent_runner injects (for_agent_prompt=True).
+        docs = mongo_store.find_docs(
+            "whiteboard_entries", {"ticker": c.ticker.upper()},
+            sort=[("created_at", -1)], limit=1)
+        if not docs:
+            c.notes.append("whiteboard: no entries on record for this ticker")
+            return "NO_ENTRIES"
+        cyc = docs[0].get("cycle_id") or "default_cycle"
+        out = await whiteboard.summarize(c.ticker, cyc, for_agent_prompt=True)
+        c.notes.append(f"whiteboard: replayed {cyc}, delivered {len(out)} chars")
+        return out
+
+    def _whiteboard_contract(out) -> str:
+        if not isinstance(out, str):
+            return f"expected str, got {type(out).__name__}"
+        if out == "NO_ENTRIES":
+            return ""
+        if len(out.strip()) < 50:
+            return ("entries exist but summarize() delivered "
+                    f"{len(out.strip())} chars — the board is not reaching prompts")
+        return ""
+
+    add(Stage("whiteboard_build", "context", _whiteboard_build, _whiteboard_contract,
+              blurb="replay agent-prompt whiteboard delivery for the latest real cycle"))
+
     # ── Policy gate: pure logic on a synthetic desk, sub-millisecond ──
     def _policy_gates(c: Ctx):
         from app.v3.orchestrator import _apply_policy_gates
