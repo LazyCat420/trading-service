@@ -11104,12 +11104,12 @@
       "archive_file": null,
       "archived_at": null,
       "backfill_last_attempt": {
-        "at": "2026-08-19T05:23:09.622090+00:00",
+        "at": "2026-08-31T00:32:51.043241+00:00",
         "mongo_docs": 8,
         "ok": true,
         "pg_rows": 8
       },
-      "backfilled_at": "2026-08-19T05:23:09.622090+00:00",
+      "backfilled_at": "2026-08-31T00:32:51.043241+00:00",
       "backfilled_mongo_docs": 8,
       "backfilled_pg_rows": 8,
       "client_readers": [],

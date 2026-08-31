@@ -20,6 +20,7 @@ import json
 import math
 import sys
 import time
+from pathlib import Path
 from collections import Counter
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -182,22 +183,41 @@ def _key_filter(keys: list[str], doc: dict) -> dict:
     return {k: doc[k] for k in keys}
 
 
-def _bulk_upsert(collection: str, docs: list[dict], keys: list[str]) -> int:
+def _bulk_upsert(collection: str, docs: list[dict], keys: list[str],
+                 missing_only: bool = False,
+                 inserted_ids: list | None = None) -> int:
     """Composite-key-aware bulk upsert.
 
     `mongo_store.bulk_upsert` takes a single `key_field`, which cannot express
     (ticker, date, source). Rather than widen that shared helper — it is held by
     another session's in-flight work — the composite case is built here from the
     same pymongo primitive it uses.
+
+    `missing_only` switches `$set` for `$setOnInsert`, which inserts an absent
+    document and does NOTHING to one that is already there.
+
+    THAT DISTINCTION IS THE POINT, and this tool had no way to express it.
+    Postgres froze on 2026-08-19 and Mongo has been the source of truth since,
+    so a plain `$set` from the archive over a live collection is not a repair —
+    it is a REVERT of every write since the cutover for the rows the two stores
+    share. `technicals` is the case in hand: it is 37,842 rows short of the
+    archive, so a repair is genuinely needed, and its rows are also recomputed
+    in place by `refresh_technicals.py`, so a blanket overwrite would undo any
+    recomputation done since. `--missing-only` is how you get the first without
+    the second.
     """
     if not docs:
         return 0
-    if len(keys) == 1:
+    if len(keys) == 1 and not missing_only:
         return mongo_store.bulk_upsert(collection, docs, key_field=keys[0])
     mongo_store.ensure_indexes()
-    ops = [pymongo.UpdateOne(_key_filter(keys, d), {"$set": d}, upsert=True) for d in docs]
-    mongo_store.get_doc_db()[collection_for(collection)].bulk_write(ops, ordered=False)
-    return len(docs)
+    op = "$setOnInsert" if missing_only else "$set"
+    ops = [pymongo.UpdateOne(_key_filter(keys, d), {op: d}, upsert=True) for d in docs]
+    res = mongo_store.get_doc_db()[collection_for(collection)].bulk_write(
+        ops, ordered=False)
+    if inserted_ids is not None and res.upserted_ids:
+        inserted_ids.extend(res.upserted_ids.values())
+    return res.upserted_count if missing_only else len(docs)
 
 
 def _paginate_clause(keys: list[str], first_page: bool) -> tuple[str, str]:
@@ -510,7 +530,8 @@ def ensure_key_index(table: str, key_fields: list[str]) -> str:
 
 
 def backfill(table: str, batch: int = 2000, verify_only: bool = False,
-             rate_limit: float = 0.0) -> int:
+             rate_limit: float = 0.0, missing_only: bool = False,
+             inserted_log: "Path | None" = None) -> int:
     try:
         select_sql, key_fields, mapper = _spec_for(table)
     except (KeyError, ValueError) as exc:
@@ -532,6 +553,8 @@ def backfill(table: str, batch: int = 2000, verify_only: bool = False,
         # (so we never compare an int id against a sentinel string), and later
         # pages use the actual last-row key value, which carries its own type.
         last_key = None
+        scanned = 0
+        _inserted: list = []
         while True:
             where, order = _paginate_clause(key_fields, last_key is None)
             params = ([] if last_key is None else list(last_key)) + [batch]
@@ -544,10 +567,14 @@ def backfill(table: str, batch: int = 2000, verify_only: bool = False,
             batch_started = time.monotonic()
             docs = [mapper(r, cols) for r in rows]
             # One bulk round-trip per batch (not one upsert per doc).
-            _bulk_upsert(table, docs, key_fields)
-            moved += len(docs)
+            moved += _bulk_upsert(table, docs, key_fields,
+                                  missing_only=missing_only,
+                                  inserted_ids=_inserted)
+            scanned += len(docs)
             last_key = tuple(rows[-1][cols.index(k)] for k in key_fields)
-            print(f"[{table}] upserted {moved}/{pg_count}", end="\r", flush=True)
+            label = "inserted" if missing_only else "upserted"
+            print(f"[{table}] {label} {moved} (scanned {scanned}/{pg_count})",
+                  end="\r", flush=True)
             if rate_limit > 0:
                 # Hold sustained throughput at --rate-limit rows/sec so a big
                 # backfill cannot roll the oplog or starve the live service.
@@ -556,6 +583,11 @@ def backfill(table: str, batch: int = 2000, verify_only: bool = False,
                 if sleep_for > 0:
                     time.sleep(sleep_for)
         print()
+        if missing_only and inserted_log is not None and _inserted:
+            inserted_log.parent.mkdir(parents=True, exist_ok=True)
+            inserted_log.write_text(json.dumps([str(i) for i in _inserted]))
+            print(f"[{table}] wrote {len(_inserted)} inserted _ids to "
+                  f"{inserted_log} — the rollback for this run")
 
     mongo_after = mongo_store.count_docs(table)
     ok = mongo_after >= pg_count
@@ -634,6 +666,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("table", nargs="?", help="table to backfill (or 'all' with --verify-fields)")
     ap.add_argument("--verify-only", action="store_true", help="count-compare only, no writes")
+    ap.add_argument("--missing-only", action="store_true",
+                    help="insert documents the collection LACKS and never "
+                         "overwrite one it has — the only safe mode against a "
+                         "collection that has taken writes since the cutover")
+    ap.add_argument("--inserted-log", type=Path, metavar="FILE",
+                    help="with --missing-only, write the inserted _ids here "
+                         "so the run can be undone exactly")
     ap.add_argument("--verify-fields", type=int, metavar="N", default=0,
                     help="field-level parity on N random rows per table, no writes")
     ap.add_argument("--batch", type=int, default=2000, help="rows per bulk round-trip")
@@ -658,8 +697,13 @@ def main():
     if args.verify_fields:
         tables = known_tables() if args.table == "all" else [args.table]
         return _sweep(tables, lambda t: verify_fields(t, args.verify_fields))
+    if args.inserted_log and not args.missing_only:
+        print("--inserted-log only means something with --missing-only",
+              file=sys.stderr)
+        return 2
     return backfill(args.table, batch=args.batch, verify_only=args.verify_only,
-                    rate_limit=args.rate_limit)
+                    rate_limit=args.rate_limit, missing_only=args.missing_only,
+                    inserted_log=args.inserted_log)
 
 
 if __name__ == "__main__":
