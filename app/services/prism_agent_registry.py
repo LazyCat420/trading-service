@@ -28,6 +28,15 @@ AGENT_ID_MAP: dict[str, str] = {
     "CUSTOM_PRE_TRADE_AGENT": "CUSTOM_PRE_TRADE_AGENT",
     "CUSTOM_META_AUDIT_AGENT": "CUSTOM_META_AUDIT_AGENT",
 
+    # ── Autoresearch & Evolution Auditor Mappings ──
+    "autoresearch_reflection": "CUSTOM_SYNTHESIZER_AGENT",
+    "reflection": "CUSTOM_SYNTHESIZER_AGENT",
+    "auditor_1": "CUSTOM_META_AUDIT_AGENT",
+    "auditor_2": "CUSTOM_META_AUDIT_AGENT",
+    "auditor_3": "CUSTOM_META_AUDIT_AGENT",
+    "chief_auditor": "CUSTOM_META_AUDIT_AGENT",
+    "evaluator": "CUSTOM_META_AUDIT_AGENT",
+
     # ── System Janitor Agent Mappings ──
     "CUSTOM_DATA_JANITOR_AGENT": "CUSTOM_SYSTEM_JANITOR_AGENT",
     "CUSTOM_DATA_JANITOR_CRITIC_AGENT": "CUSTOM_SYSTEM_JANITOR_AGENT",

@@ -56,6 +56,18 @@ async def _reflect(audit_bundle: dict) -> dict:
     else:
         prompt += f"Prediction accuracy: INSUFFICIENT DATA ({outcome_stats.get('note', 'cold start')})\n"
 
+    # Filter out self-referential error messages from LLM parsing/canary failures
+    clean_exec_errs = [
+        err for err in exec_errs
+        if not (
+            isinstance(err, dict)
+            and any(
+                k in str(err.get("error_message", "")).lower()
+                for k in ("failed to parse json", "think-leak", "empty response text", "all auditors failed")
+            )
+        )
+    ]
+
     prompt += (
         f"LLM calls: {llm_a.get('total_calls', 0)}, failures: {llm_a.get('failed_calls', 0)}\n"
         f"Duration: {perf.get('total_ms', 0) / 1000:.1f}s\n"
@@ -64,7 +76,7 @@ async def _reflect(audit_bundle: dict) -> dict:
         f"Data gaps: {safe_dumps(data_q.get('gaps', [])[:3])}\n"
         f"Issues: {safe_dumps(dec_q.get('issues', [])[:3])}\n"
         f"Schedule issues: {safe_dumps(sched.get('issues', [])[:3])}\n"
-        f"System Execution Errors: {safe_dumps(exec_errs)}"
+        f"System Execution Errors: {safe_dumps(clean_exec_errs)}"
     )
 
     learning_signals = audit_bundle.get("learning_signals") or {}

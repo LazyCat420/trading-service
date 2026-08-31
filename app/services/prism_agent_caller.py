@@ -514,12 +514,11 @@ async def call_prism_agent(
     
     try:
         # Prepend system prompt directly to messages list for OpenAI/vLLM compatibility.
-        # We interleave a dummy user message between our system prompt and the actual user message.
-        # This forces prism-service's vLLM patch to rewrite the injected system context block
-        # to a user message, maintaining exactly one leading system message for Qwen.
+        # We interleave an assistant acknowledgment turn between system prompt and user message
+        # to ensure strict role alternation: system -> assistant -> user.
         messages = [
             {"role": "system", "content": FIRM_CONTEXT + (fallback_system_prompt or "")},
-            {"role": "user", "content": "Acknowledged. I am ready to process the quantitative data."},
+            {"role": "assistant", "content": "Acknowledged. I am ready to process the quantitative data."},
             {"role": "user", "content": user_message}
         ]
         from app.v3.guardrails import get_budget_for_role
@@ -602,13 +601,41 @@ async def call_prism_agent(
             response_text = ""
         response_text, leaked = strip_reasoning_leak(response_text, agent_id)
         if not response_text:
-            # A reasoning-capable model that burns its whole output budget on
-            # reasoning returns content="" with finish=stop — same symptom as
-            # a genuinely textless turn, so make it loud instead of silent.
+            # A fast empty response indicates a chat-template or reasoning token drop.
+            # Retry once with a clean, single-turn [system, user] structure.
             logger.warning(
-                "[THINK-LEAK] %s: empty response text — if the model is a "
-                "reasoner, the output budget may have been consumed by "
-                "reasoning tokens.", agent_id,
+                "[PrismAgentCaller] %s: empty response text (%dms) — attempting clean single-turn retry",
+                agent_id, int((time.monotonic() - start) * 1000),
+            )
+            try:
+                clean_messages = [
+                    {"role": "system", "content": FIRM_CONTEXT + (fallback_system_prompt or "")},
+                    {"role": "user", "content": user_message},
+                ]
+                retry_resp = await prism_client.call_agent(
+                    model=model,
+                    messages=clean_messages,
+                    system_prompt=FIRM_CONTEXT + (fallback_system_prompt or ""),
+                    agent_name=agent_id,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    project=project or settings.PROJECT_NAME,
+                    max_iterations=max_iter,
+                    provider=provider,
+                    thinking_enabled=False,
+                )
+                retry_text = (retry_resp.json().get("text") or "").strip()
+                retry_text, _ = strip_reasoning_leak(retry_text, agent_id)
+                if retry_text:
+                    response_text = retry_text
+                    logger.info("[PrismAgentCaller] %s: single-turn retry SUCCEEDED (%d chars)", agent_id, len(response_text))
+            except Exception as retry_err:
+                logger.debug("[PrismAgentCaller] %s: single-turn retry failed: %s", agent_id, retry_err)
+
+        if not response_text:
+            logger.warning(
+                "[THINK-LEAK] %s: empty response text after retry — output budget may have been consumed",
+                agent_id,
             )
         elapsed_ms = int((time.monotonic() - start) * 1000)
         tokens = _extract_token_usage(resp, response_text)
