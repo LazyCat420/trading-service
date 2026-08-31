@@ -98,6 +98,56 @@ def test_a_lower_threshold_never_reduces_days_out_of_market():
 
 # ── point-in-time alignment ──────────────────────────────────────────
 
+def _fake_reads(monkeypatch, prices, posts):
+    """Stand in for the two Mongo reads `load_aligned_series` makes.
+
+    REWRITTEN 2026-08-30. This used to patch
+    `scripts.migration.pg_connection.get_db` with a fake cursor that returned
+    `posts` or `prices` depending on whether the SQL text mentioned
+    `regime_hmm_posteriors`. `scripts/regime_overlay_backtest.py` was ported to
+    MongoDB, so there is no SQL and no `get_db`: the patch intercepted nothing
+    and the function reached the REAL store — caught only because
+    `block_production_mongo` raises, which is the guard doing a job this test
+    should have been doing itself.
+
+    `mongo_query.find_rows` returns tuples in the requested column order, so
+    the fixtures below are unchanged: (date, close) and
+    (as_of, state_probabilities, regime) are already the shapes the SQL asked
+    for. `_one_vendor` is stubbed to the identity filter — the vendor rule has
+    its own test in tests/unit/test_price_history_one_vendor_guard.py, and
+    resolving a dominant vendor here would need a second fixture collection to
+    resolve it FROM.
+    """
+    from app.db import mongo_query
+    import app.quant.returns as rets
+
+    def find_rows(collection, query, columns, sort=None, limit=0, **kw):
+        if collection == "regime_hmm_posteriors":
+            return list(posts)
+        if collection == "price_history":
+            return list(prices)
+        raise AssertionError(f"unexpected collection {collection!r}")
+
+    monkeypatch.setattr(mongo_query, "find_rows", find_rows)
+    monkeypatch.setattr(rets, "_one_vendor", lambda ticker, q: dict(q))
+
+
+def test_the_fake_covers_every_read_the_function_makes(monkeypatch):
+    """Negative control: if the module grows a third read, say so here.
+
+    The predecessor's fake answered ANY query — it branched on SQL text and
+    fell through to `prices` for anything unrecognised — so a new read would
+    have been served silently with the wrong rows.
+    """
+    import scripts.regime_overlay_backtest as mod
+    from datetime import date
+
+    _fake_reads(monkeypatch,
+                [(date(2026, 1, 5), 100.0), (date(2026, 1, 6), 110.0)],
+                [(date(2026, 1, 5), {"STRESSED": 0.8}, "STRESSED")])
+    assert mod.load_aligned_series("SPY")
+
+
 def test_alignment_pairs_a_posterior_with_the_NEXT_session(monkeypatch):
     """The posterior for date D may only trade D+1's return. If this paired D
     with D's own return the overlay would be acting on information it did not
@@ -109,26 +159,7 @@ def test_alignment_pairs_a_posterior_with_the_NEXT_session(monkeypatch):
               (date(2026, 1, 7), 99.0)]
     posts = [(date(2026, 1, 5), {"CALM": 0.2, "STRESSED": 0.8}, "STRESSED")]
 
-    class _DB:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_):
-            return False
-
-        def execute(self, sql, params=None):
-            self._rows = posts if "regime_hmm_posteriors" in sql else prices
-            return self
-
-        def fetchall(self):
-            return self._rows
-
-    # load_aligned_series imports both of these inside the function body, so
-    # patching them at their source modules is what reaches it.
-    import scripts.migration.pg_connection as conn
-    import app.quant.returns as rets
-    monkeypatch.setattr(conn, "get_db", lambda: _DB())
-    monkeypatch.setattr(rets, "dominant_source_sql", lambda: "'yfinance'")
+    _fake_reads(monkeypatch, prices, posts)
 
     rows = mod.load_aligned_series("SPY")
     assert len(rows) == 1
@@ -147,24 +178,7 @@ def test_a_posterior_with_no_following_session_is_dropped(monkeypatch):
     prices = [(date(2026, 1, 5), 100.0)]
     posts = [(date(2026, 1, 5), {"STRESSED": 0.9}, "STRESSED")]
 
-    class _DB:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_):
-            return False
-
-        def execute(self, sql, params=None):
-            self._rows = posts if "regime_hmm_posteriors" in sql else prices
-            return self
-
-        def fetchall(self):
-            return self._rows
-
-    import scripts.migration.pg_connection as conn
-    import app.quant.returns as rets
-    monkeypatch.setattr(conn, "get_db", lambda: _DB())
-    monkeypatch.setattr(rets, "dominant_source_sql", lambda: "'yfinance'")
+    _fake_reads(monkeypatch, prices, posts)
 
     assert mod.load_aligned_series("SPY") == []
 
