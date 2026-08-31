@@ -148,12 +148,25 @@ def test_no_postgres_coupling_survives_in_the_module():
         _code_only(text), re.I,
     )
 
-    # Non-vacuity: the same scan MUST condemn the version this replaced,
-    # or it is matching nothing and would pass on a file that never changed.
-    import subprocess
-    before = subprocess.run(
-        ["git", "show", "HEAD:scripts/regime_overlay_backtest.py"],
-        cwd=REPO, capture_output=True, text=True, check=True).stdout
+    # Non-vacuity: the same scan MUST condemn the shape this replaced, or it
+    # is matching nothing and would pass on a file that never changed.
+    #
+    # This used to read `git show 77e6dc3:scripts/regime_overlay_backtest.py`,
+    # which was the pre-port file right up until the port was COMMITTED — and
+    # then HEAD became the ported version, the control found no `pg_connection`
+    # in it, and the test failed for having succeeded. A negative control
+    # pinned to a moving ref expires the moment the work lands. It is a
+    # FIXTURE now: the shape itself, which cannot rot.
+    before = (
+        "from scripts.migration.pg_connection import get_db\n"
+        "from app.quant.returns import dominant_source_sql\n"
+        "def load_aligned_series(ticker):\n"
+        "    with get_db() as db:\n"
+        "        return db.execute(\n"
+        "            'SELECT date, close FROM price_history WHERE ticker = %s '\n"
+        "            'AND source = ' + dominant_source_sql(), [ticker]\n"
+        "        ).fetchall()\n"
+    )
     assert re.findall(r"pg_connection", before)
     assert re.findall(r"\bget_db\b|\bfetchall\b|dominant_source_sql",
                       _code_only(before), re.I)

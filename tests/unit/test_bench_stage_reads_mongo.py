@@ -48,7 +48,7 @@ The 2026-08-19 Mongo cutover killed both, silently, in opposite ways.
 
 WHY EACH TEST HERE WOULD HAVE BEEN RED BEFORE THE PORT
 ------------------------------------------------------
-Verified by running these assertions against `git show HEAD:scripts/bench_stage.py`
+Verified by running these assertions against `git show 77e6dc3:scripts/bench_stage.py`
 loaded as a separate module, not by reasoning about it.
 
   test_the_script_has_no_postgres_coupling

@@ -23,7 +23,7 @@ WHY EACH TEST HERE WOULD HAVE BEEN RED BEFORE THE PORT
   test_the_script_has_no_postgres_coupling
         `scripts.gate_zero_pg.scan` found 3 sites in the pre-port file:
         connection_import (line 180), get_db_call (182), execute_call (183).
-        Measured 2026-08-30 against `git show HEAD:scripts/news_attribution_ab.py`;
+        Measured 2026-08-30 against `git show 77e6dc3:scripts/news_attribution_ab.py`;
         it reports 0 for the ported file.
   test_the_coupling_scan_is_not_vacuous
         negative control — a scan that looked at nothing passes the assertion

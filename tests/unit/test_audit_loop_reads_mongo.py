@@ -43,7 +43,7 @@ read the way they do:
    and the script then printed a two-section clean bill of health and exited
    0. The first version of this suite asserted that behaviour was correct.
 
-Each test below fails against `git show HEAD:scripts/audit-loop.py`; the four
+Each test below fails against `git show 77e6dc3:scripts/audit-loop.py`; the four
 latest-cycle tests also fail against the first port.
 """
 from __future__ import annotations

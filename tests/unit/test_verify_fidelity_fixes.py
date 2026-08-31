@@ -33,7 +33,7 @@ pre-cutover cycles (70 desks) gives byte-identical (status, detail) pairs for
 all 42 (check, cycle) pairs, and identical `(ticker, overridden_from)` tuples
 for X1 on every one.
 
-Which of these fail against `git show HEAD:scripts/verify_fidelity_fixes.py`,
+Which of these fail against `git show 77e6dc3:scripts/verify_fidelity_fixes.py`,
 verified by loading that exact source and re-running them:
 
     test_the_script_has_no_postgres_coupling            RED (2 pg_connection lines)
@@ -62,7 +62,7 @@ def _load():
     """The script, loaded by path.
 
     `SCRIPT` is read at call time, not bound as a default, so the negative
-    control can point this at `git show HEAD:` output and re-run every test
+    control can point this at `git show 77e6dc3:` output and re-run every test
     below against the pre-port source.
     """
     spec = importlib.util.spec_from_file_location("vff_under_test", SCRIPT)

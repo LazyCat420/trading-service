@@ -41,7 +41,7 @@ WHAT WAS WRONG, MEASURED 2026-08-30 AGAINST BOTH STORES
 HOW THESE ARE KNOWN TO BE RED
 -----------------------------
 Eleven of the thirteen tests below fail against
-`git show HEAD:scripts/verify_audit_phases.py` — no `_as_desk`, no
+`git show 77e6dc3:scripts/verify_audit_phases.py` — no `_as_desk`, no
 `_newest_cycle`, no `_stamp_note`, and `_desks` goes through the pool and never
 touches `mongo_query`, so the recorders see zero calls.
 

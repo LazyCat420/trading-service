@@ -38,7 +38,7 @@ input, and `group_rows`' `("count", col)` — which is the middle spelling's
 inverse — counts False as a success. Both wrong answers are silent, and one of
 them would have read as "every tool call in the system failed".
 
-Every test below is RED against `git show HEAD:scripts/tool_audit.py`, and the
+Every test below is RED against `git show 77e6dc3:scripts/tool_audit.py`, and the
 three that pin behaviour rather than absence were each re-checked against a
 deliberately broken copy of the PORTED script (see the docstrings).
 """

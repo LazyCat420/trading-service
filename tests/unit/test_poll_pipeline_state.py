@@ -48,7 +48,7 @@ in place of `scripts.poll_pipeline_state` through a plugin that rebinds
 
 WHY EACH TEST HERE WOULD HAVE BEEN RED BEFORE THE PORT
 ------------------------------------------------------
-Read `git show HEAD:scripts/poll_pipeline_state.py` alongside this list; every
+Read `git show 77e6dc3:scripts/poll_pipeline_state.py` alongside this list; every
 claim below is a property of that file, not a recollection.
 
   test_the_script_has_no_postgres_coupling
