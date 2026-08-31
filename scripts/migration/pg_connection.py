@@ -254,9 +254,28 @@ def _ensure_pool() -> ConnectionPool:
     with _lock:
         if _pool is None:
             if os.getenv("TRADING_BOT_TEST_DB") == "1":
-                db_url = settings.TEST_DATABASE_URL
+                db_url = (os.getenv("TEST_DATABASE_URL")
+                          or getattr(settings, "TEST_DATABASE_URL", None))
+                if not db_url:
+                    raise SystemExit(
+                        "TRADING_BOT_TEST_DB=1 but no TEST_DATABASE_URL in the "
+                        "environment — the Postgres test database has no DSN")
             else:
-                db_url = settings.DATABASE_URL
+                # The ARCHIVE DSN, by name. This read `settings.DATABASE_URL`,
+                # which was REMOVED from the settings object on 2026-08-28
+                # (app/config/config.py:256) because app/ has no reader for it.
+                # Nothing updated this pool, so every archive tool that opens it
+                # — pg_to_mongo_backfill, migrate_all, check_natural_keys, the
+                # parity checkers — has been dying on
+                # `AttributeError: 'Settings' object has no attribute
+                # 'DATABASE_URL'` ever since. That is the same error the
+                # UNPORTED readers raise, so it read as the migration working
+                # as designed, and the tooling that would have MEASURED the
+                # migration was quietly unusable at the same time. The
+                # technicals backfill is 42,860 rows short and the tool that
+                # could have said so could not start.
+                from scripts.quality_census import pg_url
+                db_url = pg_url()
             logger.info(
                 f"[DB] Connecting to PostgreSQL: {db_url.split('@')[-1] if '@' in db_url else db_url}"
             )
