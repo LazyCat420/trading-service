@@ -257,6 +257,63 @@ def block_production_mongo(request):
 
 
 @pytest.fixture
+def live_mongo():
+    """READ-ONLY handle on the PRODUCTION Mongo database, for the live audit.
+
+    The Mongo twin of `live_db`, and it exists for the same reason. The autouse
+    `block_production_mongo` below raises on the real client, so a live audit
+    written against Mongo without this fixture does not read production — it
+    errors, or (if the error is swallowed, which is the shape that keeps
+    happening in this repo) reports an empty result indistinguishable from a
+    genuinely empty database. `live_db` documents that exact failure for the
+    Postgres side; the audit it protected has since been pointed at a store
+    frozen on 2026-08-19, which answers with July and never says so.
+
+    Requesting this overrides the autouse block with a real client, so a live
+    test can actually fail. It skips loudly when the audit is off rather than
+    degrading into a check that always passes.
+
+    READ-ONLY IS ENFORCED, not documented: every `mongo_store` write is patched
+    to raise. This points at production, and no audit is worth a stray write
+    there.
+    """
+    if not os.environ.get("TRADING_BOT_LIVE_AUDIT"):
+        pytest.skip("live audit — set TRADING_BOT_LIVE_AUDIT=1")
+
+    import pymongo
+
+    from app.config import settings
+    from app.db import mongo_store as _ms
+
+    try:
+        client = pymongo.MongoClient(
+            settings.PRISM_MONGO_URI, serverSelectionTimeoutMS=5000
+        )
+        client.admin.command("ping")
+    except Exception as e:  # noqa: BLE001
+        pytest.skip(f"MongoDB unreachable: {e}")
+
+    def _refuse(*a, **k):
+        raise AssertionError(
+            "the live audit is READ-ONLY — it is pointed at production Mongo"
+        )
+
+    writes = ("insert_docs", "upsert_doc", "bulk_upsert", "update_docs",
+              "delete_docs", "find_one_and_update")
+    patches = [patch("app.db.mongo.get_mongo_client", lambda: client),
+               patch("app.db.mongo_store.get_mongo_client", lambda: client)]
+    patches += [patch.object(_ms, name, _refuse) for name in writes]
+    for p_ in patches:
+        p_.start()
+    try:
+        yield client[_ms.TRADING_MONGO_DB]
+    finally:
+        for p_ in reversed(patches):
+            p_.stop()
+        client.close()
+
+
+@pytest.fixture
 def real_mongo():
     """A real Mongo database for tests that need one — never the production DB.
 

@@ -230,32 +230,38 @@ pytestmark_live = pytest.mark.skipif(
 
 
 def _recent_summaries(limit=10):
-    from scripts.migration.pg_connection import get_db
+    """The most recently finished `done` cycles, as the dicts `violations()` reads.
 
-    with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT cycle_id, status, tickers_final, collector_ok, collector_error,
-                   collector_skipped, collector_failures, analysis_results_count,
-                   buy_count, sell_count, hold_count, trade_attempted,
-                   trade_executed, trade_failed, primary_failure_reason
-            FROM cycle_run_summaries
-            WHERE status = 'done'
-            ORDER BY finished_at DESC NULLS LAST LIMIT %s
-            """,
-            [limit],
-        ).fetchall()
+    Ported off Postgres 2026-08-30. Two things the SQL did that the Mongo call
+    has to do deliberately:
+
+    * `ORDER BY finished_at DESC NULLS LAST` — Mongo sorts a missing/null field
+      FIRST on a descending sort, so the naive translation would fill the whole
+      LIMIT with cycles that never recorded a finish time and audit none of the
+      real ones. A `done` cycle without `finished_at` is itself a defect, so it
+      is filtered out here AND asserted on separately below rather than being
+      silently reordered away.
+    * the column list is the tuple `violations()` unpacks, so it stays explicit.
+    """
+    from app.db import mongo_query
 
     cols = ("cycle_id", "status", "tickers_final", "collector_ok", "collector_error",
             "collector_skipped", "collector_failures", "analysis_results_count",
             "buy_count", "sell_count", "hold_count", "trade_attempted",
             "trade_executed", "trade_failed", "primary_failure_reason")
+    rows = mongo_query.find_rows(
+        "cycle_run_summaries",
+        {"status": "done", "finished_at": {"$ne": None}},
+        cols,
+        sort=[("finished_at", -1)],
+        limit=limit,
+    )
     return [dict(zip(cols, r)) for r in rows]
 
 
 @pytestmark_live
 class TestLiveCyclesUpholdInvariants:
-    """Every test here MUST take the `live_db` fixture.
+    """Every test here MUST take the `live_mongo` fixture.
 
     2026-07-30: these three read `get_db` directly, and conftest's autouse
     `patch_get_db` meant they were reading a MagicMock — `fetchall()` returned
@@ -264,12 +270,16 @@ class TestLiveCyclesUpholdInvariants:
     subscripting `None`. The live audit measured nothing for as long as it
     existed.
 
-    `live_db` overrides that patch with a real read-only connection, so these
-    can fail. It also skips loudly when the audit is off, instead of degrading
+    2026-08-30: the same audit, pointed at the same Postgres, had become a
+    different kind of nothing. The archive froze at the cutover, so it answered
+    — with July — and said nothing about the cycles that have run since. The
+    reads are Mongo now, and `live_mongo` overrides the autouse
+    `block_production_mongo` with a real, WRITE-BLOCKED client so these can
+    actually fail. It skips loudly when the audit is off, instead of degrading
     into a check that always passes.
     """
 
-    def test_recent_completed_cycles_are_self_consistent(self, live_db):
+    def test_recent_completed_cycles_are_self_consistent(self, live_mongo):
         summaries = _recent_summaries()
         assert summaries, "no completed cycles on record — this proved nothing"
 
@@ -278,30 +288,67 @@ class TestLiveCyclesUpholdInvariants:
         }
         assert not failures, f"invariant violations: {failures}"
 
-    def test_no_live_outcome_is_scored_at_zero_confidence(self, live_db):
+    def test_a_finished_cycle_records_when_it_finished(self, live_mongo):
+        """The invariant `_recent_summaries`' filter depends on.
+
+        Without this, a growing population of `done` cycles with no
+        `finished_at` would shrink the audited set silently — the sort would
+        simply never reach them, and the test above would keep passing on an
+        ever-older ten.
+        """
+        from app.db import mongo_store
+
+        done = mongo_store.count_docs("cycle_run_summaries", {"status": "done"})
+        assert done, "no completed cycles at all — this proved nothing"
+        undated = mongo_store.count_docs(
+            "cycle_run_summaries", {"status": "done", "finished_at": None})
+        assert undated == 0, (
+            f"{undated} of {done} completed cycles have no finished_at; they are "
+            "invisible to every recency-ordered audit, including this file's")
+
+    def test_no_live_outcome_is_scored_at_zero_confidence(self, live_mongo):
         """Pipeline crashes must not re-enter decision_outcomes as trades."""
-        total = live_db.execute(
-            "SELECT COUNT(*) FROM decision_outcomes "
-            "WHERE outcome IN ('WIN','LOSS','FLAT')"
-        ).fetchone()[0]
+        from app.db import mongo_store
+
+        scored = {"outcome": {"$in": ["WIN", "LOSS", "FLAT"]}}
+        total = mongo_store.count_docs("decision_outcomes", scored)
         assert total, "no scored outcomes at all — this proved nothing"
 
-        row = live_db.execute(
-            "SELECT COUNT(*) FROM decision_outcomes "
-            "WHERE confidence = 0 AND outcome IN ('WIN','LOSS','FLAT')"
-        ).fetchone()
-        assert row[0] == 0, f"{row[0]} crash artifact(s) scored as trades"
+        bad = mongo_store.count_docs(
+            "decision_outcomes", {**scored, "confidence": 0})
+        assert bad == 0, f"{bad} crash artifact(s) scored as trades"
 
-    def test_no_analysis_price_of_zero_when_prices_exist(self, live_db):
+    def test_no_analysis_price_of_zero_when_prices_exist(self, live_mongo):
         """analysis_price feeds the Freshness Gate's next-cycle delta. A zero
-        baseline beside real price_history rows is the NaN-bar bug."""
-        row = live_db.execute(
-            """
-            SELECT COUNT(*) FILTER (WHERE ar.analysis_price = 0) bad, COUNT(*) n
-            FROM analysis_results ar
-            WHERE ar.created_at > NOW() - INTERVAL '2 days'
-              AND EXISTS (SELECT 1 FROM price_history p WHERE p.ticker = ar.ticker)
-            """
-        ).fetchone()
-        assert row[1], "no recent analysis rows with prices — this proved nothing"
-        assert row[0] == 0, f"{row[0]} zero-price snapshot(s) despite stored prices"
+        baseline beside real price_history rows is the NaN-bar bug.
+
+        The SQL was a correlated EXISTS against price_history. That table is
+        15.7M rows and the collection is no smaller, so the port does NOT
+        `$lookup` it: it takes the distinct tickers of the recent analysis rows
+        (tens, not millions) and asks the indexed question once per ticker.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        from app.db import mongo_store
+
+        since = datetime.now(timezone.utc) - timedelta(days=2)
+        recent = mongo_store.find_docs(
+            "analysis_results", {"created_at": {"$gt": since}},
+            projection={"_id": 0, "ticker": 1, "analysis_price": 1})
+        assert recent, "no analysis rows in the last two days — this proved nothing"
+
+        with_prices, bad = 0, []
+        seen: dict[str, bool] = {}
+        for row in recent:
+            ticker = row.get("ticker")
+            if ticker not in seen:
+                seen[ticker] = mongo_store.count_docs(
+                    "price_history", {"ticker": ticker}) > 0
+            if not seen[ticker]:
+                continue
+            with_prices += 1
+            if row.get("analysis_price") == 0:
+                bad.append(ticker)
+
+        assert with_prices, "no recent analysis rows with prices — this proved nothing"
+        assert not bad, f"{len(bad)} zero-price snapshot(s) despite stored prices: {sorted(set(bad))[:10]}"
