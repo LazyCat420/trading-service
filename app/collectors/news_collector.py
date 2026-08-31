@@ -193,18 +193,21 @@ async def _translate_foreign_text(text: str, publisher: str) -> str:
     prompt = f"You are a professional financial translator. Translate the following news snippet from {publisher} into English. Only return the English translation, no other text or explanation.\n\nText: {text}"
     
     try:
-        reply, _, _ = await call_prism_agent(
-            agent_id="translator",
-            user_message=prompt,
-            fallback_system_prompt="You are a professional financial translator. Output only the requested translation.",
-            fallback_agent_name="Translator",
-            temperature=0.1,
-            max_tokens=1000,
+        reply, _, _ = await asyncio.wait_for(
+            call_prism_agent(
+                agent_id="translator",
+                user_message=prompt,
+                fallback_system_prompt="You are a professional financial translator. Output only the requested translation.",
+                fallback_agent_name="Translator",
+                temperature=0.1,
+                max_tokens=1000,
+            ),
+            timeout=5.0,
         )
         if reply and len(reply.strip()) > 5:
             return reply.strip()
     except Exception as e:
-        logger.warning("[news] Translation failed for %s: %s", publisher, e)
+        logger.warning("[news] Translation failed/timed out for %s: %s", publisher, e)
     
     return text
 
@@ -219,16 +222,16 @@ async def _scrape_article_body_via_service(url: str, max_chars: int = 15000) -> 
     return ""
 
 
-async def _scrape_with_timeout(url: str, fallback_summary: str, timeout: float = 15.0) -> str:
+async def _scrape_with_timeout(url: str, fallback_summary: str, timeout: float = 4.0) -> str:
     """Scrape article body with a strict timeout, falling back to the API summary."""
     try:
         body = await asyncio.wait_for(_scrape_article_body_via_service(url), timeout=timeout)
         if body:
             return body
     except asyncio.TimeoutError:
-        logger.warning("[news] Scrape timeout (15s) for URL: %s, falling back to API summary", url)
+        logger.debug("[news] Scrape timeout (%.1fs) for URL: %s, using API summary", timeout, url)
     except Exception as e:
-        logger.warning("[news] Scrape failed for URL %s: %s, falling back to API summary", url, e)
+        logger.debug("[news] Scrape failed for URL %s: %s, using API summary", url, e)
     return fallback_summary
 
 
@@ -510,17 +513,25 @@ def url_fanout_exceeded(db=None, url: str | None = None, cap: int | None = None)
         return False
 
 
-def safe_emit(emit_cb, step: str, detail: str, status: str = "ok"):
+def safe_emit(emit_cb, step: str, detail: str, status: str = "ok", data: dict | None = None):
     if not emit_cb:
         return
     try:
         import inspect
         sig = inspect.signature(emit_cb)
         params = list(sig.parameters.values())
-        if len(params) >= 4:
-            emit_cb("discovery", step, detail, status=status)
-        else:
+        param_names = [p.name for p in params]
+        if len(params) >= 4 or "data" in param_names:
+            emit_cb(step, detail, status=status, data=data or {})
+        elif len(params) >= 3:
             emit_cb(step, detail, status)
+        else:
+            emit_cb(step, detail)
+    except TypeError:
+        try:
+            emit_cb(step, detail, status)
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -543,6 +554,7 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
         )
 
         async def process_rss_article(article):
+            nonlocal count
             title = article.get("title", "").strip()
             if not title:
                 return []
@@ -559,17 +571,20 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
 
             pub_val = article.get("published_at")
             if isinstance(pub_val, str):
-                published_at = datetime.datetime.fromisoformat(pub_val)
-                if published_at.tzinfo is None:
-                    published_at = published_at.replace(tzinfo=datetime.UTC)
+                try:
+                    published_at = datetime.datetime.fromisoformat(pub_val)
+                    if published_at.tzinfo is None:
+                        published_at = published_at.replace(tzinfo=datetime.UTC)
+                except Exception:
+                    published_at = datetime.datetime.now(datetime.UTC)
             else:
                 published_at = datetime.datetime.now(datetime.UTC)
 
-            # STRICT QUALITY GATE & BODY SCRAPING
+            # STRICT QUALITY GATE & BODY SCRAPING (fast timeout to avoid stalling feed)
             api_summary = summary
             summary = ""
             if url and (len(api_summary) < 150 or "..." in api_summary):
-                body = await _scrape_article_body_via_service(url)
+                body = await _scrape_with_timeout(url, api_summary, timeout=4.0)
                 if body and len(body) >= 150:
                     summary = body
 
@@ -633,27 +648,16 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
                     "is_general": True,
                     "tickers_list": [],
                 })
-            return res_items
 
-        # Process up to 15 items in parallel to speed up RSS sweeps
-        tasks = [process_rss_article(art) for art in items[:15]]
-        results_lists = await asyncio.gather(*tasks)
-
-        for item_list in results_lists:
-            if not item_list:
-                continue
-            for item in item_list:
+            # Stream save immediately as each article is processed
+            saved_any = False
+            for item in res_items:
                 if url_fanout_exceeded(None, item.get("url")):
                     continue
                 _qs, _qr = quality_at_write(item["title"], item["summary"])
                 from app.db import mongo_store
                 now_dt = datetime.datetime.now(datetime.UTC)
                 attr_val = "general" if item.get("is_general") else "detected"
-                # One upsert. The conversion left a second, near-identical
-                # one behind a writes_pg() gate that also lands in Mongo,
-                # so in dual/mongo_read mode every article was written
-                # twice — idempotent on the id key, but a wasted round trip
-                # per article, and a writes_pg flag controlling nothing.
                 mongo_store.upsert_doc(
                     "news_articles",
                     {"id": item["id"]},
@@ -675,23 +679,33 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
                     insert_only=True,
                 )
                 count += 1
+                saved_any = True
 
-            # Emit news scraped log for this unique item list
-            first_item = item_list[0]
-            if not first_item.get("is_general"):
+            # Emit news scraped log immediately for this unique item list
+            if saved_any and res_items:
+                first_item = res_items[0]
+                tkr_str = f"Extracted: {first_item['tickers_list']}" if not first_item.get("is_general") else "Extracted: General"
                 safe_emit(
                     emit_cb,
                     "news_scraped",
-                    f"📰 {first_item['publisher']}: '{first_item['title'][:80]}' -> Extracted: {first_item['tickers_list']}",
-                    status="ok"
+                    f"📰 {first_item['publisher']}: '{first_item['title'][:80]}' -> {tkr_str}",
+                    status="ok",
+                    data={
+                        "kind": "news_article_scraped",
+                        "publisher": first_item["publisher"],
+                        "title": first_item["title"][:100],
+                        "tickers": first_item["tickers_list"],
+                        "feed": feed_name,
+                        "is_general": first_item.get("is_general", False),
+                    }
                 )
-            else:
-                safe_emit(
-                    emit_cb,
-                    "news_scraped",
-                    f"📰 {first_item['publisher']}: '{first_item['title'][:80]}' -> Extracted: General",
-                    status="ok"
-                )
+
+            return res_items
+
+        # Process up to 15 items in parallel to speed up RSS sweeps
+        tasks = [process_rss_article(art) for art in items[:15]]
+        await asyncio.gather(*tasks)
+
     except Exception as e:
         logger.error(f"[news] {feed_name} FAILED: {type(e).__name__}: {e}", exc_info=True)
 
@@ -700,37 +714,14 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
 
 # Feeds are independent hosts, so they can be fetched in parallel; the
 # scraper's own per-domain rate limiter still paces anything that shares one.
-#
-# Raising this past 5 buys nothing. `scraper_client` holds ONE semaphore of 5
-# for every call it makes (scraper_client.py:50-53), so each feed's article
-# bodies queue behind the same global limit. Measured on the container over a
-# full 27-feed pass: concurrency 5 -> 105.0s, 10 -> 98.1s, 16 -> 102.8s. The
-# knob that would actually move it is that client semaphore, which also gates
-# the body upgrade and every other scrape, so it is not free to raise.
 FEED_CONCURRENCY = int(os.getenv("NEWS_FEED_CONCURRENCY", "5"))
 
 
 async def collect_all(limit_feeds: int | None = None, emit_cb: any = None) -> int:
-    """Fetch all RSS feeds. Returns total articles written.
-
-    This used to run **serially with a 2s sleep between feeds**, so 10 feeds
-    cost ~30s and both call sites passed ``limit_feeds=10`` to keep the
-    discovery phase affordable. The truncation was positional — the first 10
-    in dict order — and silent, so of 30 configured feeds only **9 produced a
-    single row in 30 days**, and every foreign-language feed sat past index 10
-    and had never been fetched at all. Non-English coverage was zero while the
-    config implied four sources.
-
-    Measured through the real collection path, the never-fetched feeds were
-    not broken: BBC 50 items, Kiplinger 50, Guardian 39, FT 25, Les Echos 20,
-    Handelsblatt 20, Federal Reserve 20. They were simply never asked.
-
-    Fetching them concurrently makes the whole set cheaper than the first ten
-    were, so there is nothing left to truncate. ``limit_feeds`` still works for
-    callers that want it, and now says what it dropped.
-    """
+    """Fetch all RSS feeds. Returns total articles written."""
     total = 0
     failed = 0
+    completed_feeds = 0
 
     # Combine regular and foreign feeds
     feeds_to_check = [(name, url, False) for name, url in RSS_FEEDS.items()]
@@ -747,17 +738,32 @@ async def collect_all(limit_feeds: int | None = None, emit_cb: any = None) -> in
     sem = asyncio.Semaphore(FEED_CONCURRENCY)
 
     async def _one(name: str, url: str, is_foreign: bool) -> int:
-        nonlocal failed
+        nonlocal failed, completed_feeds
         async with sem:
             try:
                 count = await collect_feed(name, url, emit_cb=emit_cb, is_foreign=is_foreign)
+                completed_feeds += 1
                 if count > 0:
                     logger.info(f"[news] {name} (Foreign={is_foreign}): {count} articles")
                 else:
                     logger.info(f"[news] {name}: no new articles")
+                safe_emit(
+                    emit_cb,
+                    "news_feed_progress",
+                    f"📡 Feed Progress: {completed_feeds}/{len(feeds_to_check)} checked ({name} -> {count} articles)",
+                    status="ok",
+                    data={
+                        "kind": "news_feed_progress",
+                        "completed_feeds": completed_feeds,
+                        "total_feeds": len(feeds_to_check),
+                        "feed_name": name,
+                        "feed_articles": count,
+                    }
+                )
                 return count
             except Exception as e:
                 failed += 1
+                completed_feeds += 1
                 logger.error(
                     f"[news] {name}: UNCAUGHT: {type(e).__name__}: {e}",
                     exc_info=True,

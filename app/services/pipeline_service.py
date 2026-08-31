@@ -1213,14 +1213,14 @@ class PipelineService:
                 
                 # Dynamic scraper run at the start of auto-discovery
                 if not tickers:
-                    def discovery_emit(step: str, detail: str, status: str = "running"):
+                    def discovery_emit(step: str, detail: str, status: str = "running", data: dict | None = None):
                         event = {
                             "ts": datetime.now(timezone.utc).isoformat(),
                             "phase": "discovery",
                             "step": step,
                             "detail": detail,
                             "status": status,
-                            "data": {}
+                            "data": data or {}
                         }
                         logger.info(f"[{cycle_id}][discovery][{step}] {detail}")
                         PipelineStateDB.append_events(cycle_id, [event])
@@ -1228,6 +1228,15 @@ class PipelineService:
                             send_system_log("AGENT", detail)
                         except Exception as sys_log_err:
                             logger.warning(f"[PipelineService] Failed to send system log: {sys_log_err}")
+                        
+                        try:
+                            cls._state.update({
+                                "progress": f"[DISCOVERY] {detail}",
+                                "phase": "discovery"
+                            })
+                            cls.save_state()
+                        except Exception:
+                            pass
                         
                     async def run_scraper_sync():
                         try:
