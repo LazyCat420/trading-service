@@ -100,31 +100,79 @@ def test_a_missing_mongo_document_reports_idle_not_a_stale_postgres_row(store):
     assert d.get("error") is None, "an empty collection is not an error state"
 
 
-def test_at_full_mongo_a_missing_document_does_not_read_postgres(store):
+def _postgres_is_unreachable(monkeypatch):
+    """Make EVERY route to Postgres raise, and return the list of attempts.
+
+    This replaces a patch of `scripts.migration.pg_connection.get_db`.
+    `app/services/pipeline_state.py` imports `mongo_query` and `mongo_store`
+    and nothing else — it has not named `get_db` since the cutover — so
+    patching that function intercepted a call the module cannot make. The test
+    passed because there was nothing to catch, which is the same reason it
+    would have passed if the module HAD started reading Postgres through any
+    other door.
+
+    Sabotaging the import is the version that cannot go quiet: psycopg,
+    psycopg2 and the archive pool are all made to explode, so a read attempted
+    by any route shows up as a failure of THIS test rather than as a silent
+    fallback.
+    """
+    import builtins
+
+    attempts: list[str] = []
+    real_import = builtins.__import__
+
+    def guard(name, *args, **kwargs):
+        if (name.startswith("psycopg")
+                or name.startswith("scripts.migration.pg_connection")):
+            attempts.append(name)
+            raise AssertionError(f"Postgres reached at mode `mongo` via {name!r}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guard)
+    return attempts
+
+
+def test_the_postgres_tripwire_actually_trips(monkeypatch):
+    """NEGATIVE CONTROL for the test below.
+
+    Without this, a tripwire that silently stopped matching would make the
+    next test pass forever — which is precisely how its predecessor failed.
+    """
+    attempts = _postgres_is_unreachable(monkeypatch)
+    with pytest.raises(AssertionError, match="Postgres reached"):
+        __import__("psycopg")
+    assert attempts == ["psycopg"]
+
+
+def test_at_full_mongo_a_missing_document_does_not_read_postgres(store, monkeypatch):
     """At `mongo` Postgres is frozen, so falling back would serve stale state."""
     store["mode"] = "mongo"
     store["docs"] = []
-    called = {"pg": False}
+    attempts = _postgres_is_unreachable(monkeypatch)
 
-    import contextlib
+    d = PipelineStateDB.get_state(summary_only=True)
 
-    from scripts.migration import pg_connection as connection
-
-    @contextlib.contextmanager
-    def fake_db():
-        called["pg"] = True
-        raise AssertionError("Postgres must not be read at mode `mongo`")
-        yield  # pragma: no cover
-
-    orig = connection.get_db
-    connection.get_db = fake_db
-    try:
-        d = PipelineStateDB.get_state(summary_only=True)
-    finally:
-        connection.get_db = orig
-
-    assert not called["pg"]
+    assert attempts == [], f"the module reached for Postgres: {attempts}"
     assert d["status"] == "idle"  # honestly empty, not stale
+
+
+def test_the_module_under_test_names_no_postgres_at_all():
+    """The static half. An import-time tripwire cannot see a lazy import that
+    never runs on this code path, so pin the source too."""
+    import ast
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[2] / "app" / "services" / "pipeline_state.py"
+    tree = ast.parse(src.read_text())
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names |= {a.name for a in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names.add(node.module)
+    offenders = sorted(n for n in names
+                       if n.startswith("psycopg") or "pg_connection" in n)
+    assert offenders == [], f"pipeline_state imports {offenders}"
 
 
 def test_a_mongo_read_error_is_reported_not_swallowed_into_idle(store, caplog):
