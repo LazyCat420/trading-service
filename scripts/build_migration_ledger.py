@@ -53,7 +53,16 @@ So DDL (CREATE/ALTER/DROP TABLE, CREATE INDEX ... ON) is recorded as evidence
 but excluded from the referenced/unreferenced decision, which reads DML only.
 """
 
+
 from __future__ import annotations
+
+import os
+import sys
+
+# `python scripts/<this>.py` puts scripts/ on sys.path[0], not the repo
+# root, so `from scripts.quality_census import pg_url` below would raise
+# ModuleNotFoundError and the script would exit 1 with no output.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse
 import json
@@ -148,9 +157,17 @@ RETIRED: dict[str, dict] = {
     },
 }
 
-DSN = os.environ.get(
-    "DATABASE_URL", "postgresql://trader:trading_bot_pass@10.0.0.16:5433/trading_bot"
-)
+# The archive DSN, resolved ONCE, by name. This was
+# `os.environ.get("DATABASE_URL", "postgresql://trader:trading_bot_pass@...")`
+# — a production DSN as the DEFAULT, so the script connected to the live
+# archive on any box regardless of the environment, and carried a password
+# that has never been rotated in a file anyone can read. Resolving through
+# quality_census.pg_url() means it prefers PG_ARCHIVE_URL from .env.migration,
+# warns if it had to fall back to DATABASE_URL, and fails loudly with the fix
+# in the message when neither is set.
+from scripts.quality_census import pg_url  # noqa: E402
+
+DSN = pg_url()
 
 # ---------------------------------------------------------------------------
 # Hard-coded shapes. These are decisions, not derivations, and are listed here

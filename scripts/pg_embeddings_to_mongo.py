@@ -20,6 +20,15 @@ Env (fall back to the standard NAS coordinates):
 """
 
 import os
+import sys
+
+# `python scripts/<this>.py` puts scripts/ on sys.path[0], not the repo
+# root, so `from scripts.quality_census import pg_url` below would raise
+# ModuleNotFoundError and the script would exit 1 with no output.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+import os
 import struct
 import sys
 import random
@@ -29,12 +38,20 @@ import psycopg2
 import pymongo
 from bson import Binary
 
-PG_DSN = os.getenv("PG_DSN") or os.getenv(
-    "DATABASE_URL", "postgresql://trader:trading_bot_pass@10.0.0.16:5433/trading_bot"
-).strip('"')
-MONGO_URI = os.getenv("MONGO_URI") or os.getenv(
-    "PRISM_MONGO_URI", "mongodb://sun:sun@10.0.0.16:27017/?directConnection=true"
-).strip('"')
+# Same change as build_migration_ledger.py: the production DSN was the DEFAULT
+# of an os.getenv, so this connected to the live archive on any box and shipped
+# an unrotated password in plain text. pg_url() prefers PG_ARCHIVE_URL from
+# .env.migration and exits with the fix in the message when nothing is set.
+from scripts.quality_census import pg_url  # noqa: E402
+
+PG_DSN = os.getenv("PG_DSN") or pg_url()
+# Same defect as the Postgres DSN above, in the other direction: a Mongo URI
+# WITH CREDENTIALS as the default of an os.getenv. app.config.settings already
+# loads PRISM_MONGO_URI from .env, so there is no reason to carry a second copy
+# of the password in a script.
+from app.config import settings as _settings  # noqa: E402
+
+MONGO_URI = (os.getenv("MONGO_URI") or _settings.PRISM_MONGO_URI).strip('"')
 MONGO_DB = os.getenv("MONGO_DB", "trading_bot")
 
 BATCH = 2000
