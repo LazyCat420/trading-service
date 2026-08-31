@@ -85,3 +85,27 @@ plumbing; land the riders before or with the deploy.
    retire branch `hold-wall-release`.
 
 Fix plan and benchmark ladder: `~/.claude/plans/also-can-we-run-magical-pascal.md`.
+
+## Fixes landed (same day, master `c0e0ecd`..`96937b4`, pushed NOT deployed)
+
+1. `c0e0ecd` — memory injection restored behind `MEMORY_CONTEXT_ENABLED`
+   (parameter store, default 0=off so the benchmark owns the flip);
+   `memory_context_state` stamp makes off / on:<chars> / crashed:<ExcType>
+   distinguishable. Proof: 4 red-first tests importing the REAL modules
+   (`tests/unit/test_memory_injection_seam.py`); bench_stage `memory_retrieval`
+   returned 4,587 chars for NVDA through the real retriever.
+2. `2eec45d` (+ lazy-agent-service `d17fc22`/`f8c6b6c`) — annotate ids are
+   strings end to end. The CATALOG is the load-bearing half: the SDK registry
+   lets a catalog entry overwrite a decorator entry, never the reverse — the
+   decorator-only fix was proven inert by its own schema test.
+3. `c40f8be` — riders 1-3 above (fallback-rate summary log, marked
+   `published_at_estimated`, no per-article `save_state()`); rider 4 proved a
+   no-change (final summary is `api_summary` either way and
+   `is_truncated_content` still gates it) and is CLOSED.
+4. `96937b4` — bench_stage grew `memory_retrieval` + `whiteboard_build` stages
+   (registry now 21; ch.40's "seventeen" was stale at 19).
+
+Suite: 5,823 passed. The four non-green are accounted: migration_ledger red BY
+DESIGN (28bcf74's real drift), dynamic_trigger an xdist flake (passes alone,
+27/27), two sqlglot collection errors = worktree fallback interpreter, green on
+the primary venv (toolchain red, not code red).
