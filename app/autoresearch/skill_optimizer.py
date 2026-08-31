@@ -33,11 +33,19 @@ import hashlib
 import logging
 import re
 import time
+from datetime import datetime, timezone
 
 from app.autoresearch.scorecard import (
     VERDICT_CONTAMINATED, VERDICT_HEALTHY, VERDICT_REGRESSED, regression_verdict,
 )
 from app.db import mongo_query, mongo_store
+
+
+def _now():
+    """`created_at` was a Postgres column DEFAULT on both tables this module
+    inserts into. Postgres supplied it; Mongo supplies nothing, and the
+    converted INSERT never named the column because the SQL never did."""
+    return datetime.now(timezone.utc)
 
 logger = logging.getLogger(__name__)
 
@@ -715,7 +723,7 @@ def _save_skill(
     new_version: int,
 ) -> None:
     mongo_store.update_docs('agent_skills', {'agent_name': agent_name, 'status': 'active'}, {'$set': {'status': 'archived'}})
-    mongo_store.insert_docs('agent_skills', [{'agent_name': agent_name, 'version': new_version, 'skill_text': skill_text, 'skill_hash': skill_hash, 'cycle_id': cycle_id, 'score': round(float(score), 4), 'action': action, 'rationale': rationale, 'status': 'active'}])
+    mongo_store.insert_docs('agent_skills', [{'agent_name': agent_name, 'version': new_version, 'skill_text': skill_text, 'skill_hash': skill_hash, 'cycle_id': cycle_id, 'score': round(float(score), 4), 'action': action, 'rationale': rationale, 'status': 'active', 'created_at': _now()}])
 
 
 def _rollback_skill(agent_name: str, from_version: int, cycle_id: str,
@@ -778,6 +786,6 @@ def _log_rejection(
     rationale: str,
 ) -> None:
     try:
-        mongo_store.insert_docs('rejected_skill_edits', [{'agent_name': agent_name, 'skill_hash': skill_hash, 'cycle_id': cycle_id, 'reason': reason, 'score_delta': round(float(score_delta), 4) if score_delta is not None else None, 'rationale': rationale}])
+        mongo_store.insert_docs('rejected_skill_edits', [{'agent_name': agent_name, 'skill_hash': skill_hash, 'cycle_id': cycle_id, 'reason': reason, 'score_delta': round(float(score_delta), 4) if score_delta is not None else None, 'rationale': rationale, 'created_at': _now()}])
     except Exception as e:  # noqa: BLE001 — audit log, never fatal
         logger.debug("[SkillOpt] rejection log failed for %s: %s", agent_name, e)

@@ -44,7 +44,12 @@ scratch/
 logs/
 logs_local/
 data/
-memory/
+# ANCHORED. `memory/` matched every directory of that name at any depth,
+# including the tracked source package `app/services/memory/` — so `git add`
+# refused a path inside it and `git status` had to be trusted instead. A rule
+# that hides a source tree is one bad `git clean` from deleting it.
+# `data/` above already covers `data/memory/`.
+/memory/
 plans/
 reports/
 test_mkdir_exist/

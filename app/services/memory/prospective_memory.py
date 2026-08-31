@@ -23,7 +23,7 @@ class ProspectiveMemoryStore:
         """Store a new prospective memory (future trigger/reminder)."""
         mem_id = str(uuid.uuid4())
 
-        mongo_store.insert_docs('prospective_memory', [{'id': mem_id, 'ticker': ticker, 'intention': intention, 'trigger_condition': trigger_condition, 'priority': priority, 'status': 'pending', 'trigger_at': trigger_at, 'context': context}])
+        mongo_store.insert_docs('prospective_memory', [{'id': mem_id, 'ticker': ticker, 'intention': intention, 'trigger_condition': trigger_condition, 'priority': priority, 'status': 'pending', 'trigger_at': trigger_at, 'context': context, 'created_at': datetime.now(timezone.utc)}])
 
         logger.info(f"[PROSPECTIVE] Wrote reminder for {ticker}: {intention}")
         return mem_id

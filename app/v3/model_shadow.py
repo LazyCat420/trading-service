@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from app.db import mongo_store
 
 logger = logging.getLogger(__name__)
@@ -99,7 +100,15 @@ def classify_shadow(text: str, tokens: int, loops: int) -> tuple[str, str | None
 def _record(row: dict) -> None:
     try:
         from app.db import mongo_store
-        mongo_store.insert_docs('model_shadow_runs', [{'cycle_id': row["cycle_id"], 'ticker': row["ticker"], 'agent_name': row["agent_name"], 'endpoint': row["endpoint"], 'bot_id': row.get("bot_id") or "unknown", 'primary_model': row.get("primary_model"), 'primary_provider': row.get("primary_provider"), 'primary_elapsed_ms': row.get("primary_elapsed_ms") or 0, 'primary_tokens': row.get("primary_tokens") or 0, 'primary_loops': row.get("primary_loops") or 0, 'primary_text': (row.get("primary_text") or "")[:_MAX_TEXT], 'shadow_model': row.get("shadow_model"), 'shadow_provider': row.get("shadow_provider"), 'shadow_elapsed_ms': row.get("shadow_elapsed_ms") or 0, 'shadow_tokens': row.get("shadow_tokens") or 0, 'shadow_loops': row.get("shadow_loops") or 0, 'shadow_outcome': row["shadow_outcome"], 'shadow_error': row.get("shadow_error") or None, 'shadow_text': (row.get("shadow_text") or "")[:_MAX_TEXT], 'system_prompt': row.get("system_prompt"), 'user_prompt': row.get("user_prompt")}])
+        mongo_store.insert_docs('model_shadow_runs', [{'cycle_id': row["cycle_id"], 'ticker': row["ticker"], 'agent_name': row["agent_name"], 'endpoint': row["endpoint"], 'bot_id': row.get("bot_id") or "unknown", 'primary_model': row.get("primary_model"), 'primary_provider': row.get("primary_provider"), 'primary_elapsed_ms': row.get("primary_elapsed_ms") or 0, 'primary_tokens': row.get("primary_tokens") or 0, 'primary_loops': row.get("primary_loops") or 0, 'primary_text': (row.get("primary_text") or "")[:_MAX_TEXT], 'shadow_model': row.get("shadow_model"), 'shadow_provider': row.get("shadow_provider"), 'shadow_elapsed_ms': row.get("shadow_elapsed_ms") or 0, 'shadow_tokens': row.get("shadow_tokens") or 0, 'shadow_loops': row.get("shadow_loops") or 0, 'shadow_outcome': row["shadow_outcome"], 'shadow_error': row.get("shadow_error") or None, 'shadow_text': (row.get("shadow_text") or "")[:_MAX_TEXT], 'system_prompt': row.get("system_prompt"), 'user_prompt': row.get("user_prompt"),
+                                                 # `created_at` was `DEFAULT now()` on the Postgres table, so the
+                                                 # INSERT never named it and the codemod had nothing to carry
+                                                 # across. 31 of the 45 shadow runs recorded since the cutover
+                                                 # have no timestamp at all, and pipeline_service's
+                                                 # `{"$max": "$created_at"}` and jetson_benchmark's replay sort
+                                                 # both skip a document that lacks it — so the shadow's "last
+                                                 # run" reads as older than it is.
+                                                 'created_at': datetime.now(timezone.utc)}])
     except Exception as e:
         logger.warning("[ModelShadow] Failed to record %s: %s", row.get("agent_name"), e)
 

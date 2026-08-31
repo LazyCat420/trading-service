@@ -56,7 +56,7 @@ def _ensure_seed_channels():
     for handle, name in DEFAULT_CHANNELS:
         doc = mongo_query.find_row('youtube_channels', {'channel_handle': handle}, ['channel_handle'])
         if not doc:
-            mongo_store.insert_docs('youtube_channels', [{'channel_handle': handle, 'display_name': name, 'added_by': 'system', 'is_active': True}])
+            mongo_store.insert_docs('youtube_channels', [{'channel_handle': handle, 'display_name': name, 'added_by': 'system', 'is_active': True, 'added_at': datetime.datetime.now(datetime.timezone.utc)}])
             added += 1
     if added:
         logger.info(
@@ -81,7 +81,7 @@ def _log_discovered_channel(
         new_avg = ((existing[1] or 0) * existing[0] + view_count) / new_count
         mongo_store.update_docs('discovered_channels', {'channel_handle': channel_handle}, {'$set': {'discovery_count': new_count, 'avg_view_count': new_avg, 'last_seen': datetime.datetime.now(datetime.timezone.utc)}})
     else:
-        mongo_store.insert_docs('discovered_channels', [{'channel_handle': channel_handle, 'display_name': display_name, 'discovery_count': 1, 'avg_view_count': view_count, 'status': 'pending'}])
+        mongo_store.insert_docs('discovered_channels', [{'channel_handle': channel_handle, 'display_name': display_name, 'discovery_count': 1, 'avg_view_count': view_count, 'status': 'pending', 'first_seen': datetime.datetime.now(datetime.timezone.utc), 'last_seen': datetime.datetime.now(datetime.timezone.utc)}])
 
 
 async def collect_channel(

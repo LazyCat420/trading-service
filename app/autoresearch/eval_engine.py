@@ -426,7 +426,12 @@ def update_tool_playbook():
         for agent_name, tool_name, uses, avg_score in rows:
             seq = f"Primary tool: {tool_name} (avg score: {avg_score:.1f} over {uses} uses)"
 
-            mongo_store.update_docs('tool_playbook', {'agent_role': agent_name, 'task_type': 'general', 'market_context': 'any', 'tool_name': tool_name}, {'$set': {'recommended_tool_sequence': seq, 'score_stats': json.dumps({"uses": int(uses), "avg_score": round(float(avg_score), 2)}), 'last_validated_at': datetime.now(timezone.utc)}, '$setOnInsert': {'id': str(uuid.uuid4()), 'required_preconditions': 'None'}}, upsert=True)
+            mongo_store.update_docs('tool_playbook', {'agent_role': agent_name, 'task_type': 'general', 'market_context': 'any', 'tool_name': tool_name}, {'$set': {'recommended_tool_sequence': seq, 'score_stats': json.dumps({"uses": int(uses), "avg_score": round(float(avg_score), 2)}), 'last_validated_at': datetime.now(timezone.utc)}, '$setOnInsert': {'id': str(uuid.uuid4()), 'required_preconditions': 'None',
+                                                                                 # DEFAULT CURRENT_TIMESTAMP in Postgres, supplied by nobody
+                                                                                 # in Mongo: 19 of the 21 playbook rows written since the
+                                                                                 # cutover have none, and agent_runner sorts the playbook by
+                                                                                 # (last_validated_at, created_at) DESC to pick an agent's tips.
+                                                                                 'created_at': datetime.now(timezone.utc)}}, upsert=True)
 
         logger.info(
             "[EvalWorker] Updated tool playbook: %d agent/tool pairs upserted.", len(rows)

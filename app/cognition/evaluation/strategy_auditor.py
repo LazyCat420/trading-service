@@ -474,7 +474,7 @@ async def evaluate_strategy(
         eval_id = str(uuid.uuid4())
 
         # Save to database
-        mongo_store.insert_docs('strategy_evaluations', [{'id': eval_id, 'cycle_id': latest_cycle_id, 'total_score': total_score, 'risk_score': risk_score, 'performance_score': perf_score, 'robustness_score': rob_score, 'logic_score': log_score, 'operational_score': op_score, 'full_analysis': json.dumps(payload)}])
+        mongo_store.insert_docs('strategy_evaluations', [{'id': eval_id, 'cycle_id': latest_cycle_id, 'total_score': total_score, 'risk_score': risk_score, 'performance_score': perf_score, 'robustness_score': rob_score, 'logic_score': log_score, 'operational_score': op_score, 'full_analysis': json.dumps(payload), 'timestamp': datetime.datetime.now(datetime.timezone.utc)}])
 
         logger.info(f"Strategy Evaluated! Total Score: {total_score}")
 
