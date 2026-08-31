@@ -85,13 +85,33 @@ import logging
 import os
 import statistics
 import sys
+import contextlib
 from collections import Counter
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-logging.disable(logging.CRITICAL)  # gate replay is chatty; we want the report only
+# NOT at import. `logging.disable(CRITICAL)` is PROCESS-WIDE and permanent —
+# it silences every logger in the interpreter, including the caller's, and
+# nothing here can put it back for them. Merely IMPORTING this module used to
+# do that: pytest imports every module under tests/unit at collection, so
+# importing `tests/unit/test_gate_ablation_reads_mongo.py` killed logging for
+# the whole session and three `caplog` assertions in `test_doctrine_mining`
+# failed several files later, with nothing connecting the two. That file's
+# `_restore_logging` fixture put it back for its OWN tests only; when they were
+# deselected the import still fired and nothing undid it.
+#
+# The silence is wanted — a gate replay is chatty and the report is the point —
+# but it belongs to the RUN, not to the import. `main()` enters this.
+@contextlib.contextmanager
+def _quiet_replay():
+    """Silence the replay's chatter for the duration of one run, then restore."""
+    logging.disable(logging.CRITICAL)
+    try:
+        yield
+    finally:
+        logging.disable(logging.NOTSET)
 
 import app.v3.orchestrator as O  # noqa: E402
 import app.v3.telemetry as T  # noqa: E402
@@ -426,7 +446,9 @@ def main() -> int:
     args = ap.parse_args()
 
     fires: list = []
-    with patch.object(T, "record_guardrail_firing", lambda *a, **k: fires.append(a)):
+    # `_quiet_replay` is entered HERE and not at import — see its docstring.
+    with _quiet_replay(), \
+         patch.object(T, "record_guardrail_firing", lambda *a, **k: fires.append(a)):
         desks = load_desks(args.since)
         print(f"loaded {len(desks)} desks since {args.since}")
         blind = desks_without_created_at()
