@@ -15,6 +15,26 @@
 
 psycopg[binary,pool]==3.2.6
 
+# psycopg2 as well as psycopg3, and they are DIFFERENT PACKAGES. Four retained
+# tools import the v2 API — `pg_embeddings_to_mongo`, `db_audit`,
+# `build_migration_ledger` and `.claude/hooks/_check_idle_txn` — while the
+# archive pool and the parity instruments use v3.
+#
+# Pinned here on 2026-08-30. Until then it was in NO requirements file at all,
+# installed by hand into trading-service/.venv and into the system python, and
+# that gap was load-bearing in the wrong direction: `_check_cycle_running.py`
+# asserted in prose that psycopg2 "is not installed", which was true of the
+# IMAGE and false of the box — and the false half is what let eight silent
+# readers keep answering from the frozen archive.
+#
+# Not uninstalled, deliberately. ch.106 proposed removing it to make the
+# remaining readers loud; the readers are ported now and `DATABASE_URL` is out
+# of `.env` (5f6410f), so they are loud already, and uninstalling would take the
+# retained archive tooling with it. Same rule as psycopg3: migration tooling,
+# never `requirements.in`, or it lands in the image and
+# tests/unit/test_app_image_has_no_pg_driver.py fails the build.
+psycopg2-binary==2.9.12
+
 # The SQL parser `scripts/sql_to_mongo.py` translates through, and therefore
 # what `scripts/codemod_pg_to_mongo.py` needs to run. Pinned here on
 # 2026-08-19 because it was in NO requirements file at all — installed by hand
