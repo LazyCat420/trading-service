@@ -51,21 +51,12 @@ FOREIGN_TABLES = {t for tables in FOREIGN_OWNERS.values() for t in tables}
 COUNTERS = ("seq_scan", "idx_scan", "n_tup_ins", "n_tup_upd", "n_tup_del")
 
 
-def pg_url() -> str:
-    url = os.environ.get("DATABASE_URL")
-    if not url:
-        for candidate in (Path(__file__).resolve().parents[1] / ".env",
-                          Path(__file__).resolve().parents[2] / "trading-service" / ".env"):
-            if candidate.exists():
-                for line in candidate.read_text().splitlines():
-                    if line.startswith("DATABASE_URL"):
-                        url = line.split("=", 1)[1].strip().strip('"').strip("'")
-                        break
-            if url:
-                break
-    if not url:
-        raise SystemExit("DATABASE_URL not found in env or .env")
-    return url.replace("postgresql+asyncpg://", "postgresql://")
+# The archive DSN comes from ONE place, and it is not this file. This used to
+# be a byte-equivalent private copy of `quality_census.pg_url()`, which meant
+# the seam close had two copies to find; worse, only one of them would have
+# learned to prefer PG_ARCHIVE_URL, and the retirement instrument would have
+# been the one still reading the ambient DATABASE_URL.
+from scripts.quality_census import pg_url  # noqa: E402
 
 
 def snapshot() -> dict:

@@ -40,15 +40,64 @@ CHECKLIST = DOCS / "DATA_COLLECTION_IMPROVEMENT_CHECKLIST.md"
 LEDGER = REPO / "app" / "db" / "migration_ledger.json"
 
 
+_ARCHIVE_FALLBACK_WARNED = False
+
+
+def _dsn_from_file(path: Path, key: str) -> str | None:
+    """One `KEY=value` out of a dotenv file, without importing dotenv."""
+    try:
+        for line in path.read_text().splitlines():
+            if line.startswith(key + "=") or line.startswith(key + " ="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return None
+
+
 def pg_url() -> str:
-    url = os.environ.get("DATABASE_URL")
+    """The Postgres ARCHIVE DSN, for the tooling that legitimately wants it.
+
+    Resolution order, and the order is the point:
+
+      1. `PG_ARCHIVE_URL` in the environment
+      2. `PG_ARCHIVE_URL` in `.env.migration` — the file
+         `.env.migration.example` tells you to create, loaded EXPLICITLY here
+         rather than into the ambient environment
+      3. `DATABASE_URL` from the environment or `.env`, with a warning
+
+    Step 3 is the compatibility path and it is on its way out. An archive DSN
+    sitting in the ambient environment is exactly how ~36 legacy scripts kept
+    reporting July numbers as current: they did not ask for the archive, they
+    just found it. When `DATABASE_URL` is finally dropped from `.env` the only
+    thing that should break is code that never said which store it wanted —
+    and this function will already be reading the right variable for everything
+    that did.
+
+    The warning names the caller, because "something read the archive" is not
+    actionable and "purge_bad_data read the archive" is.
+    """
+    global _ARCHIVE_FALLBACK_WARNED
+
+    url = os.environ.get("PG_ARCHIVE_URL") or _dsn_from_file(
+        REPO / ".env.migration", "PG_ARCHIVE_URL")
     if not url:
-        for line in (REPO / ".env").read_text().splitlines():
-            if line.startswith("DATABASE_URL"):
-                url = line.split("=", 1)[1].strip().strip('"').strip("'")
-                break
+        url = os.environ.get("DATABASE_URL") or _dsn_from_file(REPO / ".env",
+                                                               "DATABASE_URL")
+        if url and not _ARCHIVE_FALLBACK_WARNED:
+            _ARCHIVE_FALLBACK_WARNED = True
+            import traceback
+            caller = "?"
+            for frame in reversed(traceback.extract_stack()[:-1]):
+                if "quality_census" not in frame.filename:
+                    caller = f"{Path(frame.filename).name}:{frame.lineno}"
+                    break
+            print(f"[pg_url] {caller} reached the ARCHIVE through DATABASE_URL. "
+                  f"That variable is being removed; put PG_ARCHIVE_URL in "
+                  f".env.migration (see .env.migration.example).", file=sys.stderr)
     if not url:
-        raise SystemExit("DATABASE_URL not found in env or .env")
+        raise SystemExit(
+            "no archive DSN: set PG_ARCHIVE_URL in .env.migration "
+            "(see .env.migration.example), or DATABASE_URL in the environment")
     return url.replace("postgresql+asyncpg://", "postgresql://")
 
 
