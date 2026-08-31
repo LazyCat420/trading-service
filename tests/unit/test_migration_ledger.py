@@ -201,16 +201,29 @@ def test_adopted_tables_declare_the_key_the_database_actually_has(ledger):
     that drifts. Checked against the live primary key when the database is
     reachable; skipped, never faked, when it is not.
     """
-    import os
-
-    dsn = os.getenv("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL not set")
+    # IT ASKS FOR THE ARCHIVE BY NAME. This read `os.getenv("DATABASE_URL")`
+    # directly, and that variable was removed from `.env` on 2026-08-30 — so
+    # this test stopped FAILING and started SKIPPING, which is worse than
+    # either. It had a real finding to report (`agent_tasks` declares
+    # key_field='task_id' and the database's primary key is `[]`), and closing
+    # the seam made the finding disappear rather than fixing it. A check that
+    # goes quiet when the environment changes is the failure this whole
+    # migration has been about.
+    #
+    # `quality_census.pg_url()` is the ONE place that resolves the archive DSN
+    # — PG_ARCHIVE_URL from `.env.migration` first — so going through it keeps
+    # this alive past the seam close, and keeps it honest: it skips only when
+    # there genuinely is no archive to ask.
+    try:
+        from scripts.quality_census import pg_url
+        dsn = pg_url()
+    except SystemExit as exc:          # pg_url exits with the fix in the message
+        pytest.skip(f"no archive DSN: {exc}")
     try:
         import psycopg
         conn = psycopg.connect(dsn, connect_timeout=8)
     except Exception as exc:  # noqa: BLE001
-        pytest.skip(f"database unreachable: {type(exc).__name__}: {exc}")
+        pytest.skip(f"archive unreachable: {type(exc).__name__}: {exc}")
 
     adopted = [r for r in ledger["tables"] if r["scope_basis"] == "adopted"]
     assert adopted, "no adopted tables in the ledger"

@@ -355,6 +355,18 @@
       "disposition": "archive-only",
       "owner": "trading",
       "why": "Builds the Postgres test database."
+    },
+    {
+      "path": "tests/unit/test_the_archive_dsn_is_not_ambient.py",
+      "mechanisms": [
+        "env-dsn",
+        "literal-dsn",
+        "quality_census.pg_url"
+      ],
+      "can_connect": false,
+      "disposition": "parity-only",
+      "owner": "",
+      "why": "Guards the closed seam: neither repo's .env may define DATABASE_URL, and the archive must still be reachable through PG_ARCHIVE_URL. It NAMES those variables in order to forbid one and require the other \u2014 the scanner cannot tell a guard from a reader, and this is a guard."
     }
   ]
 }
