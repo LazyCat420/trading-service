@@ -14,111 +14,15 @@
       "why": "Reports leaked idle-in-transaction sessions. A Postgres concept about a server that is still up and still shared with treesearch-service."
     },
     {
-      "path": "scripts/agent_fidelity_audit.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Agent prompt-vs-artifact fidelity."
-    },
-    {
-      "path": "scripts/agent_latency_report.py",
-      "mechanisms": [
-        "driver:psycopg2",
-        "env-dsn",
-        "literal-dsn"
-      ],
-      "can_connect": true,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Per-cycle agent latency; has a --self-test replaying ch.34, so the port is verifiable."
-    },
-    {
-      "path": "scripts/agent_scorecard.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Per-agent scorecard."
-    },
-    {
-      "path": "scripts/audit-loop.py",
-      "mechanisms": [
-        "driver:psycopg",
-        "env-dsn"
-      ],
-      "can_connect": true,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Replays agent tool usage against DOMAIN_BOUNDARIES; app/agents/tool_whitelists.py is live."
-    },
-    {
-      "path": "scripts/audit_ticker_blocklist.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Ticker blocklist audit."
-    },
-    {
-      "path": "scripts/bench_stage.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Read-only single-stage sandbox; a live debugging tool."
-    },
-    {
-      "path": "scripts/board_quality_telemetry.py",
-      "mechanisms": [
-        "driver:psycopg2",
-        "env-dsn"
-      ],
-      "can_connect": true,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Per-ticker/regime/failure-reason board quality map. The questions are live."
-    },
-    {
       "path": "scripts/build_migration_ledger.py",
       "mechanisms": [
         "driver:psycopg2",
-        "env-dsn",
-        "literal-dsn"
+        "quality_census.pg_url"
       ],
       "can_connect": true,
       "disposition": "parity-only",
       "owner": "trading",
       "why": "Derives app/db/migration_ledger.json from both repos' SQL + the live archive."
-    },
-    {
-      "path": "scripts/calibrate_confidence_floor.py",
-      "mechanisms": [
-        "driver:psycopg",
-        "env-dsn"
-      ],
-      "can_connect": true,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "The confidence-floor sweep; the floor is a live policy gate."
-    },
-    {
-      "path": "scripts/calibration_report.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Calibration shelf."
     },
     {
       "path": "scripts/check_generated_specs.py",
@@ -153,44 +57,15 @@
       "why": "An archive census by construction: table list, ticker_reports, shared_desk phases. Label the output archive-only."
     },
     {
-      "path": "scripts/decision_score_report.py",
+      "path": "scripts/export_pg_column_defaults.py",
       "mechanisms": [
-        "pg_connection"
+        "driver:psycopg",
+        "quality_census.pg_url"
       ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "The reader that makes decision_scores look write-only. Porting it closes that finding from the other end."
-    },
-    {
-      "path": "scripts/execution_quality.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Execution quality report."
-    },
-    {
-      "path": "scripts/factor_backtest.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Factor backtest over price_history/technicals."
-    },
-    {
-      "path": "scripts/gate_ablation.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Policy-gate ablation; the gates are live."
+      "can_connect": true,
+      "disposition": "archive-only",
+      "owner": "",
+      "why": "Snapshots information_schema off the archive into docs/migration/pg_column_defaults.json so scripts/mongo_default_gaps.py needs no Postgres. Same class as generate_schema_manifest.py: it reads the archive by design, and it is the reason the gap instrument survives the seam close."
     },
     {
       "path": "scripts/generate_schema_manifest.py",
@@ -202,38 +77,6 @@
       "disposition": "archive-only",
       "owner": "trading",
       "why": "Reads information_schema off the archive to regenerate schema_manifest.json."
-    },
-    {
-      "path": "scripts/grade_hmm_regime.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Grades the regime engine."
-    },
-    {
-      "path": "scripts/grade_regime_calls.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Grades regime calls."
-    },
-    {
-      "path": "scripts/inflight_peak.py",
-      "mechanisms": [
-        "driver:psycopg2",
-        "env-dsn",
-        "literal-dsn"
-      ],
-      "can_connect": true,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Reconstructs peak vLLM concurrency; confirm whether it reads prism's store rather than trading_bot before porting."
     },
     {
       "path": "scripts/init_test_db.py",
@@ -263,9 +106,10 @@
       "path": "scripts/migration/pg_connection.py",
       "mechanisms": [
         "driver:pgvector,psycopg,psycopg_pool",
-        "settings.DATABASE_URL"
+        "env-dsn",
+        "quality_census.pg_url"
       ],
-      "can_connect": false,
+      "can_connect": true,
       "disposition": "archive-only",
       "owner": "trading",
       "why": "The archive pool itself; app/db/connection.py moved here at teardown."
@@ -301,31 +145,11 @@
       "why": "One-shot DDL helper for the archive."
     },
     {
-      "path": "scripts/news_attribution_ab.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "News attribution A/B."
-    },
-    {
-      "path": "scripts/news_extraction_ab.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "News extraction A/B."
-    },
-    {
       "path": "scripts/pg_embeddings_to_mongo.py",
       "mechanisms": [
         "driver:psycopg2",
-        "env-dsn",
-        "literal-dsn"
+        "literal-dsn",
+        "quality_census.pg_url"
       ],
       "can_connect": true,
       "disposition": "archive-only",
@@ -336,7 +160,7 @@
       "path": "scripts/pg_quiescence.py",
       "mechanisms": [
         "driver:psycopg",
-        "env-dsn"
+        "quality_census.pg_url"
       ],
       "can_connect": true,
       "disposition": "parity-only",
@@ -352,16 +176,6 @@
       "disposition": "archive-only",
       "owner": "trading",
       "why": "The backfill itself."
-    },
-    {
-      "path": "scripts/poll_pipeline_state.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Polls pipeline_state, which is Mongo. check_pipeline_state.py already does this correctly."
     },
     {
       "path": "scripts/prove_mongo.py",
@@ -408,160 +222,6 @@
       "why": "Measures every quality gate against the archive; owns the shared pg_url() helper."
     },
     {
-      "path": "scripts/refresh_technicals.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Recomputes technicals."
-    },
-    {
-      "path": "scripts/regime_overlay_backtest.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Regime overlay backtest."
-    },
-    {
-      "path": "scripts/research_loop_report.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Research loop report."
-    },
-    {
-      "path": "scripts/residual_alpha_report.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Residual alpha report."
-    },
-    {
-      "path": "scripts/self_healing_watchdog.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Referenced by tests/unit/test_repair_scope.py; the repair queue is live."
-    },
-    {
-      "path": "scripts/shadow_report.py",
-      "mechanisms": [
-        "driver:psycopg",
-        "env-dsn"
-      ],
-      "can_connect": true,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "PORT FIRST. Runs clean today and prints 2026-07-29 rows citing tournament_result, deleted 08-28. The empirical input for promoting the contradiction shadow to a real gate."
-    },
-    {
-      "path": "scripts/simplification_baseline.py",
-      "mechanisms": [
-        "driver:psycopg2",
-        "env-dsn"
-      ],
-      "can_connect": true,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Stage-0 invariant baseline; .simplification_baselines/* still name tournament.py, consistent with frozen input."
-    },
-    {
-      "path": "scripts/simulate_freshness_thresholds.py",
-      "mechanisms": [
-        "driver:psycopg",
-        "settings.DATABASE_URL",
-        "env-dsn"
-      ],
-      "can_connect": true,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Cited by live app code (technical_baseline, cycle_scheduler) and a live test."
-    },
-    {
-      "path": "scripts/skill_scorecard.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Skill scorecard."
-    },
-    {
-      "path": "scripts/skill_version_scorecard.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Skill-version scorecard."
-    },
-    {
-      "path": "scripts/smoke_test_streaming.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Streaming smoke test."
-    },
-    {
-      "path": "scripts/stress_tests/memory_soak.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Memory soak instrument."
-    },
-    {
-      "path": "scripts/tool_audit.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Tool usage audit; tool_usage_stats is live in Mongo."
-    },
-    {
-      "path": "scripts/verify_audit_phases.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Verifies cycle audit phases."
-    },
-    {
-      "path": "scripts/verify_fidelity_fixes.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Verifies the fidelity fixes."
-    },
-    {
       "path": "scripts/verify_translations.py",
       "mechanisms": [
         "driver:psycopg",
@@ -571,16 +231,6 @@
       "disposition": "parity-only",
       "owner": "trading",
       "why": "SQL->Mongo translation parity."
-    },
-    {
-      "path": "scripts/vol_forecast_race.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Volatility forecaster race."
     },
     {
       "path": "tests/conftest.py",
@@ -615,14 +265,25 @@
       "why": "Tests archive constraints."
     },
     {
-      "path": "tests/unit/test_cycle_invariants.py",
+      "path": "tests/unit/test_archive_dsn_resolution.py",
+      "mechanisms": [
+        "literal-dsn",
+        "quality_census.pg_url"
+      ],
+      "can_connect": false,
+      "disposition": "archive-only",
+      "owner": "",
+      "why": "Pins quality_census.pg_url()'s resolution order \u2014 PG_ARCHIVE_URL first, DATABASE_URL with a warning second. It NAMES those variables, which is why the scanner sees it; it opens no connection."
+    },
+    {
+      "path": "tests/unit/test_archive_pool_contract.py",
       "mechanisms": [
         "pg_connection"
       ],
       "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Patches scripts.migration.pg_connection.get_db for code that reads Mongo."
+      "disposition": "archive-only",
+      "owner": "",
+      "why": "The retained archive pool's two contract traps: get_db() is a context manager, PooledCursor has no rowcount. Moved out of test_persistent_research_firm.py on 2026-08-30, whose three subjects are all Mongo-only."
     },
     {
       "path": "tests/unit/test_migration_ledger.py",
@@ -636,14 +297,34 @@
       "why": "Compares the ledger to the live archive; currently the reason it is red on a box with no DSN."
     },
     {
-      "path": "tests/unit/test_persistent_research_firm.py",
+      "path": "tests/unit/test_mongo_write_smoke.py",
       "mechanisms": [
-        "pg_connection"
+        "driver:psycopg,psycopg2"
       ],
       "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Same shape."
+      "disposition": "parity-only",
+      "owner": "",
+      "why": "Controls for scripts/mongo_write_smoke.py. It names psycopg/psycopg2 because it asserts that the tripwire BLOCKS them \u2014 the scanner cannot tell a guard from a reader, and this is a guard."
+    },
+    {
+      "path": "tests/unit/test_news_extraction_ab.py",
+      "mechanisms": [
+        "settings.DATABASE_URL"
+      ],
+      "can_connect": false,
+      "disposition": "archive-only",
+      "owner": "",
+      "why": "Asserts the ported script carries no DSN literal; the needle strings ('5433', 'trading_bot_pass', 'DATABASE_URL') are what the scanner sees."
+    },
+    {
+      "path": "tests/unit/test_no_credentialed_dsn_literals.py",
+      "mechanisms": [
+        "literal-dsn"
+      ],
+      "can_connect": false,
+      "disposition": "archive-only",
+      "owner": "",
+      "why": "Repo-wide guard against a DSN with a password in executable code. It PLANTS one in a tmp_path fixture to prove the scanner is not vacuous, which is the only reason it appears here."
     },
     {
       "path": "tests/unit/test_pg_write_guard.py",
@@ -654,26 +335,6 @@
       "disposition": "archive-only",
       "owner": "trading",
       "why": "Tests the guard that protects the archive."
-    },
-    {
-      "path": "tests/unit/test_pipeline_state_mongo_read.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Same shape; the subject is already Mongo."
-    },
-    {
-      "path": "tests/unit/test_regime_overlay.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Same shape."
     },
     {
       "path": "tests/unit/test_schema_init_is_resilient.py",
@@ -694,16 +355,6 @@
       "disposition": "archive-only",
       "owner": "trading",
       "why": "Builds the Postgres test database."
-    },
-    {
-      "path": "tests/unit/test_v3_events_db.py",
-      "mechanisms": [
-        "pg_connection"
-      ],
-      "can_connect": false,
-      "disposition": "mongo",
-      "owner": "trading",
-      "why": "Same shape."
     }
   ]
 }

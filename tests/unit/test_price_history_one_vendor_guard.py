@@ -112,16 +112,29 @@ KNOWN_UNPINNED: dict[str, int] = {
     # SQL freshness probe became a distinct-ticker count, which is
     # vendor-immune by construction rather than merely out of the SQL
     # scanner's sight (the Mongo scan checks the same file).
-    "scripts/factor_backtest.py": 1,
-    "scripts/gate_ablation.py": 1,
+    # 0 as of 2026-08-30, all four below: the Mongo port took their SQL
+    # literals with it and the reads now go through `app.quant.returns`'
+    # `_one_vendor` / `keep_dominant_source`, which is the canonical pin. They
+    # are NOT gone — the Mongo scan sees them, and the combined floor above
+    # confirms it: 15 SQL + 61 Mongo before, 3 SQL + 73 Mongo after, both 76.
+    # Three of the four (residual_alpha_report, regime_overlay_backtest,
+    # vol_forecast_race) each replaced TWO direct reads with one call through a
+    # shared helper that reads once, and the +1s elsewhere covered it.
+    #
+    # residual_alpha_report's port also closed a real hole rather than moving
+    # it: the old `LIMIT sessions` returned n ROWS spanning about n/2 DATES on a
+    # dual-vendor name, and 107 of the 255 tickers decided on since 2026-05-01
+    # carry two vendors.
+    "scripts/factor_backtest.py": 0,
+    "scripts/gate_ablation.py": 0,
     # 0 as of 2026-08-30: the SQL `SELECT ticker FROM fundamentals UNION SELECT
     # ticker FROM price_history` became two distinct_values calls. A
     # distinct-ticker list is vendor-immune by construction — the same reason
     # cycle_healthcheck left this list — so the read moves to the Mongo scan
     # below and needs no budget there either.
     "scripts/mine_shkreli_doctrine.py": 0,
-    "scripts/residual_alpha_report.py": 2,
-    "scripts/simulate_freshness_thresholds.py": 3,
+    "scripts/residual_alpha_report.py": 0,
+    "scripts/simulate_freshness_thresholds.py": 0,
 }
 
 _FROM_PRICE_HISTORY = re.compile(r"from\s+price_history", re.I)

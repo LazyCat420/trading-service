@@ -56,7 +56,17 @@ INSTRUMENTS = (
 # re-measured when work lands is a ratchet with the teeth filed off.
 # Lower it whenever a script is converted, moved under scripts/migration/, or
 # deleted; never raise it.
-SCRIPTS_RATCHET = 241
+# 241 -> 74 on 2026-08-30, when the last 35 Postgres readers outside app/ were
+# ported in one session. What is left is the retained archive tooling, which
+# reads Postgres on purpose: the pool, the backfill, the seeder, the parity
+# instruments and their tests. `docs/migration/pg_script_inventory.json` says
+# which and why, one row per file, and `test_pg_script_inventory.py` fails if a
+# PG-bound file has no row.
+#
+# This is the last big drop this number can make. From here it moves only if
+# retained tooling is deleted — so if you find yourself lowering it again,
+# check that a reader was RETIRED and not merely hidden.
+SCRIPTS_RATCHET = 74
 
 
 @pytest.mark.parametrize("rel", INSTRUMENTS)

@@ -44,17 +44,55 @@ def merged():
     return merge(scan(), stored)
 
 
+#: Files that read Postgres ON PURPOSE and are not going anywhere: the archive
+#: pool, the backfill, the seeder and the parity instruments. They are what the
+#: retirement is measured WITH, so they outlive every port by construction.
+#: Naming them is a non-vacuity floor that cannot decay as the work succeeds —
+#: unlike a headcount, which does.
+PERMANENT_ARCHIVE_READERS = frozenset({
+    "scripts/migration/pg_connection.py",
+    "scripts/pg_to_mongo_backfill.py",
+    "scripts/quality_census.py",
+    "scripts/pg_quiescence.py",
+    "scripts/migrate_all.py",
+})
+
+
 def test_the_scan_is_not_vacuous(merged):
     """A scan that looked at nothing satisfies every assertion below.
 
     This is the same failure the soak-instrument guard names: "a scan that finds
     nothing because it LOOKED at nothing passes just as happily".
+
+    THE FLOOR IS NAMED, NOT COUNTED, and the reason is written into the count's
+    own obituary. `len(rows) >= 40` said "it was 67 on 2026-08-30 and shrinks by
+    ports and deletions, not by a factor of two overnight" — and then 35 files
+    were ported in one session and it fell to 33, correctly. A population floor
+    on a population the work exists to shrink goes red for success and gets
+    lowered until it means nothing; this is the third such floor in this repo to
+    do it (see COMBINED_READ_FLOOR in test_price_history_one_vendor_guard.py and
+    SCRIPTS_RATCHET in test_soak_instruments_read_mongo.py).
+
+    So the check is now that the scanner still finds the files that CANNOT
+    leave. If those go missing the scanner is broken; if the count merely falls,
+    the migration worked.
     """
     rows, _new, _gone = merged
-    assert len(rows) >= 40, (
-        f"only {len(rows)} Postgres-bound files found — that is the scanner "
-        "failing, not the shelf having emptied. It was 67 on 2026-08-30 and "
-        "shrinks by ports and deletions, not by a factor of two overnight."
+    seen = {r["path"] for r in rows}
+    missing = sorted(PERMANENT_ARCHIVE_READERS - seen)
+    assert not missing, (
+        f"the scanner cannot see {missing} — these read Postgres deliberately "
+        "and permanently, so their absence is the SCANNER failing, not the "
+        "shelf emptying. (Delete one from PERMANENT_ARCHIVE_READERS only when "
+        "the file itself is genuinely gone, and say where it went.)"
+    )
+    # A small numeric floor is kept underneath, as a second signal: the named
+    # five plus the rest of the retained archive tooling. Lower it only for a
+    # DELETION, and record which file went.
+    assert len(rows) >= 25, (
+        f"only {len(rows)} Postgres-bound files found. The five named above are "
+        "present, so the scanner works — but the retained archive tooling alone "
+        "is more than this, so something has been deleted without a note."
     )
 
 
