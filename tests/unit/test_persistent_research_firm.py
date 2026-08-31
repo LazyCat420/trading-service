@@ -43,8 +43,16 @@ the equivalent assertion here compares the whole `$in` list.
 the caller listed; `group_rows` returns tuples in its own group/agg order. The
 fixtures below honour that.
 
-`question_ledger` still uses `get_db`, so its tests keep the `FakeCursor` path
-unchanged.
+## The archive contracts moved out (2026-08-30)
+
+`question_ledger` is Mongo-only too now, so all three subjects of this file are.
+The two tests that pinned the RETAINED archive pool's contracts — `get_db()`
+must be used as a context manager, and `PooledCursor` exposes no `rowcount` —
+were the last reason this file imported `scripts.migration.pg_connection`, which
+made a test of Mongo code read as Postgres-coupled. They now live in
+`tests/unit/test_archive_pool_contract.py`, unchanged. The `FakeCursor` below
+stays: it is what the module-level docstring above is about, and it still
+documents the shape both services got wrong.
 """
 
 from contextlib import contextmanager
@@ -188,31 +196,6 @@ def patch_queue_mongo(fake):
             return False
 
     return _Both()
-
-
-# ─────────────────────────────── the contract ───────────────────────────────
-
-
-def test_get_db_never_hands_back_something_you_can_execute_on():
-    """The invariant both services violated, asserted against whatever
-    `get_db` currently is — the real one, or the autouse test fake.
-
-    Pinning it here rather than to `@contextmanager` internals is deliberate:
-    the fixture must be held to the same contract as production, because the
-    previous fixture satisfied both the correct and the incorrect usage and so
-    could not fail. If the fake is ever loosened back to
-    `MagicMock(return_value=cursor)`, this goes red.
-    """
-    from scripts.migration.pg_connection import get_db
-
-    handle = get_db()
-    assert not hasattr(handle, "execute"), (
-        "get_db() returned something with .execute — the contract is "
-        "`with get_db() as db:`, and a fake that allows `db = get_db()` "
-        "cannot catch the bug that shipped on 2026-08-07"
-    )
-    with get_db() as db:
-        assert hasattr(db, "execute"), "the yielded object must be a cursor"
 
 
 # ───────────────────────────── schema validation ─────────────────────────────
@@ -609,24 +592,6 @@ def test_clean_questions_drops_fragments_and_dedupes_preserving_order():
         "What is the segment margin trend into FY26?",
         "Does the covenant reset before the refinancing window?",
     ]
-
-
-def test_pooled_cursor_has_no_rowcount_so_counts_must_use_returning():
-    """The second contract trap in the same file.
-
-    `PooledCursor` wraps a psycopg cursor but exposes no `rowcount` and no
-    `__getattr__` passthrough. Code that counts affected rows with
-    `cur.rowcount` raises `AttributeError`, and inside a `try/except` that
-    becomes a metric permanently reporting 0 — indistinguishable from "nothing
-    happened". Both ledger updaters use `RETURNING id` instead.
-    """
-    from scripts.migration.pg_connection import PooledCursor
-
-    assert not hasattr(PooledCursor, "rowcount")
-    assert not hasattr(PooledCursor, "__getattr__"), (
-        "a passthrough would make rowcount work again — if one is added "
-        "deliberately, delete this test and say so"
-    )
 
 
 def test_mark_not_reasked_counts_rows_it_actually_closed():
