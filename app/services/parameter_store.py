@@ -105,6 +105,15 @@ PARAMETER_REGISTRY: dict[str, ParamSpec] = {
         default=40, min_value=20, max_value=70, direction=RISK_DOWN, kind="int",
         description="Board conviction_vector.data_quality below this blocks the trade.",
     ),
+    # Memory injection (2026-08-31): the retrieval seam was silently dead
+    # 08-18..08-31 (ghost _ensure_schema import). Restored behind this flag so
+    # the paired on/off benchmark owns the flip and OFF stays distinguishable
+    # from CRASHED (see orchestrator's memory_context_state stamp).
+    "MEMORY_CONTEXT_ENABLED": ParamSpec(
+        default=0, min_value=0, max_value=1, direction=RISK_NEUTRAL, kind="int",
+        description="0=off (no Past Cycle Memory reaches prompts), 1=on "
+                    "(canonical brief + episodic/working-memory addenda).",
+    ),
     # Risk exits
     "MAX_PORTFOLIO_DRAWDOWN_PCT": ParamSpec(
         default=0.25, min_value=0.10, max_value=0.40, direction=RISK_UP,

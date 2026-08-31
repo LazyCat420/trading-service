@@ -141,3 +141,16 @@ def update_memory_validation_stats(
             'updated_at': now_str,
         }}
     )
+
+
+def _ensure_schema() -> None:
+    """Compat no-op. Schema creation was a Postgres concept; Mongo collections
+    are created on first write and indexes live in app/db/mongo.py.
+
+    Kept because app/services/memory/repository.py imports it function-locally
+    and scripts/init_test_db.py references it by name. Its silent absence
+    (deleted in b6b29d3, 2026-08-18) made every MemoryRetriever.retrieve raise
+    ImportError, which orchestrator.py swallowed — no memory reached any agent
+    prompt for 13 days. Guarded by tests/unit/test_memory_injection_seam.py.
+    """
+    return None

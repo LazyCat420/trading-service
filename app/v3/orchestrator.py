@@ -562,35 +562,53 @@ async def run_v3_pipeline(
             logger.debug("[V3] %s: directive injection failed (non-fatal): %s",
                          ticker, dir_err)
 
-    # Retrieve past cycle memory for this ticker (non-fatal)
+    # Retrieve past cycle memory for this ticker (non-fatal).
+    # Gated 2026-08-31: this seam was silently DEAD 08-18..08-31 — b6b29d3
+    # deleted _ensure_schema while repository.py kept a function-local import
+    # of it, so every retrieve raised ImportError and this try swallowed it.
+    # "Off" and "crashed" were indistinguishable. The flag plus the
+    # memory_context_state stamp make the three states measurable:
+    # off / on:<chars> / on:empty / crashed:<ExceptionType>.
     try:
-        from app.services.memory.retriever import MemoryRetriever
-        retrieval_results = MemoryRetriever.retrieve(ticker=ticker)
-        brief_text = ""
-        if retrieval_results:
-            memory_brief = MemoryRetriever.build_memory_brief(retrieval_results)
-            brief_text = memory_brief.get("brief_text", "")
-
-        # Working-memory (reminders/facts/patterns) + hybrid semantic recall.
-        # These were previously injected only via the dead RLM prompt path and
-        # never reached live agents. Char-capped inside the builders.
-        addenda = ""
+        from app.services.parameter_store import get_param
+        _memory_on = bool(get_param("MEMORY_CONTEXT_ENABLED"))
+    except Exception:
+        _memory_on = False
+    if not _memory_on:
+        desk.cycle_metadata["memory_context_state"] = "off"
+    else:
         try:
-            from app.services.retrieval_context import build_memory_addenda
-            addenda = build_memory_addenda(ticker)
-        except Exception as addenda_err:
-            logger.debug("[V3] %s: memory addenda failed (non-fatal): %s",
-                         ticker, addenda_err)
+            from app.services.memory.retriever import MemoryRetriever
+            retrieval_results = MemoryRetriever.retrieve(ticker=ticker)
+            brief_text = ""
+            if retrieval_results:
+                memory_brief = MemoryRetriever.build_memory_brief(retrieval_results)
+                brief_text = memory_brief.get("brief_text", "")
 
-        combined = "\n\n".join(b for b in (brief_text, addenda) if b)
-        if combined:
-            desk.cycle_metadata["memory_context"] = combined
-            logger.info(
-                "[V3] %s: Injected memory context (%d canonical entries, %d chars total)",
-                ticker, len(retrieval_results or []), len(combined),
-            )
-    except Exception as e:
-        logger.warning("[V3] %s: Memory retrieval failed (non-fatal): %s", ticker, e)
+            # Working-memory (reminders/facts/patterns) + hybrid semantic recall.
+            # These were previously injected only via the dead RLM prompt path and
+            # never reached live agents. Char-capped inside the builders.
+            addenda = ""
+            try:
+                from app.services.retrieval_context import build_memory_addenda
+                addenda = build_memory_addenda(ticker)
+            except Exception as addenda_err:
+                logger.debug("[V3] %s: memory addenda failed (non-fatal): %s",
+                             ticker, addenda_err)
+
+            combined = "\n\n".join(b for b in (brief_text, addenda) if b)
+            if combined:
+                desk.cycle_metadata["memory_context"] = combined
+                desk.cycle_metadata["memory_context_state"] = f"on:{len(combined)}"
+                logger.info(
+                    "[V3] %s: Injected memory context (%d canonical entries, %d chars total)",
+                    ticker, len(retrieval_results or []), len(combined),
+                )
+            else:
+                desk.cycle_metadata["memory_context_state"] = "on:empty"
+        except Exception as e:
+            desk.cycle_metadata["memory_context_state"] = f"crashed:{type(e).__name__}"
+            logger.warning("[V3] %s: Memory retrieval failed (non-fatal): %s", ticker, e)
 
     # Retrieve the previous cycle's SharedDesk ("Manila Envelope")
     # NOTE: Load ONCE and reuse for both envelope injection and triage gate
