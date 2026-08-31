@@ -22,13 +22,59 @@ and reverses the threshold without reading why.
 Every band is scored against the **always-long null over the same rows**, never
 against zero. In a rising tape any long-biased strategy beats zero.
 
+READS MONGODB. Ported off Postgres 2026-08-30, and the port is not cosmetic:
+
+  * The read reached the archive through the migration package's connection
+    helper, whose pool asks the settings object for an archive DSN field that
+    was deleted on 2026-08-28. Every run since has raised AttributeError
+    before printing a single line, so this report has answered nothing for the
+    whole of the post-cutover period.
+  * Had the DSN survived, the failure would have been quieter and worse. The
+    archive's newest `decision_outcomes` row is 2026-08-19 22:56:58 and is
+    frozen there, so the sweep would have kept re-deriving a LIVE policy floor
+    from a dead population while printing the same confident table.
+  * The frozen copy is also WRONG about rows it does hold. Three pre-cutover
+    BUYs were resolved after it (do-bfe576b3e1fa -0.40, do-46ce583de666 -1.19,
+    do-2ee3f21b30ea +1.32); Postgres still records all three as unresolved
+    with `pnl_pct` NULL, forever, so a reader bound to it does not merely miss
+    new decisions — it misgrades old ones.
+
+Parity, measured 2026-08-30 over this exact population (the archive SQL run
+against Postgres vs. the query below run against Mongo):
+
+    BUY   pg n=907 mean +2.7607   mongo n=911 mean +2.7443
+          0 rows only in pg, 4 only in Mongo (3 resolved after the cutover,
+          1 created after it) -> SUPERSET, which is the pass
+    SELL  pg n=868 mean +0.9831   mongo n=868 mean +0.9831, identical row for
+          row in created_at order -> MATCH
+
+The excluded corrupt population is identical in both stores: confidence=0 363,
+lesson_stored ~ 'PIPELINE FAILURE' 145, ~ 'Failed to parse' 206.
+
+REPRODUCING THE ANCHOR. The collection is live and grows, so a bare run can
+never return the 2026-07-26 numbers again. `--as-of DATE` restricts the
+population to decisions RESOLVED on or before DATE — exactly what this script
+could have seen on the day it was run. `--as-of 2026-07-26` returns, from
+Mongo on 2026-08-30:
+
+    n=829  null=+2.88   <72: n=136 mean -1.84 (-4.72 vs null)
+                       >=72: n=693 mean +3.80 (+0.93 vs null)
+
+One row wider in the low band than the recorded 135, and 0.03pp apart on the
+high band. It does not reconstruct to the row, and cannot: outcomes are
+re-resolved after the fact and `pnl_pct` is rewritten when they are, so the
+population "as of 2026-07-26" is not a thing any later store can rebuild
+exactly. Both bands, both signs and both gaps reproduce; that is the claim.
+
 Usage:
     python scripts/calibration_report.py
     python scripts/calibration_report.py --action BUY --min-n 30
+    python scripts/calibration_report.py --as-of 2026-07-26
 """
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import sys
 from pathlib import Path
 
@@ -36,7 +82,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.migration.pg_connection import get_db  # noqa: E402
+from app.db import mongo_query  # noqa: E402
 from app.quant.stat_gates import (  # noqa: E402
     is_oos_degradation,
     newey_west_tstat,
@@ -46,8 +92,59 @@ from app.quant.stat_gates import (  # noqa: E402
 BANDS = ((0, 60), (60, 66), (66, 72), (72, 78), (78, 85), (85, 101))
 CANDIDATE_THRESHOLDS = (60, 65, 68, 70, 72, 75, 78)
 
+COLLECTION = "decision_outcomes"
 
-def fetch(action: str) -> list[tuple[int, float]]:
+#: The two lesson texts that mark a pipeline failure scored as a trade, as one
+#: alternation — `LIKE '%PIPELINE FAILURE%' OR LIKE '%Failed to parse%'`.
+#: Neither string contains a regex metacharacter, so the substring semantics of
+#: LIKE and of an unanchored `$regex` are the same here. Case-SENSITIVE on
+#: purpose, because `LIKE` is: `$options: "i"` would widen the exclusion the
+#: first time a lesson is written in another case, and that is a change to the
+#: calibration population, not a tidy-up. Same constant as
+#: `scripts/calibrate_confidence_floor.py`, deliberately — the two reports must
+#: not disagree about which rows are real decisions.
+_FAILED_LESSON = {"$regex": "PIPELINE FAILURE|Failed to parse"}
+
+
+def clean_query(action: str, as_of: dt.datetime | None = None) -> dict:
+    """The WHERE clause of the archive SELECT, as a Mongo filter.
+
+    `WHERE resolved_at IS NOT NULL AND action = %s AND pnl_pct IS NOT NULL
+     AND confidence IS NOT NULL AND confidence > 0
+     AND COALESCE(lesson_stored,'') NOT LIKE '%PIPELINE FAILURE%'
+     AND COALESCE(lesson_stored,'') NOT LIKE '%Failed to parse%'`
+
+    Only the `lesson_stored` clause fails to translate by eye, and it is the
+    one that decides the whole finding. The SQL COALESCEs a NULL lesson to ''
+    and then asks NOT LIKE, so a decision that stored no lesson at all is
+    KEPT. In Mongo that field is null on 679 documents and ABSENT on 56 more,
+    and the two obvious negations drop every one of them: `{"$ne": None}` and
+    `{"$nin": [None, ""]}` are membership tests that a missing field fails.
+    `{"$not": {...}}` is the complement — it matches any document the inner
+    expression does not match, including one that lacks the field — which is
+    exactly what COALESCE-to-'' buys. Measured 2026-08-30 on BUY: the `$not`
+    form returns 911 rows and either membership form 778 — the same 133
+    lesson-less decisions missing (185 across BUY and SELL), with no error on
+    either side and nothing in the output that looks wrong.
+
+    `IS NOT NULL` -> `{"$ne": None}` is right for the rest: post-cutover
+    documents can lack `pnl_pct` and `resolved_at` entirely (35 of each today,
+    unresolved decisions), and `$ne: None` excludes a missing field just as
+    `IS NOT NULL` excluded a NULL.
+    """
+    resolved: dict = {"$ne": None}
+    if as_of is not None:
+        resolved["$lt"] = as_of
+    return {
+        "resolved_at": resolved,
+        "action": action,
+        "pnl_pct": {"$ne": None},
+        "confidence": {"$ne": None, "$gt": 0},
+        "lesson_stored": {"$not": _FAILED_LESSON},
+    }
+
+
+def fetch(action: str, as_of: dt.datetime | None = None) -> list[tuple[int, float]]:
     """Resolved outcomes for `action`, EXCLUDING pipeline failures.
 
     `decision_outcomes` carries 366 rows that are not decisions at all: 363
@@ -65,24 +162,47 @@ def fetch(action: str) -> list[tuple[int, float]]:
     Concretely, before this filter the SELL 0-59 band read n=392 mean -5.55%
     and the whole SELL sweep was dominated by it. A floor "justified" by that
     band would be gating on parse failures, not on confidence.
+
+    WHICH CLAUSE DOES THE WORK, measured 2026-08-30. Almost all of it is
+    `confidence > 0`: drop that alone and SELL 0-59 goes from n=37 mean -3.27%
+    straight back to n=393 mean -5.53%, i.e. the recorded disaster band. The
+    two `NOT LIKE` clauses add only 8 rows across both actions, because a row
+    whose lesson names the failure is nearly always a confidence=0 row too.
+    They are kept because "nearly always" is not always, and because the
+    exclusion is quoted in this docstring as two rules; a reader who trusts
+    the sentence should get the rows the sentence describes.
+
+    Rows come back in `created_at` order because the chronological split below
+    is the check the finding rests on. Sorting is only chronological while
+    `created_at` is a BSON Date: a string timestamp sorts above every Date and
+    would quietly deal the halves wrong rather than raise, so the type is
+    counted and a violation is reported instead of averaged over.
     """
-    with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT confidence, pnl_pct
-            FROM decision_outcomes
-            WHERE resolved_at IS NOT NULL
-              AND action = %s
-              AND pnl_pct IS NOT NULL
-              AND confidence IS NOT NULL
-              AND confidence > 0
-              AND COALESCE(lesson_stored, '') NOT LIKE '%%PIPELINE FAILURE%%'
-              AND COALESCE(lesson_stored, '') NOT LIKE '%%Failed to parse%%'
-            ORDER BY created_at
-            """,
-            [action],
-        ).fetchall()
-    return [(int(r[0]), float(r[1])) for r in rows]
+    strings = mongo_query.count(COLLECTION, {"created_at": {"$type": "string"}})
+    if strings:
+        print(f"⚠ {strings} {COLLECTION} documents store created_at as a STRING, "
+              f"not a Date.\n  BSON sorts every string above every date, so the "
+              f"chronological split below\n  is NOT chronological. Fix the "
+              f"timestamps before reading the halves.", file=sys.stderr)
+
+    rows = mongo_query.find_rows(
+        COLLECTION,
+        clean_query(action, as_of),
+        ["confidence", "pnl_pct"],
+        sort=[("created_at", 1)],
+    )
+    return [(int(c), float(p)) for c, p in rows]
+
+
+def _as_of(value: str) -> dt.datetime:
+    """`--as-of 2026-07-26` -> the exclusive upper bound 2026-07-27T00:00Z.
+
+    Inclusive of the named day, because the population a run on that day saw
+    is everything resolved BY the end of it.
+    """
+    day = dt.datetime.strptime(value, "%Y-%m-%d").date()
+    return dt.datetime.combine(day + dt.timedelta(days=1), dt.time(),
+                               tzinfo=dt.timezone.utc)
 
 
 def _wilson(hits: int, n: int) -> tuple[float, float]:
@@ -101,9 +221,14 @@ def main() -> int:
     ap.add_argument("--action", default="BUY", choices=("BUY", "SELL"))
     ap.add_argument("--min-n", type=int, default=20,
                     help="Hide bands/thresholds thinner than this (default 20)")
+    ap.add_argument("--as-of", type=_as_of, metavar="YYYY-MM-DD", default=None,
+                    help="Only decisions RESOLVED on or before this date — what "
+                         "a run on that day would have seen. Use it to "
+                         "reproduce a recorded measurement against a "
+                         "collection that has grown since.")
     args = ap.parse_args()
 
-    rows = fetch(args.action)
+    rows = fetch(args.action, args.as_of)
     if len(rows) < args.min_n:
         print(f"Only {len(rows)} resolved {args.action} decisions — not enough to "
               f"calibrate anything.")
@@ -115,6 +240,9 @@ def main() -> int:
     print("=" * 88)
     print(f"CONFIDENCE CALIBRATION — {len(rows)} resolved {args.action} decisions")
     print("=" * 88)
+    if args.as_of is not None:
+        cutoff = (args.as_of - dt.timedelta(days=1)).date()
+        print(f"AS OF {cutoff} — only decisions resolved on or before that day.")
     print(f"\nTHE NULL: always-long over these same rows = {null:+.2f}%")
     print("Every band below is scored against THAT, not against zero.\n")
 

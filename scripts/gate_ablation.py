@@ -21,6 +21,12 @@ Measured 2026-07-29, replay vs the stored `policy_action` since 07-24:
 
     131/133 = 98.5%  (the 2 misses are the 65->70 floor move, see --floor)
 
+Re-measured 2026-08-30 against MongoDB, `--since 2026-06-18` (1,960 desks, 599
+of them carrying a stored action):
+
+    598/599 = 99.8%  (one miss: CCEP, stored EXECUTE_BUY, replays
+                      HOLD_POLICY_BLOCKED_LOW_CONFIDENCE)
+
 THE BAR FOR DELETING A GATE
 ---------------------------
 Deliberately high, and the default verdict is KEEP. A gate that never fires
@@ -42,6 +48,28 @@ pattern is already present here (LOW_CONFIDENCE: net +0.48% built from a
 16-positive / 15-negative split, i.e. a coin flip). So every gate reports
 `blocked_good` / `blocked_bad` separately, and the net last.
 
+WHERE THE NUMBERS COME FROM (MongoDB, since the 2026-08-19 cutover)
+-------------------------------------------------------------------
+Every read is MongoDB. Postgres still answers, but every row in it stopped at
+the cutover, so the archive would have reported a window ending 2026-08-19 as
+"current" — and this script had been raising AttributeError on the archive DSN
+rather than doing that, which is the only reason it was not already lying.
+
+Two consequences of the store change are visible in the OUTPUT, not just the
+code, and both are improvements over the SQL this replaced:
+
+  * `price_history` carries one row per (ticker, date, SOURCE) and the vendors
+    disagree by ~20% on average. The SQL took whichever print the planner
+    emitted first, so an entry close could come from yfinance and the exit from
+    polygon and the vendor spread became a "forward return". Both legs are now
+    pinned to the ticker's dominant vendor (`app.quant.returns._one_vendor`),
+    which is the same rule the live scoring path uses.
+  * `shared_desk.created_at` has no Mongo default. Postgres supplied one, so
+    `WHERE created_at >= %s` saw every row; documents written after the cutover
+    can simply LACK the field, and `$gte` matches neither a null nor a missing
+    field. Those desks are invisible to every window, so their count is printed
+    rather than silently dropped.
+
 Usage:
     python scripts/gate_ablation.py --since 2026-06-18
     python scripts/gate_ablation.py --since 2026-07-24 --horizon 3 --json out.json
@@ -50,13 +78,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import bisect
 import copy
 import json
 import logging
 import os
 import statistics
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -65,6 +95,8 @@ logging.disable(logging.CRITICAL)  # gate replay is chatty; we want the report o
 
 import app.v3.orchestrator as O  # noqa: E402
 import app.v3.telemetry as T  # noqa: E402
+from app.db import mongo_query, mongo_store  # noqa: E402
+from app.quant.returns import _one_vendor  # noqa: E402
 from app.quant.stat_gates import stationary_bootstrap_ci  # noqa: E402
 from app.v3.shared_desk import SharedDesk  # noqa: E402
 
@@ -174,23 +206,66 @@ def _floor_for(created_at) -> int:
     return FLOOR_BEFORE if str(created_at)[:10] < FLOOR_CHANGE_DATE else FLOOR_AFTER
 
 
-def load_desks(since: str) -> list[dict]:
-    from scripts.migration.pg_connection import get_db
+def _since_datetime(value: str) -> datetime:
+    """`--since` as the BSON datetime `created_at` is actually compared against.
 
-    with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT s.cycle_id, s.ticker, s.created_at, s.desk_data, t.policy_action
-            FROM shared_desk s
-            LEFT JOIN trade_results t
-              ON t.cycle_id = s.cycle_id AND t.ticker = s.ticker
-            WHERE s.created_at >= %s
-            ORDER BY s.created_at ASC
-            """,
-            [since],
-        ).fetchall()
+    A bare string bound would match NOTHING and report it as "no desks":
+    `created_at` is a BSON Date, Mongo orders across types by TYPE, and a Date
+    is never `>=` a String. The failure is silent — an empty result, not an
+    error — which is the exact shape this migration exists to catch.
+    """
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        raise SystemExit(f"--since {value!r} is not an ISO date (YYYY-MM-DD)")
+
+
+def desks_without_created_at() -> int:
+    """Desks no `--since` window can ever see, because they carry no timestamp.
+
+    Postgres declared `shared_desk.created_at` with a DEFAULT, so the column was
+    never absent and `WHERE created_at >= %s` saw every row. Mongo has no column
+    defaults: a writer that does not stamp the field simply omits it, and
+    `{"$gte": ...}` matches neither a null nor a missing field. Counting them is
+    the difference between "the window is empty" and "the window cannot see
+    them" — see scripts/mongo_default_gaps.py for the full list of columns the
+    cutover dropped a default for.
+    """
+    return mongo_store.count_docs("shared_desk", {"created_at": {"$exists": False}})
+
+
+def load_desks(since: str) -> list[dict]:
+    """Every desk in the window, carrying the policy_action production stored.
+
+    The SQL was a LEFT JOIN on a COMPOSITE key
+    (`t.cycle_id = s.cycle_id AND t.ticker = s.ticker`), and every join helper
+    in `mongo_query` takes exactly ONE equality — so the stitch is spelled out
+    here rather than approximated with a single-column join that would pair a
+    desk with another ticker's result. `trade_results` is unique on
+    (cycle_id, ticker) — its `cycle_id_1_ticker_1` index says so — so the join
+    is 1:1 and cannot multiply rows; `dict.setdefault` keeps the first match if
+    that ever stops being true, which is the LEFT-JOIN-safe direction.
+
+    LEFT, not inner: a desk with no trade_results row is exactly the population
+    the fidelity check reports as unverifiable, and an inner join would delete
+    it instead of counting it.
+    """
+    rows = mongo_query.find_rows(
+        "shared_desk", {"created_at": {"$gte": _since_datetime(since)}},
+        ["cycle_id", "ticker", "created_at", "desk_data"],
+        sort=[("created_at", 1)])
+
+    stored: dict[tuple, str | None] = {}
+    for cid, tk, action in mongo_query.find_rows(
+            "trade_results",
+            {"cycle_id": {"$in": sorted({r[0] for r in rows if r[0]})}},
+            ["cycle_id", "ticker", "policy_action"]):
+        stored.setdefault((cid, tk), action)
+
     out = []
-    for cid, tk, ts, dd, stored in rows:
+    for cid, tk, ts, dd in rows:
+        # desk_data is JSON *TEXT*, not a subdocument — a Mongo filter on
+        # `desk_data.foo` matches 0 of 2,036 desks. It has to be parsed here.
         if isinstance(dd, str):
             try:
                 dd = json.loads(dd)
@@ -198,7 +273,7 @@ def load_desks(since: str) -> list[dict]:
                 continue
         if isinstance(dd, dict):
             out.append({"cycle_id": cid, "ticker": tk, "created_at": ts,
-                        "desk": dd, "stored": stored})
+                        "desk": dd, "stored": stored.get((cid, tk))})
     return out
 
 
@@ -228,8 +303,14 @@ def replay(desk_dict: dict, created_at, gate: str | None = None) -> str | None:
         return None
 
 
-#: (ticker, date, horizon) -> forward return %. Populated once up front.
+#: (ticker, date) -> forward return %. Populated once up front, for one horizon.
 _FWD: dict[tuple, float | None] = {}
+
+#: How far before the earliest desk day each ticker's primed series starts.
+#: Purely an optimisation — `_entry_close` re-asks the store without a lower
+#: bound whenever a desk day has no bar inside the primed range, so a stale or
+#: delisted ticker still resolves to the same close the unbounded SQL returned.
+_ENTRY_PAD_DAYS = 30
 
 
 def prime_forward_returns(desks: list[dict], horizon: int) -> None:
@@ -238,32 +319,83 @@ def prime_forward_returns(desks: list[dict], horizon: int) -> None:
     Per-desk queries were both slow and wrong: each opened its own pooled
     cursor inside the outer loop, and the connection closed underneath them
     ("the cursor is closed") the moment the enclosing `with get_db()` unwound.
-    """
-    from scripts.migration.pg_connection import get_db
 
-    todo = {(r["ticker"], str(r["created_at"])[:10]) for r in desks}
-    with get_db() as db:
-        for ticker, day in todo:
-            try:
-                row = db.execute(
-                    """
-                    WITH e AS (SELECT close FROM price_history
-                                WHERE ticker = %s AND date <= %s
-                                ORDER BY date DESC LIMIT 1),
-                         x AS (SELECT close FROM price_history
-                                WHERE ticker = %s AND date >  %s
-                                ORDER BY date ASC OFFSET %s LIMIT 1)
-                    SELECT (SELECT close FROM e), (SELECT close FROM x)
-                    """,
-                    [ticker, day, ticker, day, max(horizon - 1, 0)],
-                ).fetchone()
-            except Exception:
-                _FWD[(ticker, day)] = None
-                continue
-            if row and row[0] and row[1] and float(row[0]) > 0:
-                _FWD[(ticker, day)] = 100.0 * (float(row[1]) - float(row[0])) / float(row[0])
-            else:
-                _FWD[(ticker, day)] = None
+    One pass is now one query PER TICKER rather than per ticker-day, and the
+    reason is the vendor pin rather than speed. `_one_vendor` resolves the
+    dominant source with its own aggregation over the ticker's rows; asking it
+    twice per ticker-day (1,148 of them on the default window) spends ~130s
+    re-deriving 255 answers. Resolved once per ticker, both legs of every
+    forward return are guaranteed to come from the SAME vendor — which is the
+    property that matters, because `price_history` is keyed
+    (ticker, date, source) and the two vendors' closes differ by ~20% on
+    average. An entry from yfinance against an exit from polygon is not a
+    return, it is a vendor spread, and the SQL this replaces took whichever row
+    the planner happened to emit first.
+    """
+    days_by_ticker: dict[str, set[str]] = {}
+    for r in desks:
+        days_by_ticker.setdefault(r["ticker"], set()).add(str(r["created_at"])[:10])
+
+    for ticker, days in days_by_ticker.items():
+        floor = datetime.fromisoformat(min(days)) - timedelta(days=_ENTRY_PAD_DAYS)
+        try:
+            docs = mongo_store.find_docs(
+                "price_history",
+                _one_vendor(ticker, {"ticker": ticker, "date": {"$gte": floor}}),
+                sort=[("date", 1)],
+                projection={"date": 1, "close": 1, "_id": 0},
+            )
+        except Exception:
+            docs = []
+        dates = [d.get("date") for d in docs]
+        closes = [d.get("close") for d in docs]
+        for day in days:
+            _FWD[(ticker, day)] = _forward_pct(ticker, day, dates, closes, horizon)
+
+
+def _entry_close(ticker: str, on: datetime):
+    """The last close on/before `on`, with no lower bound — the entry leg.
+
+    The primed series starts `_ENTRY_PAD_DAYS` before the earliest desk day, so
+    a ticker whose most recent bar predates that (a stale or delisted name —
+    precisely the population HOLD_POLICY_BLOCKED_STALE_PRICE_DATA exists for)
+    would otherwise silently score as "no forward return". The SQL had no lower
+    bound; neither does this.
+    """
+    try:
+        docs = mongo_store.find_docs(
+            "price_history",
+            _one_vendor(ticker, {"ticker": ticker, "date": {"$lte": on}}),
+            sort=[("date", -1)], limit=1, projection={"close": 1, "_id": 0})
+    except Exception:
+        return None
+    return docs[0].get("close") if docs else None
+
+
+def _forward_pct(ticker: str, day: str, dates: list, closes: list,
+                 horizon: int) -> float | None:
+    """`(exit - entry) / entry` in percent, or None where the window is not there.
+
+    entry = last bar on/before `day`            (SQL: date <= day ORDER BY date DESC LIMIT 1)
+    exit  = the `horizon`-th bar AFTER `day`    (SQL: date >  day ORDER BY date ASC
+                                                      OFFSET horizon-1 LIMIT 1)
+
+    `bisect_right` over the ascending date list gives the index of the first bar
+    strictly after `day`, which is both boundaries at once: everything before it
+    is `<= day`, everything from it on is `> day`.
+    """
+    on = datetime.fromisoformat(day)
+    after = bisect.bisect_right(dates, on)
+    entry = closes[after - 1] if after else _entry_close(ticker, on)
+
+    exit_at = after + max(horizon - 1, 0)
+    exit_ = closes[exit_at] if exit_at < len(closes) else None
+
+    # Same truthiness test the SQL caller used: a NULL or a zero close is not a
+    # price, and dividing by it is how a 0.0 entry became an infinite return.
+    if entry and exit_ and float(entry) > 0:
+        return 100.0 * (float(exit_) - float(entry)) / float(entry)
+    return None
 
 
 def forward_return(ticker: str, on_date, horizon: int) -> float | None:
@@ -297,6 +429,11 @@ def main() -> int:
     with patch.object(T, "record_guardrail_firing", lambda *a, **k: fires.append(a)):
         desks = load_desks(args.since)
         print(f"loaded {len(desks)} desks since {args.since}")
+        blind = desks_without_created_at()
+        if blind:
+            print(f"  ({blind} desks carry NO created_at and are invisible to "
+                  f"every window — the cutover dropped the Postgres DEFAULT; "
+                  f"see scripts/mongo_default_gaps.py)")
         if not desks:
             print("no desks — nothing to do")
             return 1

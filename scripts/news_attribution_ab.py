@@ -34,7 +34,18 @@ template; the labels are hand-made from title + lead and committed to
 `scripts/data/attribution_oracle.json`. The scored run loads that file. The
 oracle is never the model under test, and never a peer box.
 
-Read-only against the DB: samples rows, writes nothing back.
+Read-only against the store: samples rows, writes nothing back.
+
+**Where the corpus now lives (2026-08-30).** `news_articles` moved to MongoDB
+at the 2026-08-19 cutover; Postgres is a frozen archive. The sampler reads
+Mongo. The frozen oracle did NOT need re-labelling and was not re-labelled:
+the candidate population is 42,920 rows in both stores with zero difference
+in either direction, and the md5-ordered top 60 reproduces every id, ticker,
+title and lead in `attribution_oracle.json` byte for byte. It cannot drift
+either, because the population is closed — all 21,614 documents written after
+the cutover carry a non-null `ticker_attribution`, so none of them is a
+candidate. The first result below was scored against the same 57 articles it
+is scored against today.
 
     python3 scripts/news_attribution_ab.py --sample 60      # emit template
     python3 scripts/news_attribution_ab.py --run            # score vs oracle
@@ -101,6 +112,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import math
 import os
@@ -159,16 +171,51 @@ def _wilson_lower(successes: int, total: int, z: float = 1.96) -> float:
 
 # ─── Sampling ────────────────────────────────────────────────────────────────
 
-_SAMPLE_SQL = """
-    SELECT id, ticker, COALESCE(title, ''), summary
-    FROM news_articles
-    WHERE ticker_attribution IS NULL
-      AND ticker IS NOT NULL
-      AND summary IS NOT NULL
-      AND length(summary) >= 400
-    ORDER BY md5(id)
-    LIMIT %s
-"""
+# The candidate population — legacy rows nothing has labelled. This was
+#
+#     SELECT id, ticker, COALESCE(title, ''), summary FROM news_articles
+#      WHERE ticker_attribution IS NULL AND ticker IS NOT NULL
+#        AND summary IS NOT NULL AND length(summary) >= 400
+#      ORDER BY md5(id) LIMIT %s
+#
+# and each clause is translated to the SAME predicate, not a near one:
+#
+#   ticker_attribution IS NULL  ->  {"ticker_attribution": None}, which matches
+#       a null AND a missing field — which is what IS NULL means. Postgres
+#       column DEFAULTs did not survive the cutover, so a field the archive
+#       always carried can simply be ABSENT on a post-cutover document. Here it
+#       never is (0 of 116,354 lack it), but `{"$eq": None}` is right either way
+#       and `{"$exists": True, "$eq": None}` would not be.
+#   ticker IS NOT NULL  ->  {"$ne": None}, which matches neither a null nor a
+#       missing field. That is exactly IS NOT NULL, and it is the one place the
+#       "$ne matches nothing missing" trap works FOR the query rather than
+#       against it.
+#   summary IS NOT NULL AND length(summary) >= 400  ->  one $expr. $ifNull maps
+#       a null or absent summary to "", whose length is 0, so the NOT NULL test
+#       is folded into the length test instead of being a second clause that
+#       could disagree with it. $strLenCP counts CODE POINTS, which is what
+#       Postgres length(text) counts; $strLenBytes is a different predicate on
+#       every article carrying a non-ASCII character, and this corpus is full
+#       of curly quotes and em dashes.
+_SAMPLE_QUERY: dict[str, Any] = {
+    "ticker_attribution": None,
+    "ticker": {"$ne": None},
+    "$expr": {"$gte": [{"$strLenCP": {"$ifNull": ["$summary", ""]}}, 400]},
+}
+
+_SAMPLE_FIELDS = ["id", "ticker", "title", "summary"]
+
+
+def _md5_key(article_id: str) -> str:
+    """`md5(id)` as Postgres computed it: lowercase hex of the UTF-8 bytes.
+
+    Sorting on the hex TEXT and not on the raw digest, because that is what
+    `ORDER BY md5(id)` sorted on — and because the frozen oracle's row order is
+    a Postgres artifact this has to keep reproducing. (The two happen to agree,
+    hex being order-preserving; the test pins the digest choice, which does
+    not.)
+    """
+    return hashlib.md5(article_id.encode("utf-8")).hexdigest()
 
 
 def sample(n: int) -> list[dict[str, Any]]:
@@ -176,15 +223,41 @@ def sample(n: int) -> list[dict[str, Any]]:
 
     Ordered by md5(id) rather than random() so re-running --sample returns the
     same rows and the oracle stays comparable across runs.
-    """
-    from scripts.migration.pg_connection import get_db
 
-    with get_db() as db:
-        rows = db.execute(_SAMPLE_SQL, [n]).fetchall()
+    Mongo has no md5 operator, so the digest is computed here over the
+    candidate ids and the ordering done in Python. Neither of the two obvious
+    server-side alternatives is the same measurement:
+
+      * `$sample` is not deterministic, and the whole point of md5 ordering is
+        that a re-run hands back the rows the oracle was labelled from.
+      * a bare `limit` is worse than either — natural order returns the OLDEST
+        documents, so the "sample" would be a window on the past. md5 order is
+        uniform over the candidate set no matter when a row arrived, which is
+        the property being bought here.
+
+    Two round trips rather than one, deliberately: the id list is ~43k short
+    strings, while the same rows' `summary` text is hundreds of megabytes and
+    only `n` of them are ever read.
+    """
+    from app.db import mongo_query
+
+    # `id` is the Postgres primary key, so md5(id) was never null there. A
+    # document that somehow lacks the field cannot be hashed and cannot be
+    # named in the second read either; Postgres sorted NULLs LAST, so dropping
+    # them changes the sample only when the whole candidate set is smaller
+    # than n. Measured today: 0 of 42,920.
+    ids = [r[0] for r in mongo_query.find_rows(
+        "news_articles", _SAMPLE_QUERY, ["id"]) if r[0] is not None]
+    chosen = sorted(ids, key=_md5_key)[:n]
+
+    by_id = {r[0]: r for r in mongo_query.find_rows(
+        "news_articles", {"id": {"$in": chosen}}, _SAMPLE_FIELDS)}
     return [
-        {"id": r[0], "ticker": r[1], "title": r[2],
-         "lead": (r[3] or "")[:_MAX_TEXT_CHARS], "about": None, "note": ""}
-        for r in rows
+        # `[2] or ""` is the COALESCE(title, ''): find_rows hands back None
+        # for a null or missing field, exactly as the DB-API cursor did.
+        {"id": i, "ticker": by_id[i][1], "title": by_id[i][2] or "",
+         "lead": (by_id[i][3] or "")[:_MAX_TEXT_CHARS], "about": None, "note": ""}
+        for i in chosen if i in by_id
     ]
 
 

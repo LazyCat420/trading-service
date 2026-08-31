@@ -52,6 +52,7 @@ import json
 import math
 import os
 import sys
+from datetime import date, datetime
 
 import numpy as np
 
@@ -72,38 +73,85 @@ _VAR_FLOOR = 0.01
 
 # ── forecasts ────────────────────────────────────────────────────────
 
+def as_day(value) -> date | None:
+    """One calendar day out of whatever the store happens to hold.
+
+    Postgres declared both `price_history.date` and
+    `regime_hmm_posteriors.as_of` as `date`, so the two joined on equality for
+    free. MongoDB has no date type: the backfill wrote naive midnight
+    datetimes, and `app/db/date_fields.py` keeps writes in that shape — but its
+    string repair only recognises a bare `YYYY-MM-DD`, so the four posteriors
+    written after the cutover carry `as_of` as the TEXT
+    `"2026-08-19 00:00:00"`. Measured 2026-08-30: 255 of 259 SPY posteriors are
+    BSON dates, 4 are strings, and the sets do not overlap.
+
+    Two things break if the raw value is used as a join key. A string `as_of`
+    matches no datetime in the price index, so those four days are dropped
+    silently — the NEWEST four, i.e. exactly the ones a live run is for. And
+    `load_posteriors`' `sort=[("as_of", 1)]` sorts by BSON TYPE first, where
+    String ranks below Date, so the four post-cutover rows come back BEFORE
+    2025-08-05: turnover, the equity path and the Newey-West lag structure all
+    read that order as chronological.
+
+    Normalising both sides to a `datetime.date` fixes the join and the order at
+    once, and restores the `date` the SQL used to return.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):     # NOTE: datetime subclasses date
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (TypeError, ValueError):
+        return None
+
+
 def build_series(ticker: str = "SPY") -> list[dict]:
     """One row per day carrying all three forecasts and the realized outcome.
 
     Every forecast is for the session AFTER `as_of`, built only from data
     through `as_of`.
     """
-    from scripts.migration.pg_connection import get_db
+    from app.db import mongo_store
     from app.quant.garch import garch_forecast
-    from app.quant.returns import dominant_source_sql
-    from scripts.grade_hmm_regime import _load_posteriors, predictive_band
+    from app.quant.regime_grading import load_posteriors, predictive_band
+    from app.quant.returns import _one_vendor
 
-    with get_db() as db:
-        prices = db.execute(
-            f"""
-            SELECT date, close FROM price_history
-            WHERE ticker = %(ticker)s AND close IS NOT NULL AND close > 0
-              AND source = ({dominant_source_sql()})
-            ORDER BY date ASC
-            """,
-            {"ticker": ticker},
-        ).fetchall()
+    # ONE VENDOR, always. `price_history` is keyed (ticker, date, source) and
+    # the vendors disagree by ~20% on average, so an unpinned read pairs two
+    # prints of the same day into a near-zero return and dilutes the very
+    # variance this script is scoring. `_one_vendor` is the Mongo spelling of
+    # the `dominant_source_sql()` subquery this read used to carry — the same
+    # freshest-then-deepest rule, applied to the live store.
+    docs = mongo_store.find_docs(
+        "price_history",
+        _one_vendor(ticker, {"ticker": ticker, "close": {"$gt": 0}}),
+        sort=[("date", 1)],
+    )
+    prices = [(as_day(d.get("date")), d.get("close")) for d in docs]
 
-    closes = [(d, float(c)) for d, c in prices if c == c]
+    closes = [(d, float(c)) for d, c in prices
+              if d is not None and c is not None and float(c) == float(c)]
     dates = [d for d, _ in closes]
     px = np.array([c for _, c in closes], dtype=float)
     # log returns in PERCENT, aligned so ret_pct[i] is the return INTO dates[i]
     ret_pct = np.concatenate([[np.nan], np.diff(np.log(px)) * 100.0])
     index = {d: i for i, d in enumerate(dates)}
 
+    # Sorted on the NORMALISED day, not on what Mongo's `as_of` sort returned:
+    # see as_day(). Everything downstream — turnover, the equity path, the HAC
+    # lag — assumes this list is in time order.
+    posteriors = sorted(
+        (p for p in load_posteriors(ticker) if as_day(p.get("as_of")) is not None),
+        key=lambda p: as_day(p["as_of"]),
+    )
+
     rows = []
-    for post in _load_posteriors(ticker):
-        i = index.get(post["as_of"])
+    for post in posteriors:
+        as_of = as_day(post["as_of"])
+        i = index.get(as_of)
         if i is None or i + 1 >= len(dates):
             continue
 
@@ -137,7 +185,7 @@ def build_series(ticker: str = "SPY") -> list[dict]:
             continue
 
         rows.append({
-            "as_of": post["as_of"],
+            "as_of": as_of,
             "hmm_sigma": hmm_sigma,
             "garch_sigma": garch_sigma,
             "trail_sigma": trail_sigma,

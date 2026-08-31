@@ -11,6 +11,24 @@ picked, and reports what is left over.
 
 Exposures are computed AS OF each decision date from that date's cross-section,
 so nothing here can see the future. Reports only — it never gates a trade.
+
+## Store
+
+MongoDB, since 2026-08-30. Both halves of this script — the desks and the
+prices that score them — used to come from Postgres, which froze at the
+2026-08-19 cutover: the desk read stopped at 1,762 rows while the live
+collection carries 1,960, and the price archive stopped at 2026-08-19, so every
+forward window opened in the last fortnight scored as "not closed yet" and was
+silently dropped. Neither failure raised.
+
+The port also closes the vendor hole the SQL had. `price_history`'s primary key
+is (ticker, date, source) and the vendors disagree by a mean 20% on the same
+ticker-date, so the old `LIMIT sessions` returned `sessions` ROWS spanning about
+half as many DATES on a dual-source name. 107 of the 255 tickers decided on
+since 2026-05-01 carry two vendors, so that was not an edge case. Forward
+windows now go through `app.quant.returns.forward_move_pct`, which pins the
+ticker's dominant vendor, and the ADV lookup pins the same one — see
+`tests/unit/test_price_history_one_vendor_guard.py`.
 """
 
 from __future__ import annotations
@@ -19,35 +37,65 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import date, datetime, timedelta
+from functools import lru_cache
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Trailing window for the ADV liquidity tiers, in calendar days. This was
+# `date > current_date - 90` when the lookup ran on Postgres; it is a calendar
+# window, not a session count, and stays one.
+ADV_LOOKBACK_DAYS = 90
 
 
 def fetch_adv(tickers: set[str]) -> dict[str, float]:
     """Average daily dollar volume per ticker, for the cost model's liquidity
     tiers. Missing tickers are simply absent from the result — the caller
-    charges the conservative default rather than assuming a cheap fill."""
+    charges the conservative default rather than assuming a cheap fill.
+
+    ONE VENDOR PER TICKER. Averaging both vendors' prints of the same
+    ticker-date is not a harmless smoothing: they carry different adjustment
+    conventions (yfinance dividend/split-adjusted, polygon raw) and disagree by
+    a mean 20% on close, so a dual-source name's ADV is an average of two
+    different series in unequal proportion. Measured 2026-08-30 over the 90-day
+    window, AAPL reads $18.09bn on polygon against $16.92bn on yfinance — a 6.9%
+    gap, which is a whole liquidity tier for names nearer a boundary.
+    `_one_vendor` is the same helper `forward_move_pct` pins its windows with,
+    so the ADV and the return it prices come from the same series.
+    """
     if not tickers:
         return {}
-    from scripts.migration.pg_connection import get_db
+    from app.db import mongo_store
+    from app.quant.returns import _one_vendor
 
     try:
-        with get_db() as db:
-            rows = db.execute(
-                """
-                SELECT ticker, avg(close * volume) AS adv
-                FROM price_history
-                WHERE ticker = ANY(%s) AND date > current_date - 90
-                  AND close > 0 AND volume > 0
-                GROUP BY ticker
-                """,
-                [list(tickers)],
-            ).fetchall()
-        return {r[0]: float(r[1]) for r in rows if r[1]}
+        floor = datetime.combine(date.today() - timedelta(days=ADV_LOOKBACK_DAYS),
+                                 datetime.min.time())
+        rows = mongo_store.aggregate("price_history", [
+            {"$match": {"$or": [_one_vendor(t, {"ticker": t}) for t in sorted(tickers)],
+                        "date": {"$gt": floor},
+                        "close": {"$gt": 0}, "volume": {"$gt": 0}}},
+            {"$group": {"_id": "$ticker",
+                        "adv": {"$avg": {"$multiply": ["$close", "$volume"]}}}},
+        ])
+        return {r["_id"]: float(r["adv"]) for r in rows if r.get("adv")}
     except Exception as e:  # noqa: BLE001
         print(f"  (ADV lookup failed: {e} — falling back to the default spread)")
         return {}
+
+
+@lru_cache(maxsize=None)
+def _forward_move(ticker: str, as_of, sessions: int) -> float | None:
+    """`forward_move_pct` memoized for the length of one run.
+
+    The desks repeat: 1,960 of them since 2026-05-01 name only 1,148 distinct
+    (ticker, day) pairs, because a cycle re-analyses names it already holds.
+    The window for a given pair cannot change while the process runs, so this
+    is a cache and not a semantic change — it removes ~41% of the price reads.
+    """
+    from app.quant.returns import forward_move_pct
+
+    return forward_move_pct(ticker, as_of, sessions)
 
 
 def fetch_decisions(since: str, horizon: int) -> list[dict]:
@@ -56,63 +104,60 @@ def fetch_decisions(since: str, horizon: int) -> list[dict]:
     Mirrors agent_scorecard's `--source price` path: `decision_outcomes` is
     bookkeeping-limited (n=40 and it ignores --since), while scoring desks
     straight off prices gives ~10-20x the sample and includes HOLDs.
+
+    `desk_data` is JSON TEXT, not a sub-document — every post-cutover desk
+    stores it as a string — so it is parsed here and never filtered on in the
+    query. A Mongo filter on `desk_data.trade_decision` matches 0 of 2,036
+    desks.
+
+    Desks with no `created_at` are dropped, because `$gte` does not match a
+    missing field. That is correct rather than lucky: all 76 such documents are
+    suite fixtures (cycle-1/HOOD, cycle-test-1/AAPL, cycle-abort/TEST,
+    cycle-abort2/TEST), none of them a real desk. Verified 2026-08-30 — re-check
+    if the count moves.
     """
-    from scripts.migration.pg_connection import get_db
+    from app.db import mongo_query
 
     sessions = horizon + 1
     out: list[dict] = []
-    with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT s.cycle_id, s.ticker, s.created_at, s.desk_data
-            FROM shared_desk s
-            WHERE s.created_at >= %s
-            ORDER BY s.created_at ASC
-            """,
-            [since],
-        ).fetchall()
+    rows = mongo_query.find_rows(
+        "shared_desk", {"created_at": {"$gte": since}},
+        ["cycle_id", "ticker", "created_at", "desk_data"],
+        sort=[("created_at", 1)],
+    )
 
-        for cycle_id, ticker, created_at, desk_data in rows:
-            desk = desk_data if isinstance(desk_data, dict) else json.loads(desk_data or "{}")
-            as_of = created_at.date() if hasattr(created_at, "date") else created_at
-            prices = db.execute(
-                """
-                SELECT close FROM price_history
-                WHERE ticker = %s AND close IS NOT NULL AND date >= %s
-                ORDER BY date ASC LIMIT %s
-                """,
-                [ticker, as_of, sessions],
-            ).fetchall()
-            if len(prices) < sessions:
-                continue          # forward window hasn't closed yet
-            try:
-                entry, exit_ = float(prices[0][0]), float(prices[-1][0])
-            except (TypeError, ValueError):
-                continue
-            if not entry or entry != entry or exit_ != exit_:
-                continue
+    for cycle_id, ticker, created_at, desk_data in rows:
+        desk = desk_data if isinstance(desk_data, dict) else json.loads(desk_data or "{}")
+        as_of = created_at.date() if hasattr(created_at, "date") else created_at
 
-            decision = desk.get("trade_decision") or desk.get("final_decision") or {}
-            action = str(decision.get("action") or "").upper()
-            if action not in ("BUY", "SELL", "HOLD"):
-                continue
+        # The whole window from ONE vendor, or nothing. The helper returns None
+        # both when the window has not closed yet and when the entry print is
+        # unusable, which are the two `continue`s this loop used to spell out.
+        move_pct = _forward_move(ticker, as_of, sessions)
+        if move_pct is None:
+            continue
 
-            # Skip decisions no agent actually made — a degraded fallback
-            # scores as a real opinion and is exactly the laundering the
-            # provenance field exists to stop.
-            prov = decision.get("decision_provenance") or desk.get("decision_provenance")
-            if prov and str(prov).lower() in ("degraded_fallback", "coerced", "timeout_fallback"):
-                continue
+        decision = desk.get("trade_decision") or desk.get("final_decision") or {}
+        action = str(decision.get("action") or "").upper()
+        if action not in ("BUY", "SELL", "HOLD"):
+            continue
 
-            held = bool((desk.get("cycle_metadata") or {}).get("held"))
-            out.append({
-                "cycle_id": cycle_id,
-                "ticker": ticker,
-                "as_of": as_of,
-                "action": action,
-                "held": held,
-                "move_pct": (exit_ - entry) / entry * 100.0,
-            })
+        # Skip decisions no agent actually made — a degraded fallback
+        # scores as a real opinion and is exactly the laundering the
+        # provenance field exists to stop.
+        prov = decision.get("decision_provenance") or desk.get("decision_provenance")
+        if prov and str(prov).lower() in ("degraded_fallback", "coerced", "timeout_fallback"):
+            continue
+
+        held = bool((desk.get("cycle_metadata") or {}).get("held"))
+        out.append({
+            "cycle_id": cycle_id,
+            "ticker": ticker,
+            "as_of": as_of,
+            "action": action,
+            "held": held,
+            "move_pct": move_pct,
+        })
     return out
 
 

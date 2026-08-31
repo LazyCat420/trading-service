@@ -32,6 +32,17 @@ Exposure for session t+1 is set from the posterior fitted on data through t
 (`regime_hmm_posteriors.as_of = t`). The overlay can never act on a day it has
 already seen. Verified in tests/unit/test_regime_overlay.py.
 
+## Where it reads (MongoDB, since the 2026-08-19 cutover)
+
+`price_history` (vendor-pinned — see `load_aligned_series`) and
+`regime_hmm_posteriors`. Both were read out of Postgres until this file was
+ported; Postgres is now a frozen archive whose last row is the cutover, so a
+backtest reading it would be scoring a series that stopped growing. The two
+stores were compared per vendor on 2026-08-30 and Mongo is a strict superset
+of the archive on both reads: yfinance 8,443 archive rows -> 8,445 in Mongo
+before the cutover with none missing, polygon 264 -> 265, and the posteriors
+255 -> 255 identical plus 4 written after it.
+
 Usage:
     python scripts/regime_overlay_backtest.py --grade
     python scripts/regime_overlay_backtest.py --grade --sweep --json out.json
@@ -43,6 +54,8 @@ import argparse
 import json
 import os
 import sys
+from datetime import date as _date, datetime
+from typing import Any
 
 import numpy as np
 
@@ -57,38 +70,110 @@ MIN_USABLE_OBS = 200          # pre-registered floor
 STRESSED_LABEL = "STRESSED"
 
 
+def _as_day(value: Any) -> datetime | None:
+    """One calendar day as a naive midnight datetime — the join key.
+
+    WHY A PORT NEEDS THIS AND THE SQL DID NOT
+    -----------------------------------------
+    `price_history.date` and `regime_hmm_posteriors.as_of` were both Postgres
+    `date` columns, so `by_index.get(as_of)` below compared two values of one
+    type and the ORDER BY was a total order on calendar day. Mongo has no
+    column types, and the two collections no longer agree. Measured
+    2026-08-30: every one of `price_history`'s SPY dates is a BSON date, but 4
+    of the 259 `regime_hmm_posteriors` documents hold `as_of` as the STRING
+    `"2026-08-19 00:00:00"` — and those 4 are exactly the ones written after
+    the cutover. `app/quant/regime_hmm.py:300` writes `str(dates[-1])`, and
+    `app/db/date_fields.as_date` only recognises a bare `YYYY-MM-DD`
+    (`_ISO_DATE`), so the coercion seam every write passes through hands the
+    string straight to the collection.
+
+    Two things break without this, and neither of them raises:
+
+      * `sort=[("as_of", 1)]` orders by BSON TYPE first, where String ranks
+        BELOW Date, so the four newest posteriors come back FIRST. The report
+        prints `rows[0] .. rows[-1]` as its window and reads
+        "2026-08-19 .. 2026-08-17" — a backwards window on a sorted query.
+      * a string key never equals a datetime key, so the join misses on those
+        four rows and the backtest silently scores 255 observations where the
+        collection holds 259. That is not an empty result anyone would notice;
+        it is a short one that looks right.
+
+    So the value is normalised here and the ordering re-established in Python,
+    which restores exactly what the `date` column gave for free. Anything
+    unparseable returns None: a row that cannot be placed on the calendar
+    cannot be aligned to a session, and dropping it is what the SQL join did.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return datetime(value.year, value.month, value.day)
+    # NOTE the order: datetime subclasses date, so this must come second.
+    if isinstance(value, _date):
+        return datetime(value.year, value.month, value.day)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return datetime(parsed.year, parsed.month, parsed.day)
+    return None
+
+
 def load_aligned_series(ticker: str = "SPY") -> list[dict]:
     """(as_of, P(stressed), next-session return %) — the point-in-time join.
 
     The posterior for `as_of` is paired with the return of the session that
     comes STRICTLY AFTER it, which is the only return it could have traded.
+
+    The price read pins ONE vendor. `price_history`'s primary key is
+    `(ticker, date, source)`, so a ticker-date carries a print per vendor:
+    SPY has 269 dual-vendor dates in Mongo. Unpinned, `by_index` would collapse
+    them — `closes[i + 1]` would be the OTHER VENDOR'S print of the SAME day,
+    turning a session return into a vendor spread. `_one_vendor` is the same
+    freshest-then-deepest rule `dominant_source_sql()` spelled out in the SQL
+    this replaces.
     """
-    from scripts.migration.pg_connection import get_db
-    from app.quant.returns import dominant_source_sql
+    from app.db import mongo_query
+    from app.quant.returns import _one_vendor
 
-    with get_db() as db:
-        prices = db.execute(
-            f"""
-            SELECT date, close FROM price_history
-            WHERE ticker = %(ticker)s AND close IS NOT NULL AND close > 0
-              AND source = ({dominant_source_sql()})
-            ORDER BY date ASC
-            """,
-            {"ticker": ticker},
-        ).fetchall()
-        posts = db.execute(
-            """
-            SELECT as_of, state_probabilities, regime
-            FROM regime_hmm_posteriors WHERE ticker = %s ORDER BY as_of ASC
-            """,
-            [ticker],
-        ).fetchall()
+    prices = mongo_query.find_rows(
+        "price_history",
+        # `{"$gt": 0}` is `close IS NOT NULL AND close > 0`: a missing or null
+        # field does not satisfy a `$gt`, so both halves of the SQL predicate
+        # are carried by the one operator.
+        _one_vendor(ticker, {"ticker": ticker, "close": {"$gt": 0}}),
+        ["date", "close"],
+        sort=[("date", 1)],
+    )
+    posts = mongo_query.find_rows(
+        "regime_hmm_posteriors",
+        {"ticker": ticker},
+        ["as_of", "state_probabilities", "regime"],
+        sort=[("as_of", 1)],
+    )
 
-    closes = [(d, float(c)) for d, c in prices if c == c]
+    # Both series are re-keyed to a calendar day and re-sorted in Python. The
+    # Mongo sorts above are kept because they let the server use the index and
+    # leave only a nearly-sorted list to fix up — but they are NOT the order
+    # this depends on. See `_as_day`.
+    closes = []
+    for d, c in prices:
+        day, close = _as_day(d), (float(c) if c is not None else None)
+        if day is None or close is None or close != close:   # != itself: NaN
+            continue
+        closes.append((day, close))
+
+    aligned = [(day, p, r) for day, p, r in ((_as_day(a), p, r) for a, p, r in posts)
+               if day is not None]
+
+    # `sorted` is stable, so a duplicated day keeps the order Mongo's index
+    # gave it — the same latitude `ORDER BY date` left the query planner.
+    closes.sort(key=lambda row: row[0])
+    aligned.sort(key=lambda row: row[0])
     by_index = {d: i for i, (d, _) in enumerate(closes)}
 
     out = []
-    for as_of, probs, regime in posts:
+    for as_of, probs, regime in aligned:
         i = by_index.get(as_of)
         # i + 1 is the next session: the first one tradeable on this posterior.
         if i is None or i + 1 >= len(closes):
@@ -96,9 +181,16 @@ def load_aligned_series(ticker: str = "SPY") -> list[dict]:
         prev_close, next_close = closes[i][1], closes[i + 1][1]
         if not prev_close:
             continue
+        # Mongo stores `state_probabilities` as a subdocument, so this is a
+        # dict; the json.loads branch survives for a legacy row that still
+        # holds the JSON text Postgres's jsonb column was read back as.
         p = probs if isinstance(probs, dict) else json.loads(probs or "{}")
         out.append({
-            "as_of": as_of,
+            # `.date()` and not the datetime: the column was a Postgres `date`
+            # and the report prints this value, so a bare day keeps the window
+            # line reading "2025-08-05 .. 2026-08-26" rather than gaining a
+            # " 00:00:00" the column never had.
+            "as_of": as_of.date(),
             "p_stressed": float(p.get(STRESSED_LABEL, 0.0)),
             "regime": regime,
             "next_return_pct": (next_close - prev_close) / prev_close * 100.0,

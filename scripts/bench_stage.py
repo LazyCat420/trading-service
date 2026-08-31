@@ -2,7 +2,7 @@
 """Run ONE stage of the V3 cycle, on ONE ticker, in a read-only sandbox.
 
     python3 scripts/bench_stage.py --list
-    python3 scripts/bench_stage.py context --ticker AAPL
+    python3 scripts/bench_stage.py policy_gates --ticker AAPL
     python3 scripts/bench_stage.py data_report --ticker AAPL --repeat 5
     python3 scripts/bench_stage.py junior --ticker AAPL          # one LLM agent
     python3 scripts/bench_stage.py --all-context --ticker AAPL --json out.json
@@ -22,12 +22,34 @@ probe.
 
 WHAT MAKES IT A SANDBOX
 =======================
-1. **The database session is READ ONLY.** `get_db` is wrapped so every
-   connection issues `SET default_transaction_read_only = on`. An accidental
-   INSERT raises `psycopg.errors.ReadOnlySqlTransaction` instead of writing a
-   fake desk, a fake telemetry row, or a fake decision into the tables the
-   audits read. Pass `--allow-writes` only when you specifically want the
-   stage's persistence path exercised, and expect rows.
+1. **The store is READ ONLY.** Every mutating method on a pymongo
+   `Collection`/`Database` is blocked for the life of the process, so an
+   accidental write raises `SandboxWriteBlocked` instead of putting a fake
+   desk, a fake telemetry row, a fake whiteboard entry or a fake decision into
+   the collections the audits read. Pass `--allow-writes` only when you
+   specifically want the stage's persistence path exercised, and expect rows.
+
+   Until 2026-08-30 this guard patched the archive connection module's
+   `get_db` to issue `SET default_transaction_read_only = on`, and it has
+   answered nothing since the 2026-08-19 cutover. That seam is empty: the
+   cutover left `app/` with **zero** live `get_db()` call sites and **312**
+   `mongo_store` write calls, so the header printed `db=READ-ONLY` over a
+   completely open write path. `bench_stage quant -t AAPL` really did append
+   rows to `whiteboard_entries` (`app/agents/whiteboard.py:108`) on every run.
+   The guard is now installed at the pymongo class, which is the only level
+   that catches all three write routes — the `mongo_store` helpers,
+   `mongo_store._coll(t).bulk_write(...)` (`app/analytics/returns_engine.py:414`)
+   and `vector_store._mongo_coll()`. The footer NAMES the writes it blocked,
+   so the guard is a measurement rather than a claim — a first live run on
+   AAPL blocked 8, into `price_history`, `technicals`, `data_source_status`,
+   `watch_events` and `v3_guardrail_firings`.
+
+   Expect a blocked write to show up as a warning inside a stage: the
+   collectors cache what they fetch, so `data_report` logs
+   `AAPL/yfinance_price failed: SandboxWriteBlocked` and falls back to what is
+   already stored. That is the sandbox working, and it is why `--allow-writes`
+   exists — but it does mean a read-only `data_report` measures the CACHED
+   path, not the fetch-and-persist one.
 2. **It never claims a cycle.** `pipeline_state` is not touched and no
    `START_CYCLE` command is queued, so this cannot deduplicate against, stall,
    or be killed by the real scheduler. The cycle id is stamped `bench-*` so any
@@ -52,7 +74,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextlib
 import json
 import os
 import statistics
@@ -72,36 +93,182 @@ os.environ.setdefault("EXECUTION_MODE", "staging")
 # Read-only guard
 # ─────────────────────────────────────────────────────────────────────
 
+class SandboxWriteBlocked(RuntimeError):
+    """A stage tried to write to MongoDB while the sandbox was read-only."""
+
+
+# Every MUTATING method on a pymongo Collection, plus the two catalog verbs on
+# Database and the one on MongoClient. Reads (`find`, `find_one`, `aggregate`,
+# `count_documents`, `distinct`, `list_indexes`, `watch`) are deliberately
+# absent — this must not narrow what the stages can measure.
+_COLLECTION_WRITES = (
+    "insert_one", "insert_many",
+    "update_one", "update_many", "replace_one",
+    "delete_one", "delete_many",
+    "bulk_write",
+    "find_one_and_update", "find_one_and_replace", "find_one_and_delete",
+    "drop", "rename",
+    "create_index", "create_indexes", "drop_index", "drop_indexes",
+)
+_DATABASE_WRITES = ("create_collection", "drop_collection")
+_CLIENT_WRITES = ("drop_database",)
+
+# Every blocked call, as "collection.method", in order. Printed in the footer:
+# a guard whose number never moves is a guard nobody can tell is installed.
+BLOCKED_WRITES: list[str] = []
+
+
+# ── Index-DDL latches ────────────────────────────────────────────────
+# Index creation is DDL, so the guard blocks it, so it lands in BLOCKED_WRITES
+# and buries the writes the footer exists to name. Every "have I ensured my
+# indexes yet" latch in `app/` is therefore pinned True before any stage runs.
+#
+# `carries` is the (file, attribute) each pin covers, so a test can compare the
+# pinned set against the latches actually present in `app/` — in BOTH
+# directions. This defect class has already bitten once: the first version of
+# the guard pinned `mongo_store` only, and `VectorStore`'s latch (which flips
+# only on SUCCESS, inside a swallow-everything `except`) retried its DDL on
+# every single call, adding an unbounded `embeddings.create_index` to the count.
+
+def _pin_mongo_store_indexes() -> None:
+    from app.db import mongo_store
+
+    mongo_store._indexes_ready = True
+
+
+_pin_mongo_store_indexes.carries = ("app/db/mongo_store.py", "_indexes_ready")
+
+
+def _pin_vector_store_indexes() -> None:
+    from app.db.vector_store import VectorStore
+
+    # The CLASS attribute, which is where it lives — the module also exposes a
+    # `vector_store` singleton, and setting the instance would leave the class
+    # default False for anything that builds its own VectorStore.
+    VectorStore._mongo_indexes_ready = True
+
+
+_pin_vector_store_indexes.carries = ("app/db/vector_store.py", "_mongo_indexes_ready")
+
+_INDEX_LATCHES = (_pin_mongo_store_indexes, _pin_vector_store_indexes)
+
+
 def install_read_only_db() -> None:
-    """Wrap `get_db` so every sandbox connection is read-only.
+    """Block every MongoDB write for the life of this process.
 
-    Patched on the module (`scripts.migration.pg_connection.get_db`) rather than on each
-    caller, because callers import it inside functions at call time — the same
-    reason the test suite's autouse fixture patches it there.
+    Installed on the pymongo CLASSES, not on `app.db.mongo_store`, for the same
+    reason the old version patched `get_db` on its module rather than on each
+    caller: the guard has to sit at the one place every route converges. There
+    are three routes here and only one of them goes through a `mongo_store`
+    helper — `app/analytics/returns_engine.py:414` calls
+    `mongo_store._coll(...).bulk_write(...)` directly, and
+    `app/db/vector_store.py:197,428` calls `bulk_write`/`delete_many` on its own
+    handle. Patching the helpers would have left both of those open while
+    reporting READ-ONLY, which is the exact shape of the bug this replaces.
+
+    Idempotent: a second call is a no-op, so `--allow-writes` off/on inside one
+    process cannot double-wrap.
+
+    EVERY index-DDL latch in the codebase is pinned as part of installing,
+    because a write helper calls its index-ensure first and that DDL would
+    otherwise land in `BLOCKED_WRITES` before the real write was even
+    attempted — burying the one number that matters under catalog noise. Index
+    DDL is skipped, not performed: this is a read-only sandbox and it has no
+    business creating collections either.
+
+    There are TWO latches and they behave differently, which is why the first
+    version of this guard fixed one and left the other flooding:
+
+      `mongo_store._indexes_ready`        set unconditionally by `ensure_indexes()`
+      `VectorStore._mongo_indexes_ready`  set ONLY on success (`vector_store.py:88`)
+
+    The second one is inside a `try/except` that logs and continues, so under
+    the guard `create_index` raises, the latch never flips, and EVERY later
+    `VectorStore._mongo_coll()` retries the DDL. Measured in-process with the
+    guard proved installed: 3 calls -> `BLOCKED_WRITES == ['embeddings.create_index'] * 3`,
+    latch still False — unbounded on any embeddings/RAG-touching agent stage,
+    and it corrupts both the footer line and the `blocked_writes` JSON key,
+    which are the port's only evidence that the sandbox is real. Pinning it is
+    what makes the count "the writes the sandbox actually stopped".
+
+    Each latch is pinned in its OWN try/except: one module failing to import
+    must not skip the other, and neither may take the write block down with it.
     """
-    from scripts.migration import pg_connection as _conn
+    import pymongo
 
-    real_get_db = _conn.get_db
+    if getattr(pymongo.collection.Collection, "_bench_read_only", False):
+        return
 
-    @contextlib.contextmanager
-    def _read_only_get_db():
-        with real_get_db() as cur:
-            cur.execute("SET LOCAL default_transaction_read_only = on")
-            yield cur
+    def _blocker(cls_label: str, method: str):
+        def _raise(self, *_a, **_kw):
+            # `isinstance(..., str)` and not a bare getattr default: pymongo's
+            # `MongoClient.__getattr__` resolves ANY unknown attribute to a
+            # Database, so `getattr(client, "name", cls_label)` hands back a
+            # Database object rather than falling through to the default, and
+            # the blocked-write line would read `Database(...).drop_database`.
+            name = getattr(self, "name", None)
+            where = f"{name if isinstance(name, str) else cls_label}.{method}"
+            BLOCKED_WRITES.append(where)
+            raise SandboxWriteBlocked(
+                f"read-only sandbox: blocked {where}(). Re-run with "
+                f"--allow-writes if you meant to exercise the persistence path."
+            )
+        return _raise
 
-    _conn.get_db = _read_only_get_db
+    for cls, methods, label in (
+        (pymongo.collection.Collection, _COLLECTION_WRITES, "collection"),
+        (pymongo.database.Database, _DATABASE_WRITES, "database"),
+        (pymongo.MongoClient, _CLIENT_WRITES, "client"),
+    ):
+        for name in methods:
+            if hasattr(cls, name):
+                setattr(cls, name, _blocker(label, name))
+
+    pymongo.collection.Collection._bench_read_only = True
+
+    for pin in _INDEX_LATCHES:
+        try:
+            pin()
+        except Exception:  # noqa: BLE001 - the write block is what matters
+            # Independently, so a module that fails to import cannot skip the
+            # next latch and quietly restore the flood it was meant to stop.
+            pass
+
+
+# The repo's ONE definition of "this cycle is over". Stated negatively, exactly
+# as `cycle_scheduler.py:313,1790`, `watch_desk.py:833`,
+# `smoke_test_cycle.py:64` and `smoke_test_streaming.py:484` state it, so five
+# places cannot drift apart about whether a cycle is live.
+#
+# This used to be a POSITIVE allowlist here — ("running", "starting",
+# "collecting", "analyzing", "trading") — and it had drifted in both
+# directions: `collecting`/`analyzing`/`trading` are `pipeline_state.phase`
+# values and are never written to `status` (grep: zero sites), while `stopping`
+# (`pipeline_service.py:2705`) and `blocked` (`boot_service.py:240`) ARE live
+# statuses and the list missed both. A cycle being stopped read as "no cycle",
+# which is precisely when `--force` should have been required.
+TERMINAL_CYCLE_STATUSES = ("idle", "done", "error", "stopped", "interrupted")
 
 
 def live_cycle_id() -> str | None:
-    """Return the cycle id of a running cycle, or None. Never raises."""
-    try:
-        from scripts.migration.pg_connection import get_db
+    """Return the cycle id of a running cycle, or None. Never raises.
 
-        with get_db() as db:
-            row = db.execute(
-                "SELECT cycle_id, status FROM pipeline_state WHERE singleton_id = 'current'"
-            ).fetchone()
-        if row and row[1] in ("running", "starting", "collecting", "analyzing", "trading"):
+    Reads MONGO. Postgres' `pipeline_state` froze at the 2026-08-19 cutover on
+    `cycle-v3-1787179210 (done)` and has not moved since, so the Postgres
+    version of this answered "no cycle is live" through the whole of every live
+    cycle — the LLM-load refusal below could never fire, and every timing this
+    tool printed was labelled clean.
+
+    `pipeline_state` is a SINGLETON: one document, `singleton_id='current'`,
+    overwritten in place. There is nothing to sort and nothing to sample.
+    """
+    try:
+        from app.db import mongo_query
+
+        row = mongo_query.find_row(
+            "pipeline_state", {"singleton_id": "current"}, ["cycle_id", "status"]
+        )
+        if row and row[1] not in TERMINAL_CYCLE_STATUSES:
             return f"{row[0]} ({row[1]})"
     except Exception:
         return None
@@ -662,7 +829,7 @@ async def main() -> int:
                     help="every non-LLM stage — the fast pre-flight")
     ap.add_argument("--all-agents", action="store_true", help="every LLM agent stage")
     ap.add_argument("--allow-writes", action="store_true",
-                    help="do NOT force the DB session read-only (rows will be written)")
+                    help="do NOT block Mongo writes (rows will be written)")
     ap.add_argument("--force", action="store_true",
                     help="run even while a real cycle is live (timings will be junk)")
     ap.add_argument("--json", dest="json_out", help="write the full result to this path")
@@ -737,10 +904,21 @@ async def main() -> int:
     total_s = sum(r["median_s"] for r in results)
     print("\n" + "=" * 72)
     print(f"  {passed}/{len(results)} stages PASS   |   {total_s:.1f}s of measured work")
+    if BLOCKED_WRITES:
+        # Named, not just counted. "3 writes blocked" is not actionable;
+        # "whiteboard_entries.insert_many x2" tells you which persistence path
+        # you just declined to exercise, and is the receipt that the sandbox is
+        # a guard rather than a label in the header.
+        tally: dict[str, int] = {}
+        for w in BLOCKED_WRITES:
+            tally[w] = tally.get(w, 0) + 1
+        detail = ", ".join(f"{k} x{v}" for k, v in sorted(tally.items()))
+        print(f"  {len(BLOCKED_WRITES)} mongo write(s) BLOCKED by the sandbox: {detail}")
     print("=" * 72)
 
     payload = {"ticker": ctx.ticker, "cycle_id": cycle_id,
-               "live_cycle": bool(live), "results": results}
+               "live_cycle": bool(live), "blocked_writes": list(BLOCKED_WRITES),
+               "results": results}
 
     if args.json_out:
         with open(args.json_out, "w", encoding="utf-8") as f:

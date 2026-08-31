@@ -27,7 +27,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.migration.pg_connection import get_db                                # noqa: E402
+from app.db import mongo_query                                       # noqa: E402
 from app.autoresearch.scorecard import (                            # noqa: E402
     MATURITY_N, REGRESSION_MARGIN, VERDICT_CONTAMINATED, VERDICT_IMMATURE,
     VERDICT_REGRESSED, build_scorecard, regression_verdict,
@@ -42,20 +42,38 @@ _MARK = {
 
 
 def _versions(agent: str, history: bool) -> list[int]:
-    with get_db() as db:
-        if history:
-            rows = db.execute(
-                "SELECT version FROM agent_skills WHERE agent_name = %s "
-                "ORDER BY version",
-                [agent],
-            ).fetchall()
-            return [r[0] for r in rows]
-        row = db.execute(
-            "SELECT version FROM agent_skills "
-            "WHERE agent_name = %s AND status = 'active'",
-            [agent],
-        ).fetchone()
-        return [row[0]] if row else []
+    """The version numbers to score, oldest first.
+
+    Reads `agent_skills` in Mongo. `app.autoresearch.scorecard` — which this
+    script is a viewer for — already reads the same collection through
+    `mongo_query`, so both halves of the report now come from one store.
+
+    ASCENDING, and `main()` depends on it: it applies `regression_verdict` to
+    `versions[-1]` and `build_scorecard` to the rest, so a descending list
+    would run the regression test against the OLDEST version and score the
+    newest as history. `version` is a plain int on all 162 documents, so the
+    sort is numeric — not the string ordering that would put v10 before v2.
+    """
+    if history:
+        rows = mongo_query.find_rows(
+            "agent_skills", {"agent_name": agent}, ["version"],
+            sort=[("version", 1)])
+        return [r[0] for r in rows]
+    # `status = 'active'`. The SQL took whichever row the heap handed back
+    # first; Mongo's natural order is a different arbitrary order, so
+    # "faithful" here means picking deterministically rather than picking
+    # blind. Highest version wins, which is what the two app-side readers of
+    # this same question already do (`skill_loader._load` and
+    # `skill_optimizer._load_skill`, both ported from
+    # `... status = 'active' ORDER BY version DESC LIMIT 1`) — and
+    # `skill_optimizer._save_skill` archives-then-inserts as two un-transacted
+    # Mongo ops, so a second active row is a state this can land in. Verified a no-op on today's
+    # data: all 7 agents have exactly one active row, so the output is
+    # unchanged either way.
+    row = mongo_query.find_row(
+        "agent_skills", {"agent_name": agent, "status": "active"}, ["version"],
+        sort=[("version", -1)])
+    return [row[0]] if row else []
 
 
 def main() -> int:

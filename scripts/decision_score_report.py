@@ -24,22 +24,94 @@ recomputed for a past decision is not the score that desk was shown. The
 shadow report only has data from the moment recording started, and a
 `decision_scores` row with a NULL `board_action` is a desk that never reached
 a verdict, which is a different fact from a HOLD.
+
+READS MONGODB (2026-08-30)
+--------------------------
+Both halves used to open the frozen archive through the migration pool, which
+since the 2026-08-19 cutover raises AttributeError on a settings attribute
+that no longer exists — so this file has not produced a number since the
+cutover, loudly. (docs/PREFLIGHT_FAILED_OPEN_2026-08-30.md has the full list;
+this script is one of its named three.) That is why `decision_scores` reads as
+write-only: the collection has a writer (`app.quant.decision_score_store`) and
+its ONLY reader is this script. The finding is closed from this end, by giving
+the reader a live store; the collection is not the thing to delete.
+
+Every read below names a POSTGRES TABLE and lets `mongo_store` resolve the
+collection once, so a future rename cannot split the read from the write.
+
+The `decision_scores`/`decision_outcomes` join is a COMPOSITE key
+(cycle_id, ticker), which `mongo_query.left_join_rows` does not take — it
+joins on one equality — so the stitch is done here, with the same semantics:
+a NULL key matches nothing, an unmatched left row survives with the right
+side NULL, and a left row matching N right rows emits N rows. Measured on the
+archive: `decision_outcomes` has 239 (cycle_id, ticker) groups with more than
+one row, so the fan-out is not hypothetical, even though none of those groups
+happens to meet a scored desk today (237 matched rows from 237 distinct
+`decision_scores` rows).
+
+PARITY WITH THE ARCHIVE, AND WHY A NAIVE ROW DIFF CALLS IT WRONG
+----------------------------------------------------------------
+Measured 2026-08-30. `fundamentals` distinct tickers: pg 1,192, Mongo 1,212,
+0 only-in-pg — a clean superset. `decision_scores WHERE score IS NOT NULL`:
+pg 304, Mongo 490, 0 only-in-pg — likewise.
+
+The joined result is NOT a clean superset, and the reason is worth knowing
+before someone reports it as a port bug. Over the whole set, 51 rows are
+"only in pg" — but every one of them is a row whose `pnl_pct` was NULL at the
+cutover and has since RESOLVED: 53 of 53 pg-only `decision_outcomes` rows are
+null-pnl in the archive and carry a number in Mongo for the SAME
+(cycle_id, ticker), and 0 keys are only-in-pg. 111 outcomes resolved after
+2026-08-19. So the archive holds an EARLIER STATE of rows Mongo still has,
+which a row-identity diff can only express as "missing" — a value updated in
+place is invisible to a comparison that only knows row-add.
+
+Close the window on the field that actually moves and the two stores agree
+exactly: scores created before the cutover joined to outcomes RESOLVED before
+it gives 297 rows on each side, 0 only-in-pg, 0 only-in-mongo.
+
+Historical note, because the test that guards it is still live: the SQL this
+replaced aliased `decision_outcomes` as `do`, a Postgres reserved word, so
+`shadow` raised a SyntaxError before reading a row from the day it shipped
+(aac14ec) until 2026-08-07. `tests/unit/test_sql_reserved_aliases.py` keeps
+that scan running over the SQL that is left elsewhere.
 """
 
+import os
 import statistics
 import sys
 from collections import Counter
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+# The SELECT list the shadow report reads POSITIONALLY: r[0] band, r[1] score,
+# r[2] baseline_confidence, r[3] risk_reward, r[4] board_action,
+# r[5] board_confidence — and r[6] pnl_pct is stitched on from the right side.
+# `risk_reward` is selected and never read; it is kept so the indices below
+# are the SQL's indices, and dropping it would silently shift r[4] and r[5].
+_SCORE_COLUMNS = ("band", "score", "baseline_confidence", "risk_reward",
+                  "board_action", "board_confidence")
+
+
+def _universe_tickers() -> list[str]:
+    """`SELECT DISTINCT ticker FROM fundamentals ORDER BY ticker`.
+
+    `sql_to_mongo` refuses SELECT DISTINCT ("use distinct_values() by hand"),
+    so it is done by hand. Blank/None tickers are dropped rather than sorted
+    against strings: `compute_decision_score("")` returns NOT_SCOREABLE, so
+    keeping them would only pad the denominator every band percentage below is
+    computed over. Measured 2026-08-30: 0 such documents in `fundamentals`,
+    so today the two behaviours are identical.
+    """
+    from app.db import mongo_store
+
+    return sorted({t for t in mongo_store.distinct_values("fundamentals", "ticker") if t})
+
 
 def _universe_scores():
     from app.quant.decision_score import compute_decision_score, rank_scores
-    from scripts.migration.pg_connection import get_db
 
-    with get_db() as db:
-        rows = db.execute(
-            "SELECT DISTINCT ticker FROM fundamentals ORDER BY ticker"
-        ).fetchall()
-    tickers = [r[0] for r in rows]
+    tickers = _universe_tickers()
     print(f"scoring {len(tickers)} tickers...", file=sys.stderr)
     scores = [compute_decision_score(t) for t in tickers]
     return rank_scores(scores)
@@ -107,27 +179,74 @@ def distribution() -> int:
     return 0
 
 
-def shadow() -> int:
-    from scripts.migration.pg_connection import get_db
+def _shadow_rows() -> list[tuple]:
+    """The archive's
 
-    with get_db() as db:
-        rows = db.execute(
-            """
-            -- `do` is a RESERVED WORD in Postgres (the DO statement), so the
-            -- obvious alias for decision_outcomes is a syntax error and this
-            -- whole subcommand raised before it read a row. It shipped that
-            -- way in aac14ec and stayed dead until 2026-08-07, because the
-            -- only test on this file covers compute_decision_score, never the
-            -- reporter. `outcome` is not reserved.
-            SELECT ds.band, ds.score, ds.baseline_confidence, ds.risk_reward,
-                   ds.board_action, ds.board_confidence, outcome.pnl_pct
-              FROM decision_scores ds
-              LEFT JOIN decision_outcomes outcome
-                     ON outcome.cycle_id = ds.cycle_id
-                    AND outcome.ticker = ds.ticker
-             WHERE ds.score IS NOT NULL
-            """
-        ).fetchall()
+        SELECT ds.band, ds.score, ds.baseline_confidence, ds.risk_reward,
+               ds.board_action, ds.board_confidence, outcome.pnl_pct
+          FROM decision_scores ds
+          LEFT JOIN decision_outcomes outcome
+                 ON outcome.cycle_id = ds.cycle_id
+                AND outcome.ticker  = ds.ticker
+         WHERE ds.score IS NOT NULL
+
+    as two collection reads and a Python stitch, returning tuples in the same
+    SELECT order so every positional read below is unchanged.
+
+    `{"score": {"$ne": None}}` is the faithful `IS NOT NULL`: in Mongo a query
+    for `null` also matches a document that LACKS the field, so `$ne: None`
+    excludes both — which is what a NULL column was. The mirror of that matters
+    on the way out and is why the columns are read through `find_rows()` rather
+    than filtered on: `board_action` and `board_confidence` are `$set` onto the
+    row afterwards by `attach_board_decision`, so on a desk that never reached a
+    verdict the fields are ABSENT, not null — 129 of 508 rows today, against 44
+    explicit nulls inherited from the archive. `find_rows()` returns None for a
+    missing field exactly as Postgres returned NULL for the column, so the
+    "no board action" count below sees all 173 and not just the archive's 44.
+
+    NOT `$lookup`: its left-outer array semantics differ from a LEFT JOIN, and
+    `from:` would need a resolved collection name — a second `collection_for()`
+    on a table `mongo_store` already resolves, which is the defect
+    `tests/unit/test_no_double_collection_resolution.py` fails the build on.
+    """
+    from app.db import mongo_query
+
+    left = mongo_query.find_rows(
+        "decision_scores", {"score": {"$ne": None}},
+        list(_SCORE_COLUMNS) + ["cycle_id", "ticker"])
+    # The whole right side, as `left_join_rows` also reads it: 2,693 documents
+    # of three fields. Pushing the left side's cycle_ids down as an `$in` would
+    # be equivalent, and is not worth a second thing that can be wrong.
+    right = mongo_query.find_rows(
+        "decision_outcomes", {}, ["cycle_id", "ticker", "pnl_pct"])
+
+    # `NULL = NULL` is not true, so a row without a COMPLETE key joins nothing,
+    # on either side. That is enforced in ONE place — the index simply never
+    # holds an incomplete key — and one place is the point: an incomplete left
+    # key can only ever match an incomplete right key, so guarding the index
+    # covers both sides, whereas guarding BOTH sides makes each guard redundant
+    # and so removable with no test going red. Drop this condition and a
+    # `decision_scores` row with no cycle_id joins every `decision_outcomes`
+    # row with no cycle_id — a cross product of exactly the rows that should
+    # not have matched at all, and one no row count would look wrong for.
+    index: dict[tuple, list] = {}
+    for cycle_id, ticker, pnl_pct in right:
+        if cycle_id is not None and ticker is not None:
+            index.setdefault((cycle_id, ticker), []).append(pnl_pct)
+
+    rows: list[tuple] = []
+    for row in left:
+        head, key = row[:len(_SCORE_COLUMNS)], (row[-2], row[-1])
+        # No match -> ONE row with the right side NULL (LEFT JOIN, not INNER);
+        # N matches -> N rows, which is what the SQL did when the right side
+        # was not unique on the key.
+        for pnl_pct in (index.get(key) or [None]):
+            rows.append(head + (pnl_pct,))
+    return rows
+
+
+def shadow() -> int:
+    rows = _shadow_rows()
 
     if not rows:
         print("no decision_scores rows yet — the shadow period has not started "

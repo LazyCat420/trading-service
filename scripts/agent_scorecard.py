@@ -40,6 +40,12 @@ import os
 import sys
 from collections import defaultdict
 
+# `python scripts/agent_scorecard.py` puts scripts/ on sys.path[0], not the
+# repo root, so `from app.db import ...` below would raise ModuleNotFoundError
+# and the script would exit 1 with no output. Done at module scope, before any
+# app import, so `import scripts.agent_scorecard` works from a test too.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 # ── Stance extraction ────────────────────────────────────────────────────────
 # (desk artifact key, label) -> how to read a direction out of it. Agents speak
 # different dialects: analysts emit thesis_direction, decision-makers emit
@@ -154,28 +160,85 @@ def _wilson(hits: int, n: int) -> tuple[float, float]:
     return (max(0.0, centre - margin) * 100, min(1.0, centre + margin) * 100)
 
 
+def _resolved_outcomes(since: str) -> list[dict]:
+    """`WHERE resolved_at IS NOT NULL AND pnl_pct IS NOT NULL AND created_at >= s`.
+
+    `{"$ne": None}` is the exact Mongo spelling of SQL's `IS NOT NULL`: it
+    matches neither a stored null nor a MISSING field. That matters here —
+    Postgres supplied a NULL for every unresolved row, but a document written
+    after the cutover simply has no `resolved_at` key (35 of the 2,693 outcome
+    documents, measured 2026-08-30), and those are unresolved, so dropping them
+    is what the SQL did.
+    """
+    from app.db import mongo_store
+
+    return mongo_store.find_docs(
+        "decision_outcomes",
+        {"resolved_at": {"$ne": None},
+         "pnl_pct": {"$ne": None},
+         "created_at": {"$gte": since}},
+        sort=[("created_at", 1)],
+        projection={"_id": 0, "cycle_id": 1, "ticker": 1, "action": 1,
+                    "confidence": 1, "pnl_pct": 1, "outcome": 1,
+                    "created_at": 1},
+    )
+
+
 def fetch_rows(since: str) -> list[dict]:
     """Resolved outcomes joined to their desk. One row per (cycle, ticker)."""
-    from scripts.migration.pg_connection import get_db
+    from app.db import mongo_store
 
-    with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT d.cycle_id, d.ticker, d.action, d.confidence,
-                   d.pnl_pct, d.outcome, d.created_at, s.desk_data
-            FROM decision_outcomes d
-            JOIN shared_desk s
-              ON s.cycle_id = d.cycle_id AND s.ticker = d.ticker
-            WHERE d.resolved_at IS NOT NULL
-              AND d.pnl_pct IS NOT NULL
-              AND d.created_at >= %s
-            ORDER BY d.created_at ASC
-            """,
-            [since],
-        ).fetchall()
+    outcomes = _resolved_outcomes(since)
+
+    # The JOIN, as two queries and a Python stitch on the COMPOSITE key
+    # (cycle_id, ticker).
+    #
+    # Not `mongo_query.join_rows`: it carries ONE equality, and joining on
+    # cycle_id alone fans a 12-ticker cycle out 12-fold — every desk in the
+    # cycle would be scored against every other ticker's realized move, which
+    # no row count would look wrong.
+    #
+    # Not `$lookup` either: it is a LEFT outer join, so an outcome with no desk
+    # comes back with an empty array rather than being dropped — and dropping
+    # them is the entire content of this statement. 2,584 outcomes are
+    # resolved; 626 of them have a desk (measured 2026-08-30 against the
+    # archive). A careless port turns the 626-row sample into a 2,584-row one
+    # whose desk is `{}` for three quarters of it.
+    #
+    # Only the cycles that actually appear in the outcomes are fetched, so the
+    # desk side stays proportional to the join and not to shared_desk.
+    cycle_ids = sorted({o.get("cycle_id") for o in outcomes} - {None})
+    desks: dict[tuple, list[dict]] = {}
+    if cycle_ids:
+        for d in mongo_store.find_docs(
+            "shared_desk", {"cycle_id": {"$in": cycle_ids}},
+            projection={"_id": 0, "cycle_id": 1, "ticker": 1, "desk_data": 1},
+        ):
+            key = (d.get("cycle_id"), d.get("ticker"))
+            # `NULL = NULL` is not true in SQL, so a keyless desk joins nothing.
+            if key[0] is None or key[1] is None:
+                continue
+            desks.setdefault(key, []).append(d)
+
+    rows = []
+    for o in outcomes:
+        key = (o.get("cycle_id"), o.get("ticker"))
+        # One output row per matching desk — what an INNER JOIN does when the
+        # right side is not unique on the key. shared_desk has no unique index
+        # on (cycle_id, ticker) in either store (Postgres: 1,762 rows / 1,757
+        # distinct pairs), so the fan-out is real and is preserved rather than
+        # quietly de-duplicated.
+        for d in desks.get(key, ()):
+            rows.append((o.get("cycle_id"), o.get("ticker"), o.get("action"),
+                         o.get("confidence"), o.get("pnl_pct"), o.get("outcome"),
+                         o.get("created_at"), d.get("desk_data")))
 
     out = []
     for cycle_id, ticker, action, conf, pnl_pct, outcome, created_at, desk_data in rows:
+        # `desk_data` is JSON *TEXT* for every desk written after the cutover
+        # (274 of 2,036) and a sub-document for every one the migration
+        # backfilled. Both shapes are read here; a Mongo filter or a dotted
+        # projection into `desk_data.x` would match zero of the text ones.
         desk = desk_data if isinstance(desk_data, dict) else json.loads(desk_data or "{}")
         # decision_outcomes.pnl_pct is signed relative to the ACTION taken
         # (SELL inverts it). Undo that: every agent is scored against the same
@@ -209,59 +272,70 @@ def fetch_rows_from_prices(since: str, horizon: int = 7) -> list[dict]:
     `horizon` sessions later. Applied identically to every agent, so
     cross-agent comparisons stay fair even where the fill is idealized.
     """
-    from scripts.migration.pg_connection import get_db
+    from app.db import mongo_query
 
     sessions = horizon + 1  # entry + horizon forward sessions
-    with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT s.cycle_id, s.ticker, s.created_at, s.desk_data
-            FROM shared_desk s
-            WHERE s.created_at >= %s
-            ORDER BY s.created_at ASC
-            """,
-            [since],
-        ).fetchall()
 
-        # Forward windows go through app/quant/returns.forward_move_pct: ONE
-        # vendor, one bar per date, and the full window or nothing.
-        #
-        # The previous inline query had no `source` filter, and price_history
-        # keeps `source` in its primary key — so on a dual-source ticker
-        # `LIMIT sessions` returned `sessions` ROWS spanning about half as many
-        # DATES. Measured 2026-07-30 on CRH: the +7-session move read +0.970%
-        # where the truth is -2.358%. A SIGN FLIP, on 146 of 773 completed
-        # desks (19%, 20 of 122 tickers). Every aggregate this script prints
-        # was drawing ~a fifth of its rows from a corrupted window.
-        from app.quant.returns import forward_move_pct
+    # `created_at >= since` on a field that CAN BE MISSING. 76 of the 2,036
+    # shared_desk documents carry no `created_at` at all — Postgres defaulted
+    # the column to now() and the Mongo writer briefly did not (fixed since;
+    # every one of the 76 was written on 2026-08-18). `$gte` does not match a
+    # missing field, so they are dropped, and dropping them is CORRECT rather
+    # than lucky: all 76 are suite fixtures — cycle-1/HOOD (27), cycle-test-1/
+    # AAPL (25), cycle-abort/TEST (12), cycle-abort2/TEST (12) — none of which
+    # is a real desk. Falling back to `updated_at` to "recover" them would
+    # inject 76 test rows into the scorecard. Verified 2026-08-30; re-check if
+    # the count ever moves.
+    rows = mongo_query.find_rows(
+        "shared_desk", {"created_at": {"$gte": since}},
+        ["cycle_id", "ticker", "created_at", "desk_data"],
+        sort=[("created_at", 1)],
+    )
 
-        out = []
-        for cycle_id, ticker, created_at, desk_data in rows:
-            desk = desk_data if isinstance(desk_data, dict) else json.loads(desk_data or "{}")
-            start = created_at.date() if hasattr(created_at, "date") else created_at
-            move = forward_move_pct(ticker, start, sessions)
-            if move is None:
-                continue  # window hasn't closed yet, or no clean data
+    # Forward windows go through app/quant/returns.forward_move_pct: ONE
+    # vendor, one bar per date, and the full window or nothing.
+    #
+    # The previous inline query had no `source` filter, and price_history
+    # keeps `source` in its primary key — so on a dual-source ticker
+    # `LIMIT sessions` returned `sessions` ROWS spanning about half as many
+    # DATES. Measured 2026-07-30 on CRH: the +7-session move read +0.970%
+    # where the truth is -2.358%. A SIGN FLIP, on 146 of 773 completed
+    # desks (19%, 20 of 122 tickers). Every aggregate this script prints
+    # was drawing ~a fifth of its rows from a corrupted window.
+    #
+    # That helper is now a Mongo read and keeps the vendor pin inside it
+    # (`_one_vendor`), so the fix survives the cutover — this script must keep
+    # going THROUGH it and never read price_history itself.
+    from app.quant.returns import forward_move_pct
 
-            # Excess over SPY across the SAME window. Raw moves are dominated by
-            # the market: every completed desk sits in a 5-week span, so a
-            # market-wide drift makes every decision look good (or bad)
-            # together and the action mix explains nothing.
-            bench = forward_move_pct(BENCHMARK_TICKER, start, sessions)
+    out = []
+    for cycle_id, ticker, created_at, desk_data in rows:
+        # JSON text for post-cutover desks, a sub-document for backfilled ones.
+        desk = desk_data if isinstance(desk_data, dict) else json.loads(desk_data or "{}")
+        start = created_at.date() if hasattr(created_at, "date") else created_at
+        move = forward_move_pct(ticker, start, sessions)
+        if move is None:
+            continue  # window hasn't closed yet, or no clean data
 
-            decision = desk.get("trade_decision") or desk.get("final_decision") or {}
-            out.append({
-                "cycle_id": cycle_id,
-                "ticker": ticker,
-                "action": decision.get("action"),
-                "confidence": decision.get("confidence"),
-                "move_pct": move,
-                "excess_pct": None if bench is None else move - bench,
-                "bench_pct": bench,
-                "outcome": None,
-                "created_at": created_at,
-                "desk": desk,
-            })
+        # Excess over SPY across the SAME window. Raw moves are dominated by
+        # the market: every completed desk sits in a 5-week span, so a
+        # market-wide drift makes every decision look good (or bad)
+        # together and the action mix explains nothing.
+        bench = forward_move_pct(BENCHMARK_TICKER, start, sessions)
+
+        decision = desk.get("trade_decision") or desk.get("final_decision") or {}
+        out.append({
+            "cycle_id": cycle_id,
+            "ticker": ticker,
+            "action": decision.get("action"),
+            "confidence": decision.get("confidence"),
+            "move_pct": move,
+            "excess_pct": None if bench is None else move - bench,
+            "bench_pct": bench,
+            "outcome": None,
+            "created_at": created_at,
+            "desk": desk,
+        })
     return out
 
 
@@ -455,9 +529,11 @@ def main() -> int:
     # it is fixed, `price` is the honest default.
     ap.add_argument("--source", choices=("outcomes", "price"), default="price",
                     help="price (DEFAULT) = score every desk straight from "
-                         "price_history — ~10-20x the sample, no resolver wait, "
+                         "price_history — ~2x the sample, no resolver wait, "
                          "includes HOLDs. outcomes = resolved decision_outcomes "
-                         "only (bookkeeping-limited; n=40 as of 2026-07-25).")
+                         "only (bookkeeping-limited: 2,658 resolved, 700 of "
+                         "which join to a desk, against 1,626 scoreable desks "
+                         "on the price side — measured 2026-08-30).")
     ap.add_argument("--horizon", type=int, default=7,
                     help="Forward trading sessions to score over (price source only)")
     ap.add_argument("--executable-only", action="store_true",
@@ -473,8 +549,6 @@ def main() -> int:
                          "HOLD unless provenance is checked.")
     args = ap.parse_args()
 
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
     if args.source == "price":
         rows = fetch_rows_from_prices(args.since, args.horizon)
         source_label = f"desks scored on the +{args.horizon}-session move"
@@ -484,12 +558,10 @@ def main() -> int:
         # Say out loud how much of the resolved data never reaches the score.
         # Silence here is what let a 65-row join masquerade as the sample.
         try:
-            from scripts.migration.pg_connection import get_db
-            with get_db() as _db:
-                _resolved = _db.execute(
-                    "SELECT count(*) FROM decision_outcomes "
-                    "WHERE resolved_at IS NOT NULL AND pnl_pct IS NOT NULL"
-                ).fetchone()[0]
+            from app.db import mongo_query
+            _resolved = mongo_query.count(
+                "decision_outcomes",
+                {"resolved_at": {"$ne": None}, "pnl_pct": {"$ne": None}})
             if _resolved > len(rows):
                 print(f"⚠ {_resolved} resolved outcomes exist but only {len(rows)} join to a "
                       f"shared_desk row — {_resolved - len(rows)} are unscoreable here.\n"
@@ -678,5 +750,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     raise SystemExit(main())

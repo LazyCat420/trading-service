@@ -15,7 +15,7 @@ This grades those calls once the window has passed, using the same
     RISING/   VIX direction on the same ±5% deadband — volatility moves in
     FALLING   percentage terms, so a 1% band would call everything a hit.
 
-Read-only. Usage:
+Reads MongoDB (`asset_prices`, `shared_desk`). Read-only. Usage:
     python scripts/grade_regime_calls.py [--since 2026-07-24]
 """
 
@@ -26,23 +26,85 @@ import json
 import os
 import sys
 from collections import defaultdict
+from datetime import date as _date, datetime as _datetime
+
+# `python scripts/grade_regime_calls.py` puts `scripts/` on sys.path[0], not
+# the repo root, so `from app.db import ...` below would raise
+# ModuleNotFoundError before main() ever runs. Must precede the app imports.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.db import mongo_query, mongo_store  # noqa: E402
 
 HORIZON_DAYS = 5
 SPX_DEADBAND_PCT = 1.0
 VIX_DEADBAND_PCT = 5.0
 
 
-def _load_closes(symbol: str) -> list[tuple]:
-    from scripts.migration.pg_connection import get_db
+def _as_day(value):
+    """A calendar day, whatever the store handed back.
 
-    with get_db() as db:
-        rows = db.execute(
-            "SELECT date, close FROM asset_prices WHERE symbol = %s "
-            "AND close IS NOT NULL ORDER BY date ASC",
-            [symbol],
-        ).fetchall()
-    # NaN survives a NOT NULL check; it is not a price.
-    return [(d, float(c)) for d, c in rows if c == c]
+    Postgres' `asset_prices.date` is a `date` and its driver returned
+    `datetime.date`; BSON has no date type, so `table_spec` stores the same
+    column as naive midnight UTC and pymongo returns `datetime.datetime`. That
+    difference is not cosmetic here: `_move_after` compares an element of this
+    list against `created_at.date()`, and `datetime >= date` raises
+    `TypeError: can't compare datetime.datetime to datetime.date` — the whole
+    grader would die on its first call rather than mis-grade one.
+    """
+    if isinstance(value, _datetime):
+        return value.date()
+    if isinstance(value, _date):
+        return value
+    if isinstance(value, str):        # a stringly-typed date should never
+        return _date.fromisoformat(value[:10])   # reach here; be loud, not wrong
+    raise TypeError(f"asset_prices.date is a {type(value).__name__}: {value!r}")
+
+
+def _load_closes(symbol: str) -> list[tuple]:
+    """One close per trading day for `symbol`, oldest first.
+
+    ONE PER DAY IS THE WHOLE POINT. Postgres held `asset_prices` under
+    `PRIMARY KEY (symbol, asset_class, date)`, so `SELECT date, close ...
+    ORDER BY date` was already one row per day and `_move_after` could count
+    five ROWS for five trading days. Mongo's `natural_key` index on the same
+    three fields is **not unique**, and `market_regime_collector` writes with
+    `insert_docs` in the belief that a duplicate key would be swallowed —
+    "`ON CONFLICT (symbol, asset_class, date) DO NOTHING` … insert_docs is
+    ordered=False and swallows duplicate-key errors". With no unique index
+    nothing ever conflicts, so every cycle's re-fetch of the trailing window
+    APPENDS: GSPC is 4,203 documents over 203 days (33 on most of them),
+    VIX 4,262 over 207. A straight port would step five ROWS ahead, land on
+    the same afternoon, measure a 0.00% five-day move, and score every single
+    call FLAT — while printing a full, plausible table. So the collapse
+    happens here, at the read.
+
+    WHICH print survives: the FIRST document written for a day. That is what
+    the writer intended (DO NOTHING keeps the incumbent), and it is what the
+    archive holds — first-by-`_id` reproduces Postgres on 196/196 GSPC days
+    and 200/200 VIX days, where last-by-`_id` matches only 164 and 154, min
+    176/172 and max 184/182. The duplicates are intraday re-fetches and they
+    disagree: 32 of GSPC's 196 archived days carry more than one distinct
+    close in Mongo, so "pick any" is not a rounding difference.
+
+    `close IS NOT NULL` becomes `{"$ne": None}`, which in Mongo also excludes
+    a MISSING field — the right reading, since an absent field is exactly what
+    Postgres called NULL. (0 of the 133,000 documents are missing `close`
+    today, so the two spellings agree on the current data either way.)
+    """
+    pipeline = [
+        {"$match": {"symbol": symbol, "close": {"$ne": None}}},
+        # (date, _id) so the $first below is the first document WRITTEN for
+        # that day; _id is monotonic in insertion time.
+        {"$sort": {"date": 1, "_id": 1}},
+        {"$group": {"_id": "$date", "close": {"$first": "$close"}}},
+        {"$sort": {"_id": 1}},
+    ]
+    rows = mongo_store.aggregate("asset_prices", pipeline)
+    # NaN survives a NOT NULL check; it is not a price. Dropped after the
+    # collapse, not before, so the day a NaN incumbent owns stays dropped —
+    # which is what the archive row for that day would have done.
+    return [(_as_day(r["_id"]), float(r["close"]))
+            for r in rows if r["close"] == r["close"]]
 
 
 def _move_after(closes: list[tuple], start_date, days: int) -> float | None:
@@ -57,24 +119,35 @@ def _move_after(closes: list[tuple], start_date, days: int) -> float | None:
     return (end - start) / start * 100.0
 
 
+def _since_bound(text: str) -> _datetime:
+    """`--since` as a value that can be compared to a BSON Date.
+
+    `{"created_at": {"$gte": "2026-07-24"}}` is not a narrower window, it is an
+    EMPTY one: Mongo's comparison operators only match within a BSON type
+    bracket, and String does not compare against Date at all. Postgres cast the
+    literal for us. `date_fields.coerce_filter` would also rescue this, since
+    `shared_desk.created_at` is a registered timestamp column — but a read that
+    is only correct because a registry happens to list it is a read that breaks
+    the day the registry moves, so the bound is built here.
+    """
+    try:
+        return _datetime.fromisoformat(text)
+    except ValueError:
+        raise SystemExit(f"--since must be an ISO date/timestamp, got {text!r}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--since", default="2026-07-24", help="Only grade calls made on/after this date")
     ap.add_argument("--json", dest="json_out", help="Write the raw report here")
     args = ap.parse_args()
 
-    from scripts.migration.pg_connection import get_db
-
-    with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT cycle_id, ticker, created_at, desk_data
-            FROM shared_desk
-            WHERE created_at >= %s
-            ORDER BY created_at ASC
-            """,
-            [args.since],
-        ).fetchall()
+    rows = mongo_query.find_rows(
+        "shared_desk",
+        {"created_at": {"$gte": _since_bound(args.since)}},
+        ["cycle_id", "ticker", "created_at", "desk_data"],
+        sort=[("created_at", 1)],
+    )
 
     spx = _load_closes("GSPC")
     vix = _load_closes("VIX")
@@ -92,6 +165,10 @@ def main() -> int:
     for cycle_id, _ticker, created_at, desk_data in rows:
         if cycle_id in seen:
             continue
+        # `desk_data` is BOTH shapes in this collection: the 1,762 backfilled
+        # rows carry the JSONB as a subdocument (a dict), while every write
+        # since the cutover stores it as JSON TEXT. 610 dicts and 198 strings
+        # in the default window today, so neither branch is dead code.
         desk = desk_data if isinstance(desk_data, dict) else json.loads(desk_data or "{}")
         regime = desk.get("regime_classification") or {}
         call = regime.get("forward_call")
@@ -181,5 +258,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     raise SystemExit(main())

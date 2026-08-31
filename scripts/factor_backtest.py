@@ -42,7 +42,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime
 
 import numpy as np
 import pandas as pd
@@ -57,34 +57,82 @@ COST_PCT_PER_SIDE = 0.075
 
 
 def load_panel(start: str, end: str | None = None) -> pd.DataFrame:
-    """Wide close panel [date x ticker]. Chunked by year to keep the planner
-    off a single huge grouped scan — the Postgres container has the Docker
-    default 64MB /dev/shm and fans out to parallel workers on big joins."""
-    from scripts.migration.pg_connection import get_db
+    """Wide close panel [date x ticker], ONE VENDOR PER TICKER.
+
+    Reads the `price_history` collection in MongoDB. Chunked by year, which was
+    originally a Postgres planner concession (64MB /dev/shm, parallel workers on
+    a big grouped scan) and survives the port for a different reason: the
+    document decode, not the query, is what costs memory here. 1995-2026 is
+    ~13.7M documents; a year at a time keeps at most ~750k raw dicts in flight
+    instead of all of them, and each chunk is a plain range scan on the `date`
+    index.
+
+    THE VENDOR PIN — the correctness change this port carries
+    ---------------------------------------------------------
+    `price_history` is keyed `(ticker, date, source)`, so one ticker-date can
+    hold several vendor prints and they DISAGREE — measured 20.05% mean absolute
+    close difference across 9,225 dual-source ticker-dates, because yfinance
+    publishes dividend/split-adjusted closes and polygon raw. The SQL this
+    replaced selected no `source` and filtered none, and leaned on
+    `pivot_table(aggfunc="last")` to pick a winner per cell — i.e. whichever
+    vendor's row landed last in the frame, decided independently for every cell.
+    That is exactly the shape `tests/unit/test_price_history_one_vendor_guard.py`
+    exists to catch (it carried this file at a budget of 1), and on this data it
+    is not hypothetical. Measured 2026-08-30 over 1995-2026: 51,979 off-vendor
+    prints, and among them 58 `world_simulator` rows for NVDA — synthetic prices
+    on 58 days yfinance never printed, which an unpinned read admits into the
+    panel as if they were quotes (NVDA's column: 222 observations unpinned,
+    164 pinned, over 2025-11..2026-06).
+
+    So `source` is now selected and `keep_dominant_source()` pins one vendor per
+    ticker — freshest first, then deepest, ties broken by name. It runs ONCE on
+    the whole concatenated window, never per chunk: a per-chunk pin would let
+    the winner change between years and manufacture the adjustment-convention
+    jumps the pin exists to remove.
+    """
+    from app.db import mongo_store
+    from app.quant.returns import keep_dominant_source
 
     end = end or str(date.today())
     frames = []
     y0, y1 = int(start[:4]), int(end[:4])
-    with get_db() as db:
-        for y in range(y0, y1 + 1):
-            lo = max(f"{y}-01-01", start)
-            hi = min(f"{y}-12-31", end)
-            rows = db.execute(
-                """
-                SELECT ticker, date, close FROM price_history
-                WHERE date >= %s AND date <= %s
-                  AND close IS NOT NULL AND close > 0
-                """,
-                [lo, hi],
-            ).fetchall()
-            if rows:
-                frames.append(pd.DataFrame(rows, columns=["ticker", "date", "close"]))
+    for y in range(y0, y1 + 1):
+        lo = max(f"{y}-01-01", start)
+        hi = min(f"{y}-12-31", end)
+        # `$ne: None` plus `$gt: 0` is `close IS NOT NULL AND close > 0`:
+        # neither operator matches a document that lacks the field, which is
+        # what the SQL meant. Verified against the archive by
+        # scripts/verify_translations.py — MATCH, 2,620 rows.
+        docs = mongo_store.find_docs(
+            "price_history",
+            {"date": {"$gte": lo, "$lte": hi},
+             "close": {"$ne": None, "$gt": 0}},
+            projection={"ticker": 1, "date": 1, "close": 1, "source": 1, "_id": 0},
+        )
+        if docs:
+            frames.append(pd.DataFrame(
+                docs, columns=["ticker", "date", "close", "source"]))
     if not frames:
         return pd.DataFrame()
     df = pd.concat(frames, ignore_index=True)
     df["close"] = pd.to_numeric(df["close"], errors="coerce")
-    panel = df.pivot_table(index="date", columns="ticker", values="close", aggfunc="last")
-    return panel.sort_index()
+
+    raw_rows = len(df)
+    df = keep_dominant_source(df)
+    print(f"  vendor pin: kept {len(df):,} of {raw_rows:,} rows "
+          f"({raw_rows - len(df):,} off-vendor prints dropped)", flush=True)
+
+    panel = df.pivot_table(index="date", columns="ticker", values="close",
+                           aggfunc="last").sort_index()
+    # Postgres handed back `datetime.date`; BSON has no date type, so the
+    # backfill stored naive midnight datetimes and pymongo decodes them as
+    # `datetime`. Normalise the index back to plain dates so the panel prints
+    # and stamps exactly as it did on SQL — done on the ~8k-row index, not on
+    # the 13.7M-row frame.
+    panel.index = pd.Index(
+        [d.date() if isinstance(d, datetime) else d for d in panel.index],
+        name="date")
+    return panel
 
 
 def _factor_values(name: str, hist: pd.DataFrame, mkt: pd.Series | None) -> dict:

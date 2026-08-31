@@ -19,7 +19,7 @@ The headline is `UNGUARDED`. A field nothing checks is a field nobody can trust,
 and the 2026-07-24 audit counted 171 invented RSIs out of 305 exactly because
 somebody built the counter first.
 
-Read-only. Usage:
+Reads `shared_desk` from MongoDB. Read-only. Usage:
     python scripts/agent_fidelity_audit.py [--days 7] [--json out.json]
 """
 
@@ -31,6 +31,7 @@ import os
 import re
 import sys
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -122,7 +123,7 @@ _PROSE_KEYS = ("summary", "reasoning", "thesis", "price_implied_assumption")
 
 
 def audit(days: int) -> dict:
-    from scripts.migration.pg_connection import get_db
+    from app.db import mongo_query
 
     enforced = _reconciled_fields()
     stats: dict[str, dict] = defaultdict(lambda: {
@@ -135,15 +136,76 @@ def audit(days: int) -> dict:
         "prose_examples": [],
     })
 
-    with get_db() as db:
-        rows = db.execute(
-            "SELECT desk_data FROM shared_desk "
-            "WHERE created_at > now() - (%s || ' days')::interval",
-            [str(days)],
-        ).fetchall()
+    # WAS: SELECT desk_data FROM shared_desk
+    #      WHERE created_at > now() - (%s || ' days')::interval
+    #
+    # `sql_to_mongo.translate()` REFUSES that statement — "value Cast is not a
+    # literal or placeholder" — and the refusal is the right answer rather than
+    # a gap: `now() - (n || ' days')::interval` is arithmetic Postgres did
+    # server-side, and Mongo has no equivalent. So the boundary is computed
+    # here, once, and passed as a value.
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
-    for (desk,) in rows:
-        # get_db() hands back jsonb as a string, unlike a psycopg2 dict cursor.
+    # `created_at` is MISSING on 76 of the collection's 2036 desks (measured
+    # 2026-08-30) — all written 2026-08-18 during the dual-write mirror, and
+    # present in Mongo ONLY (0 of the 76 are in the Postgres archive) — and
+    # `$gt` does not match a missing field, so a bare
+    # `{"created_at": {"$gt": cutoff}}` drops all 76 with no error and no
+    # trace in the denominator (591 desks vs 667 at `--days 30`, measured).
+    #
+    # This disjunction is a deliberate WIDENING, not a faithful translation,
+    # and the distinction matters because an earlier draft of this comment
+    # claimed the opposite. `information_schema.columns` for
+    # shared_desk.created_at reports `is_nullable = YES, column_default =
+    # now()`: the DEFAULT is why 0 of the 1762 archive rows are NULL, but
+    # there is no NOT NULL constraint, and had a row been NULL the SQL's
+    # `created_at > ...` would have EXCLUDED it — the opposite of what this
+    # fallback does. What justifies the widening is not the archive, which
+    # never had these desks, but the 76 Mongo-only rows: each carries a real
+    # BSON `updated_at` within 43 ms (42.109 ms, max, measured) of the
+    # `created_at` recorded INSIDE desk_data, so it dates them to the right
+    # day and then some. They are counted and reported separately, never
+    # folded in silently.
+    window = {"$or": [
+        {"created_at": {"$gt": cutoff}},
+        {"created_at": {"$exists": False}, "updated_at": {"$gt": cutoff}},
+    ]}
+    # "shared_desk" is the POSTGRES TABLE NAME: mongo_query resolves it through
+    # collection_for() itself, exactly once.
+    #
+    # The COLUMN ORDER is the contract. `find_rows` returns tuples in the
+    # order asked for — that shape compatibility is the only reason positional
+    # call sites survived the codemod — so `desk_data` first and `created_at`
+    # second is what `for desk, created in rows` unpacks. Swapping the two is
+    # a one-token change that prints the full banner over zero agent sections;
+    # `test_the_columns_are_projected_in_unpacking_order` fails on it and the
+    # vacuity guard below shouts about it at runtime.
+    #
+    # NO `limit`, deliberately and explicitly: an audit reads its whole
+    # window. A limit here would not sample the collection, it would sample
+    # the PAST — natural order returns the OLDEST documents first, so
+    # `limit=n` on a growing collection audits the desks least likely to still
+    # be representative, and quietly.
+    rows = mongo_query.find_rows(
+        "shared_desk", window, ["desk_data", "created_at"], limit=0)
+    undated = sum(1 for _, created in rows if created is None)
+
+    # How many rows survived decoding, as opposed to how many arrived. These
+    # are different numbers and the difference is the whole vacuity question:
+    # `len(rows)` counts what the WINDOW matched, `decoded` counts what this
+    # script could actually read, and `artifacts` counts what it could
+    # actually audit. Only the last one is evidence.
+    decoded = 0
+
+    for desk, _created in rows:
+        # desk_data arrives in BOTH shapes, and always has: the 1762 desks
+        # backfilled from the jsonb column are subdocuments, while the 274 the
+        # live writer has stored since are JSON **TEXT**, and the split falls
+        # exactly on the cutover — a 7-day window today is 100% text. Postgres
+        # handed this column back as a string too, so the branch is unchanged
+        # — it is simply load-bearing for the live half of the collection now
+        # rather than for all of it. A Mongo-side filter on `desk_data.<key>`
+        # would match none of that half.
         if isinstance(desk, str):
             try:
                 desk = json.loads(desk)
@@ -151,6 +213,7 @@ def audit(days: int) -> dict:
                 continue
         if not isinstance(desk, dict):
             continue
+        decoded += 1
         ticker = desk.get("ticker")
         for artifact_key, label, metrics_key, origin_keys, _ in AGENTS:
             art = desk.get(artifact_key)
@@ -191,18 +254,55 @@ def audit(days: int) -> dict:
                         continue
                     if abs(said - stated) / max(abs(stated), 1e-9) > 0.02:
                         s["prose_mismatches"] += 1
-                        if len(s["prose_examples"]) < 5:
-                            s["prose_examples"].append(
-                                {"ticker": ticker, "field": field,
-                                 "prose": said, "field_value": stated}
-                            )
+                        # EVERY mismatch is kept and the five that print are
+                        # picked at report time by a total order on their own
+                        # content. "The first five seen" made these lines a
+                        # function of the order the store returned rows in,
+                        # not of the data: reducing the SAME 1762 desks with
+                        # the row list reversed changed the examples for three
+                        # agents (valuation_analyst printed MU/CRH/CVS/SE/GLP
+                        # one way and DE/GE/BKE/… the other), and those lines
+                        # are printed to the terminal as findings. There are
+                        # far more mismatches than slots — 66 for
+                        # quant_analyst alone — so which five survive has to
+                        # be decided by the data.
+                        s["prose_examples"].append(
+                            {"ticker": ticker, "field": field,
+                             "prose": said, "field_value": stated}
+                        )
 
-    report = {"days": days, "desks": len(rows), "agents": {}}
+    artifacts_total = sum(s["artifacts"] for s in stats.values())
+    report = {"days": days, "desks": len(rows), "desks_decoded": decoded,
+              "artifacts": artifacts_total,
+              "desks_dated_by_updated_at": undated, "agents": {}}
+    if not artifacts_total:
+        # An audit that returns nothing is not a clean bill of health, and the
+        # explanations look identical from the output alone: a quiet week, a
+        # read pointed at the wrong store, or a read that fetched rows it
+        # could not decode. The total says which.
+        #
+        # This guard was on `if not rows` and that was the wrong quantity. A
+        # run where rows ARRIVE but none of them decode, or none carry an
+        # agent artifact, printed the full banner — "AGENT NUMERIC FIDELITY —
+        # 133 desks, last 7 days" — followed by nothing at all, and exited 0,
+        # which is exactly what "no agent fabricated anything this week" looks
+        # like. Swapping the two projected columns above produces precisely
+        # that, so the vacuity condition has to be the quantity the report is
+        # actually made of: artifacts audited.
+        report["collection_total"] = mongo_query.count("shared_desk")
     for _, label, _, _, _ in AGENTS:
         s = stats.get(label)
         if not s:
             continue
-        emitted = dict(sorted(s["emitted"].items(), key=lambda kv: -kv[1]))
+        # `-kv[1]` ALONE is not a total order, and the tail of this report is
+        # nothing but ties: sorting by count only, the order of two fields with
+        # the same count fell out of the order the desks came back in, which no
+        # store guarantees. Reducing the SAME 1044 pre-cutover desks out of
+        # Postgres and out of Mongo produced identical counters and a DIFFERENT
+        # `fields_most_often_wrong`, because five fields tied at 3 and only four
+        # fitted the [:8] cut. Breaking the tie on the field NAME makes the
+        # report a function of the data alone.
+        emitted = dict(sorted(s["emitted"].items(), key=lambda kv: (-kv[1], kv[0])))
         guarded = set(enforced.get(label, ()))
         unguarded = [f for f in emitted if f not in guarded]
         report["agents"][label] = {
@@ -216,11 +316,18 @@ def audit(days: int) -> dict:
                 if s["artifacts"] else None
             ),
             "fields_most_often_wrong": dict(
-                sorted(s["disagreed_fields"].items(), key=lambda kv: -kv[1])[:8]
+                sorted(s["disagreed_fields"].items(),
+                       key=lambda kv: (-kv[1], kv[0]))[:8]
             ),
             "prose_claims_checked": s["prose_claims"],
             "prose_mismatches": s["prose_mismatches"],
-            "prose_mismatch_examples": s["prose_examples"],
+            "prose_mismatch_examples": sorted(
+                s["prose_examples"],
+                # `str(ticker)`: a desk with no ticker yields None, and
+                # `None < "AAPL"` is a TypeError, not a sort order.
+                key=lambda e: (str(e["ticker"]), e["field"],
+                               e["prose"], e["field_value"]),
+            )[:5],
         }
     return report
 
@@ -239,6 +346,24 @@ def main() -> int:
     print(f"\n{'='*78}")
     print(f"AGENT NUMERIC FIDELITY — {rep['desks']} desks, last {rep['days']} days")
     print(f"{'='*78}")
+    if not rep["artifacts"]:
+        # Three ways to audit nothing, and the banner above looks the same for
+        # all three and for a genuinely clean week. Say which one happened.
+        if not rep["desks"]:
+            why = "no desks in the window"
+        elif not rep["desks_decoded"]:
+            why = (f"{rep['desks']} desks matched the window and NOT ONE "
+                   f"decoded to a document — desk_data is not arriving where "
+                   f"this script reads it (check the projected column order)")
+        else:
+            why = (f"{rep['desks_decoded']} desks decoded and not one carries "
+                   f"any of the {len(AGENTS)} agent artifacts this audits")
+        print(f"\nVACUITY: {why}. shared_desk holds "
+              f"{rep.get('collection_total', '?')} documents in all — this run "
+              f"measured NOTHING about fidelity, it did not find it clean.")
+    if rep.get("desks_dated_by_updated_at"):
+        print(f"   ({rep['desks_dated_by_updated_at']} of these carry no "
+              f"created_at and were dated by updated_at)")
     for label, a in rep["agents"].items():
         print(f"\n{label}  ({a['artifacts']} artifacts)")
         if not a["numeric_fields_emitted"]:
@@ -264,6 +389,12 @@ def main() -> int:
         with open(args.json_out, "w") as fh:
             json.dump(rep, fh, indent=2, default=str)
         print(f"\nwrote {args.json_out}")
+    # 0 unconditionally, including on a vacuous run: this is a reporting
+    # script, its contract since it was written is "renders, exits 0", and
+    # nothing shells out to it expecting a gate. The vacuity is made loud in
+    # the OUTPUT rather than in the status, and both the default `--days 7`
+    # and this return value are pinned by tests so that "flags and exit code
+    # unchanged" is a checked claim rather than a stated one.
     return 0
 
 

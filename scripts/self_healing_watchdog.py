@@ -34,6 +34,59 @@ regression.
 SCOPE (``repair_scope.is_patchable``) still applies before anything is logged:
 only trading-cycle source is repairable. The repair machinery, DB schema,
 config, deploy scripts, and tests are off-limits.
+
+WHERE IT READS FROM (ported off Postgres 2026-08-30)
+----------------------------------------------------
+All three reads are MongoDB now. Until this port they went through
+``get_db()`` from the ``scripts.migration`` archive pool — the Postgres
+ARCHIVE, which has taken no writes since the 2026-08-19 cutover. The failure
+mode was SILENT, not loud: the archive pool still opens, so the watchdog kept
+answering, from frozen rows. Measured minutes before this change, against live
+Postgres:
+
+    Active Cycle ID: cycle-v3-1787179210 | Status: done | Phase: analyzing
+    Cycle status is not 'error'. Checking recent pipeline events for crashes...
+    No active pipeline event crashes found. System healthy.
+
+The live cycle at that moment was cycle-v3-1788074145, and it had five error
+events, two of them ``v3_regime_engine CRASHED``. Postgres holds 190,775
+pipeline_events, none newer than 2026-08-19 22:55:03; Mongo holds 201,345, of
+which 10,891 — 544 of them errors — were written after the cutover. The
+watchdog was blind to every one of them, and said so as "System healthy".
+(Over a shared pre-cutover window, 2026-08-01..08-10, the two stores agree
+exactly: 4,189 events and 21 errors in each.)
+
+THE CONSECUTIVE-FAILURE GUARD CHANGED TABLES, DELIBERATELY
+----------------------------------------------------------
+``has_consecutive_failures`` used to read ``pending_evolution_fixes``. That is
+the RETIRED loop's table (retired 2026-07-28 — see
+``app/services/logging/pending_review.py``): 96 rows in both stores, newest
+2026-07-27, and no live code path can ever write another one.
+
+Porting that query as written would have moved a dead read onto a live store
+and turned it into a PERMANENT halt. Of the 8 distinct targets in the archive,
+6 have ``rejected`` as their newest two rows, and 4 of those 6 —
+scraper/news, scraper/price_history, scraper/fundamentals, scraper/technicals —
+are live names in ``target_map.SCRAPER_MAP`` today; three of them resolve to
+``app/collectors/yfinance_collector.py``, the file 3 of the 4 rows in the live
+repair queue are about. The halt returns BEFORE ``enqueue_job``, so the one
+thing this script still does — logging the failure — would never happen again
+for those targets, and no new row could ever clear the halt.
+
+So the guard now asks the same question of the store this script actually
+writes: ``evolution_repair_queue``, keyed by (target_path, target_symbol) —
+the key ``enqueue_job`` itself dedups on.
+
+HOW TO RUN
+----------
+    python scripts/self_healing_watchdog.py --diagnose   # one pass, no boot
+    python scripts/self_healing_watchdog.py              # boots the service
+                                                         # context, then one pass
+
+``--diagnose`` runs the same ``heal_once()`` the in-process scheduler calls
+(``app/services/cycle_scheduler.py``). It needs no BootService: the Postgres
+pool that used to be booted for is gone, and so is the vLLM discovery — nothing
+here calls a model any more.
 """
 
 import sys
@@ -49,7 +102,7 @@ from datetime import datetime, timezone
 # Ensure project root is in path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from scripts.migration.pg_connection import get_db
+from app.db import mongo_query
 from app.cognition.evolution.target_map import list_available_targets, resolve_target
 from app.cognition.evolution.repair_scope import is_patchable
 
@@ -78,14 +131,26 @@ def run_ssh_command(cmd: str) -> str:
         return ""
 
 def get_active_cycle() -> tuple[str, str, str, str]:
-    """Query current pipeline_state to find active cycle ID, status, error, and phase."""
-    with get_db() as db:
-        db.execute(
-            "SELECT cycle_id, status, error, phase FROM pipeline_state WHERE singleton_id = 'current'"
-        )
-        row = db.fetchone()
-        if row:
-            return row[0] or "", row[1] or "", row[2] or "", row[3] or ""
+    """The LIVE pipeline_state singleton: cycle id, status, error, phase.
+
+    Was: SELECT cycle_id, status, error, phase FROM pipeline_state
+         WHERE singleton_id = 'current'
+
+    One document, updated in place by the running pipeline. Reading the
+    Postgres copy of it returned the cycle that was current when the archive
+    froze, which is why this file used to report a finished 2026-08-19 cycle as
+    "active" for eleven days.
+    """
+    row = mongo_query.find_row(
+        "pipeline_state", {"singleton_id": "current"},
+        ["cycle_id", "status", "error", "phase"],
+    )
+    if row:
+        # `or ""` also covers a field that is absent rather than NULL: Postgres
+        # column DEFAULTs did not survive the cutover, so a post-cutover
+        # document can simply lack `error` or `phase`. find_row() returns None
+        # for both cases, exactly as the cursor returned None for a NULL.
+        return row[0] or "", row[1] or "", row[2] or "", row[3] or ""
     return "", "", "", ""
 
 # Policy gate outcomes are recorded with status='error' in pipeline_events but
@@ -106,27 +171,35 @@ def _is_benign_policy_event(step: str, detail: str) -> bool:
 
 
 def get_latest_error_events(cycle_id: str) -> list[dict]:
-    """Query recent error events from the database for the given cycle."""
+    """The five newest error events for a cycle, benign policy outcomes dropped.
+
+    Was: SELECT phase, step, detail, timestamp FROM pipeline_events
+         WHERE cycle_id = %s AND status = 'error'
+         ORDER BY timestamp DESC LIMIT 5
+
+    The LIMIT is applied by the sort, not by natural order, so this samples the
+    newest rows rather than the oldest five the collection happens to hold —
+    and `timestamp` is a BSON date on all 201,345 documents (checked), so the
+    ordering is a real ordering and not a string comparison that would rank
+    "2026-1..." above "2026-09...". The benign-policy filter stays where it
+    was, in Python and after the fetch, so it drops the same rows the SQL
+    version dropped from the same five.
+    """
     events = []
-    with get_db() as db:
-        db.execute(
-            """
-            SELECT phase, step, detail, timestamp 
-            FROM pipeline_events 
-            WHERE cycle_id = %s AND status = 'error' 
-            ORDER BY timestamp DESC LIMIT 5
-            """,
-            [cycle_id]
-        )
-        for row in db.fetchall():
-            if _is_benign_policy_event(row[1], row[2]):
-                continue
-            events.append({
-                "phase": row[0],
-                "step": row[1],
-                "detail": row[2],
-                "timestamp": row[3]
-            })
+    rows = mongo_query.find_rows(
+        "pipeline_events", {"cycle_id": cycle_id, "status": "error"},
+        ["phase", "step", "detail", "timestamp"],
+        sort=[("timestamp", -1)], limit=5,
+    )
+    for row in rows:
+        if _is_benign_policy_event(row[1], row[2]):
+            continue
+        events.append({
+            "phase": row[0],
+            "step": row[1],
+            "detail": row[2],
+            "timestamp": row[3]
+        })
     return events
 
 def fetch_nas_cycle_logs(cycle_id: str) -> str:
@@ -223,22 +296,40 @@ def detect_target_from_error(error_msg: str) -> tuple[str, str] | None:
             
     return None
 
-def has_consecutive_failures(target_type: str, target_name: str) -> bool:
-    """Check if we have failed to fix this exact target twice consecutively."""
-    with get_db() as db:
-        db.execute(
-            """
-            SELECT status FROM pending_evolution_fixes 
-            WHERE target_type = %s AND target_name = %s 
-            ORDER BY created_at DESC LIMIT 2
-            """,
-            [target_type, target_name]
-        )
-        rows = db.fetchall()
-        # If the last two attempts both ended up rolled back or errored
-        if len(rows) >= 2 and all(r[0] in ("rolled_back", "rejected") for r in rows):
-            return True
-    return False
+# Terminal statuses that mean "this attempt failed". `finish_job` writes the
+# CORAL runner's vocabulary (done / failed / skipped); rolled_back and rejected
+# are the retired deployer's and are kept so a row written before 2026-07-31
+# still reads as a failure. A row still `queued` or `running` has not failed
+# yet and must not count towards the halt.
+_FAILED_JOB_STATUSES = ("failed", "rolled_back", "rejected", "error")
+
+
+def has_consecutive_failures(target_path: str, target_symbol: str) -> bool:
+    """Have the last two repair jobs for this exact target both ended failed?
+
+    Was: SELECT status FROM pending_evolution_fixes
+         WHERE target_type = %s AND target_name = %s
+         ORDER BY created_at DESC LIMIT 2
+
+    ...against a table retired on 2026-07-28 and frozen since 2026-07-27, so
+    the halt it computes can never change again. Six of its eight targets carry
+    two `rejected` rows on top — including scraper/news, scraper/price_history,
+    scraper/fundamentals and scraper/technicals, all four still live in
+    target_map — which would have halted this watchdog for them permanently and
+    silently, before the enqueue that is the only thing it still does. See the
+    module docstring.
+
+    Same question, live table: `evolution_repair_queue` is where `enqueue_job`
+    below writes, and (target_path, target_symbol) is the key it dedups on, so
+    the guard and the write cannot disagree about which target this is.
+    """
+    rows = mongo_query.find_rows(
+        "evolution_repair_queue",
+        {"target_path": target_path, "target_symbol": target_symbol},
+        ["status"], sort=[("created_at", -1)], limit=2,
+    )
+    # The last two attempts both ended rolled back, rejected or failed.
+    return len(rows) >= 2 and all(r[0] in _FAILED_JOB_STATUSES for r in rows)
 
 # NOTE: push_git_changes() and deploy_container_nas() were removed deliberately.
 #
@@ -404,10 +495,17 @@ async def heal_once():
 
     target_type = target_info["target_type"]
     target_name = target_info["target_name"]
+    # Resolved once, here: the halt guard, the scope check and the write all
+    # key on the SAME (path, symbol) pair. When the guard keyed on
+    # (target_type, target_name) and the queue on (target_path, target_symbol),
+    # the two could not have been reading about the same thing.
+    target_rel = target_info.get("relative_path", "")
+    evidence = target_info.get("evidence")
+    target_symbol = getattr(evidence, "name", None) or target_name
     logger.warning(f"Target mapped successfully: {target_type}/{target_name} ({target_info['relative_path']})")
 
     # ── 2. Loop termination safeguard: consecutive failures check ──
-    if has_consecutive_failures(target_type, target_name):
+    if has_consecutive_failures(target_rel, target_symbol):
         logger.critical(
             f"⛔ HALTING SELF-HEALING: Target {target_type}/{target_name} has failed 2 consecutive fixes. Escalating to human."
         )
@@ -432,7 +530,6 @@ async def heal_once():
     # human wrote, keeping the worktree isolation and the fail-on-HEAD control.
     from app.cognition.evolution.coral.attempts import enqueue_job
 
-    target_rel = target_info.get("relative_path", "")
     allowed, scope_reason = is_patchable(target_rel)
     if not allowed:
         logger.critical(
@@ -446,13 +543,12 @@ async def heal_once():
         )
         return
 
-    evidence = target_info.get("evidence")
     job_id = enqueue_job(
         cycle_id=cycle_id,
         error_message=error_msg or "",
         traceback_text=traceback_text or "",
         target_path=target_rel,
-        target_symbol=getattr(evidence, "name", None) or target_name,
+        target_symbol=target_symbol,
     )
 
     if job_id is None:
@@ -493,4 +589,14 @@ async def run_healing_cycle():
 
 
 if __name__ == "__main__":
-    asyncio.run(run_healing_cycle())
+    # `--diagnose` is one pass with NO service boot — the same entrypoint the
+    # in-process scheduler uses. It exists because the boot is now vestigial
+    # for a diagnosis: the Postgres pool it used to raise is gone (Mongo
+    # connects lazily) and startup_vllm_discovery was for the proposer that was
+    # removed 2026-07-31. Booting the full service to read three collections
+    # also starts the scheduler and the background tasks, which is not
+    # something an operator asking "what broke?" should have to do.
+    if "--diagnose" in sys.argv[1:]:
+        asyncio.run(heal_once())
+    else:
+        asyncio.run(run_healing_cycle())

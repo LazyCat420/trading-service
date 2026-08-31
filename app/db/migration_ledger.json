@@ -10524,7 +10524,15 @@
     {
       "archive_file": null,
       "archived_at": null,
-      "backfilled_at": null,
+      "backfill_last_attempt": {
+        "at": "2026-08-31T00:43:45.778839+00:00",
+        "mongo_docs": 1378293,
+        "ok": true,
+        "pg_rows": 1371047
+      },
+      "backfilled_at": "2026-08-31T00:43:45.778839+00:00",
+      "backfilled_mongo_docs": 1378293,
+      "backfilled_pg_rows": 1371047,
       "client_readers": [
         "trading-client/app/client_agents/worker_agents.py:132:select",
         "trading-client/app/routers/dashboard.py:136:select",

@@ -6,8 +6,32 @@ actually behaves as intended. Reports PASS / FAIL / N/A per claim — N/A matter
 as much as FAIL, because it means the path never executed and the fix is still
 unverified rather than working.
 
-    python scripts/verify_audit_phases.py --cycle cycle-observe-1784930000
+    python scripts/verify_audit_phases.py --cycle cycle-v3-1788074145
     python scripts/verify_audit_phases.py            # newest cycle
+
+READS MONGO (2026-08-30 port). It used to open the archive through the
+migration connection pool, and since the archive DSN setting was dropped on
+2026-08-28 that raised `AttributeError` on the first statement — the script did
+not answer at all. Before that it answered from the SQL archive, frozen at the
+2026-08-19 cutover: its newest cycle is `cycle-v3-1787179210` (2026-08-19
+22:44:43) and it will still be that cycle next year. Mongo's newest is
+`cycle-v3-1788074145` (2026-08-30 07:21:55). "Verify the fixes against a REAL
+cycle" is the whole point of this script, so the archive was the wrong store
+for it twice over.
+
+The other half — `app.v3.reconciliation` — was already on Mongo, so until this
+port the script compared an eleven-day-old desk against a live `trade_results`
+and would have reported the gap as a reconciliation MISMATCH.
+
+TWO SHAPES OF `desk_data`, BOTH LIVE
+------------------------------------
+Measured against the collection on 2026-08-30: of 2,036 documents, 1,762 (the
+backfilled archive rows) hold `desk_data` as a subdocument and 274 (everything
+written after the cutover) hold it as JSON **TEXT**. So the newest cycle — the
+one this script exists to check — is always a string, and `desks[t].get(...)`
+on it would raise `AttributeError: 'str' object has no attribute 'get'` for
+every phase. `_as_desk()` normalises both. The same asymmetry is why a Mongo
+filter on `desk_data.foo` matches nothing on recent cycles.
 """
 
 from __future__ import annotations
@@ -19,6 +43,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+#: The POSTGRES TABLE NAME, not a resolved collection name. Every
+#: `mongo_query` helper calls `collection_for()` itself, exactly once;
+#: resolving here as well would miss the read and create a second, invisible
+#: collection the day renames are switched on.
+DESK_TABLE = "shared_desk"
+
 PASS, FAIL, NA = "PASS", "FAIL", "n/a"
 _results: list[tuple[str, str, str]] = []
 
@@ -27,15 +57,79 @@ def check(name: str, status: str, detail: str = "") -> None:
     _results.append((name, status, detail))
 
 
-def _desks(cycle_id: str) -> list[tuple]:
-    from scripts.migration.pg_connection import get_db
+def _as_desk(desk_data) -> dict:
+    """One `desk_data` value -> a dict, whichever way it was stored.
 
-    with get_db() as db:
-        return db.execute(
-            "SELECT ticker, desk_data FROM shared_desk WHERE cycle_id = %s "
-            "ORDER BY ticker",
-            [cycle_id],
-        ).fetchall()
+    Not defensive coding: both shapes are in the collection right now (1,762
+    subdocuments from the backfill, 274 JSON strings from the live writer), and
+    the string half is the recent half.
+    """
+    if isinstance(desk_data, dict):
+        return desk_data
+    if not desk_data:
+        return {}
+    return json.loads(desk_data)
+
+
+def _desks(cycle_id: str) -> list[tuple]:
+    """`SELECT ticker, desk_data FROM shared_desk WHERE cycle_id=%s ORDER BY ticker`"""
+    from app.db import mongo_query
+
+    return mongo_query.find_rows(
+        DESK_TABLE, {"cycle_id": cycle_id}, ["ticker", "desk_data"],
+        sort=[("ticker", 1)],
+    )
+
+
+def _newest_cycle() -> tuple[str, object]:
+    """`SELECT cycle_id FROM shared_desk ORDER BY created_at DESC LIMIT 1`
+
+    Returns the stamp too, so the caller can say how old the thing it just
+    verified is instead of implying it is current.
+    """
+    from app.db import mongo_query
+
+    row = mongo_query.find_row(
+        DESK_TABLE, {}, ["cycle_id", "created_at"], sort=[("created_at", -1)],
+    )
+    return (row[0], row[1]) if row else ("", None)
+
+
+def _unstamped_desks() -> tuple[int, object]:
+    """How many desks carry NO `created_at`, and the newest `updated_at` there.
+
+    `shared_desk.created_at` was `DEFAULT now()` in Postgres and the default did
+    not survive the cutover (`scripts/mongo_default_gaps.py --all`: 76 of 2,036).
+    A document without the field cannot be selected by `sort=[("created_at",-1)]`
+    at all — Mongo sorts a missing field below every date — so a cycle written
+    without a stamp is INVISIBLE to `_newest_cycle()` and this script would
+    quietly verify an older cycle and print a clean grid.
+
+    The 76 today are four hand-run cycles from 2026-08-18 (`cycle-1`,
+    `cycle-abort`, `cycle-abort2`, `cycle-test-1`), all older than the newest
+    stamped cycle, so the pick is currently sound. `_stamp_note()` says so out
+    loud rather than leaving it assumed.
+    """
+    from app.db import mongo_query
+
+    return mongo_query.agg_row(
+        DESK_TABLE, {"created_at": {"$exists": False}},
+        [("count", None), ("max", "updated_at")],
+    )
+
+
+def _stamp_note(chosen_at) -> str:
+    """The one line about what `_newest_cycle()` could not see. '' when nothing."""
+    n, newest = _unstamped_desks()
+    if not n:
+        return ""
+    if chosen_at is not None and newest is not None and newest > chosen_at:
+        return (f"WARNING: {n} shared_desk rows have no created_at and one was "
+                f"touched at {newest} — AFTER the cycle picked here ({chosen_at}). "
+                f"The newest cycle may not be the one being verified; pass --cycle.")
+    return (f"note: {n} shared_desk rows have no created_at (newest touched "
+            f"{newest}) and can never be picked as newest; the cycle chosen "
+            f"({chosen_at}) is newer than all of them, so the pick stands.")
 
 
 def main() -> int:
@@ -43,18 +137,15 @@ def main() -> int:
     ap.add_argument("--cycle", default="")
     args = ap.parse_args()
 
-    from scripts.migration.pg_connection import get_db
-
     cycle_id = args.cycle
     if not cycle_id:
-        with get_db() as db:
-            row = db.execute(
-                "SELECT cycle_id FROM shared_desk ORDER BY created_at DESC LIMIT 1"
-            ).fetchone()
-        if not row:
+        cycle_id, chosen_at = _newest_cycle()
+        if not cycle_id:
             print("no cycles found")
             return 1
-        cycle_id = row[0]
+        note = _stamp_note(chosen_at)
+        if note:
+            print(note, file=sys.stderr)
 
     rows = _desks(cycle_id)
     if not rows:
@@ -63,7 +154,7 @@ def main() -> int:
 
     desks = {}
     for ticker, dd in rows:
-        desks[ticker] = dd if isinstance(dd, dict) else json.loads(dd)
+        desks[ticker] = _as_desk(dd)
 
     print(f"\nVERIFYING {cycle_id} — {len(desks)} tickers: {', '.join(desks)}\n")
 
@@ -193,6 +284,11 @@ def main() -> int:
     # every cycle — this script was its only caller, which is why the
     # divergence went unnoticed. Do not re-inline it here: a check that keeps
     # a second copy of what it verifies cannot see the first one drift.
+    #
+    # That module reads Mongo, and did before this script did. Feeding it
+    # archive desks compared a frozen record against a live one — the store
+    # mismatch would have surfaced as an ACTION MISMATCH and accused the
+    # writer. Both halves now read the same store.
     from app.v3.reconciliation import reconcile_cycle
 
     rec = reconcile_cycle(cycle_id, desks=desks)

@@ -11,7 +11,11 @@ higher DROP RATE, not as quietly worse agent inputs. That is the same metric
 that catches the failure mode recorded for this box in vision_engine.py — Qwen
 "editorialises instead of transcribing" — without needing a judge model to say so.
 
-Read-only: pulls real article text from `news_articles` and writes nothing.
+Read-only: pulls real article text from the MongoDB `news_articles`
+collection and writes nothing. It read the SQL table of the same name until
+2026-08-30; that store froze at the 2026-08-19 cutover, so the bench was
+replaying a corpus that had stopped growing — and once the archive DSN setting
+was removed it raised AttributeError before the first article instead.
 
     python3 scripts/news_extraction_ab.py --n 40
     python3 scripts/news_extraction_ab.py --n 40 --json out.json
@@ -45,6 +49,7 @@ import os
 import statistics
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -64,6 +69,34 @@ from app.utils.text_utils import parse_json_response  # noqa: E402
 CALL_TIMEOUT_S = _CALL_TIMEOUT_S
 
 BOXES = ("dgx_spark", "jetson")
+
+# ── The one thing the SQL said that Mongo has no operator for ───────────────
+# `summary ~ ('\m' || ticker || '\M')` — Postgres word boundaries around the
+# ticker. Mongo's `$regexMatch` has `\b`, and `\b` is NOT the same thing here:
+# Mongo runs PCRE with UTF-8 on but WITHOUT unicode character properties for
+# `\w`, so a word character is ASCII-only and `\bF\b` matches the F of the
+# German "Für" — which Postgres's `\mF\M` does not, because its ctype says ü
+# is alphanumeric. Measured over collected_at in 2026-08-10..14, on_ticker=True:
+#
+#     Postgres  5309 rows
+#     `\b`      5310 rows   (+1: a German-language article filed under F)
+#     the below 5309 rows   identical field for field, and in the same order
+#
+# So the word class is spelled out in unicode properties instead of borrowed
+# from `\w`. Case-sensitive, like Postgres's `~`, hence no "i" option.
+_WORD_CHAR = r"[\p{L}\p{N}_]"
+_WORD_START = r"(?<!" + _WORD_CHAR + r")"
+_WORD_END = r"(?!" + _WORD_CHAR + r")"
+
+# A NULL ticker: `'\m' || NULL || '\M'` is NULL and `summary ~ NULL` is NULL,
+# so Postgres returned no such row — 9,198 of the 116,354 documents have no
+# ticker, so this is not a hypothetical. `$concat` with a null operand yields
+# null and `$regexMatch` then ERRORS ("regex must be of type string or regex")
+# rather than skipping the document, so the null is substituted for an
+# assertion that can never be satisfied. The filter also excludes null tickers
+# outright; this is the belt to that suspenders, because `$and` is not
+# documented to short-circuit.
+_NO_TICKER_PATTERN = "(?!)"
 
 
 def _endpoint_urls() -> dict[str, str]:
@@ -97,22 +130,56 @@ def fetch_articles(n: int, days: int,
     mechanical symbol match, not a judge model — the point is to remove the
     confound without introducing a second model's opinion as ground truth.
     """
-    from scripts.migration.pg_connection import get_db
+    from app.db import mongo_query
 
-    sql = """
-        SELECT id, ticker, COALESCE(title, ''), summary
-        FROM news_articles
-        WHERE collected_at > NOW() - (%s || ' days')::interval
-          AND summary IS NOT NULL
-          AND length(summary) >= %s
-        {on_ticker}
-        ORDER BY collected_at DESC
-        LIMIT %s
-    """.format(on_ticker="AND summary ~ ('\\m' || ticker || '\\M')" if on_ticker else "")
+    # `LIMIT 0` returned zero rows; Mongo's `$limit` REFUSES a zero, so the
+    # degenerate case is answered here rather than as a server error.
+    if n <= 0:
+        return []
 
-    with get_db() as db:
-        rows = db.execute(sql, [str(days), _MIN_TEXT_CHARS, n]).fetchall()
-    return [(r[0], r[1], r[2], r[3]) for r in rows]
+    # `collected_at > NOW() - (n || ' days')::interval`. collected_at is a BSON
+    # date on all 116,354 documents (checked: 0 strings, 0 missing, 0 null), so
+    # this is a date-to-date comparison and not the string/date sort trap.
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # `length(summary) >= %s`. $strLenCP, not $strLenBytes: Postgres length()
+    # counts characters and these summaries are not all ASCII. The $ifNull is
+    # what keeps a document with no `summary` field from ERRORING the whole
+    # query instead of being filtered out — post-cutover documents no longer
+    # get Postgres's column defaults, so "the field is always there" is an
+    # assumption with an expiry date.
+    conditions: list[dict[str, Any]] = [
+        {"$expr": {"$gte": [{"$strLenCP": {"$ifNull": ["$summary", ""]}},
+                            _MIN_TEXT_CHARS]}},
+    ]
+    query: dict[str, Any] = {
+        # IS NOT NULL. `$ne: None` also excludes a MISSING field, which is what
+        # Postgres would have called NULL.
+        "summary": {"$ne": None},
+        "collected_at": {"$gt": cutoff},
+    }
+    if on_ticker:
+        query["ticker"] = {"$ne": None}
+        conditions.append({"$expr": {"$regexMatch": {
+            "input": {"$ifNull": ["$summary", ""]},
+            "regex": {"$concat": [_WORD_START,
+                                  {"$ifNull": ["$ticker", _NO_TICKER_PATTERN]},
+                                  _WORD_END]},
+        }}})
+    # Both predicates are `$expr`, and two of those cannot share the one
+    # top-level `$expr` key, so they are `$and`-ed.
+    query["$and"] = conditions
+
+    # find_rows takes the POSTGRES TABLE NAME and resolves the collection once,
+    # and hands back tuples in the column order the SELECT asked for, so the
+    # caller's `article_id, ticker, title, text = article` is unchanged.
+    rows = mongo_query.find_rows(
+        "news_articles", query, ["id", "ticker", "title", "summary"],
+        sort=[("collected_at", -1)], limit=n)
+    # `COALESCE(title, '')` — the SELECT did this, so the caller has never had
+    # to handle a None title and `_PROMPT_TEMPLATE.format` would print "None".
+    return [(article_id, ticker, title or "", summary)
+            for article_id, ticker, title, summary in rows]
 
 
 async def call_box(base_url: str, model: str, prompt: str,

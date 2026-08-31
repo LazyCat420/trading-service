@@ -7,12 +7,28 @@ specific defect it is testing for and the measurement that established it.
 
 Run against a cycle's desks:
 
-    python scripts/verify_fidelity_fixes.py --cycle cycle-observe-1785270000
+    python scripts/verify_fidelity_fixes.py --cycle cycle-v3-1787232600
 
 Exit 0 = every check passed. Exit 1 = at least one FAILED. Checks that cannot
 be evaluated (no artifact of that kind in the cycle) report SKIP and do not
 fail the run — but they are printed, because a suite that silently skips
 everything looks identical to one that passes.
+
+STORAGE: MongoDB (`trading_bot`). The two reads here — the cycle's desks and
+its recorded overrides — went to Postgres, which stopped being written at the
+2026-08-19 cutover. Measured 2026-08-30: `shared_desk` holds 1762 rows in the
+archive, newest 2026-08-19 22:44:43 UTC, against 2036 in Mongo, newest
+2026-08-30 07:21:55; `decision_outcomes` 2637 against 2693. So on the archive
+this harness answered "no desks for this cycle — nothing to verify" and exited
+1 for EVERY cycle run since the cutover — 201 desks over 96 cycles — which is
+the one failure mode an acceptance test must not have, because a suite that
+cannot see the artifact reads exactly like a suite whose subject regressed.
+
+Only the two SELECTs moved. Every check's PASS CRITERION is byte-for-byte
+what it was before the port: they were written ahead of the verification cycle
+precisely so they could not be tuned to its output, and a change of store is
+not a licence to retune them. The example cycle above was updated because
+`cycle-observe-1785270000` has 0 desks in either store.
 """
 
 from __future__ import annotations
@@ -24,17 +40,30 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app.db import mongo_query  # noqa: E402
+
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 
 
 def _desks(cycle_id: str) -> list[dict]:
-    from scripts.migration.pg_connection import get_db
+    """The cycle's desks, from `shared_desk` in Mongo.
 
-    with get_db() as db:
-        rows = db.execute(
-            "SELECT desk_data FROM shared_desk WHERE cycle_id = %s",
-            [cycle_id],
-        ).fetchall()
+    `desk_data` comes back in TWO shapes and the split is not historical
+    noise — it is the cutover line. `$type` on 2026-08-30: 1762 documents hold
+    a subdocument and 274 hold JSON **TEXT**, no cycle mixes the two, and the
+    text ones are the RECENT ones — they begin at 2026-08-18 19:44, span 94
+    cycles, and are 195 of the 201 desks written since the cutover. So the
+    `json.loads` branch below is not defensive padding: drop it and this
+    returns [] for every cycle the harness would actually be pointed at today,
+    every check reports SKIP, and the run still exits 0.
+
+    For the same reason nothing here filters on `desk_data.<field>` — a Mongo
+    filter into a JSON string matches nothing. The whole column is fetched and
+    parsed in Python, exactly as the archive version did with the jsonb the
+    driver handed back.
+    """
+    rows = mongo_query.find_rows(
+        "shared_desk", {"cycle_id": cycle_id}, ["desk_data"])
     out = []
     for (d,) in rows:
         if isinstance(d, str):
@@ -206,8 +235,6 @@ def check_synthesizer_receives_blocks(_desks: list[dict]) -> tuple[str, str]:
 def check_overrides_recorded(cycle_id: str, desks: list[dict]) -> tuple[str, str]:
     """A HOLD the desk agreed on and a HOLD that overruled a Board BUY were the
     same row, so the largest filter on trade flow was unmeasurable."""
-    from scripts.migration.pg_connection import get_db
-
     expected = {
         d.get("ticker"): (d.get("final_decision") or {}).get("action")
         for d in desks
@@ -217,11 +244,14 @@ def check_overrides_recorded(cycle_id: str, desks: list[dict]) -> tuple[str, str
     }
     if not expected:
         return SKIP, "no Board/synthesizer disagreement in this cycle"
-    with get_db() as db:
-        rows = db.execute(
-            "SELECT ticker, overridden_from FROM decision_outcomes "
-            "WHERE cycle_id = %s", [cycle_id],
-        ).fetchall()
+    # `overridden_from` is present on all 2693 documents today, but nothing
+    # relies on that: find_rows() yields None for a field a document lacks,
+    # which is what Postgres returned for the NULL, and the comparison below
+    # is an equality against the Board's action — never a `$ne: None` filter,
+    # which would have matched neither the nulls nor a missing field.
+    rows = mongo_query.find_rows(
+        "decision_outcomes", {"cycle_id": cycle_id},
+        ["ticker", "overridden_from"])
     got = {t: o for t, o in rows}
     if not got:
         return SKIP, "no decision_outcomes rows yet for this cycle"
