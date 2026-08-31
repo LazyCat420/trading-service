@@ -47,21 +47,37 @@ def _checks(desk: dict, wb_sections: set[str]) -> list[tuple[str, str, bool, str
         ("junior", "catalyst_call present", bool(dn.get("catalyst_call")), str(dn.get("catalyst_call"))),
         ("junior", "data_gaps is list", isinstance(dn.get("data_gaps"), list), str(dn.get("data_gaps"))),
         ("junior", "whiteboard market_context written", "market_context" in wb_sections, ""),
-        ("fundamental", "5 pillars", len(fr.get("pillars") or {}) >= 5, str(list(fr.get("pillars") or {}))),
-        ("fundamental", "near_term_read present", bool(fr.get("near_term_read")), str(fr.get("near_term_read"))),
-        ("fundamental", "positioning_read present", "positioning_read" in fr, str(fr.get("positioning_read"))),
-        ("fundamental", "whiteboard risk_flags written", "risk_flags" in wb_sections, ""),
         ("quant", "overlays present", bool(qr.get("overlays")), str(qr.get("overlays"))),
         ("quant", "risk_metrics present", bool(qr.get("risk_metrics")), str(list(qr.get("risk_metrics") or {}))),
         ("quant", "whiteboard signals posted", "signals" in wb_sections, ""),
-        ("valuation", "verdict present", bool(vr.get("verdict")), str(vr.get("verdict"))),
-        ("valuation", "what_would_change_my_mind", bool(vr.get("what_would_change_my_mind")), str(vr.get("what_would_change_my_mind"))),
-        ("valuation", "doctrine_rules_applied", bool(vr.get("doctrine_rules_applied")), str(vr.get("doctrine_rules_applied"))),
         ("board", "conviction_vector.data_quality", "data_quality" in (fd.get("conviction_vector") or {}), str((fd.get("conviction_vector") or {}).get("data_quality"))),
         ("synth", "signal_weights non-empty", bool(td.get("signal_weights")), str(td.get("signal_weights"))),
         ("synth", "internal_consensus_score present", td.get("internal_consensus_score") is not None, str(td.get("internal_consensus_score"))),
         ("synth", "dynamic_trigger has value when typed", (dt.get("value") is not None) if dt.get("type") else True, str(dt)),
     ]
+    # JA triage QUANT_ONLY (and the regime skip_fa path) skip FA by DESIGN,
+    # leaving a stub whose data_gaps carries "Fundamental analysis bypassed" —
+    # and valuation follows FA's fate (orchestrator: "valuation IS fundamental
+    # analysis"), so vr is absent entirely. Scoring those as FAIL is the same
+    # error the debate-skip branch below fixed (8 false FAILs on DKS): both
+    # observe runs on 2026-08-31 scored 6 false FAILs each before this gate.
+    fa_ran = not any(
+        "Fundamental analysis bypassed" in str(g) for g in (fr.get("data_gaps") or [])
+    )
+    if fa_ran:
+        out += [
+            ("fundamental", "5 pillars", len(fr.get("pillars") or {}) >= 5, str(list(fr.get("pillars") or {}))),
+            ("fundamental", "near_term_read present", bool(fr.get("near_term_read")), str(fr.get("near_term_read"))),
+            ("fundamental", "positioning_read present", "positioning_read" in fr, str(fr.get("positioning_read"))),
+            ("fundamental", "whiteboard risk_flags written", "risk_flags" in wb_sections, ""),
+            ("valuation", "verdict present", bool(vr.get("verdict")), str(vr.get("verdict"))),
+            ("valuation", "what_would_change_my_mind", bool(vr.get("what_would_change_my_mind")), str(vr.get("what_would_change_my_mind"))),
+            ("valuation", "doctrine_rules_applied", bool(vr.get("doctrine_rules_applied")), str(vr.get("doctrine_rules_applied"))),
+        ]
+    else:
+        out.append(("fundamental", "skipped by triage (FA+VA checks N/A)", True,
+                    str((dn.get("triage_recommendation") or "regime skip_fa"))))
+
     if debate_ran:
         out += [
             ("bull", "invalidation in catalyst_timeline", bool((bull.get("catalyst_timeline") or {}).get("invalidation")), str((bull.get("catalyst_timeline") or {}).get("invalidation"))),
