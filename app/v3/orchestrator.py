@@ -152,396 +152,328 @@ async def run_v3_pipeline(
     # Store the pre-collected report
     desk.cycle_metadata["data_report"] = data_report
 
-    # Live macro snapshot for the Regime Engine. It classifies the GLOBAL
-    # market state but the per-ticker data_report gives it nothing macro, so
-    # it was producing a regime from thin air (1 turn, no tools, lowest
-    # quality). Inject real VIX/index/yield/dollar levels so the classification
-    # is grounded. Non-fatal — the engine still has its tools as a fallback.
-    try:
-        from app.collectors.market_regime_collector import get_latest_market_snapshot
-        macro_briefing = _format_macro_briefing(get_latest_market_snapshot())
-        if macro_briefing:
-            desk.cycle_metadata["macro_briefing"] = macro_briefing
-    except Exception as e:
-        logger.warning("[V3] %s: macro snapshot unavailable (non-fatal): %s", ticker, e)
-
-    # Precomputed quant math (2026-07-21 research audit): the quant analyst
-    # averages 1.6 loops and the board 1.0 — prompts telling them to CALL the
-    # GARCH/HRP tools mostly never fire. Compute the math in code here and
-    # inject the results into their prompts (agent_runner scopes the block to
-    # quant + board). Off-loop via to_thread: GARCH is ~1s of CPU + DB reads.
-    try:
-        from app.quant.context_block import build_quant_math_block
-        # 60s, raised from 25s on 2026-07-25. The HMM regime shadow costs ~32s
-        # on its FIRST call of a cycle (two Baum-Welch fits; cached per cycle
-        # thereafter, so tickers 2..N are ~free). At 25s the whole block timed
-        # out and failed open, silently dropping GARCH, HRP and the sizing
-        # bracket as well — a degrade that logs an EMPTY exception message and
-        # is otherwise invisible. Budget the first-call cost explicitly.
-        quant_math = await asyncio.wait_for(
-            asyncio.to_thread(build_quant_math_block, ticker, bot_id, cycle_id),
-            timeout=60,
-        )
-        if quant_math:
-            desk.cycle_metadata["quant_math_context"] = quant_math
-            logger.info("[V3] %s: precomputed quant math injected (%d chars)",
-                        ticker, len(quant_math))
-    except asyncio.TimeoutError:
-        # asyncio.TimeoutError stringifies to "" — the original handler logged
-        # "failed (non-fatal): " with nothing after it, which is how a
-        # cycle-wide loss of GARCH/HRP/sizing context went unnoticed. Name it.
-        logger.warning(
-            "[V3] %s: quant math precompute TIMED OUT after 60s — GARCH, HRP and "
-            "the sizing bracket are all MISSING from this desk", ticker,
-        )
-    except Exception as e:
-        logger.warning("[V3] %s: quant math precompute failed (non-fatal): %s (%s)",
-                       ticker, e, type(e).__name__)
-
-    # Verified technical baseline (2026-07-24 audit): the quant desk was
-    # reporting RSI/ATR/SMA values that matched nothing on the desk in 56% of
-    # reports. The authoritative numbers live in the `technicals` table — put
-    # them in front of the agent instead of hoping it calls a tool (it makes
-    # none in 84% of runs).
-    try:
-        from app.quant.technical_baseline import build_technical_baseline_block
-        tech_block = await asyncio.wait_for(
-            asyncio.to_thread(build_technical_baseline_block, ticker),
-            timeout=15,
-        )
-        if tech_block:
-            desk.cycle_metadata["technical_baseline_context"] = tech_block
-            logger.info("[V3] %s: verified technical baseline injected (%d chars)",
-                        ticker, len(tech_block))
-        else:
-            # Only reachable if the block builder itself returns "" — it no
-            # longer does for a missing ticker (it emits an explicit NONE ON
-            # FILE section). Logged at WARNING because a silent empty baseline
-            # is exactly how ASIC reached the board with no data and no
-            # complaint anywhere in the logs.
-            logger.warning(
-                "[V3] %s: technical baseline came back EMPTY — the desk has no "
-                "verified indicator anchor for this ticker", ticker,
-            )
-    except Exception as e:
-        logger.warning("[V3] %s: technical baseline failed (non-fatal): %s", ticker, e)
-
-    # Precomputed valuation math (2026-07-27). Same shape and same reasoning as
-    # the technical baseline above, one layer down: before this the pipeline had
-    # NO valuation math at all — no DCF, no computed EV/EBITDA — so an agent
-    # asked whether a name was overvalued had nothing to anchor on but the
-    # price, which is how the 171/305 invented-RSI failure started.
-    #
-    # 15s, not 60s: this is five PK-prefixed index reads with no model fit in
-    # it. The 60s above exists for the HMM's Baum-Welch pass and would only
-    # delay the desk here.
-    try:
-        from app.quant.valuation_block import build_valuation_block
-        val_block = await asyncio.wait_for(
-            asyncio.to_thread(build_valuation_block, ticker),
-            timeout=15,
-        )
-        if val_block:
-            desk.cycle_metadata["valuation_context"] = val_block
-            logger.info("[V3] %s: precomputed valuation math injected (%d chars)",
-                        ticker, len(val_block))
-        else:
-            # Unreachable unless the builder regresses — it emits an explicit
-            # NONE ON FILE section for a ticker with no fundamentals row rather
-            # than "". Logged loudly for the ASIC reason: a silent empty block
-            # is indistinguishable from a healthy one downstream.
-            logger.warning(
-                "[V3] %s: valuation block came back EMPTY — the desk has no "
-                "verified multiple or implied growth rate for this ticker", ticker,
-            )
-    except asyncio.TimeoutError:
-        logger.warning(
-            "[V3] %s: valuation math precompute TIMED OUT after 15s — enterprise "
-            "value, multiples and the reverse DCF are all MISSING from this desk",
-            ticker,
-        )
-    except Exception as e:
-        logger.warning("[V3] %s: valuation math precompute failed (non-fatal): "
-                       "%s (%s)", ticker, e, type(e).__name__)
-
-    # Precomputed fundamental snapshot (2026-07-28). The third of the same
-    # family. The fidelity audit found the fundamental analyst emitted no
-    # numeric fields at all across 163 artifacts, so nothing reconciled it and
-    # the ratios in its prose went unchecked — 4 of 7 stated P/Es were wrong.
-    # It also gives the deciding desks fundamentals as NUMBERS: they previously
-    # arrived as prose while technicals arrived as reconciled figures, which is
-    # why the synthesizer's overrides leaned on oscillators (stochastic
-    # +27.1pp) and away from fundamentals (eps -21.2pp).
-    #
-    # 10s: a single indexed row read, no model fit and no filing scan.
-    try:
-        from app.quant.fundamental_block import build_fundamental_block
-        fund_block = await asyncio.wait_for(
-            asyncio.to_thread(build_fundamental_block, ticker),
-            timeout=10,
-        )
-        if fund_block:
-            desk.cycle_metadata["fundamental_context"] = fund_block
-            logger.info("[V3] %s: precomputed fundamental snapshot injected "
-                        "(%d chars)", ticker, len(fund_block))
-        else:
-            logger.warning(
-                "[V3] %s: fundamental block came back EMPTY — the desk has no "
-                "verified ratios for this ticker", ticker,
-            )
-    except asyncio.TimeoutError:
-        logger.warning(
-            "[V3] %s: fundamental snapshot precompute TIMED OUT after 10s — "
-            "margins, returns, leverage and growth are MISSING from this desk",
-            ticker,
-        )
-    except Exception as e:
-        logger.warning("[V3] %s: fundamental snapshot precompute failed "
-                       "(non-fatal): %s (%s)", ticker, e, type(e).__name__)
-
-    # Deterministic baseline score (2026-08-05). The fifth of the family, and
-    # the first that COMBINES the other four rather than adding a new input.
-    #
-    # It exists because the Board's confidence stopped meaning anything:
-    # measured on trade_results, the share of decisions clearing the 70 floor
-    # went 81% -> 25.6% -> 24.6% -> 0.0% over four weeks while HOLD went 49% ->
-    # 93%, and 83 of 97 recent rows carry HOLD_NO_SIGNAL + board_reasoned, so
-    # the Board is choosing it rather than a gate forcing it. A prose fix was
-    # tried first (`dcc00af`, an explicit confidence rubric in the Board
-    # prompt) and made it worse: mean 63.6 -> 59.8. So the number is computed
-    # in code and the agent argues with it.
-    #
-    # It also restores a quantity the pipeline lost. `calculate_risk_reward`
-    # left the quant whitelist on 07-25 and `tournament_pitch` — the only other
-    # holder — was retired on 07-29, so nothing on the live path computed an
-    # R:R. The Board still writes stops and targets: UBER got a 5.05:1 setup
-    # and a HOLD at 50 while T got 3.38:1 and a BUY at 62.
-    #
-    # SHADOW ONLY. The band vocabulary is deliberately not BUY/SELL/HOLD and
-    # nothing downstream reads it — it is injected into the prompt and stored
-    # for comparison. 15s: three indexed row reads plus the DCF, no model fit.
-    try:
-        from app.quant.decision_score import (
-            build_decision_score_block, compute_decision_score,
-        )
-
-        def _score_and_render():
-            s = compute_decision_score(ticker)
-            return s, build_decision_score_block(ticker, s)
-
-        score, score_block = await asyncio.wait_for(
-            asyncio.to_thread(_score_and_render), timeout=15,
-        )
-        # Stash the structured score as well as the prose. The prose is for the
-        # agent; the dict is what `trade_result_saver` persists so the shadow
-        # comparison (does the baseline predict P&L better than the board's
-        # confidence?) is answerable later without re-deriving it against
-        # fundamentals that will have moved on — they are not a point-in-time
-        # panel, so a score computed after the fact is not the score the desk
-        # saw.
-        desk.cycle_metadata["decision_score"] = score
-        # Recorded here, before any agent runs, so a desk that dies mid-
-        # pipeline still leaves its baseline behind — those are the rows worth
-        # having, since "the baseline said STRONG_BUY and the desk never
-        # finished" cannot be stored on a decision row that was never written.
+    # ───────────────────────────────────────────────────────────────────
+    # Concurrent Context Block Assembly (13 independent IO/Compute tasks)
+    # ───────────────────────────────────────────────────────────────────
+    async def _build_macro_task():
         try:
-            from app.quant.decision_score_store import record_decision_score
-            await asyncio.to_thread(
-                record_decision_score, cycle_id, ticker, score)
+            from app.collectors.market_regime_collector import get_latest_market_snapshot
+            macro_snapshot = await asyncio.to_thread(get_latest_market_snapshot)
+            macro_briefing = _format_macro_briefing(macro_snapshot)
+            if macro_briefing:
+                desk.cycle_metadata["macro_briefing"] = macro_briefing
         except Exception as e:
-            logger.debug("[V3] %s: baseline not recorded (non-fatal): %s",
-                         ticker, e)
-        if score_block:
-            desk.cycle_metadata["decision_score_context"] = score_block
-            logger.info(
-                "[V3] %s: deterministic baseline injected — %s %s "
-                "(conf %s, coverage %s%%, R:R %s)",
-                ticker, score.get("band"), score.get("score"),
-                score.get("confidence"), score.get("coverage_pct"),
-                (score.get("risk_reward") or {}).get("ratio"),
+            logger.warning("[V3] %s: macro snapshot unavailable (non-fatal): %s", ticker, e)
+
+    async def _build_quant_math_task():
+        try:
+            from app.quant.context_block import build_quant_math_block
+            quant_math = await asyncio.wait_for(
+                asyncio.to_thread(build_quant_math_block, ticker, bot_id, cycle_id),
+                timeout=60,
             )
-    except asyncio.TimeoutError:
-        logger.warning(
-            "[V3] %s: deterministic baseline TIMED OUT after 15s — the desk has "
-            "no computed composite, no R:R and no structural gates", ticker,
-        )
-    except Exception as e:
-        logger.warning("[V3] %s: deterministic baseline failed (non-fatal): "
-                       "%s (%s)", ticker, e, type(e).__name__)
-
-    # The cycle's OTHER names — the desk's first cross-ticker surface
-    # (app/v3/cycle_candidates.py). Built by the caller before the gatekeeper
-    # ran, so it costs nothing here and cannot race the concurrent fan-out.
-    #
-    # Empty for a Watch Desk wake, which names its ticker explicitly and
-    # bypasses discovery: no pool exists, and the renderer returns "" rather
-    # than a header promising alternatives it cannot list.
-    try:
-        from app.v3.cycle_candidates import build_candidate_block, shown_tickers
-        from app.v3.substitute import POOL_KEY
-
-        candidate_block = build_candidate_block(cycle_candidates, self_ticker=ticker)
-        if candidate_block:
-            desk.cycle_metadata["cycle_candidates_context"] = candidate_block
-            # The SAME rows, from the same filter, under the same condition —
-            # so "the bear was asked for a substitute" and "the block rendered"
-            # are one fact rather than two that can drift. `substitute.py`
-            # rejects any name outside this list, and a validator rejecting a
-            # ticker the agent was genuinely shown is unfixable from inside the
-            # prompt.
-            pool = shown_tickers(cycle_candidates, self_ticker=ticker)
-            desk.cycle_metadata[POOL_KEY] = pool
-            logger.info(
-                "[V3] %s: cross-ticker candidates injected — %d alternatives",
-                ticker, len(pool),
+            if quant_math:
+                desk.cycle_metadata["quant_math_context"] = quant_math
+                logger.info("[V3] %s: precomputed quant math injected (%d chars)",
+                            ticker, len(quant_math))
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[V3] %s: quant math precompute TIMED OUT after 60s — GARCH, HRP and "
+                "the sizing bracket are all MISSING from this desk", ticker,
             )
-    except Exception as e:  # noqa: BLE001
-        logger.warning("[V3] %s: candidate block failed (non-fatal): %s", ticker, e)
+        except Exception as e:
+            logger.warning("[V3] %s: quant math precompute failed (non-fatal): %s (%s)",
+                           ticker, e, type(e).__name__)
 
-    # NO POOL ON A NAME WE OWN — borrow the last full cycle's shortlist.
-    #
-    # Measured 2026-08-12: 31 of 33 held desks reached the bear with an EMPTY
-    # pool, so `substitute.read_substitute` recorded NOT_ASKED on 21 of the 23
-    # that produced an artifact, and the bear won 0 of 26 held debates against
-    # 54 of 78 (69%) unheld. The substitute axis — which `hold_reason` calls its
-    # PRIMARY axis — is unavailable on exactly the population where an exit is
-    # the decision. See `app/v3/wake_pool.py` for the full measurement.
-    #
-    # HELD-ONLY, deliberately. Unheld pool-less desks stay as the control: if
-    # held NAMED/DECLINED moves and the unheld pool-less rate does not, the pool
-    # is what did it. `held` is resolved at line ~139 by `_build_cycle_metadata`,
-    # well before this runs, so reading it here cannot race.
-    #
-    # `substitute_ask_skipped` is recorded on EVERY path including success, so a
-    # later reader can tell "no pool existed", "the pool was stale" and "the
-    # bear ignored the question" apart. Pooling those three into NOT_ASKED is
-    # what made this defect invisible for four days.
-    try:
-        from app.v3.substitute import POOL_KEY
-        from app.v3.wake_pool import build_wake_pool, build_wake_pool_block
+    async def _build_technical_task():
+        try:
+            from app.quant.technical_baseline import (
+                build_technical_baseline_block, compute_technical_baseline,
+            )
+            tech_block = await asyncio.wait_for(
+                asyncio.to_thread(build_technical_baseline_block, ticker),
+                timeout=15,
+            )
+            if tech_block:
+                desk.cycle_metadata["technical_baseline_context"] = tech_block
+                logger.info("[V3] %s: verified technical baseline injected (%d chars)",
+                            ticker, len(tech_block))
+            else:
+                logger.warning(
+                    "[V3] %s: technical baseline came back EMPTY — the desk has no "
+                    "verified indicator anchor for this ticker", ticker,
+                )
 
-        if desk.cycle_metadata.get("held") is True and not desk.cycle_metadata.get(POOL_KEY):
-            record = build_wake_pool(ticker, exclude_cycle_id=cycle_id)
-            desk.cycle_metadata["substitute_ask_skipped"] = record.get("reason")
-            block = build_wake_pool_block(record, self_ticker=ticker)
-            if block:
-                # Written under the SAME key the live block uses so every reader
-                # — the bear's prompt, `candidate_context`, the whiteboard — sees
-                # one surface. A second key would be a second thing to remember.
-                desk.cycle_metadata["cycle_candidates_context"] = block
-                desk.cycle_metadata[POOL_KEY] = list(record["tickers"])
-                desk.cycle_metadata["wake_pool"] = {
-                    "source_cycle_id": record.get("cycle_id"),
-                    "age_hours": record.get("age_hours"),
-                    "n": len(record["tickers"]),
-                }
+            # Staleness detection
+            _b = await asyncio.wait_for(
+                asyncio.to_thread(compute_technical_baseline, ticker), timeout=10,
+            )
+            _trd = _stale_age((_b or {}).get("age_trading_days"))
+            if _trd is not None and _trd > 3:
+                from app.v3.telemetry import record_guardrail_firing
+
+                desk.cycle_metadata["stale_price_age_trading_days"] = _trd
+                desk.cycle_metadata["stale_price_as_of"] = str((_b or {}).get("as_of"))
+                record_guardrail_firing(
+                    "STALE_PRICE_DATA",
+                    ticker=ticker,
+                    cycle_id=cycle_id or "",
+                    detail={
+                        "age_trading_days": _trd,
+                        "as_of": str((_b or {}).get("as_of")),
+                        "shadow": False,
+                        "enforced_by": "HOLD_POLICY_BLOCKED_STALE_PRICE_DATA",
+                    },
+                )
+                logger.warning(
+                    "[V3] %s: STALE price data — baseline is %d trading day(s) old; "
+                    "any BUY/SELL from this desk will be policy-blocked", ticker, _trd,
+                )
+        except Exception as e:
+            logger.warning("[V3] %s: technical baseline failed (non-fatal): %s", ticker, e)
+
+    async def _build_valuation_task():
+        try:
+            from app.quant.valuation_block import build_valuation_block
+            val_block = await asyncio.wait_for(
+                asyncio.to_thread(build_valuation_block, ticker),
+                timeout=15,
+            )
+            if val_block:
+                desk.cycle_metadata["valuation_context"] = val_block
+                logger.info("[V3] %s: precomputed valuation math injected (%d chars)",
+                            ticker, len(val_block))
+            else:
+                logger.warning(
+                    "[V3] %s: valuation block came back EMPTY — the desk has no "
+                    "verified multiple or implied growth rate for this ticker", ticker,
+                )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[V3] %s: valuation math precompute TIMED OUT after 15s — enterprise "
+                "value, multiples and the reverse DCF are all MISSING from this desk",
+                ticker,
+            )
+        except Exception as e:
+            logger.warning("[V3] %s: valuation math precompute failed (non-fatal): "
+                           "%s (%s)", ticker, e, type(e).__name__)
+
+    async def _build_fundamental_task():
+        try:
+            from app.quant.fundamental_block import build_fundamental_block
+            fund_block = await asyncio.wait_for(
+                asyncio.to_thread(build_fundamental_block, ticker),
+                timeout=10,
+            )
+            if fund_block:
+                desk.cycle_metadata["fundamental_context"] = fund_block
+                logger.info("[V3] %s: precomputed fundamental snapshot injected (%d chars)",
+                            ticker, len(fund_block))
+            else:
+                logger.warning(
+                    "[V3] %s: fundamental block came back EMPTY — the desk has no "
+                    "verified ratios for this ticker", ticker,
+                )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[V3] %s: fundamental snapshot precompute TIMED OUT after 10s — "
+                "margins, returns, leverage and growth are MISSING from this desk",
+                ticker,
+            )
+        except Exception as e:
+            logger.warning("[V3] %s: fundamental snapshot precompute failed "
+                           "(non-fatal): %s (%s)", ticker, e, type(e).__name__)
+
+    async def _build_decision_score_task():
+        try:
+            from app.quant.decision_score import (
+                build_decision_score_block, compute_decision_score,
+            )
+
+            def _score_and_render():
+                s = compute_decision_score(ticker)
+                return s, build_decision_score_block(ticker, s)
+
+            score, score_block = await asyncio.wait_for(
+                asyncio.to_thread(_score_and_render), timeout=15,
+            )
+            desk.cycle_metadata["decision_score"] = score
+            try:
+                from app.quant.decision_score_store import record_decision_score
+                await asyncio.to_thread(
+                    record_decision_score, cycle_id, ticker, score)
+            except Exception as e:
+                logger.debug("[V3] %s: baseline not recorded (non-fatal): %s",
+                             ticker, e)
+            if score_block:
+                desk.cycle_metadata["decision_score_context"] = score_block
                 logger.info(
-                    "[V3] %s: HELD name with no pool — borrowed %d names from "
-                    "%s (%sh old)", ticker, len(record["tickers"]),
-                    record.get("cycle_id"), record.get("age_hours"),
+                    "[V3] %s: deterministic baseline injected — %s %s "
+                    "(conf %s, coverage %s%%, R:R %s)",
+                    ticker, score.get("band"), score.get("score"),
+                    score.get("confidence"), score.get("coverage_pct"),
+                    (score.get("risk_reward") or {}).get("ratio"),
+                )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[V3] %s: deterministic baseline TIMED OUT after 15s — the desk has "
+                "no computed composite, no R:R and no structural gates", ticker,
+            )
+        except Exception as e:
+            logger.warning("[V3] %s: deterministic baseline failed (non-fatal): "
+                           "%s (%s)", ticker, e, type(e).__name__)
+
+    async def _build_candidate_pool_task():
+        try:
+            from app.v3.cycle_candidates import build_candidate_block, shown_tickers
+            from app.v3.substitute import POOL_KEY
+
+            candidate_block = build_candidate_block(cycle_candidates, self_ticker=ticker)
+            if candidate_block:
+                desk.cycle_metadata["cycle_candidates_context"] = candidate_block
+                pool = shown_tickers(cycle_candidates, self_ticker=ticker)
+                desk.cycle_metadata[POOL_KEY] = pool
+                logger.info(
+                    "[V3] %s: cross-ticker candidates injected — %d alternatives",
+                    ticker, len(pool),
+                )
+        except Exception as e:
+            logger.warning("[V3] %s: candidate block failed (non-fatal): %s", ticker, e)
+
+        try:
+            from app.v3.substitute import POOL_KEY
+            from app.v3.wake_pool import build_wake_pool, build_wake_pool_block
+
+            if desk.cycle_metadata.get("held") is True and not desk.cycle_metadata.get(POOL_KEY):
+                record = build_wake_pool(ticker, exclude_cycle_id=cycle_id)
+                desk.cycle_metadata["substitute_ask_skipped"] = record.get("reason")
+                block = build_wake_pool_block(record, self_ticker=ticker)
+                if block:
+                    desk.cycle_metadata["cycle_candidates_context"] = block
+                    desk.cycle_metadata[POOL_KEY] = list(record["tickers"])
+                    desk.cycle_metadata["wake_pool"] = {
+                        "source_cycle_id": record.get("cycle_id"),
+                        "age_hours": record.get("age_hours"),
+                        "n": len(record["tickers"]),
+                    }
+                    logger.info(
+                        "[V3] %s: HELD name with no pool — borrowed %d names from "
+                        "%s (%sh old)", ticker, len(record["tickers"]),
+                        record.get("cycle_id"), record.get("age_hours"),
+                    )
+                else:
+                    logger.info(
+                        "[V3] %s: HELD name with no pool and none borrowable (%s) "
+                        "— the bear cannot be asked for a substitute",
+                        ticker, record.get("reason"),
+                    )
+        except Exception as e:
+            logger.warning("[V3] %s: wake pool failed (non-fatal): %s: %s",
+                           ticker, type(e).__name__, e)
+
+    async def _build_opinion_task():
+        try:
+            from app.v3.opinion_block import build_opinion_block
+            opinion_block = await asyncio.wait_for(
+                asyncio.to_thread(build_opinion_block, ticker),
+                timeout=10,
+            )
+            if opinion_block:
+                desk.cycle_metadata["opinion_context"] = opinion_block
+                logger.info("[V3] %s: recorded opinion cards injected (%d chars)",
+                            ticker, len(opinion_block))
+        except Exception as e:
+            logger.warning("[V3] %s: opinion block failed (non-fatal): %s", ticker, e)
+
+    async def _build_alt_data_task():
+        try:
+            from app.v3.alt_data_block import build_alt_data_block
+            alt_block = await asyncio.wait_for(
+                asyncio.to_thread(build_alt_data_block, ticker),
+                timeout=10,
+            )
+            if alt_block:
+                desk.cycle_metadata["alt_data_context"] = alt_block
+                logger.info("[V3] %s: alt-data block injected (%d chars)", ticker, len(alt_block))
+        except Exception as e:
+            logger.warning("[V3] %s: alt-data precompute failed (non-fatal): %s", ticker, e)
+
+    async def _build_book_brief_task():
+        try:
+            from app.v3.book_brief import build_book_brief
+            book_brief = await asyncio.wait_for(
+                asyncio.to_thread(build_book_brief, ticker, bot_id),
+                timeout=20,
+            )
+            if book_brief:
+                desk.cycle_metadata["book_brief_context"] = book_brief
+                logger.info("[V3] %s: book brief injected (%d chars)", ticker, len(book_brief))
+        except Exception as e:
+            logger.warning("[V3] %s: book brief failed (non-fatal): %s", ticker, e)
+
+    async def _build_memory_task():
+        try:
+            from app.services.parameter_store import get_param
+            _memory_on = bool(get_param("MEMORY_CONTEXT_ENABLED"))
+        except Exception:
+            _memory_on = False
+        if not _memory_on:
+            desk.cycle_metadata["memory_context_state"] = "off"
+            return
+        try:
+            from app.services.memory.retriever import MemoryRetriever
+            retrieval_results = await asyncio.to_thread(MemoryRetriever.retrieve, ticker=ticker)
+            brief_text = ""
+            if retrieval_results:
+                memory_brief = MemoryRetriever.build_memory_brief(retrieval_results)
+                brief_text = memory_brief.get("brief_text", "")
+
+            addenda = ""
+            try:
+                from app.services.retrieval_context import build_memory_addenda
+                addenda = await asyncio.to_thread(build_memory_addenda, ticker)
+            except Exception as addenda_err:
+                logger.debug("[V3] %s: memory addenda failed (non-fatal): %s",
+                             ticker, addenda_err)
+
+            combined = "\n\n".join(b for b in (brief_text, addenda) if b)
+            if combined:
+                desk.cycle_metadata["memory_context"] = combined
+                desk.cycle_metadata["memory_context_state"] = f"on:{len(combined)}"
+                logger.info(
+                    "[V3] %s: Injected memory context (%d canonical entries, %d chars total)",
+                    ticker, len(retrieval_results or []), len(combined),
                 )
             else:
-                logger.info(
-                    "[V3] %s: HELD name with no pool and none borrowable (%s) "
-                    "— the bear cannot be asked for a substitute",
-                    ticker, record.get("reason"),
-                )
-    except Exception as e:  # noqa: BLE001
-        logger.warning("[V3] %s: wake pool failed (non-fatal): %s: %s",
-                       ticker, type(e).__name__, e)
+                desk.cycle_metadata["memory_context_state"] = "on:empty"
+        except Exception as e:
+            desk.cycle_metadata["memory_context_state"] = f"crashed:{type(e).__name__}"
+            logger.warning("[V3] %s: Memory retrieval failed (non-fatal): %s", ticker, e)
 
-    # Recorded third-party opinion cards (2026-07-27). Unlike every other
-    # block built here this one returns "" when there is no coverage, and that
-    # is correct: a ticker nobody happened to discuss is not a gap in evidence,
-    # and announcing the absence on every desk would teach the agent to read
-    # one commentator's silence as information.
-    try:
-        from app.v3.opinion_block import build_opinion_block
-        opinion_block = await asyncio.wait_for(
-            asyncio.to_thread(build_opinion_block, ticker),
-            timeout=10,
-        )
-        if opinion_block:
-            desk.cycle_metadata["opinion_context"] = opinion_block
-            logger.info("[V3] %s: recorded opinion cards injected (%d chars)",
-                        ticker, len(opinion_block))
-    except Exception as e:
-        logger.warning("[V3] %s: opinion block failed (non-fatal): %s", ticker, e)
+    previous_desk = None
 
-    # Staleness gate, detection half. Shadow-only from 2026-07-27 ("promote it
-    # only when the distribution earns it") — promoted 2026-07-31, because the
-    # distribution earned it: cycle-v3-1785504601 shadow-fired on exactly
-    # RBLX/EC (10 trading days) and AGX (4), all three true positives, and the
-    # RBLX desk went on to emit a 75-confidence thesis with a stop-loss ABOVE
-    # the real spot, priced 24% off. Detection records here; ENFORCEMENT is the
-    # HOLD_POLICY_BLOCKED_STALE_PRICE_DATA gate in `_apply_policy_gates`, which
-    # reads the age this block stashes on the desk. Fail-open on gate failure:
-    # an unreadable baseline must not block the cycle — the executor-side
-    # checks remain the backstop, and the desk prompt still carries its own
-    # ⚠ STALE banner.
-    try:
-        from app.quant.technical_baseline import compute_technical_baseline
+    async def _build_previous_desk_task():
+        nonlocal previous_desk
+        try:
+            from app.v3.desk_persistence import load_latest_desk_for_ticker
+            previous_desk = await asyncio.to_thread(load_latest_desk_for_ticker, ticker)
+            if previous_desk:
+                prev_context = previous_desk.get_handoff_brief()
+                if prev_context and prev_context != "No artifacts on desk yet.":
+                    desk.cycle_metadata["previous_desk_context"] = prev_context
+                    from app.utils.tz import ensure_aware
+                    days_old = -1
+                    dt = ensure_aware(previous_desk.created_at)
+                    if dt is not None:
+                        days_old = (datetime.now(timezone.utc) - dt).days
+                    logger.info(
+                        "[V3] %s: Injected previous SharedDesk context from %d days ago (%d chars)",
+                        ticker, days_old, len(prev_context)
+                    )
+        except Exception as e:
+            logger.warning("[V3] %s: Failed to load previous SharedDesk (non-fatal): %s", ticker, e)
 
-        _b = await asyncio.wait_for(
-            asyncio.to_thread(compute_technical_baseline, ticker), timeout=10,
-        )
-        _trd = _stale_age((_b or {}).get("age_trading_days"))
-        if _trd is not None and _trd > 3:
-            from app.v3.telemetry import record_guardrail_firing
-
-            desk.cycle_metadata["stale_price_age_trading_days"] = _trd
-            desk.cycle_metadata["stale_price_as_of"] = str((_b or {}).get("as_of"))
-            record_guardrail_firing(
-                "STALE_PRICE_DATA",
-                ticker=ticker,
-                cycle_id=cycle_id or "",
-                detail={
-                    "age_trading_days": _trd,
-                    "as_of": str((_b or {}).get("as_of")),
-                    "shadow": False,
-                    "enforced_by": "HOLD_POLICY_BLOCKED_STALE_PRICE_DATA",
-                },
-            )
-            logger.warning(
-                "[V3] %s: STALE price data — baseline is %d trading day(s) old; "
-                "any BUY/SELL from this desk will be policy-blocked", ticker, _trd,
-            )
-    except Exception as e:  # noqa: BLE001 — detection failure must not block
-        logger.warning("[V3] %s: staleness detection skipped: %s", ticker, e)
-
-    # Alternative data (2026-07-23 collector wave): insider cluster buys +
-    # social chatter, precomputed for the research analysts — same rationale
-    # as the quant block, the data must be ON the desk, not behind a tool.
-    try:
-        from app.v3.alt_data_block import build_alt_data_block
-        alt_block = await asyncio.wait_for(
-            asyncio.to_thread(build_alt_data_block, ticker),
-            timeout=10,
-        )
-        if alt_block:
-            desk.cycle_metadata["alt_data_context"] = alt_block
-            logger.info("[V3] %s: alt-data block injected (%d chars)", ticker, len(alt_block))
-    except Exception as e:
-        logger.warning("[V3] %s: alt-data precompute failed (non-fatal): %s", ticker, e)
-
-    # Book-level brief (2026-07-23): every decision was single-ticker — no
-    # agent saw net exposure, concentration, sector tilt, or the candidate's
-    # correlation to held positions. Injected for quant + board.
-    try:
-        from app.v3.book_brief import build_book_brief
-        book_brief = await asyncio.wait_for(
-            asyncio.to_thread(build_book_brief, ticker, bot_id),
-            timeout=20,
-        )
-        if book_brief:
-            desk.cycle_metadata["book_brief_context"] = book_brief
-            logger.info("[V3] %s: book brief injected (%d chars)", ticker, len(book_brief))
-    except Exception as e:
-        logger.warning("[V3] %s: book brief failed (non-fatal): %s", ticker, e)
-
-    # Autoresearch directives — global ones plus any targeting this ticker.
-    # The param existed since V3 launch but was never consumed; directives
-    # were write-only (janitor-deleted). Non-fatal, capped to stay small.
+    # Autoresearch directives (instant in-memory filter)
     if active_directives:
         try:
             relevant = [
@@ -562,80 +494,41 @@ async def run_v3_pipeline(
             logger.debug("[V3] %s: directive injection failed (non-fatal): %s",
                          ticker, dir_err)
 
-    # Retrieve past cycle memory for this ticker (non-fatal).
-    # Gated 2026-08-31: this seam was silently DEAD 08-18..08-31 — b6b29d3
-    # deleted _ensure_schema while repository.py kept a function-local import
-    # of it, so every retrieve raised ImportError and this try swallowed it.
-    # "Off" and "crashed" were indistinguishable. The flag plus the
-    # memory_context_state stamp make the three states measurable:
-    # off / on:<chars> / on:empty / crashed:<ExceptionType>.
+    # Execute all 11 context builders in parallel
+    await asyncio.gather(
+        _build_macro_task(),
+        _build_quant_math_task(),
+        _build_technical_task(),
+        _build_valuation_task(),
+        _build_fundamental_task(),
+        _build_decision_score_task(),
+        _build_candidate_pool_task(),
+        _build_opinion_task(),
+        _build_alt_data_task(),
+        _build_book_brief_task(),
+        _build_memory_task(),
+        _build_previous_desk_task(),
+        return_exceptions=True,
+    )
+
+    # Deterministic Data Readiness Gate (shadow evaluation before Phase 0 triage)
     try:
-        from app.services.parameter_store import get_param
-        _memory_on = bool(get_param("MEMORY_CONTEXT_ENABLED"))
-    except Exception:
-        _memory_on = False
-    if not _memory_on:
-        desk.cycle_metadata["memory_context_state"] = "off"
-    else:
-        try:
-            from app.services.memory.retriever import MemoryRetriever
-            retrieval_results = MemoryRetriever.retrieve(ticker=ticker)
-            brief_text = ""
-            if retrieval_results:
-                memory_brief = MemoryRetriever.build_memory_brief(retrieval_results)
-                brief_text = memory_brief.get("brief_text", "")
-
-            # Working-memory (reminders/facts/patterns) + hybrid semantic recall.
-            # These were previously injected only via the dead RLM prompt path and
-            # never reached live agents. Char-capped inside the builders.
-            addenda = ""
-            try:
-                from app.services.retrieval_context import build_memory_addenda
-                addenda = build_memory_addenda(ticker)
-            except Exception as addenda_err:
-                logger.debug("[V3] %s: memory addenda failed (non-fatal): %s",
-                             ticker, addenda_err)
-
-            combined = "\n\n".join(b for b in (brief_text, addenda) if b)
-            if combined:
-                desk.cycle_metadata["memory_context"] = combined
-                desk.cycle_metadata["memory_context_state"] = f"on:{len(combined)}"
-                logger.info(
-                    "[V3] %s: Injected memory context (%d canonical entries, %d chars total)",
-                    ticker, len(retrieval_results or []), len(combined),
-                )
-            else:
-                desk.cycle_metadata["memory_context_state"] = "on:empty"
-        except Exception as e:
-            desk.cycle_metadata["memory_context_state"] = f"crashed:{type(e).__name__}"
-            logger.warning("[V3] %s: Memory retrieval failed (non-fatal): %s", ticker, e)
-
-    # Retrieve the previous cycle's SharedDesk ("Manila Envelope")
-    # NOTE: Load ONCE and reuse for both envelope injection and triage gate
-    previous_desk = None
-    try:
-        from app.v3.desk_persistence import load_latest_desk_for_ticker
-        previous_desk = load_latest_desk_for_ticker(ticker)
-        if previous_desk:
-            # Compact structured brief (~400 chars), not the full 8K narrative —
-            # continuity needs the decision + headline findings only (plan 4.4).
-            prev_context = previous_desk.get_handoff_brief()
-            if prev_context and prev_context != "No artifacts on desk yet.":
-                desk.cycle_metadata["previous_desk_context"] = prev_context
-                
-                # Calculate days old for logging
-                from app.utils.tz import ensure_aware
-                days_old = -1
-                dt = ensure_aware(previous_desk.created_at)
-                if dt is not None:
-                    days_old = (datetime.now(timezone.utc) - dt).days
-                
-                logger.info(
-                    "[V3] %s: Injected previous SharedDesk context from %d days ago (%d chars)",
-                    ticker, days_old, len(prev_context)
-                )
-    except Exception as e:
-        logger.warning("[V3] %s: Failed to load previous SharedDesk (non-fatal): %s", ticker, e)
+        from app.v3.data_readiness import evaluate_ticker_readiness
+        readiness = evaluate_ticker_readiness(
+            ticker=ticker,
+            data_report=data_report,
+            technical_context=desk.cycle_metadata.get("technical_baseline_context"),
+            valuation_context=desk.cycle_metadata.get("valuation_context"),
+            price_age_trading_days=desk.cycle_metadata.get("stale_price_age_trading_days"),
+        )
+        desk.cycle_metadata["readiness"] = {
+            "is_ready": readiness.is_ready,
+            "quality_score": readiness.quality_score,
+            "missing_reasons": readiness.missing_reasons,
+            "disposition": readiness.disposition,
+        }
+    except Exception as read_err:
+        logger.warning("[V3] %s: data readiness check failed (non-fatal): %s", ticker, read_err)
 
     emit(
         "analyzing", f"v3_ctx_{ticker}",
