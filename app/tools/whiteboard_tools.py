@@ -162,8 +162,8 @@ async def whiteboard_read(ticker: str, section: str = "", **_extra) -> str:
         "type": "object",
         "properties": {
             "entry_id": {
-                "type": "integer",
-                "description": "The exact entry_id (from whiteboard_read) to annotate."
+                "type": "string",
+                "description": "The exact entry_id from whiteboard_read (a string like 'wb_1a2b3c4d5e')."
             },
             "note": {
                 "type": "string",
@@ -180,11 +180,16 @@ async def whiteboard_read(ticker: str, section: str = "", **_extra) -> str:
     source="whiteboard",
     permission=PermissionLevel.WRITE,
 )
-async def whiteboard_annotate(entry_id: int, note: str, author: str = "") -> str:
+async def whiteboard_annotate(entry_id: str, note: str, author: str = "") -> str:
+    # Entry ids have been "wb_<hex>" STRINGS since the Mongo port (5fbfac8,
+    # 2026-08-18); the schema said integer until 2026-08-31, so a compliant
+    # model could never produce an id that matched any entry. Coerce defensively
+    # in case a model still sends a number.
+    entry_id = str(entry_id).strip()
     author_agent = current_agent_name()
     if author_agent == "unknown" and author.strip():
         author_agent = author.strip()[:64]
-    logger.info("[WhiteboardTool] Annotating entry %d (agent=%s)", entry_id, author_agent)
+    logger.info("[WhiteboardTool] Annotating entry %s (agent=%s)", entry_id, author_agent)
     try:
         success = await whiteboard.annotate(entry_id=entry_id, agent=author_agent, note=note)
         if success:
