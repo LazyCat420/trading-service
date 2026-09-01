@@ -23,14 +23,47 @@ class PipelineStateDB:
 
     @classmethod
     def save_state(cls, state: dict):
+        """Persist the pipeline singleton.
+
+        A MISSING `status` MUST NOT BECOME "idle".
+
+        `get_state` was hardened on the read side after a Mongo read fault
+        answered the deploy interlocks with `default_state()` — whose status is
+        "idle", a member of IDLE_STATUSES in both guards — and a deploy killed
+        a live cycle, losing EXLS/OWL/CARS/GM on 2026-07-27. The write side
+        kept the same shape: `state.get("status", "idle")` turns any partial
+        state dict into a published "no cycle is running".
+
+        That is not a hypothetical. `load_state(summary_only=True)` and any
+        caller assembling a partial dict round-trip through here, and the
+        interlocks read exactly this field: `scripts/deploy_preflight.py`
+        printed "pipeline idle (status=idle) — deploy may proceed" at
+        2026-08-31T23:29:14Z while cycle-observe-1788217529 was mid-synthesizer,
+        and the swap 49 seconds later killed it (status=stopped, no decision
+        persisted). Whether this specific default produced that read is UNKNOWN
+        — pipeline_state keeps no history — but it is a confirmed path to the
+        same answer, and it fails in the direction that costs a cycle.
+
+        "unknown" is deliberately NOT in either guard's IDLE_STATUSES, so an
+        incomplete write now blocks a deploy instead of inviting one.
+        """
         try:
             now_utc = datetime.now(timezone.utc)
+            status = state.get("status")
+            if not status:
+                logger.warning(
+                    "[PipelineStateDB] save_state called with no status (keys=%s) — "
+                    "writing 'unknown' rather than 'idle'; a partial write must not "
+                    "tell the deploy interlocks that no cycle is running",
+                    sorted(state)[:12],
+                )
+                status = "unknown"
             mongo_store.upsert_doc(
                 "pipeline_state",
                 {"singleton_id": cls.SINGLETON_ID},
                 {
                     "singleton_id": cls.SINGLETON_ID,
-                    "status": state.get("status", "idle"),
+                    "status": status,
                     "cycle_id": state.get("cycle_id"),
                     "started_at": state.get("started_at"),
                     "finished_at": state.get("finished_at"),
