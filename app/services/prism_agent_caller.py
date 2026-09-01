@@ -257,6 +257,77 @@ async def get_live_model_from_vllm(url: str, force_refresh: bool = False) -> str
 # the pair have to move together: `provider` is what prism routes on, and
 # `endpoint_key` is what we ask for the live model name. Keeping them in one
 # mapping is what makes `endpoint_override` safe to expose.
+def _prism_client_accepts_min_p() -> bool:
+    """Does the INSTALLED lazycat SDK take `min_p` on `PrismClient.call_agent`?
+
+    Mirrors `base_agent._base_agent_accepts_min_p`. deploy.sh syncs
+    lazycat-sdk alongside app/, so the two move together in a normal deploy —
+    but a partial one would raise TypeError on EVERY agent call here and turn
+    a sampling fix into a total LLM outage. Checked once at import.
+    """
+    try:
+        import inspect
+
+        from lazycat.llm import PrismClient as _PC
+
+        return "min_p" in inspect.signature(_PC.call_agent).parameters
+    except Exception:  # noqa: BLE001 — never let a capability probe stop boot
+        return False
+
+
+_PRISM_CLIENT_ACCEPTS_MIN_P = _prism_client_accepts_min_p()
+
+
+def min_p_kwargs(provider: str | None, model: str | None) -> dict:
+    """`{"min_p": 0.0}` for a local vLLM box; `{}` for anything else.
+
+    WHY EVERY `/agent` CALL MUST CARRY THIS. Prism's ParameterRegistry gives
+    `minP` an `agentDefault` of 0.05 and injects it whenever the payload
+    carries an `agent` field — which every call from this module does. vLLM
+    running speculative decoding REFUSES any min_p > 0:
+
+        The min_p and logit_bias sampling parameters are not yet supported
+        with speculative decoding
+
+    On the non-streaming path that is an HTTP 400; on prism's streaming path
+    the refusal arrives as an in-band SSE error frame AFTER the 200 header,
+    which prism's parser skips — so the caller sees a *successful* call with
+    empty text and zero usage, and prism's own empty-output recovery then
+    retries with the temperature raised, moving further from the one setting
+    that works.
+
+    Re-measured 2026-09-01 against the Jetson
+    (`cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit`, spec_decode drafts 1.85M):
+    `temperature=0.3 + min_p=0.05` -> HTTP 400, `min_p=0` -> 200 with content.
+    Gold Spark behaves identically, so this is not one box's quirk.
+
+    `temperature=0` masks the bug (vLLM zeroes min_p under greedy sampling) —
+    which is exactly why the few temp-0 callers here never failed while every
+    temp>0 caller returned empty from 2026-08-26 onward (477/477 empty in
+    prism's request ledger, 0 successes).
+
+    `base_agent.min_p_for` already applies this rule on the BaseAgent path and
+    `chat_toolless` sends the field outright. This helper is the same rule for
+    the `call_prism_agent` call sites and the class path, which were the ones
+    still leaving prism's default in place.
+    """
+    from app.agents.base_agent import min_p_for
+
+    value = min_p_for(provider, model)
+    if value is None:
+        return {}
+    if not _PRISM_CLIENT_ACCEPTS_MIN_P:
+        logger.warning(
+            "[PrismAgentCaller] the installed lazycat SDK does not accept min_p — "
+            "prism's injected default (0.05) stays on the wire for %s/%s. A local "
+            "vLLM box running speculative decoding answers that with an empty "
+            "stream; sync lazycat-sdk.",
+            provider, model,
+        )
+        return {}
+    return {"min_p": value}
+
+
 ENDPOINT_PROVIDERS: dict[str, str] = {
     "jetson": "vllm",
     "dgx_spark": "vllm-2",
@@ -569,6 +640,7 @@ async def call_prism_agent(
                 max_iterations=max_iter,
                 provider=provider,
                 thinking_enabled=False,
+                **min_p_kwargs(provider, model),
             )
         except Exception as e:
             if "404" in str(e) or "not exist" in str(e).lower() or "not found" in str(e).lower():
@@ -586,6 +658,7 @@ async def call_prism_agent(
                     max_iterations=max_iter,
                     provider=provider,
                     thinking_enabled=False,
+                    **min_p_kwargs(provider, fresh_model),
                 )
             else:
                 raise e
@@ -600,6 +673,7 @@ async def call_prism_agent(
             logger.error("[PrismAgentCaller] %s: response body was not JSON (%s) — returning empty text", agent_id, parse_err)
             response_text = ""
         response_text, leaked = strip_reasoning_leak(response_text, agent_id)
+        usage_resp = resp
         if not response_text:
             # A fast empty response indicates a chat-template or reasoning token drop.
             # Retry once with a clean, single-turn [system, user] structure.
@@ -623,11 +697,16 @@ async def call_prism_agent(
                     max_iterations=max_iter,
                     provider=provider,
                     thinking_enabled=False,
+                    **min_p_kwargs(provider, model),
                 )
                 retry_text = (retry_resp.json().get("text") or "").strip()
                 retry_text, _ = strip_reasoning_leak(retry_text, agent_id)
                 if retry_text:
                     response_text = retry_text
+                    # Bill the response that actually produced the text. Reading
+                    # usage off the FIRST (empty) response reported 0 tokens for
+                    # a call that really did spend them.
+                    usage_resp = retry_resp
                     logger.info("[PrismAgentCaller] %s: single-turn retry SUCCEEDED (%d chars)", agent_id, len(response_text))
             except Exception as retry_err:
                 logger.debug("[PrismAgentCaller] %s: single-turn retry failed: %s", agent_id, retry_err)
@@ -638,7 +717,7 @@ async def call_prism_agent(
                 agent_id,
             )
         elapsed_ms = int((time.monotonic() - start) * 1000)
-        tokens = _extract_token_usage(resp, response_text)
+        tokens = _extract_token_usage(usage_resp, response_text)
         
         try:
             publish_event(TelemetryEvent(
@@ -936,6 +1015,7 @@ class PrismLLMShim:
                 max_iterations=max_iter,
                 provider=provider,
                 thinking_enabled=False,
+                **min_p_kwargs(provider, model),
             )
 
             try:
