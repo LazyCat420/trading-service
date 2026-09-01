@@ -293,9 +293,18 @@ def check_confidence_is_monotonic(cycle_id):
     → 4.57), so confidence is tracking magnitude while wearing a probability
     label. Anything sizing positions off it is reading the wrong axis.
     """
+    # Production rows only. Measured 2026-09-01: the unfiltered cohort was
+    # 1,252 rows of which just 82 carried a `cycle-v3-` id — 93% of what this
+    # check graded came from legacy, sim, verify and observe harnesses, so its
+    # verdict on "the desk's confidence" was mostly a verdict on other things.
+    # A monotonicity violation needs little data, but it does need the right
+    # population.
+    from app.services.cycle_scope import exclude_synthetic
+
     rows = mongo_query.find_rows(
         "decision_outcomes",
-        {"outcome": {"$in": ["WIN", "LOSS"]}, "confidence": {"$gte": 70}},
+        {"outcome": {"$in": ["WIN", "LOSS"]}, "confidence": {"$gte": 70},
+         **exclude_synthetic()},
         ["confidence", "outcome"])
 
     # `width_bucket(confidence, 70, 95, 3)`: three equal bands across [70, 95),

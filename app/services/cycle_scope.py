@@ -68,7 +68,18 @@ SYNTHETIC_CYCLE_PREFIXES: tuple[str, ...] = (
     "ondemand-chart-",      # app/routers/chart_router.py, a chart render
     "sc-",                  # scripts/self_consistency_bench.py
     "stress-concurrency-",  # scripts/stress_tests/concurrency_test.py
+    # Not minted anywhere in the tree today, but present in decision_outcomes
+    # from earlier harnesses — found by censusing the live store, which is the
+    # other half of keeping this list honest.
+    "sim-",
+    "audit-",
 )
+
+#: NOT synthetic, despite not matching PRODUCTION_CYCLE_PREFIX: `cycle-<epoch>`
+#: and `cycle_<date>` are the PRE-V3 production id schemes and account for
+#: ~1,141 of the 1,248 rows in the confidence cohort. `is_synthetic_cycle`
+#: leaves them visible precisely because it is a denylist — an allowlist here
+#: would have silently thrown away most of the desk's outcome history.
 
 #: The one prefix the production pipeline mints.
 PRODUCTION_CYCLE_PREFIX = "cycle-v3-"
