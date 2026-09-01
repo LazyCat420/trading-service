@@ -140,6 +140,36 @@ async def startup_fred_refresh(is_shutting_down: Callable[[], bool]):
     except Exception as e:
         logger.warning("[startup] FRED refresh failed (non-fatal): %s", e)
 
+async def _off_the_loop(coro_fn, label: str):
+    """Drive an `async def` that contains no `await` in a worker thread.
+
+    compute_market_regime / compute_sector_breadth / backfill_sector_performance
+    / compute_sector_performance / compute_all_correlations are coroutines in
+    name only — each is CPU-bound pandas (pivot, corr, groupby) with zero
+    awaits in the body, so a bare `await` pins the whole event loop for as long
+    as the maths takes.
+
+    Measured 2026-08-31, 40s after a redeploy: the 5-second vllm-shim metrics
+    poller stopped for 207s during sector-breadth + cross-asset correlations,
+    and again for 129s during the sp500 refresh, and every agent tool call in
+    those windows failed with "bridge timeout after 30000ms" — the bridge route
+    shares this loop. 12 of 62 tool calls in cycle-observe-1788219049 died that
+    way, and both tickers' triage was overridden to FULL for "degraded
+    research" as a result. The same message accounts for 98 of 174 tool
+    failures since 2026-08-24.
+
+    `asyncio.run` inside the worker is safe precisely because these bodies
+    never touch the outer loop; the same reason they should not have been
+    `async def` in the first place.
+    """
+    import asyncio as _asyncio
+
+    def _runner():
+        return _asyncio.run(coro_fn())
+
+    return await _asyncio.to_thread(_runner)
+
+
 async def startup_market_collect(is_shutting_down: Callable[[], bool]):
     """Background: collect market regime data (indexes, VIX, yields, ETFs)."""
     if is_shutting_down():
@@ -183,10 +213,10 @@ async def startup_market_collect(is_shutting_down: Callable[[], bool]):
         from app.data.sector_correlation_engine import compute_all_correlations
         from app.data.sector_aggregator import backfill_sector_performance
 
-        await compute_market_regime()
-        await compute_sector_breadth()
-        await backfill_sector_performance()
-        await compute_all_correlations()
+        await _off_the_loop(compute_market_regime, "market regime")
+        await _off_the_loop(compute_sector_breadth, "sector breadth")
+        await _off_the_loop(backfill_sector_performance, "sector performance backfill")
+        await _off_the_loop(compute_all_correlations, "cross-asset correlations")
         logger.info("[startup] Analytics and cross-asset correlations computed")
     except Exception as e:
         logger.warning("[startup] Market compute failed (non-fatal): %s", e)
@@ -239,8 +269,8 @@ async def startup_sp500_seed(is_shutting_down: Callable[[], bool]):
                     backfill_sector_performance,
                 )
 
-                await backfill_sector_performance()
-                await compute_sector_performance()
+                await _off_the_loop(backfill_sector_performance, "sector performance backfill")
+                await _off_the_loop(compute_sector_performance, "sector performance")
             except asyncio.CancelledError:
                 logger.info("[startup] Sector compute cancelled.")
             except Exception as e:
@@ -269,8 +299,8 @@ async def startup_sp500_seed(is_shutting_down: Callable[[], bool]):
             backfill_sector_performance,
         )
 
-        await backfill_sector_performance()
-        await compute_sector_performance()
+        await _off_the_loop(backfill_sector_performance, "sector performance backfill")
+        await _off_the_loop(compute_sector_performance, "sector performance")
     except asyncio.CancelledError:
         logger.info("[startup] SP500 seed cancelled.")
     except Exception as e:
