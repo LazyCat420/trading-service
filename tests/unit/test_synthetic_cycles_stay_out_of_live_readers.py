@@ -243,17 +243,36 @@ class TestWatchDeskArming:
 # ── 4. the outcome / calibration cohort ───────────────────────────────────
 class TestTheOutcomeCohort:
     def test_the_recorder_refuses_a_synthetic_cycle(self):
+        """Records the touches instead of raising on them.
+
+        A first draft of this test raised AssertionError from the patched
+        reader — and passed on the UNFIXED code too, because the recorder's
+        own error handling swallowed it and returned 0 either way. A check
+        that passes in both states is not a check; a sentinel the function
+        cannot catch is.
+        """
         from app.autoresearch import outcome_tracker
 
-        def _explode(*a, **kw):  # pragma: no cover - must never run
-            raise AssertionError("the recorder touched the DB for a synthetic cycle")
+        touched: list[str] = []
 
-        with patch.object(outcome_tracker.mongo_query, "find_rows", _explode):
+        def _note_rows(collection, *a, **kw):
+            touched.append(f"find_rows:{collection}")
+            return []
+
+        def _note_docs(collection, *a, **kw):
+            touched.append(f"find_docs:{collection}")
+            return []
+
+        with patch.object(outcome_tracker.mongo_query, "find_rows", _note_rows), \
+                patch.object(outcome_tracker.mongo_store, "find_docs", _note_docs):
             recorded = outcome_tracker.record_cycle_decisions(
                 "cycle-observe-1788220872", {"tickers": ["NVDA"]}
             )
 
         assert recorded == 0
+        assert not [t for t in touched if "analysis_results" in t], (
+            "the recorder read analysis_results for a synthetic cycle: " + str(touched)
+        )
 
     def test_the_resolver_skips_rows_already_in_the_table(self):
         """The 13 observe HOLDs from 2026-08-31 are still stored on purpose.
