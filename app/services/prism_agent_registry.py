@@ -8,10 +8,18 @@ yet, the caller can auto-register it via POST /custom-agents.
 This replaces the scattered if/elif chain that was in prism_client.py.
 """
 
+import logging
+
 
 # ── Central Agent ID Map ──
 # Keys: local agent_name strings used in llm.chat() calls
 # Values: Prism custom agent IDs (uppercase, CUSTOM_ prefix)
+logger = logging.getLogger(__name__)
+
+#: Names already reported as falling through to the default — warn once each,
+#: not once per call.
+_REPORTED_FALLBACKS: set[str] = set()
+
 AGENT_ID_MAP: dict[str, str] = {
     # ── Canonical Prism Agent IDs (Self-Mapping) ──
     "CUSTOM_SYSTEM_JANITOR_AGENT": "CUSTOM_SYSTEM_JANITOR_AGENT",
@@ -259,6 +267,19 @@ def resolve_agent_id(agent_name: str, default_agent: str = "CUSTOM_MARKET_ALPHA"
             return f"{base_agent}{suffix}"
         return base_agent
     
+    # Nothing matched. The call still succeeds — it just runs under a persona
+    # nobody chose for it, which is how autoresearch_reflection and auditor_1..3
+    # spent weeks being answered by the data janitor before anyone looked. Say
+    # so once per name so the fallback is visible in a log instead of only in a
+    # prompt.
+    if agent_name not in _REPORTED_FALLBACKS:
+        _REPORTED_FALLBACKS.add(agent_name)
+        logger.warning(
+            "[PrismAgentRegistry] %r has no entry in AGENT_ID_MAP and matched no "
+            "keyword rule — it will run as the generic fallback persona. Add an "
+            "explicit mapping if that is not what you want.", agent_name,
+        )
+
     base_agent = "CUSTOM_SYSTEM_JANITOR_AGENT"
     # Otherwise, default to SYSTEM_JANITOR_AGENT for data ingestion
     if "technical" in name_lower:
