@@ -573,6 +573,9 @@ async def run_v3_pipeline(
             technical_context=desk.cycle_metadata.get("technical_baseline_context"),
             valuation_context=desk.cycle_metadata.get("valuation_context"),
             price_age_trading_days=desk.cycle_metadata.get("stale_price_age_trading_days"),
+            stale_detection_failed=bool(
+                desk.cycle_metadata.get("stale_price_detection_failed")
+            ),
         )
         desk.cycle_metadata["readiness"] = {
             "is_ready": readiness.is_ready,
