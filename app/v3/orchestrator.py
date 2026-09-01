@@ -186,10 +186,23 @@ async def run_v3_pipeline(
                            ticker, e, type(e).__name__)
 
     async def _build_technical_task():
+        # TWO INDEPENDENT try blocks, deliberately.
+        #
+        # 22c95d8 folded the staleness probe into the baseline block's handler
+        # while making these builders concurrent. That coupled them: a failed
+        # or 15s-timed-out `build_technical_baseline_block` skipped detection
+        # entirely, and `_apply_policy_gates` reads an ABSENT age as fresh — so
+        # HOLD_POLICY_BLOCKED_STALE_PRICE_DATA stopped firing in exactly the
+        # case it exists for (degraded price data), with no log line saying so.
+        # The pre-22c95d8 code ran the probe in its own try for this reason.
+        #
+        # Fail-open is still the policy here, unchanged since 2026-07-31: an
+        # unreadable baseline must not block a cycle, and the executor-side
+        # position/price checks are the backstop. What changes is that a failed
+        # probe is now RECORDED instead of being indistinguishable from fresh.
         try:
-            from app.quant.technical_baseline import (
-                build_technical_baseline_block, compute_technical_baseline,
-            )
+            from app.quant.technical_baseline import build_technical_baseline_block
+
             tech_block = await asyncio.wait_for(
                 asyncio.to_thread(build_technical_baseline_block, ticker),
                 timeout=15,
@@ -203,6 +216,11 @@ async def run_v3_pipeline(
                     "[V3] %s: technical baseline came back EMPTY — the desk has no "
                     "verified indicator anchor for this ticker", ticker,
                 )
+        except Exception as e:
+            logger.warning("[V3] %s: technical baseline failed (non-fatal): %s", ticker, e)
+
+        try:
+            from app.quant.technical_baseline import compute_technical_baseline
 
             # Staleness detection
             _b = await asyncio.wait_for(
@@ -230,7 +248,34 @@ async def run_v3_pipeline(
                     "any BUY/SELL from this desk will be policy-blocked", ticker, _trd,
                 )
         except Exception as e:
-            logger.warning("[V3] %s: technical baseline failed (non-fatal): %s", ticker, e)
+            # The age is UNKNOWN, which is not the same fact as "fresh". Stamp
+            # it so the desk carries the distinction the gate cannot express,
+            # and count it in shadow so the operator can see how often the
+            # stale-price gate is running blind before anyone argues about
+            # promoting this to a hard block.
+            desk.cycle_metadata["stale_price_detection_failed"] = (
+                f"{type(e).__name__}: {e}"[:200]
+            )
+            logger.warning(
+                "[V3] %s: staleness detection skipped: %s — price age is UNKNOWN for "
+                "this desk, so HOLD_POLICY_BLOCKED_STALE_PRICE_DATA cannot fire",
+                ticker, e,
+            )
+            try:
+                from app.v3.telemetry import record_guardrail_firing
+
+                record_guardrail_firing(
+                    "STALE_PRICE_DETECTION_FAILED",
+                    ticker=ticker,
+                    cycle_id=cycle_id or "",
+                    detail={
+                        "error": f"{type(e).__name__}: {e}"[:200],
+                        "shadow": True,
+                        "enforced_by": None,
+                    },
+                )
+            except Exception:  # noqa: BLE001 — telemetry must never fail a desk
+                pass
 
     async def _build_valuation_task():
         try:
