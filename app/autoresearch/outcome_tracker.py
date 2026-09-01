@@ -276,6 +276,21 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
     unresolved decision_outcomes for every BUY/SELL/HOLD decision. HOLDs are
     tracked as "no meaningful move" claims (see module docstring).
     """
+    from app.services.cycle_scope import is_synthetic_cycle
+
+    # A test run's decisions are not claims about the market. These rows are
+    # picked up by resolve_pending_outcomes 7 days later and land in the
+    # 30-day resolved cohort behind hold-accuracy and calibration ECE, and
+    # write_outcome_to_memory copies them back into episodic memory. The
+    # 2026-08-31 observe ladder put 13 such HOLDs in the table before anyone
+    # noticed the recorder had no gate.
+    if is_synthetic_cycle(cycle_id):
+        logger.info(
+            "[OUTCOME] %s is a synthetic cycle — recording no decision outcomes",
+            cycle_id,
+        )
+        return 0
+
     recorded = 0
     skipped_degraded = 0
 
@@ -403,9 +418,16 @@ def resolve_pending_outcomes() -> dict:
 
     try:
         cutoff = datetime.now(timezone.utc) - timedelta(days=RESOLVE_AFTER_DAYS)
+        # `exclude_synthetic` also covers rows written BEFORE the recorder
+        # gained its gate above — the 13 observe HOLDs from 2026-08-31 stay
+        # unresolved forever rather than being deleted, so the evidence of
+        # what happened survives while the calibration cohort stays clean.
+        from app.services.cycle_scope import exclude_synthetic
+
         pending = mongo_query.find_rows(
             'decision_outcomes',
-            {'resolved_at': None, 'created_at': {'$lt': cutoff}},
+            {'resolved_at': None, 'created_at': {'$lt': cutoff},
+             **exclude_synthetic()},
             ['id', 'ticker', 'action', 'entry_price', 'created_at', 'cycle_id', 'confidence'],
             sort=[('created_at', 1)],
             limit=50,

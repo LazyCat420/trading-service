@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from app.v3.shared_desk import SharedDesk
 from app.db import mongo_query, mongo_store
+from app.services.cycle_scope import exclude_synthetic
 
 logger = logging.getLogger(__name__)
 
@@ -110,11 +111,24 @@ def delete_desk(desk_id: str) -> bool:
 
 
 def load_latest_desk_for_ticker(ticker: str) -> SharedDesk | None:
-    """Load the most recent SharedDesk for a given ticker, regardless of cycle_id."""
+    """Load the most recent PRODUCTION SharedDesk for a ticker, any cycle_id.
+
+    Synthetic cycles are excluded. This desk becomes
+    `cycle_metadata["previous_desk_context"]` — the "Previous Cycle's SharedDesk
+    (Manila Envelope)" block injected into every agent prompt — and Phase-0
+    triage computes `hours_old` from it. An observe/bench desk here does two
+    things at once: it puts a test run's thesis in front of the production
+    agents, and it makes the ticker look freshly analysed, so triage takes the
+    cheap delta path instead of the full panel.
+
+    Both were observed on 2026-08-31: MP's "Age: 2h" prior desk in
+    cycle-observe-1788220872 was itself observe cycle-observe-1788211432, while
+    MP's real production desk was ~490 hours old and would have forced v3_deep.
+    """
     try:
         row = mongo_query.find_row(
             'shared_desk',
-            {'ticker': ticker.upper()},
+            {'ticker': ticker.upper(), **exclude_synthetic()},
             ['desk_data'],
             sort=[('created_at', -1)],
         )

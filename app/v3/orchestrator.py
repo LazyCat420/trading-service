@@ -77,7 +77,15 @@ async def run_v3_pipeline(
 
     ticker = ticker.upper()
     if not cycle_id:
-        cycle_id = f"v3-{uuid.uuid4().hex[:8]}"
+        # `cycle-v3-` prefix, not a bare `v3-`: every report and live reader
+        # identifies a production desk by that prefix
+        # (`hold_wall_report._is_production_cycle`, `cycle_scope`), so an id
+        # minted here as "v3-<uuid>" produced a real desk that the measurement
+        # window, the hold-wall report and the contamination probes all skipped.
+        # Never observed in the store (callers always pass a cycle_id), so this
+        # is closing a latent hole, not repairing data. Keeps a random tail so
+        # two tickers starting in the same second cannot collide.
+        cycle_id = f"cycle-v3-{int(time.time())}-{uuid.uuid4().hex[:6]}"
 
     t_pipeline = time.monotonic()
     breaker = CircuitBreaker(max_retries_per_phase=1)

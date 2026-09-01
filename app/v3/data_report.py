@@ -7,6 +7,7 @@ from typing import Any
 from app.db.mongo_store import handle_mongo_read_failure
 from app.utils.text_utils import format_db_section
 from app.db import mongo_store, mongo_query
+from app.services.cycle_scope import exclude_synthetic
 
 logger = logging.getLogger(__name__)
 
@@ -201,8 +202,12 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
 
     recent = None
     try:
+        # Synthetic cycles excluded: a hit here does not just quote the prior
+        # thesis into the report, it flips `is_fast_path` and SKIPS the heavy
+        # collectors (fundamentals, multi-API news, reddit, youtube). A test
+        # run must not be able to degrade a production cycle's collection pass.
         docs = mongo_store.find_docs(
-            "analysis_results", {"ticker": ticker},
+            "analysis_results", {"ticker": ticker, **exclude_synthetic()},
             sort=[("created_at", -1)], limit=1,
             projection={"_id": 0, "thesis_summary": 1, "created_at": 1},
         )

@@ -2227,8 +2227,23 @@ class PipelineService:
                 # monitored cheaply (in code) without waking the agent again until
                 # a real trigger trips. Best-effort — never breaks the cycle.
                 try:
+                    from app.services.cycle_scope import is_synthetic_cycle
                     from app.services.watch_desk import derive_baseline_watch
-                    derive_baseline_watch(ticker_name, result, snapshot, cycle_id)
+
+                    # A watch trip enqueues START_V3_CYCLE with "trade": True
+                    # (watch_desk.py — "a trip is a real decision moment"), so a
+                    # test run must never arm one. The 2026-08-31 ladder left
+                    # active NVDA/JPM/MP triggers whose reason read "watch-desk
+                    # baseline from cycle cycle-observe-1788220872", pointing the
+                    # live wake machinery at levels computed in observation mode.
+                    if is_synthetic_cycle(cycle_id):
+                        logger.info(
+                            "[PipelineService] %s: synthetic cycle %s — NOT arming a "
+                            "watch baseline (a trip would start a trading cycle)",
+                            ticker_name, cycle_id,
+                        )
+                    else:
+                        derive_baseline_watch(ticker_name, result, snapshot, cycle_id)
                 except Exception as _wd_e:
                     logger.warning("[PipelineService] Watch Desk baseline skipped for %s: %s", ticker_name, _wd_e)
 
