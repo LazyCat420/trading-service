@@ -356,24 +356,11 @@ AGENT_BUDGET_OVERRIDES: dict[str, int] = {
     # prompt by app/quant/valuation_block.py. Budget for the gap-fill calls
     # (finviz/earnings/filings) and the artifact turn, not for exploration.
     "v3_valuation_analyst": 6,
-    "v3_bull_agent": 3,          # Small verify toolset (web search + market data)
-    "v3_bear_agent": 3,          # Small verify toolset (web search + market data)
-    # 3, not 1 (fixed 2026-08-05, same evening it shipped). agent_runner sets
-    # `enable_tools=bool(tool_whitelist)`, and this agent carries whiteboard_read
-    # — so tools ARE on and a budget of 1 gave it a single iteration. It spent
-    # that iteration on a tool call and had none left to answer: RNGR came back
-    # at 49 and 94 chars, "no parseable artifact". A tool-carrying agent needs at
-    # least one turn to call and one to answer; 3 matches the rest of the debate.
-    "v3_bull_defense": 3,
-    # 5: the delta doctrine is ONE cheap pass over what changed (4 tools);
-    # a couple of gap-fill calls plus the artifact turn. THIRD victim of the
-    # missing-entry trap (bull_defense 08-05, the PM comment below) — it ran
-    # with the 9999 default and printed "TURN BUDGET: 9999" into its own
-    # prompt until 2026-08-09. The invariant test in
-    # tests/unit/test_tool_whitelists.py now scans for whitelisted agents
-    # missing an entry, so the fourth victim fails CI instead of shipping.
+    "v3_bull_agent": 5,          # Small verify toolset (web search + market data)
+    "v3_bear_agent": 5,          # Small verify toolset (web search + market data)
+    "v3_bull_defense": 4,        # Defense and concessions turn
     "v3_delta_analyst": 5,
-    "v3_debate_judge": 3,        # No tools — pure reasoning
+    "v3_debate_judge": 4,        # Impartial judgment turn
     "v3_regime_engine": 5,
     "v3_board_of_directors": 5,  # No tools — reasoning from SharedDesk
     "v3_portfolio_manager": 5,   # Has a TOOL_WHITELIST; without an entry a

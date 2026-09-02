@@ -94,6 +94,7 @@ _V3_DENIED_TOOLS = (
     "execute_skill",
     "write_file",
     "query_datastore",
+    "think",
 )
 
 #: Serialized PolicyRule shape prism reconstructs in registerCustom():
@@ -163,8 +164,9 @@ _V3_COMMON_GUIDELINES = """
 7. The platform advertises tools beyond the ones listed for your role. These
    are DENIED by policy and every call is rejected before it runs, wasting a
    turn you cannot get back: execute_command, execute_javascript,
-   execute_skill, write_file, query_datastore. Do not call them. For any
-   calculation use execute_python, which IS permitted and sandboxed.
+   execute_skill, write_file, query_datastore, think. Do not call think
+   (your model already reasons natively). For any calculation use execute_python,
+   which IS permitted and sandboxed.
 8. If you emit your artifact with emit_structured_output, "data" must be a JSON
    OBJECT, not a string, and not your artifact's fields at the top level:
      RIGHT: {"data": {"verdict": "BUY", "confidence": 78}}
@@ -179,6 +181,10 @@ _V3_COMMON_GUIDELINES = """
    calling it entirely. Write your complete JSON artifact directly as your
    final message instead — that path is parsed identically and cannot be
    rejected. Do not spend more turns on the tool.
+9. When using execute_python for numerical math, remember Python syntax requires
+   True, False, and None (capitalized). Never write JavaScript/JSON literals
+   (true, false, null) in Python code. Write your final JSON artifact directly
+   in your message response; do NOT write a Python script just to print or format JSON.
 """
 
 
