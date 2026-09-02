@@ -77,3 +77,28 @@ class TestSoloJetsonRouting:
         with pytest.raises(pac.ModelContractError) as exc:
             await pac.resolve_default_model_for_agent("v3_portfolio_manager")
         assert "DECISION_MODEL_PATTERN" in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_vllm_targets_solo_jetson_mode(self, monkeypatch):
+        """In SOLO_JETSON_MODE, vllm_targets skips dgx_spark and returns jetson target."""
+        from app.services import vllm_hosts
+
+        eps = {
+            "dgx_spark": types.SimpleNamespace(url="http://dgx:8000", enabled=True),
+            "jetson": types.SimpleNamespace(url="http://jetson:8000", enabled=True),
+        }
+        monkeypatch.setattr(pac, "llm", types.SimpleNamespace(_endpoints=eps))
+        monkeypatch.setattr(settings, "SOLO_JETSON_MODE", True)
+
+        calls = []
+        async def mock_get_live_model(url, force_refresh=False):
+            calls.append(url)
+            return "nemotron35"
+
+        monkeypatch.setattr(pac, "get_live_model_from_vllm", mock_get_live_model)
+
+        targets = await vllm_hosts.vllm_targets()
+        assert len(targets) == 1
+        assert targets[0] == ("vllm", "nemotron35", "http://jetson:8000")
+        assert "http://dgx:8000" not in calls
+

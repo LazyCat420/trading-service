@@ -34,7 +34,10 @@ async def startup_vllm_discovery():
 
             # 2. Verify all active vLLM endpoints have resolved models
             endpoints = getattr(llm, "_endpoints", {})
+            solo_jetson = bool(getattr(app_settings, "SOLO_JETSON_MODE", False))
             for ep in endpoints.values():
+                if solo_jetson and getattr(ep, "name", "") != "jetson":
+                    continue
                 if ep and ep.enabled:
                     model = await llm._sync_endpoint_model(ep, force=True)
                     if not model:
