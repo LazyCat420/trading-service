@@ -170,7 +170,12 @@ class Settings(BaseSettings):
     # no page. Decision agents refuse any served model that does not match
     # this case-insensitive substring; update it when the decision model is
     # deliberately switched (last switch: gemma→deepseek, 2026-08-03).
-    DECISION_MODEL_PATTERN: str = "deepseek"
+    # Supports pipe-delimited values (e.g. "deepseek|nemotron").
+    DECISION_MODEL_PATTERN: str = "deepseek|nemotron"
+
+    # Solo-Jetson mode: Route all trading pipeline agents (decision + collector)
+    # to the Jetson Orin AGX (vllm) when DGX Spark is offline or in local mode.
+    SOLO_JETSON_MODE: bool = False
 
     # ── World Simulator ──
     EXECUTION_MODE: str = "production"  # "production" | "staging" | "simulation"

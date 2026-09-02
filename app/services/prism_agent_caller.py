@@ -469,9 +469,15 @@ async def resolve_default_model_for_agent(
     telemetry still claimed a split, which is worse than no comparison at all.
     """
     from app.services.prism_agent_caller import llm
+    from app.config.config import settings as _settings
 
-    provider = "vllm-2"
-    endpoint_key = "dgx_spark"
+    solo_jetson = bool(getattr(_settings, "SOLO_JETSON_MODE", False))
+    if solo_jetson:
+        provider = "vllm"
+        endpoint_key = "jetson"
+    else:
+        provider = "vllm-2"
+        endpoint_key = "dgx_spark"
 
     if endpoint_override:
         if endpoint_override not in ENDPOINT_PROVIDERS:
@@ -481,7 +487,7 @@ async def resolve_default_model_for_agent(
             )
         endpoint_key = endpoint_override
         provider = ENDPOINT_PROVIDERS[endpoint_key]
-    elif agent_name:
+    elif agent_name and not solo_jetson:
         name_lower = agent_name.lower()
         # Collector & lightweight agents route to Jetson
         collector_keywords = (
@@ -502,21 +508,24 @@ async def resolve_default_model_for_agent(
 
     discovered_model = await get_live_model_from_vllm(url, force_refresh=force_refresh)
 
-    # Decision agents run on dgx_spark only. The Jetson leg is exempt: its
-    # collector/janitor roles are model-agnostic by design, and the box
-    # legitimately serves non-decision models.
-    if endpoint_key == "dgx_spark":
-        from app.config.config import settings as _settings
-
+    # Decision agents run on dgx_spark (or jetson when SOLO_JETSON_MODE is active).
+    # Normal Jetson collector/janitor roles are model-agnostic by design.
+    must_check_contract = (endpoint_key == "dgx_spark") or (
+        endpoint_key == "jetson" and solo_jetson
+    )
+    if must_check_contract:
         pattern = (getattr(_settings, "DECISION_MODEL_PATTERN", "") or "").strip().lower()
-        if pattern and pattern not in str(discovered_model).lower():
-            raise ModelContractError(
-                f"dgx_spark is serving {discovered_model!r}, which does not match "
-                f"DECISION_MODEL_PATTERN={pattern!r}. Refusing to run {agent_name} "
-                f"against a model the decision agents were not built for — another "
-                f"workload has the box, or the decision model was switched without "
-                f"updating the pattern."
-            )
+        if pattern:
+            patterns = [p.strip() for p in pattern.split("|") if p.strip()]
+            model_lower = str(discovered_model).lower()
+            if not any(p in model_lower for p in patterns):
+                raise ModelContractError(
+                    f"{endpoint_key} is serving {discovered_model!r}, which does not match "
+                    f"DECISION_MODEL_PATTERN={pattern!r}. Refusing to run {agent_name} "
+                    f"against a model the decision agents were not built for — another "
+                    f"workload has the box, or the decision model was switched without "
+                    f"updating the pattern."
+                )
 
     return discovered_model, provider
 
