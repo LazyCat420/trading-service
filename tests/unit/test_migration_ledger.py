@@ -27,17 +27,22 @@ import json
 import pathlib
 import sys
 
+import os
 import pytest
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _SCRIPTS = _ROOT / "scripts"
 
+os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
 spec = importlib.util.spec_from_file_location(
     "build_migration_ledger", _SCRIPTS / "build_migration_ledger.py"
 )
 bml = importlib.util.module_from_spec(spec)
 sys.modules["build_migration_ledger"] = bml
-spec.loader.exec_module(bml)
+try:
+    spec.loader.exec_module(bml)
+except SystemExit:
+    pass
 
 MANIFEST_PATH = _ROOT / "app" / "db" / "schema_manifest.json"
 LEDGER_PATH = _ROOT / "app" / "db" / "migration_ledger.json"
