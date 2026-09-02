@@ -15,6 +15,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+pytest.importorskip("sqlglot", reason="migration tooling; see requirements-migration.in")
+
 from scripts.sql_inventory import DEFAULT_ROOTS, scan
 
 REPO = Path(__file__).resolve().parents[2]

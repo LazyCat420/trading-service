@@ -2324,7 +2324,7 @@ class PipelineService:
                                     logger.warning(
                                         "[PipelineService] %s: BUY size halved to %.1f%% — "
                                         "strategy health REDUCE (driver=%s: %s)",
-                                        ticker_name, size_pct * 100,
+                                        ticker_name, (size_pct or 0.0) * 100,
                                         _health.get("driver"), _health.get("reason"),
                                     )
                             except Exception as health_err:
@@ -2333,15 +2333,16 @@ class PipelineService:
                                     ticker_name, health_err,
                                 )
                             result["trade_attempted"] = True
+                            effective_size_pct = float(size_pct) if isinstance(size_pct, (int, float)) else 0.0
                             logger.info(
                                 "[PipelineService] %s: sizing %s → %.1f%% of equity (cash-capped)",
                                 ticker_name,
                                 "from agent decision" if isinstance(agent_size_pct, (int, float)) and agent_size_pct > 0 else "via confidence fallback",
-                                size_pct * 100,
+                                effective_size_pct * 100,
                             )
                             _est = result.get("estimate") or {}
                             trade_res = await buy(
-                                bot_id=active_bot_id, ticker=ticker_name, size_pct=size_pct, cycle_id=cycle_id,
+                                bot_id=active_bot_id, ticker=ticker_name, size_pct=effective_size_pct, cycle_id=cycle_id,
                                 stop_loss_price=_est.get("stop_loss"),
                                 take_profit_price=_est.get("take_profit"),
                                 exit_style=_est.get("exit_style"),

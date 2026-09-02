@@ -10,9 +10,10 @@ The direction carries the meaning, so it is the direction that is asserted here:
 
   a row only in Postgres  -> Mongo is MISSING it. Real defect. DIFFER.
   a row only in Mongo     -> written after the cutover. SUPERSET.
-
-Proven red on the pre-change tree: every SUPERSET case below returned DIFFER.
 """
+import pytest
+pytest.importorskip("sqlglot", reason="migration tooling; see requirements-migration.in")
+
 from scripts.verify_translations import compare
 
 

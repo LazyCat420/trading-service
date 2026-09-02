@@ -134,7 +134,8 @@ async def screener_query(
         result["returned"] = len(rows)
         result["note"] = ("result trimmed to fit size budget — request fewer "
                           "columns or a smaller limit")
-    if result.get("total_matches", 0) > result["returned"]:
+    total_matches = result.get("total_matches") or 0
+    if total_matches > result["returned"]:
         result.setdefault(
             "note",
             f"{result['total_matches']} tickers match but only "

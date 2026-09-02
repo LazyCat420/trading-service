@@ -56,28 +56,34 @@ def _fetch_options(ticker: str) -> dict | None:
         if calls.empty and puts.empty:
             return None
 
-        total_call_vol = int(calls["volume"].sum()) if "volume" in calls else 0
-        total_put_vol = int(puts["volume"].sum()) if "volume" in puts else 0
-        total_call_oi = (
-            int(calls["openInterest"].sum()) if "openInterest" in calls else 0
+        total_call_vol = (
+            int(calls["volume"].fillna(0).sum()) if "volume" in calls else 0
         )
-        total_put_oi = int(puts["openInterest"].sum()) if "openInterest" in puts else 0
+        total_put_vol = (
+            int(puts["volume"].fillna(0).sum()) if "volume" in puts else 0
+        )
+        total_call_oi = (
+            int(calls["openInterest"].fillna(0).sum()) if "openInterest" in calls else 0
+        )
+        total_put_oi = (
+            int(puts["openInterest"].fillna(0).sum()) if "openInterest" in puts else 0
+        )
 
         pc_ratio = total_put_vol / total_call_vol if total_call_vol > 0 else 0
 
         # Find highest volume strikes
         top_calls = (
-            calls.nlargest(3, "volume")[["strike", "volume", "openInterest"]].to_dict(
-                "records"
-            )
-            if not calls.empty
+            calls.fillna({"volume": 0, "openInterest": 0})
+            .nlargest(3, "volume")[["strike", "volume", "openInterest"]]
+            .to_dict("records")
+            if not calls.empty and "volume" in calls
             else []
         )
         top_puts = (
-            puts.nlargest(3, "volume")[["strike", "volume", "openInterest"]].to_dict(
-                "records"
-            )
-            if not puts.empty
+            puts.fillna({"volume": 0, "openInterest": 0})
+            .nlargest(3, "volume")[["strike", "volume", "openInterest"]]
+            .to_dict("records")
+            if not puts.empty and "volume" in puts
             else []
         )
 

@@ -230,6 +230,12 @@ def test_adopted_tables_declare_the_key_the_database_actually_has(ledger):
     with conn, conn.cursor() as cur:
         for rec in adopted:
             cur.execute(
+                "select 1 from information_schema.tables where table_schema = 'public' and table_name = %s",
+                (rec["table"],),
+            )
+            if not cur.fetchone():
+                continue  # Table absent from Postgres archive (Mongo-native or dropped after cutover)
+            cur.execute(
                 """select kcu.column_name
                      from information_schema.table_constraints tc
                      join information_schema.key_column_usage kcu
