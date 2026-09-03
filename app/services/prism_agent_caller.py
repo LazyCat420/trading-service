@@ -472,12 +472,7 @@ async def resolve_default_model_for_agent(
     from app.config.config import settings as _settings
 
     solo_jetson = bool(getattr(_settings, "SOLO_JETSON_MODE", False))
-    if solo_jetson:
-        provider = "vllm"
-        endpoint_key = "jetson"
-    else:
-        provider = "vllm-2"
-        endpoint_key = "dgx_spark"
+    routing_mode = getattr(_settings, "ROUTING_MODE", "auto")
 
     if endpoint_override:
         if endpoint_override not in ENDPOINT_PROVIDERS:
@@ -487,32 +482,69 @@ async def resolve_default_model_for_agent(
             )
         endpoint_key = endpoint_override
         provider = ENDPOINT_PROVIDERS[endpoint_key]
-    elif agent_name and not solo_jetson:
-        name_lower = agent_name.lower()
-        # Collector & lightweight agents route to Jetson
+        candidates = [(endpoint_key, provider)]
+    elif solo_jetson or routing_mode == "force_jetson":
+        candidates = [("jetson", ENDPOINT_PROVIDERS["jetson"])]
+    elif routing_mode == "force_dgx":
+        candidates = [("dgx_spark", ENDPOINT_PROVIDERS["dgx_spark"])]
+    else:
+        # Dynamic smart routing:
+        # Harder tasks (research, debate, decisions) prefer dgx_spark;
+        # lightweight / collector tasks prefer jetson.
+        name_lower = (agent_name or "").lower()
         collector_keywords = (
             "janitor", "curator", "summarizer", "scout", "purge",
             "maintenance", "consensus", "ticker_validator"
         )
-        if any(kw in name_lower for kw in collector_keywords):
-            provider = "vllm"
-            endpoint_key = "jetson"
+        is_collector = any(kw in name_lower for kw in collector_keywords)
+        if is_collector:
+            candidates = [
+                ("jetson", ENDPOINT_PROVIDERS["jetson"]),
+                ("dgx_spark", ENDPOINT_PROVIDERS["dgx_spark"]),
+            ]
+        else:
+            candidates = [
+                ("dgx_spark", ENDPOINT_PROVIDERS["dgx_spark"]),
+                ("jetson", ENDPOINT_PROVIDERS["jetson"]),
+            ]
 
-    ep = llm._endpoints.get(endpoint_key)
-    if not ep or not ep.enabled:
-        raise RuntimeError(f"VLLM endpoint '{endpoint_key}' is not configured or disabled.")
-    
-    url = ep.url
-    if not url:
-        raise RuntimeError(f"VLLM endpoint '{endpoint_key}' has no configured URL.")
+    discovered_model = None
+    chosen_endpoint = None
+    chosen_provider = None
+    last_error = None
 
-    discovered_model = await get_live_model_from_vllm(url, force_refresh=force_refresh)
+    for ep_key, prov in candidates:
+        ep = llm._endpoints.get(ep_key)
+        if not ep or not ep.enabled or not ep.url:
+            last_error = RuntimeError(f"VLLM endpoint '{ep_key}' is not configured or disabled.")
+            continue
+        try:
+            discovered_model = await get_live_model_from_vllm(ep.url, force_refresh=force_refresh)
+            chosen_endpoint = ep_key
+            chosen_provider = prov
+            break
+        except (ModelUnavailableError, RuntimeError, Exception) as exc:
+            logger.warning(
+                "[SmartRouting] Endpoint '%s' unavailable (%s) — attempting fallback if available.",
+                ep_key, exc
+            )
+            last_error = exc
 
-    # Decision agents run on dgx_spark (or jetson when SOLO_JETSON_MODE is active).
+    if not chosen_endpoint or not discovered_model:
+        if isinstance(last_error, ModelUnavailableError):
+            raise last_error
+        raise ModelUnavailableError(f"No vLLM endpoints available: {last_error}")
+
+    # Decision agents run on dgx_spark or jetson fallback.
     # Normal Jetson collector/janitor roles are model-agnostic by design.
-    must_check_contract = (endpoint_key == "dgx_spark") or (
-        endpoint_key == "jetson" and solo_jetson
+    name_lower = (agent_name or "").lower()
+    collector_keywords = (
+        "janitor", "curator", "summarizer", "scout", "purge",
+        "maintenance", "consensus", "ticker_validator"
     )
+    is_collector = any(kw in name_lower for kw in collector_keywords)
+    must_check_contract = (not is_collector) or (chosen_endpoint == "jetson" and solo_jetson)
+
     if must_check_contract:
         pattern = (getattr(_settings, "DECISION_MODEL_PATTERN", "") or "").strip().lower()
         if pattern:
@@ -520,14 +552,14 @@ async def resolve_default_model_for_agent(
             model_lower = str(discovered_model).lower()
             if not any(p in model_lower for p in patterns):
                 raise ModelContractError(
-                    f"{endpoint_key} is serving {discovered_model!r}, which does not match "
+                    f"{chosen_endpoint} is serving {discovered_model!r}, which does not match "
                     f"DECISION_MODEL_PATTERN={pattern!r}. Refusing to run {agent_name} "
                     f"against a model the decision agents were not built for — another "
                     f"workload has the box, or the decision model was switched without "
                     f"updating the pattern."
                 )
 
-    return discovered_model, provider
+    return discovered_model, chosen_provider
 
 
 async def call_prism_agent(
