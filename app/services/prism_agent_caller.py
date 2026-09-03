@@ -669,6 +669,7 @@ async def call_prism_agent(
             # just a vLLM-overflow courtesy, not a correctness requirement).
             max_tokens = max(4096, max_tokens - est_input_tokens)
         
+        bench_task = f"{fallback_agent_name or agent_id}:{ticker}" if ticker else (fallback_agent_name or agent_id)
         try:
             resp = await prism_client.call_agent(
                 model=model,
@@ -681,6 +682,7 @@ async def call_prism_agent(
                 max_iterations=max_iter,
                 provider=provider,
                 thinking_enabled=False,
+                bench_task=bench_task,
                 **min_p_kwargs(provider, model),
             )
         except Exception as e:
@@ -699,6 +701,7 @@ async def call_prism_agent(
                     max_iterations=max_iter,
                     provider=provider,
                     thinking_enabled=False,
+                    bench_task=bench_task,
                     **min_p_kwargs(provider, fresh_model),
                 )
             else:
@@ -1044,6 +1047,7 @@ class PrismLLMShim:
                 # smaller output budget outright (no provider call is made).
                 final_max_tokens = max(4096, final_max_tokens - est_tokens - 100)
 
+            bench_task = f"{agent_name}:{ticker}" if ticker else agent_name
             resp = await self.prism_client.call_agent(
                 model=model,
                 messages=messages,
@@ -1056,6 +1060,7 @@ class PrismLLMShim:
                 max_iterations=max_iter,
                 provider=provider,
                 thinking_enabled=False,
+                bench_task=bench_task,
                 **min_p_kwargs(provider, model),
             )
 

@@ -738,6 +738,31 @@ class PipelineService:
         cls.save_state()
         cls._stop_requested = False
 
+        # DGX Spark benchmark console integration: initialize run context
+        try:
+            from app.services.bench_reporter import build_run_id, emit_bench_run
+            from lazycat.llm import set_bench_context
+            started_dt = datetime.now(timezone.utc)
+            bench_run_id = build_run_id(started_dt)
+            cls._state["bench_run_id"] = bench_run_id
+            set_bench_context(run_id=bench_run_id, harness="trading-cycle", task="daily-cycle")
+
+            # Asynchronously send initial registration to Spark Console if loop active
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(emit_bench_run(
+                    run_id=bench_run_id,
+                    harness="trading-cycle",
+                    task="daily-cycle",
+                    started_at=started_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    status="running",
+                    notes=f"Starting cycle {cycle_id} with {len(tickers)} tickers",
+                ))
+            except RuntimeError:
+                pass
+        except Exception as bench_init_err:
+            logger.warning("[PipelineService] DGX Spark bench initial registration failed (non-fatal): %s", bench_init_err)
+
         # ── Trigger provenance ──
         # Five producers enqueue START_CYCLE (Watch Desk `wd-`, the UI's `job_`,
         # the scheduler's `sch-cmd-`/`sch-open-`, the research governor's
@@ -2589,6 +2614,24 @@ class PipelineService:
             # /autoresearch/run endpoint's "latest cycle" lookup.
             cycle_summary = _persist_summary("done", tickers, results, report_generated=report_written)
 
+            # DGX Spark benchmark console: emit completion record with decisions
+            try:
+                from app.services.bench_reporter import emit_bench_run, serialize_decisions
+                bench_run_id = cls._state.get("bench_run_id") or f"tc-{cycle_id}"
+                decisions = serialize_decisions(results)
+                await emit_bench_run(
+                    run_id=bench_run_id,
+                    harness="trading-cycle",
+                    task="daily-cycle",
+                    started_at=cls._state.get("started_at"),
+                    ended_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    status="ok",
+                    decisions=decisions,
+                    notes=f"Completed V3 cycle {cycle_id} with {len(tickers)} tickers",
+                )
+            except Exception as bench_err:
+                logger.warning("[PipelineService] DGX Spark bench completion report failed (non-fatal): %s", bench_err)
+
             # A fully-DEGRADED cycle means every agent call failed after the
             # pre-flight passed (partial outage). Two in a row pages the desk
             # — see app/services/degraded_alert.py for the 4-day incident this
@@ -2715,6 +2758,20 @@ class PipelineService:
                 "finished_at": datetime.now(timezone.utc).isoformat()
             })
             _persist_summary("stopped", tickers, error="Cycle stopped/cancelled")
+            try:
+                from app.services.bench_reporter import emit_bench_run
+                bench_run_id = cls._state.get("bench_run_id") or f"tc-{cycle_id}"
+                await emit_bench_run(
+                    run_id=bench_run_id,
+                    harness="trading-cycle",
+                    task="daily-cycle",
+                    started_at=cls._state.get("started_at"),
+                    ended_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    status="aborted",
+                    notes=f"Cycle {cycle_id} stopped/cancelled by user",
+                )
+            except Exception as bench_err:
+                logger.warning("[PipelineService] DGX Spark bench cancel report failed (non-fatal): %s", bench_err)
             # Do NOT re-raise — let the finally block clean up and let
             # stop_cycle() see the task as done.
         except Exception as e:
@@ -2725,7 +2782,26 @@ class PipelineService:
                 "finished_at": datetime.now(timezone.utc).isoformat()
             })
             _persist_summary("error", tickers, error=str(e))
+            try:
+                from app.services.bench_reporter import emit_bench_run
+                bench_run_id = cls._state.get("bench_run_id") or f"tc-{cycle_id}"
+                await emit_bench_run(
+                    run_id=bench_run_id,
+                    harness="trading-cycle",
+                    task="daily-cycle",
+                    started_at=cls._state.get("started_at"),
+                    ended_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    status="failed",
+                    notes=f"Cycle {cycle_id} failed: {e}",
+                )
+            except Exception as bench_err:
+                logger.warning("[PipelineService] DGX Spark bench error report failed (non-fatal): %s", bench_err)
         finally:
+            try:
+                from lazycat.llm import clear_bench_context
+                clear_bench_context()
+            except Exception:
+                pass
             cls.save_state()
             cls._cycle_task = None
 

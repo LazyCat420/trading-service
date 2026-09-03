@@ -177,6 +177,10 @@ class Settings(BaseSettings):
     # to the Jetson Orin AGX (vllm) when DGX Spark is offline or in local mode.
     SOLO_JETSON_MODE: bool = False
 
+    # ── DGX Spark Benchmark Console ──
+    SPARK_BENCH_ENABLED: bool = True
+    SPARK_BENCH_URL: str = _config.get("SPARK_BENCH_URL", "http://10.0.0.141:8800")
+
     # ── World Simulator ──
     EXECUTION_MODE: str = "production"  # "production" | "staging" | "simulation"
     SIMULATION_TREND: str = "bullish"  # "bullish" | "bearish" | "neutral" | "volatile"

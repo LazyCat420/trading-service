@@ -842,6 +842,7 @@ async def run_agent(
                 # prism honors an explicit thinkingEnabled=false per request;
                 # registration-level thinkingDefault is ignored there).
                 thinking_enabled=False,
+                bench_task=f"{agent_name}:{ticker}" if ticker else agent_name,
             )
 
             t0 = time.time()
