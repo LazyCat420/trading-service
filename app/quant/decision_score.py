@@ -903,12 +903,16 @@ def build_decision_score_block(ticker: str, score: dict | None = None) -> str:
     s = score if score is not None else compute_decision_score(ticker)
     lines = [
         f"## DETERMINISTIC BASELINE SCORE — {s.get('ticker') or ticker}",
-        ("Computed in code from the rows already on file, before any agent"
-         " ran. It is a STARTING POINT you are expected to argue with, not a"
-         " verdict: it sees ratios and price levels and is blind to catalysts,"
-         " filings, management and news. Do NOT copy these numbers into your"
-         " own `confidence` — reach your own, and say so explicitly when you"
-         " disagree with this one and why."),
+        (
+            "Computed in code from the rows already on file, before any agent"
+            " ran. It is an ADVISORY STARTING POINT you are expected to argue"
+            " with and contextualize, not a trade veto: it sees static ratios and"
+            " price levels and is blind to catalysts, secular growth, filings,"
+            " management and real-world thesis. Do NOT copy these numbers blindly,"
+            " and do NOT let negative TTM margins in growth companies or suboptimal"
+            " R:R ratios automatically force a HOLD if the directional thesis and"
+            " downside protection (stop loss) are sound."
+        ),
         "",
     ]
 
@@ -965,8 +969,7 @@ def build_decision_score_block(ticker: str, score: dict | None = None) -> str:
                      f"{rr.get('note', 'stop or target missing')}")
     lines.append("")
 
-    lines.append("  STRUCTURAL GATES (checked separately from the score, so a "
-                 "good score cannot out-point a failure)")
+    lines.append("  QUANTITATIVE RISK FACTORS (advisory factors for stop placement and position sizing — not a trade veto)")
     for g in s.get("gates", []):
         lines.append(_fmt_gate(g))
     if s.get("warnings"):

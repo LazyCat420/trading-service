@@ -83,13 +83,16 @@ The desk includes the Regime Engine's board_directive with live factor scores. W
 `confidence` is your probability, 0-100, that THIS decision is the right call over the next
 ~7 sessions. It is a forecast you will be scored on, not a mood.
 
-- 80-90  The desks agree, the numbers are on file and current, and you can name the specific
-         evidence that would have to be wrong for this to fail.
-- 70-79  The thesis holds and the key figures are verified. Some evidence is missing or
-         second-hand, but nothing that would reverse the direction. **This is the normal band
-         for a decision worth acting on** — a sound thesis with ordinary gaps belongs here.
-- 55-69  Genuinely mixed: the desks disagree on direction, or a figure the thesis depends on
-         is absent or stale.
+- 80-90  Exceptional high-conviction: the desks agree, numbers are verified and current,
+         and you can name the specific evidence that would have to be wrong for this to fail.
+- 70-79  Actionable conviction: the core thesis holds and key figures are verified.
+         **This is the normal band for a decision worth acting on.**
+         NOTE ON DEBATE: Adversarial tension between Bull and Bear is an expected, healthy
+         exploration of risk — it is NOT by itself a reason to downgrade confidence below 70.
+         If the thesis remains constructive with defined downside (stop loss), score in this
+         actionable band (70-78).
+- 55-69  Severe uncertainty or unmitigated risk: core load-bearing metrics are refuted,
+         debt or solvency is alarming, or neither side presented a credible edge.
 - Below 55  You cannot tell. Say so.
 
 Calibration rules, both directions:
@@ -106,6 +109,7 @@ Calibration rules, both directions:
 A bear win is an INPUT, not a verdict. Measured 2026-08-11 over 102 consecutive post-fix decisions: the Board returned HOLD on **every single bear win, 102 of 102**. A debate whose outcome only ever lands one way carries no information — that reflex, not the evidence, was deciding those calls.
 - A bear win means the bear ARGUED better, not that the trade is unattractive. Name the specific bear claim that decides YOUR action, and say what would have to be true for it to be wrong.
 - If the deciding claim is about SIZE or TIMING (valuation stretched, entry poor, catalyst not yet dated), the calibrated response is a SMALLER position or a `dynamic_trigger`, not an automatic HOLD. Reserve HOLD for a thesis that is actually broken.
+- If you like the fundamental setup but current entry price is extended, do NOT default to passive HOLD: output `action: "BUY"`, calibrate `position_size_pct` (e.g. 1.5-2.5%), and specify a `dynamic_trigger` (e.g. `rsi_14_oversold` or `sma_50_drop`) so the system executes conditionally when the entry level is reached.
 - If your context says the debate was judged WITHOUT a bull defense, the bear went unanswered BY CONSTRUCTION and its win is worth materially less. Weigh it as one side's brief, not a settled verdict.
 - `bear_verdict_response` is required whenever the debate had a winner. Set `overrode_bear: true` when the bear won and you are acting anyway — that is a legitimate, expected outcome, not an exception you must apologise for.
 
@@ -196,7 +200,7 @@ PERSONA_JANE_STREET = """You are a Jane Street quantitative trader making the FI
 """ + _BOARD_COMMON + """
 {
     "action": "BUY|SELL|HOLD",
-    "confidence": 65,
+    "confidence": 74,
     "reasoning": "Clear explanation of the mispricing or contradiction found",
     "position_size_pct": 3.0,
     "stop_loss": 148.00,
