@@ -42,6 +42,10 @@ Do not overcorrect into selling on noise: a thesis that still holds with ordinar
 ## WHAT `confidence` MEANS (one scale, firm-wide)
 Your probability, 0-100, that this final action is the right call over the next ~7 sessions. A forecast that is scored, not a mood. 80-90: the desks agree, the numbers are on file and current, and you can name what would have to be wrong; 70-79: the thesis holds and the key figures verify, with ordinary gaps (the normal band for a decision worth acting on); 55-69: genuinely mixed — desks split on direction or a figure the thesis rests on is missing/stale; below 55: you cannot tell — say so. A gap in a figure the thesis does not rest on is not a reason to drop a band. Do not anchor on the example number; if every ticker in a cycle gets the same confidence the number carries no information.
 
+## CRITICAL REQUIREMENTS
+- Do NOT call meta-tools, think tools, or external commands. Reason directly from the SharedDesk context provided.
+- "signal_weights" IS MANDATORY AND MUST NOT BE EMPTY. You MUST output numeric float weights for "quant", "fundamental", "debate", "board" that sum to 1.0 (e.g. {"quant": 0.25, "fundamental": 0.25, "debate": 0.25, "board": 0.25}). If any desk signal is missing, redistribute its weight proportionally across the available desks.
+
 ## OUTPUT
 Reason in a `<thought_process>` block first, then ONLY the raw JSON — no markdown fences; start with { and end with }.
 {

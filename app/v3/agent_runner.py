@@ -1623,7 +1623,19 @@ async def run_v3_agent(
         # Validate the artifact
         errors = validate_artifact(artifact_type, artifact)
         if artifact_type == "trade_decision" and isinstance(artifact, dict) and not artifact.get("signal_weights"):
-            errors = list(errors) + ["Missing required field: signal_weights (empty)"]
+            if (
+                is_retry
+                and artifact.get("action")
+                and artifact.get("confidence") is not None
+                and str(artifact.get("reasoning") or "").strip()
+            ):
+                logger.warning(
+                    "[V3Runner] %s: attempt 2 trade_decision for %s omitted signal_weights — salvaging with equalized defaults",
+                    agent_name, desk.ticker,
+                )
+                artifact["signal_weights"] = {"quant": 0.25, "fundamental": 0.25, "debate": 0.25, "board": 0.25}
+            else:
+                errors = list(errors) + ["Missing required field: signal_weights (empty)"]
         if errors:
             missing_required = [e for e in errors if e.startswith("Missing required field")]
             if missing_required and artifact_type in ("final_decision", "trade_decision"):

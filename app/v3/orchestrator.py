@@ -2418,6 +2418,33 @@ async def _persist_trade_verdict(
     was invisible to P&L, the scorecard, strategy tracking and the judge.
     """
     decision = decision if decision is not None else desk.trade_decision
+    if not decision and desk.final_decision:
+        # Synthesizer produced no valid decision, but the Board of Directors reached
+        # an auditable verdict. Fall back to the Board's decision so the desk's
+        # research and verdict are not lost.
+        board_dec = desk.final_decision
+        decision = {
+            "action": board_dec.get("action", "HOLD"),
+            "confidence": board_dec.get("confidence", 50),
+            "reasoning": str(board_dec.get("reasoning", "")) + " [Synthesizer unavailable; persisted from Board of Directors verdict]",
+            "signal_weights": {"quant": 0.25, "fundamental": 0.25, "debate": 0.25, "board": 0.25},
+            "signal_assessments": {
+                "board": "Board fallback",
+                "quant": "Synthesizer fallback",
+                "fundamental": "Synthesizer fallback",
+                "debate": "Synthesizer fallback",
+            },
+            "risk_flags": board_dec.get("risk_flags", []),
+            "stop_loss": board_dec.get("stop_loss"),
+            "take_profit": board_dec.get("take_profit"),
+            "position_size_pct": board_dec.get("position_size_pct", 0.0),
+            "decision_provenance": "board_fallback",
+        }
+        desk.trade_decision = decision
+        logger.warning(
+            "[V3] %s: decision_synthesizer produced no decision, falling back to Board verdict (%s @ %s%%)",
+            ticker, decision["action"], decision["confidence"],
+        )
     if decision:
         try:
             from app.services.trade_result_saver import save_trade_result

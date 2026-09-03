@@ -163,3 +163,45 @@ async def test_confidence_threshold_gating():
         mock_sell.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_persist_trade_verdict_falls_back_to_board():
+    """When decision_synthesizer returns None, _persist_trade_verdict must fall back
+    to desk.final_decision (from Board of Directors) so the trade verdict is not dropped."""
+    from app.v3.orchestrator import _persist_trade_verdict
+    from app.v3.shared_desk import SharedDesk
+
+    desk = SharedDesk(ticker="CRDO")
+    desk.trade_decision = None
+    desk.final_decision = {
+        "action": "HOLD",
+        "confidence": 55,
+        "reasoning": "Oversold but confirmed downtrend below all SMAs.",
+        "stop_loss": 123.52,
+        "take_profit": 277.81,
+        "position_size_pct": 0.0,
+        "risk_flags": ["valuation_compression"],
+    }
+
+    saved_rows = []
+    mock_mongo = MagicMock()
+    mock_mongo.find_docs.return_value = []
+    with patch("app.services.trade_result_saver.save_trade_result", side_effect=lambda tk, cid, dec: saved_rows.append(dec)), \
+         patch("app.db.mongo_store.find_docs", return_value=[]), \
+         patch("app.services.rlm_audit.log_rlm_audit_trail"), \
+         patch("app.trading.strategy_tracker.record_strategy"):
+        await _persist_trade_verdict(
+            desk, None, cycle_id="test-fallback-cycle", bot_id="test-bot", ticker="CRDO", regime="NORMAL", source="unit_test"
+        )
+
+    assert len(saved_rows) == 1, "Should have saved 1 fallback trade result"
+    saved = saved_rows[0]
+    assert saved["action"] == "HOLD"
+    assert saved["confidence"] == 55
+    assert "Board of Directors" in saved["reasoning"]
+    assert saved["signal_weights"] == {"quant": 0.25, "fundamental": 0.25, "debate": 0.25, "board": 0.25}
+    assert saved["decision_provenance"] == "board_fallback"
+    assert desk.trade_decision is not None
+    assert desk.trade_decision["decision_provenance"] == "board_fallback"
+
+
+
