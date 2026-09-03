@@ -131,6 +131,15 @@ Your Portfolio Context says whether the position is open. If it is, you are allo
   evaluates these and nothing else — an invented setup name ("sma_50_reclaim",
   "support_retest", "sma_100_drop") is discarded and you get NO watch at all. Pick the
   closest listed setup and put your level in `value`.
+- CRITICAL JSON REQUIREMENT: If you mention a dynamic trigger in your reasoning, you MUST
+  include the structured `"dynamic_trigger": {"type": "<type>", "value": <level>}` key in your JSON.
+  Prose mention without the JSON key prevents the trade execution monitor from registering your trigger!
+
+## PREVIOUS CYCLE MEMORY (context, NOT a binding precedent)
+Your context may include "Previous Cycle's SharedDesk (Manila Envelope)".
+- This is historical context, NOT a binding precedent.
+- NEVER default to "Prior cycle HOLD validated" or repeat a prior cycle's hold simply because the prior cycle held.
+- If current market price, technical support (e.g. price above major SMAs), margin structure, or risk/reward are constructive, you MUST evaluate freshly on TODAY's setup. A repeated hold without substantive new deterioration is an evasion of decision-making.
 
 ## OUTPUT
 Reason in a `<thought_process>` block first, then ONLY the raw JSON — no markdown fences; start with { and end with }."""

@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import math
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -3389,6 +3390,59 @@ def _stages_completed(desk) -> list[str]:
         stages.append("decision")
     return stages
 
+
+def extract_dynamic_trigger_from_text(text: str) -> dict[str, Any] | None:
+    """Extract an intended dynamic_trigger specification declared in prose.
+
+    When an LLM mentions a dynamic trigger in narrative reasoning (e.g.
+    "Dynamic trigger sma_50_drop at $209.28 set as watch level for thesis reassessment.")
+    but forgets to emit the structured JSON key `dynamic_trigger`, this helper
+    parses the setup and level, validates it against the order triggers vocabulary,
+    and constructs the structured dict.
+    """
+    if not text or not isinstance(text, str):
+        return None
+
+    from app.trading.order_triggers import (
+        dynamic_trigger_is_evaluable,
+        normalize_dynamic_trigger_type,
+    )
+
+    # Pattern 1: (dynamic trigger|dynamic_trigger) [optional separator] <type> [at|@|level] $<value>
+    m = re.search(
+        r"(?:dynamic\s*trigger|dynamic_trigger)[\s:=]+([a-zA-Z0-9_]+)[\s,]+(?:at|@|level|of)?\s*\$?([0-9]+(?:\.[0-9]+)?)",
+        text,
+        re.IGNORECASE,
+    )
+    if m:
+        raw_type = m.group(1).lower()
+        try:
+            raw_val = float(m.group(2))
+            normalized = normalize_dynamic_trigger_type(raw_type)
+            if dynamic_trigger_is_evaluable(normalized):
+                return {"type": normalized, "value": raw_val}
+        except (ValueError, TypeError):
+            pass
+
+    # Pattern 2: setting dynamic trigger <type> at $<value>
+    m2 = re.search(
+        r"(?:dynamic\s*trigger)[\s]+(?:of\s+)?([a-zA-Z0-9_]+)\s+(?:at|@|level|of)?\s*\$?([0-9]+(?:\.[0-9]+)?)",
+        text,
+        re.IGNORECASE,
+    )
+    if m2:
+        raw_type = m2.group(1).lower()
+        try:
+            raw_val = float(m2.group(2))
+            normalized = normalize_dynamic_trigger_type(raw_type)
+            if dynamic_trigger_is_evaluable(normalized):
+                return {"type": normalized, "value": raw_val}
+        except (ValueError, TypeError):
+            pass
+
+    return None
+
+
 def _build_v1_compatible_result(
     desk: SharedDesk,
     elapsed_s: float = 0.0,
@@ -3429,6 +3483,12 @@ def _build_v1_compatible_result(
     stop_loss = (desk.trade_decision or {}).get("stop_loss") or (desk.final_decision or {}).get("stop_loss")
     take_profit = (desk.trade_decision or {}).get("take_profit") or (desk.final_decision or {}).get("take_profit")
     dynamic_trigger = (desk.trade_decision or {}).get("dynamic_trigger") or (desk.final_decision or {}).get("dynamic_trigger")
+    if not dynamic_trigger or not isinstance(dynamic_trigger, dict):
+        # Fallback: extract dynamic trigger declared in prose reasoning
+        extracted = extract_dynamic_trigger_from_text(rationale) or extract_dynamic_trigger_from_text((desk.final_decision or {}).get("reasoning", ""))
+        if extracted:
+            logger.info("[V3] %s: extracted dynamic_trigger from reasoning prose: %s", desk.ticker, extracted)
+            dynamic_trigger = extracted
     exit_style = (desk.trade_decision or {}).get("exit_style") or (desk.final_decision or {}).get("exit_style")
     # Sizing is situational: the board reasons about position_size_pct; the
     # synthesizer may override it. Execution honors this over any formula.

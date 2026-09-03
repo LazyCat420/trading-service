@@ -124,6 +124,26 @@ class TestV1CompatibleResult:
         assert result["estimate"]["take_profit"] == 245.00
         assert result["estimate"]["exit_style"] == "hard_stop"
 
+    def test_dynamic_trigger_extracted_from_prose_reasoning_when_both_omit_key(self):
+        """When neither Board nor Synthesizer provided a structured dynamic_trigger key,
+        but the Board explicitly stated it in reasoning prose, orchestrator extracts it.
+        """
+        desk = SharedDesk(cycle_id="cycle-v3-test", ticker="NVDA")
+        desk.append_artifact("final_decision", {
+            "action": "HOLD",
+            "confidence": 63,
+            "reasoning": "CONTRADICTORY regime. Dynamic trigger sma_50_drop at $209.28 set as watch level for thesis reassessment.",
+            # No structured dynamic_trigger key in final_decision
+        })
+        desk.append_artifact("trade_decision", {
+            "action": "HOLD",
+            "confidence": 63,
+            "reasoning": "Synthesized hold pending trigger breach.",
+            # No structured dynamic_trigger key in trade_decision
+        })
+        result = _build_v1_compatible_result(desk)
+        assert result["estimate"]["dynamic_trigger"] == {"type": "sma_50_drop", "value": 209.28}
+
 
 class TestNoopResult:
     """Tests for _build_noop_result."""
