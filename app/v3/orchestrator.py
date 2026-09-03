@@ -3422,13 +3422,16 @@ def _build_v1_compatible_result(
     rationale = decision.get("reasoning", "V3 pipeline produced no final decision.")
     persona = decision.get("persona_used", "unknown")
     regime = decision.get("regime", "unknown")
-    stop_loss = decision.get("stop_loss")
-    take_profit = decision.get("take_profit")
-    dynamic_trigger = decision.get("dynamic_trigger")
-    exit_style = decision.get("exit_style")
+    # Execution parameters: prefer trade_decision overrides, but inherit
+    # Board levels and dynamic_trigger so that conditional entry orders and
+    # risk bounds survive even if the synthesizer focused purely on synthesis.
+    _merged = {**(desk.final_decision or {}), **(desk.trade_decision or {})}
+    stop_loss = (desk.trade_decision or {}).get("stop_loss") or (desk.final_decision or {}).get("stop_loss")
+    take_profit = (desk.trade_decision or {}).get("take_profit") or (desk.final_decision or {}).get("take_profit")
+    dynamic_trigger = (desk.trade_decision or {}).get("dynamic_trigger") or (desk.final_decision or {}).get("dynamic_trigger")
+    exit_style = (desk.trade_decision or {}).get("exit_style") or (desk.final_decision or {}).get("exit_style")
     # Sizing is situational: the board reasons about position_size_pct; the
     # synthesizer may override it. Execution honors this over any formula.
-    _merged = {**(desk.final_decision or {}), **(desk.trade_decision or {})}
     position_size_pct = _merged.get("position_size_pct")
 
     # Consensus + data-quality feed the code-side sizing haircut in

@@ -98,6 +98,32 @@ class TestV1CompatibleResult:
         assert result["c_result"]["action"] == "SELL"
         assert result["c_result"]["confidence"] == 65
 
+    def test_dynamic_trigger_and_levels_inherited_from_board_when_synthesizer_omits(self):
+        desk = SharedDesk(cycle_id="test-cycle", ticker="NVDA")
+        desk.append_artifact("final_decision", {
+            "action": "BUY",
+            "confidence": 72,
+            "reasoning": "Strong technicals, entry extended.",
+            "dynamic_trigger": {"type": "sma_50_drop", "value": 209.28},
+            "stop_loss": 196.26,
+            "take_profit": 245.00,
+            "exit_style": "hard_stop",
+            "position_size_pct": 2.5,
+            "decision_provenance": "board_reasoned",
+        })
+        desk.append_artifact("trade_decision", {
+            "action": "HOLD",
+            "confidence": 63,
+            "reasoning": "Waiting for dip to SMA-50 support.",
+            "signal_weights": {"board": 0.45, "quant": 0.25, "fundamental": 0.15, "debate": 0.15},
+            # Synthesizer omitted dynamic_trigger, stop_loss, take_profit
+        })
+        result = _build_v1_compatible_result(desk)
+        assert result["estimate"]["dynamic_trigger"] == {"type": "sma_50_drop", "value": 209.28}
+        assert result["estimate"]["stop_loss"] == 196.26
+        assert result["estimate"]["take_profit"] == 245.00
+        assert result["estimate"]["exit_style"] == "hard_stop"
+
 
 class TestNoopResult:
     """Tests for _build_noop_result."""
