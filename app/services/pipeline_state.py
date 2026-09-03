@@ -192,6 +192,13 @@ class PipelineStateDB:
                 d.pop("singleton_id", None)
 
             if d:
+                # Stringify dates to ISO strings with explicit UTC timezone so
+                # downstream API consumers and web clients do not parse naive
+                # timestamps as local browser time.
+                for dt_field in ("started_at", "finished_at", "updated_at"):
+                    if dt_field in d and d[dt_field] is not None:
+                        d[dt_field] = _stringify_timestamp(d[dt_field])
+
                 # Enrich with events and results when the caller wants the
                 # full state; both readers are the ONE definition of the wire
                 # shape (see the per-cycle readers above).

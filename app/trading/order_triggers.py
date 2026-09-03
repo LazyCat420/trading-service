@@ -285,7 +285,11 @@ async def check_triggers(bot_id: str) -> list[dict]:
     triggers = mongo_query.find_rows(
         'price_triggers',
         {'bot_id': bot_id, 'active': True},
-        ['id', 'ticker', 'trigger_type', 'trigger_price', 'action', 'qty_pct', 'trailing_pct', 'highest_price', 'reason', 'dynamic_trigger_type', 'dynamic_trigger_value']
+        [
+            'id', 'ticker', 'trigger_type', 'trigger_price', 'action',
+            'qty_pct', 'trailing_pct', 'highest_price', 'reason',
+            'dynamic_trigger_type', 'dynamic_trigger_value', 'created_at', 'created_by'
+        ]
     )
 
     if not triggers:
@@ -308,10 +312,28 @@ async def check_triggers(bot_id: str) -> list[dict]:
             reason,
             dynamic_trigger_type,
             dynamic_trigger_value,
-        ) = row
+        ) = row[:11]
+        created_at = row[11] if len(row) > 11 else None
+        created_by = row[12] if len(row) > 12 else None
 
         if ticker in fired_tickers:
             continue
+
+        # Cooldown guard for pipeline-created dynamic triggers:
+        # A HOLD decision creates a dynamic trigger (e.g. sma_50_drop). If the condition
+        # was already true, the checker would immediately spawn an edge-case cycle for
+        # that exact stock seconds after the previous cycle completed. Require a 30-minute
+        # cooldown before a pipeline-created dynamic trigger can fire.
+        if created_by == "pipeline" and created_at:
+            c_at = created_at
+            if hasattr(c_at, "tzinfo") and c_at.tzinfo is None:
+                c_at = c_at.replace(tzinfo=timezone.utc)
+            if (now - c_at).total_seconds() < 1800:
+                logger.debug(
+                    "[TRIGGER] Skipping %s (%s): pipeline cooldown active (%.0fs / 1800s)",
+                    ticker, dynamic_trigger_type, (now - c_at).total_seconds(),
+                )
+                continue
 
         current_price, _ = _get_current_price(ticker)
         if current_price is None:
