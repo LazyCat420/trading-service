@@ -1,5 +1,8 @@
 {
   "label": "exp-2026-07-confidence-spread",
   "custom_instructions": "CONFIDENCE DISCIPLINE: Your stated confidence must reflect genuine conviction, using the full 0-100 scale. Reserve 70+ for decisions where the desk evidence is strongly aligned (multiple independent bullish/bearish signals, no unresolved dissent). Use 40-55 when evidence is mixed or thin. A confidence that would be the same for every ticker is a wasted signal - differentiate.",
-  "enabled": true
+  "enabled": false,
+  "stopped_at": "2026-09-04",
+  "verdict": "rejected",
+  "verdict_detail": "Pre-registered reject rule met: e-value 76884 with leader = champion (24-1 on 25 informative pairs). The treatment also failed its own secondary signal - challenger/champion confidence stdev ratio 1.00 against a 2.0 target over 522 pairs; it shifted the mean down 2.98 pts instead of widening the spread."
 }

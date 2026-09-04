@@ -91,7 +91,16 @@ async def active_experiment():
                 "label": spec.get("label"),
                 "enabled": spec.get("enabled") is not False,
                 "custom_instructions": spec.get("custom_instructions"),
+                # A finished experiment is not the same as no experiment. With
+                # only `active: false` to go on, the panel fell through to
+                # "collecting — not enough evidence yet" and silently lost a
+                # concluded verdict, which is the one thing an experiment is
+                # for. Carry the conclusion so a stopped run reads as stopped.
+                "stopped_at": spec.get("stopped_at"),
+                "verdict": spec.get("verdict"),
+                "verdict_detail": spec.get("verdict_detail"),
             }
+            payload["concluded"] = bool(spec.get("verdict"))
             row = mongo_query.agg_row('challenger_decisions', {'spec_label': spec.get("label")}, [('min', 'created_at'), ('max', 'created_at'), ('count', None)])
             if row:
                 payload["first_pair_at"] = row[0].isoformat() if hasattr(row[0], "isoformat") else str(row[0]) if row[0] else None
