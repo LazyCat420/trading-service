@@ -2493,6 +2493,25 @@ async def _persist_trade_verdict(
             # ("Warren Buffett"), which splits persona telemetry keys.
             persona = str(trade_decision.get("persona_used") or "")
             trade_decision["persona_used"] = persona.strip().lower().replace(" ", "_")
+
+            # Ensure dynamic trigger extracted from prose or inherited from the board
+            # is attached to trade_decision before persisting to trade_results.
+            if not isinstance(trade_decision.get("dynamic_trigger"), dict):
+                board_decision = desk.final_decision or {}
+                dt = (
+                    board_decision.get("dynamic_trigger")
+                    if isinstance(board_decision.get("dynamic_trigger"), dict)
+                    else None
+                )
+                if not dt:
+                    dt = extract_dynamic_trigger_from_text(
+                        str(trade_decision.get("reasoning") or "")
+                    ) or extract_dynamic_trigger_from_text(
+                        str(board_decision.get("reasoning") or "")
+                    )
+                if isinstance(dt, dict):
+                    trade_decision["dynamic_trigger"] = dt
+
             save_trade_result(ticker, cycle_id, trade_decision)
 
             # Feed the judge: llm_audit_logs + context_blobs are the

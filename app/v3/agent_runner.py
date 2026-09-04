@@ -1624,13 +1624,12 @@ async def run_v3_agent(
         errors = validate_artifact(artifact_type, artifact)
         if artifact_type == "trade_decision" and isinstance(artifact, dict) and not artifact.get("signal_weights"):
             if (
-                is_retry
-                and artifact.get("action")
+                artifact.get("action")
                 and artifact.get("confidence") is not None
                 and str(artifact.get("reasoning") or "").strip()
             ):
                 logger.warning(
-                    "[V3Runner] %s: attempt 2 trade_decision for %s omitted signal_weights — salvaging with equalized defaults",
+                    "[V3Runner] %s: trade_decision for %s omitted signal_weights — salvaging with equalized defaults",
                     agent_name, desk.ticker,
                 )
                 artifact["signal_weights"] = {"quant": 0.25, "fundamental": 0.25, "debate": 0.25, "board": 0.25}

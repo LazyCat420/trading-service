@@ -30,3 +30,9 @@ def test_extract_dynamic_trigger_no_mention():
     text = "Thesis is solid, holding until next earnings release."
     res = extract_dynamic_trigger_from_text(text)
     assert res is None
+
+
+def test_extract_dynamic_trigger_rsi_oversold_variant():
+    text = "Board conditional HOLD: dynamic trigger rsi_14_oversold @ 35.55 set."
+    res = extract_dynamic_trigger_from_text(text)
+    assert res == {"type": "rsi_14_oversold", "value": 35.55}
