@@ -8,6 +8,26 @@ from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
+async def _resolved_models(llm) -> dict[str, str]:
+    """{endpoint_name: model} for every enabled endpoint that answers /v1/models.
+
+    Endpoints that do not resolve are logged at WARNING and left out; the
+    caller decides whether an empty dict is fatal. Pure with respect to the
+    shim: it only calls `llm._sync_endpoint_model(ep, force=True)`.
+    """
+    resolved: dict[str, str] = {}
+    for ep in getattr(llm, "_endpoints", {}).values():
+        if not ep or not getattr(ep, "enabled", False):
+            continue
+        model = await llm._sync_endpoint_model(ep, force=True)
+        if model:
+            resolved[ep.name] = model
+        else:
+            logger.warning("[startup] endpoint '%s' (%s) has no resolved model — "
+                           "routing will fall back to the others", ep.name, ep.url)
+    return resolved
+
+
 async def startup_vllm_discovery():
     import httpx
     import asyncio
@@ -32,16 +52,14 @@ async def startup_vllm_discovery():
             if not is_healthy:
                 raise ValueError(f"Prism Gateway is OFFLINE or unreachable at {prism_client.url}")
 
-            # 2. Verify all active vLLM endpoints have resolved models
-            endpoints = getattr(llm, "_endpoints", {})
-            solo_jetson = bool(getattr(app_settings, "SOLO_JETSON_MODE", False))
-            for ep in endpoints.values():
-                if solo_jetson and getattr(ep, "name", "") != "jetson":
-                    continue
-                if ep and ep.enabled:
-                    model = await llm._sync_endpoint_model(ep, force=True)
-                    if not model:
-                        raise ValueError(f"Model not yet resolved for active endpoint '{ep.name}' ({ep.url})")
+            # 2. Verify at least ONE vLLM endpoint has a resolved model. Routing
+            # falls back between boxes (prism_agent_caller), so a DGX that is
+            # down at boot is a WARNING, not a 3-minute readiness stall: until
+            # 2026-09-03 every enabled endpoint had to resolve, which is why the
+            # solo-Jetson flag had to special-case this loop.
+            resolved = await _resolved_models(llm)
+            if not resolved:
+                raise ValueError("no vLLM endpoint resolved a model")
 
             # 3. Verify V3 agents are loaded in both live registries (via /config/agents)
             # _V3_AGENT_MODULES was a static list; it became the discovery

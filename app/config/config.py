@@ -64,7 +64,10 @@ class Settings(BaseSettings):
     # ── Prism VLLM Providers (Source of Truth from vault-service/projects.json) ──
     PROVIDER_VLLM_1_URL: str = _config.get("PROVIDER_VLLM_1_URL", "http://10.0.0.16:5591/vllm-shim/jetson")
     PROVIDER_VLLM_1_NICKNAME: str = _config.get("PROVIDER_VLLM_1_NICKNAME", "Jetson")
-    PROVIDER_VLLM_1_CONCURRENCY: int = int(_config.get("PROVIDER_VLLM_1_CONCURRENCY", "8") or "8")
+    # JETSON_MAX_CONCURRENT is what deploy.sh appends to the container's .env;
+    # until 2026-09-03 nothing read it and the Jetson's declared capacity was
+    # projects.json's 8. The overflow rule needs the real number.
+    PROVIDER_VLLM_1_CONCURRENCY: int = Field(default=int(_config.get("PROVIDER_VLLM_1_CONCURRENCY", "8") or "8"), validation_alias="JETSON_MAX_CONCURRENT")
 
     PROVIDER_VLLM_2_URL: str = _config.get("PROVIDER_VLLM_2_URL", "http://10.0.0.16:5591/vllm-shim/gold-spark")
     PROVIDER_VLLM_2_NICKNAME: str = _config.get("PROVIDER_VLLM_2_NICKNAME", "Gold Spark")
@@ -173,9 +176,12 @@ class Settings(BaseSettings):
     # Supports pipe-delimited values (e.g. "deepseek|nemotron").
     DECISION_MODEL_PATTERN: str = "deepseek|nemotron|glm"
 
-    # Solo-Jetson mode: Route all trading pipeline agents (decision + collector)
-    # to the Jetson Orin AGX (vllm) when DGX Spark is offline or in local mode.
-    SOLO_JETSON_MODE: bool = False
+    # There is no "solo box" flag any more. SOLO_JETSON_MODE (2026-09-02 →
+    # 09-03) was a static pin that could not let the DGX back in when it
+    # returned; routing is preference + overflow + fallback in
+    # prism_agent_caller.resolve_default_model_for_agent. To take a box out,
+    # leave its PROVIDER_VLLM_*_URL unset. tests/unit/test_deploy_routing_env_gate.py
+    # fails the build if the flag reappears in deploy.sh.
 
     # ── DGX Spark Benchmark Console ──
     SPARK_BENCH_ENABLED: bool = True

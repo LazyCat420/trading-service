@@ -124,8 +124,13 @@ EXTRA_SSH_SYNC() {
   # decision — see app/v3/model_shadow.py.
   ssh "$DEPLOY_SSH_HOST" "echo 'MODEL_SHADOW_AGENTS=${MODEL_SHADOW_AGENTS:-v3_regime_engine,v3_portfolio_manager}' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   ssh "$DEPLOY_SSH_HOST" "echo 'MODEL_SHADOW_ENDPOINT=${MODEL_SHADOW_ENDPOINT:-jetson}' >> '${DEPLOY_COMPOSE_DIR}/.env'"
-  ssh "$DEPLOY_SSH_HOST" "echo 'SOLO_JETSON_MODE=${SOLO_JETSON_MODE:-false}' >> '${DEPLOY_COMPOSE_DIR}/.env'"
-  ssh "$DEPLOY_SSH_HOST" "echo 'DECISION_MODEL_PATTERN=${DECISION_MODEL_PATTERN:-deepseek|nemotron|glm}' >> '${DEPLOY_COMPOSE_DIR}/.env'"
+  # Decision-model contract. A LITERAL, not ${VAR:-default}: on 2026-09-02 a
+  # sibling line here defaulted SOLO_JETSON_MODE=true and a shell-inherited
+  # value could re-arm it silently. No solo-box flag exists any more — routing
+  # is preference + overflow + fallback (prism_agent_caller). To take a box
+  # out, leave its PROVIDER_VLLM_*_URL unset in the vault master.
+  # tests/unit/test_deploy_routing_env_gate.py parses this file.
+  ssh "$DEPLOY_SSH_HOST" "echo 'DECISION_MODEL_PATTERN=deepseek|nemotron|glm' >> '${DEPLOY_COMPOSE_DIR}/.env'"
   # Postgres→Mongo migration: per-table backend flags (pg|dual|mongo_read|mongo).
   # This service overwrites its .env from the vault master (above), so runtime
   # flags must be appended HERE, not via deploy-kit/.env.deploy

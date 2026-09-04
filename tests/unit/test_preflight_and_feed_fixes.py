@@ -66,6 +66,66 @@ class TestLlmPreflight:
         assert ok is True
 
     @pytest.mark.asyncio
+    async def test_both_boxes_off_contract_aborts_through_the_real_resolver(self, monkeypatch):
+        """The tests above mock the resolver, so they cannot see this seam.
+
+        2026-09-03 moved the contract check INSIDE the candidate loop so a
+        wrong model on the DGX falls back to the Jetson. The abort must
+        survive that: only when NO box passes the contract does the cycle stop."""
+        import types
+        from app.config.config import settings
+        from app.services import llm_preflight as pf
+        import app.services.prism_agent_caller as pac
+
+        def _box(k):
+            return types.SimpleNamespace(
+                name=k, url=f"http://{k}:8000", enabled=True, model=None,
+                requests_running=0, requests_waiting=0, max_concurrent=6)
+
+        monkeypatch.setattr(settings, "DECISION_MODEL_PATTERN", "deepseek|nemotron|glm")
+        monkeypatch.setattr(pac, "llm", types.SimpleNamespace(
+            _endpoints={"dgx_spark": _box("dgx_spark"), "jetson": _box("jetson")}))
+
+        async def both_wrong(url, force_refresh=False):
+            return "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit"
+
+        monkeypatch.setattr(pac, "get_live_model_from_vllm", both_wrong)
+        ok, detail = await pf.llm_can_answer()
+        assert ok is False and "model contract violated" in detail
+
+    @pytest.mark.asyncio
+    async def test_a_wrong_dgx_with_a_good_jetson_does_not_abort(self, monkeypatch):
+        """The fallback IS the fix: one bad box must not stop the desk."""
+        import types
+        from app.config.config import settings
+        from app.services import llm_preflight as pf
+        import app.services.prism_agent_caller as pac
+
+        def _box(k):
+            return types.SimpleNamespace(
+                name=k, url=f"http://{k}:8000", enabled=True, model=None,
+                requests_running=0, requests_waiting=0, max_concurrent=6)
+
+        monkeypatch.setattr(settings, "DECISION_MODEL_PATTERN", "deepseek|nemotron|glm")
+        monkeypatch.setattr(pac, "llm", types.SimpleNamespace(
+            _endpoints={"dgx_spark": _box("dgx_spark"), "jetson": _box("jetson")}))
+
+        async def dgx_wrong(url, force_refresh=False):
+            return "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit" if "dgx" in url else "nemotron35"
+
+        seen = {}
+
+        async def alive(**kw):
+            seen.update(kw)
+            return {"content": "OK"}
+
+        monkeypatch.setattr(pac, "get_live_model_from_vllm", dgx_wrong)
+        monkeypatch.setattr(pac, "chat_toolless", alive)
+        ok, detail = await pf.llm_can_answer()
+        assert ok is True, detail
+        assert seen.get("provider") == "vllm" and seen.get("model") == "nemotron35"
+
+    @pytest.mark.asyncio
     async def test_broken_probe_machinery_fails_open(self, monkeypatch):
         """A broken probe must not become the thing that blocks all trading."""
         from app.services import llm_preflight as pf

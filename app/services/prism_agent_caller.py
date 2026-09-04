@@ -333,6 +333,38 @@ ENDPOINT_PROVIDERS: dict[str, str] = {
     "dgx_spark": "vllm-2",
 }
 
+#: Agent names containing any of these run as LIGHT work: Jetson first, DGX
+#: Spark as fallback, and no DECISION_MODEL_PATTERN contract (they are
+#: model-agnostic by design). Everything else is a decision agent: DGX Spark
+#: first, Jetson as fallback/overflow, contract enforced on whichever box
+#: answers. ONE table — the 2026-09-03 fix carried two copies of this tuple
+#: and the routing rule was read from whichever a reader found first.
+#: "translator" was missing until 2026-09-03: the foreign-feed translator
+#: (news_collector._translate_foreign_text) resolved as a DECISION agent and
+#: would have taken a 1M-context GLM slot for a three-sentence translation.
+COLLECTOR_KEYWORDS: tuple[str, ...] = (
+    "janitor", "curator", "summarizer", "scout", "purge",
+    "maintenance", "consensus", "ticker_validator", "translator",
+)
+
+
+def is_collector_agent(agent_name: str | None) -> bool:
+    """True when the agent is light/collector work by name (see COLLECTOR_KEYWORDS)."""
+    name_lower = (agent_name or "").lower()
+    return any(kw in name_lower for kw in COLLECTOR_KEYWORDS)
+
+
+def box_is_saturated(ep) -> bool:
+    """Every slot on the box is taken, per its own /metrics (polled every 5 s).
+
+    vLLM caps `num_requests_running` at the box's capacity and parks the rest
+    in `num_requests_waiting`, so running + waiting >= max_concurrent is
+    exactly "a new request would queue". Reads the dataclass fields directly:
+    a stub without them should fail loudly, not read as an idle box.
+    """
+    cap = ep.max_concurrent or 0
+    return cap > 0 and (ep.requests_running + ep.requests_waiting) >= cap
+
 
 class ModelContractError(RuntimeError):
     """The decision box is serving a model the decision agents were not built
@@ -454,25 +486,35 @@ async def resolve_default_model_for_agent(
     force_refresh: bool = False,
     endpoint_override: str | None = None,
 ) -> tuple[str, str]:
-    """Resolve default model based on agent role to balance load.
-    Jetson handles lightweight janitorial, consensus, and curation tasks.
-    Gold Spark handles heavy quant research, debates, and final decisions.
+    """Resolve (model, provider) for an agent. ONE routing mechanism:
+
+    1. PREFERENCE by role — decision agents prefer dgx_spark (Gold Spark, 1M
+       context), collector agents (COLLECTOR_KEYWORDS) prefer jetson.
+    2. OVERFLOW — a decision agent whose preferred DGX box is saturated
+       (box_is_saturated) and whose Jetson is not goes to the Jetson first.
+       Both saturated: stay queued on the DGX — a 490k-token analyst prompt
+       must not land on the 128K box (measured 2026-09-02/03: fundamental
+       analyst on the Jetson → EMPTY RESPONSE after 13 loops / 565 s).
+    3. FALLBACK — an endpoint that is unconfigured, disabled, unreachable, or
+       (for decision agents) serving a model outside DECISION_MODEL_PATTERN is
+       skipped and the next candidate is tried. Nothing is available → raise.
+
+    There is deliberately NO static pin. SOLO_JETSON_MODE (2026-09-02 →
+    2026-09-03) made the Jetson the only candidate and could never let the DGX
+    back in when it returned; every decision agent ran on nemotron35 for two
+    days with zero GLM rows in v3_agent_telemetry. "Take a box out" is done by
+    leaving its PROVIDER_VLLM_*_URL unset, which step 3 already honours.
 
     `endpoint_override` names a box directly ("jetson" / "dgx_spark") and skips
-    the name-keyword rule entirely. It exists so a caller can vary the MODEL
-    without varying the agent NAME — the keyword rule can only move work to
-    Jetson by renaming the agent, which relabels the role and makes the two
-    arms of a per-role model comparison look like two different jobs.
-
-    An unknown override RAISES rather than falling back to the default box: a
-    silent fallback would run both arms of an A/B on the same box while the
-    telemetry still claimed a split, which is worse than no comparison at all.
+    both preference and overflow. It exists so a caller can vary the MODEL
+    without varying the agent NAME (the per-role A/B shadow). An unknown
+    override RAISES: a silent fallback would run both arms of an A/B on the
+    same box while the telemetry still claimed a split.
     """
     from app.services.prism_agent_caller import llm
     from app.config.config import settings as _settings
 
-    solo_jetson = bool(getattr(_settings, "SOLO_JETSON_MODE", False))
-    routing_mode = getattr(_settings, "ROUTING_MODE", "auto")
+    is_collector = is_collector_agent(agent_name)
 
     if endpoint_override:
         if endpoint_override not in ENDPOINT_PROVIDERS:
@@ -480,33 +522,32 @@ async def resolve_default_model_for_agent(
                 f"Unknown endpoint_override {endpoint_override!r} — "
                 f"expected one of {sorted(ENDPOINT_PROVIDERS)}"
             )
-        endpoint_key = endpoint_override
-        provider = ENDPOINT_PROVIDERS[endpoint_key]
-        candidates = [(endpoint_key, provider)]
-    elif solo_jetson or routing_mode == "force_jetson":
-        candidates = [("jetson", ENDPOINT_PROVIDERS["jetson"])]
-    elif routing_mode == "force_dgx":
-        candidates = [("dgx_spark", ENDPOINT_PROVIDERS["dgx_spark"])]
+        candidates = [(endpoint_override, ENDPOINT_PROVIDERS[endpoint_override])]
+    elif is_collector:
+        candidates = [
+            ("jetson", ENDPOINT_PROVIDERS["jetson"]),
+            ("dgx_spark", ENDPOINT_PROVIDERS["dgx_spark"]),
+        ]
     else:
-        # Dynamic smart routing:
-        # Harder tasks (research, debate, decisions) prefer dgx_spark;
-        # lightweight / collector tasks prefer jetson.
-        name_lower = (agent_name or "").lower()
-        collector_keywords = (
-            "janitor", "curator", "summarizer", "scout", "purge",
-            "maintenance", "consensus", "ticker_validator"
-        )
-        is_collector = any(kw in name_lower for kw in collector_keywords)
-        if is_collector:
-            candidates = [
-                ("jetson", ENDPOINT_PROVIDERS["jetson"]),
-                ("dgx_spark", ENDPOINT_PROVIDERS["dgx_spark"]),
-            ]
-        else:
-            candidates = [
-                ("dgx_spark", ENDPOINT_PROVIDERS["dgx_spark"]),
-                ("jetson", ENDPOINT_PROVIDERS["jetson"]),
-            ]
+        candidates = [
+            ("dgx_spark", ENDPOINT_PROVIDERS["dgx_spark"]),
+            ("jetson", ENDPOINT_PROVIDERS["jetson"]),
+        ]
+        dgx = llm._endpoints.get("dgx_spark")
+        jet = llm._endpoints.get("jetson")
+        if (
+            dgx is not None and jet is not None and jet.enabled and jet.url
+            and box_is_saturated(dgx) and not box_is_saturated(jet)
+        ):
+            logger.info(
+                "[SmartRouting] dgx_spark saturated (running=%d waiting=%d cap=%d) — "
+                "overflowing %s to jetson",
+                dgx.requests_running, dgx.requests_waiting, dgx.max_concurrent, agent_name,
+            )
+            candidates.reverse()
+
+    pattern = (getattr(_settings, "DECISION_MODEL_PATTERN", "") or "").strip().lower()
+    patterns = [p.strip() for p in pattern.split("|") if p.strip()]
 
     discovered_model = None
     chosen_endpoint = None
@@ -529,33 +570,22 @@ async def resolve_default_model_for_agent(
             last_error = exc
             continue
 
-        # Decision agents run on dgx_spark or jetson fallback.
-        # Normal Jetson collector/janitor roles are model-agnostic by design.
-        name_lower = (agent_name or "").lower()
-        collector_keywords = (
-            "janitor", "curator", "summarizer", "scout", "purge",
-            "maintenance", "consensus", "ticker_validator"
-        )
-        is_collector = any(kw in name_lower for kw in collector_keywords)
-        must_check_contract = (not is_collector) or (ep_key == "jetson" and solo_jetson)
-
-        if must_check_contract:
-            pattern = (getattr(_settings, "DECISION_MODEL_PATTERN", "") or "").strip().lower()
-            if pattern:
-                patterns = [p.strip() for p in pattern.split("|") if p.strip()]
-                model_lower = str(discovered_model).lower()
-                if not any(p in model_lower for p in patterns):
-                    contract_err = ModelContractError(
-                        f"{ep_key} is serving {discovered_model!r}, which does not match "
-                        f"DECISION_MODEL_PATTERN={pattern!r}. Refusing to run {agent_name} "
-                        f"against a model the decision agents were not built for."
-                    )
-                    logger.warning(
-                        "[SmartRouting] Endpoint '%s' model contract violation: %s — attempting fallback if available.",
-                        ep_key, contract_err
-                    )
-                    last_error = contract_err
-                    continue
+        # Decision agents are contract-checked on WHICHEVER box answers,
+        # including the fallback/overflow box. Collectors are model-agnostic.
+        if not is_collector and patterns:
+            model_lower = str(discovered_model).lower()
+            if not any(p in model_lower for p in patterns):
+                contract_err = ModelContractError(
+                    f"{ep_key} is serving {discovered_model!r}, which does not match "
+                    f"DECISION_MODEL_PATTERN={pattern!r}. Refusing to run {agent_name} "
+                    f"against a model the decision agents were not built for."
+                )
+                logger.warning(
+                    "[SmartRouting] Endpoint '%s' model contract violation: %s — attempting fallback if available.",
+                    ep_key, contract_err
+                )
+                last_error = contract_err
+                continue
 
         chosen_endpoint = ep_key
         chosen_provider = prov
@@ -825,6 +855,10 @@ class VLLMEndpoint:
     requests_running: int = 0
     requests_waiting: int = 0
     last_model_sync: float = 0.0
+    #: From the box's own /v1/models (1,000,000 on the DGX, 128,000 on the
+    #: Jetson). None until the first sync. Never defaulted: the 2026-09-03
+    #: endpoint view invented 128000 for the 1M box via getattr.
+    max_model_len: int | None = None
 
 #: Metric NAME → (VLLMEndpoint attribute, converter). Names are matched
 #: EXACTLY against the token before '{' or whitespace — never by prefix.
@@ -926,6 +960,8 @@ class PrismLLMShim:
                         if models:
                             new_model = models[0]["id"]
                             ep.model = new_model
+                            raw_len = models[0].get("max_model_len")
+                            ep.max_model_len = int(raw_len) if raw_len else None
             except Exception as e:
                 logger.debug("[PrismLLMShim] Failed to sync model for %s: %s", ep.name, e)
         return getattr(ep, "model", None)
@@ -1159,6 +1195,10 @@ class PrismLLMShim:
             for ep in self._endpoints.values():
                 if not ep.enabled or not ep.url:
                     continue
+                try:
+                    await self._sync_endpoint_model(ep)
+                except Exception as e:  # noqa: BLE001 — the metrics poll below must still run
+                    logger.debug("[PrismLLMShim] model sync failed for %s: %s", ep.name, e)
                 try:
                     async with httpx.AsyncClient(timeout=3.0) as client:
                         r = await client.get(f"{ep.url}/metrics")

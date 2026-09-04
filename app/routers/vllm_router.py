@@ -275,18 +275,17 @@ def vllm_endpoints():
     try:
         endpoints_data = {}
         for name, ep in llm._endpoints.items():
+            # Only fields VLLMEndpoint actually carries. The 2026-09-03 version
+            # read role/purpose/auto_disabled/loading/active_count through
+            # getattr defaults and reported max_model_len=128000 for the 1M
+            # DGX box — a number nobody measured, served as if it had been.
             endpoints_data[name] = {
                 "name": ep.name,
                 "url": ep.url,
-                "role": getattr(ep, "role", "inference"),
                 "max_concurrent": ep.max_concurrent,
-                "purpose": getattr(ep, "purpose", "general"),
                 "enabled": ep.enabled,
-                "auto_disabled": getattr(ep, "auto_disabled", False),
-                "loading": getattr(ep, "loading", False),
                 "model": ep.model,
-                "max_model_len": getattr(ep, "max_model_len", 128000),
-                "active_count": getattr(ep, "active_count", 0),
+                "max_model_len": ep.max_model_len,
                 "cache_usage": ep.cache_usage,
                 "requests_running": ep.requests_running,
                 "requests_waiting": ep.requests_waiting,

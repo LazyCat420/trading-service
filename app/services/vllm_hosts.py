@@ -62,14 +62,9 @@ async def vllm_targets(only: tuple[str, ...] | None = None) -> list[tuple[str, s
     returning an empty list — a caller with no host has nothing to degrade to.
     """
     from app.services.prism_agent_caller import get_live_model_from_vllm, llm
-    from app.config.config import settings as _settings
-
-    solo_jetson = bool(getattr(_settings, "SOLO_JETSON_MODE", False))
 
     targets, errors = [], []
     for endpoint_key, provider in _VLLM_ENDPOINTS:
-        if solo_jetson and endpoint_key != "jetson":
-            continue
         if only and endpoint_key not in only:
             continue
         ep = llm._endpoints.get(endpoint_key)

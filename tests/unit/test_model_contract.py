@@ -19,7 +19,10 @@ import pytest
 def _endpoint_stub(**boxes):
     """llm-shaped stub: ._endpoints maps key -> obj with .url/.enabled."""
     eps = {
-        k: types.SimpleNamespace(url=f"http://{k}:8000", enabled=True)
+        k: types.SimpleNamespace(
+            name=k, url=f"http://{k}:8000", enabled=True,
+            requests_running=0, requests_waiting=0, max_concurrent=6, model=None,
+        )
         for k in boxes or {"dgx_spark": True, "jetson": True}
     }
     return types.SimpleNamespace(_endpoints=eps)

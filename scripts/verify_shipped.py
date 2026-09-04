@@ -85,8 +85,114 @@ out["maybe_shadow_gatekeeper"] = hasattr(pipeline_service, "maybe_shadow_gatekee
 from app.services.prism_agent_caller import chat_toolless
 out["chat_sends_min_p"] = "min_p_for(" in inspect.getsource(chat_toolless)
 out["shadow_agents"] = os.environ.get("MODEL_SHADOW_AGENTS", "")
+out["routing_env"] = {
+    k: v for k, v in os.environ.items()
+    if k in ("SOLO_JETSON_MODE", "DECISION_MODEL_PATTERN", "DGX_MAX_CONCURRENT",
+             "JETSON_MAX_CONCURRENT", "PROVIDER_VLLM_1_URL", "PROVIDER_VLLM_2_URL")
+}
+# Which box each role would get RIGHT NOW. Touches /v1/models only — no LLM call.
+import asyncio as _a
+from app.services.prism_agent_caller import resolve_default_model_for_agent as _r
+for _key, _agent in (("decision_route", "v3_decision_synthesizer"), ("collector_route", "janitor")):
+    try:
+        out[_key] = list(_a.run(_r(_agent)))
+    except Exception as _e:
+        out[_key] = f"{type(_e).__name__}: {_e}"
 print("JSON:" + json.dumps(out))
 """
+
+
+# ── 1b. Routing: one mechanism, and the deploy script cannot re-arm a pin ──
+#
+# 2026-09-02 this script's sibling line appended SOLO_JETSON_MODE=true to the
+# container's .env. Routing then had a static pin that could not let the DGX
+# Spark back in when it returned, and every decision agent ran on the Jetson's
+# nemotron35 for two days — 191 SUCCESS + 9 SCHEMA_INVALID on vllm, ZERO rows
+# on GLM, with the fundamental analyst returning EMPTY after 490k input tokens
+# on a 128K box. Nothing failed; the desk just quietly stopped using the box
+# that does the heavy work. These two functions are pure so a unit test can
+# drive them with the condemned text as a FIXTURE.
+
+ROUTING_ENV_KEYS = ("SOLO_JETSON_MODE", "DECISION_MODEL_PATTERN", "DGX_MAX_CONCURRENT",
+                    "JETSON_MAX_CONCURRENT", "PROVIDER_VLLM_1_URL", "PROVIDER_VLLM_2_URL")
+
+
+def deploy_env_violations(text: str) -> list[str]:
+    """Routing defects in a deploy script's text. Empty list = clean."""
+    out = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if "SOLO_JETSON_MODE" in line:
+            out.append(f"line {lineno}: writes SOLO_JETSON_MODE — the static pin is gone; "
+                       "take a box out by leaving its PROVIDER_VLLM_*_URL unset")
+        if "DECISION_MODEL_PATTERN=" in line:
+            value = line.split("DECISION_MODEL_PATTERN=", 1)[1]
+            value = value.split("'")[0].split('"')[0]
+            # ${DECISION_MODEL_PATTERN:-deepseek|nemotron} → deepseek|nemotron
+            if ":-" in value:
+                value = value.split(":-", 1)[1].rstrip("}")
+            if "glm" not in value.lower():
+                out.append(f"line {lineno}: DECISION_MODEL_PATTERN={value!r} has no 'glm' — "
+                           "the DGX Spark serves GLM-5.3-Flash-EXL3 and would be refused")
+    return out
+
+
+def routing_env_verdicts(env: dict) -> list[tuple[str, str, str]]:
+    """(claim, status, detail) for a container's routing environment."""
+    out = []
+    claim = "The deployed container has no solo-box pin"
+    if "SOLO_JETSON_MODE" in env:
+        out.append((claim, FAIL,
+                    f"SOLO_JETSON_MODE={env['SOLO_JETSON_MODE']!r} is present — the container "
+                    "was started from a pre-2026-09-03 .env; redeploy"))
+    else:
+        out.append((claim, PASS, "no SOLO_JETSON_MODE in the container environment"))
+
+    claim = "The decision-model contract admits the DGX Spark's model"
+    pattern = (env.get("DECISION_MODEL_PATTERN") or "")
+    if not pattern:
+        out.append((claim, WARN, "DECISION_MODEL_PATTERN is unset; the code default applies"))
+    elif "glm" not in pattern.lower():
+        out.append((claim, FAIL, f"DECISION_MODEL_PATTERN={pattern!r} has no 'glm'"))
+    else:
+        out.append((claim, PASS, f"DECISION_MODEL_PATTERN={pattern}"))
+
+    out.append(("Declared box capacity", INFO,
+                f"DGX_MAX_CONCURRENT={env.get('DGX_MAX_CONCURRENT')} "
+                f"JETSON_MAX_CONCURRENT={env.get('JETSON_MAX_CONCURRENT')}"))
+    return out
+
+
+def route_verdicts(decision: object, collector: object) -> list[tuple[str, str, str]]:
+    """(claim, status, detail) for the two live routing resolutions.
+
+    A decision agent on the Jetson is a WARN, not a FAIL: that is the fallback
+    or the overflow rule working. It is only wrong if it is PERMANENT, which
+    the cycle's telemetry answers, not one probe.
+    """
+    out = []
+    claim = "A decision agent resolves to the DGX Spark"
+    if isinstance(decision, str):
+        out.append((claim, FAIL, f"resolution failed: {decision}"))
+    elif decision and decision[1] == "vllm-2":
+        out.append((claim, PASS, f"{decision[0]} on vllm-2 (dgx_spark)"))
+    elif decision and decision[1] == "vllm":
+        out.append((claim, WARN,
+                    f"{decision[0]} on vllm (jetson) — legitimate only as fallback or "
+                    "overflow; check the container log for a [SmartRouting] line"))
+    else:
+        out.append((claim, FAIL, f"unexpected resolution {decision!r}"))
+
+    claim = "A collector agent resolves to the Jetson"
+    if isinstance(collector, str):
+        out.append((claim, FAIL, f"resolution failed: {collector}"))
+    elif collector and collector[1] == "vllm":
+        out.append((claim, PASS, f"{collector[0]} on vllm (jetson)"))
+    else:
+        out.append((claim, WARN, f"collector went to {collector!r} — Jetson may be down"))
+    return out
 
 
 def check_deployment(rep: Report, host: str, container: str) -> None:
@@ -132,6 +238,17 @@ def check_deployment(rep: Report, host: str, container: str) -> None:
         rep.add("The container's lazycat SDK accepts min_p", FAIL,
                 f"sdk={got.get('sdk_min_p')} probe={got.get('min_p_probe')} — "
                 "sync lazycat-sdk; every local-box call is losing min_p")
+
+    for claim_, status_, detail_ in routing_env_verdicts(got.get("routing_env") or {}):
+        rep.add(claim_, status_, detail_)
+
+    def _route(v):
+        return tuple(v) if isinstance(v, list) else v
+
+    for claim_, status_, detail_ in route_verdicts(
+        _route(got.get("decision_route")), _route(got.get("collector_route"))
+    ):
+        rep.add(claim_, status_, detail_)
 
     agents = got.get("shadow_agents", "")
     claim = "The gatekeeper is enrolled for shadowing"
@@ -378,6 +495,12 @@ async def main() -> int:
 
     rep = Report()
     print("── Deployment ──")
+    ship_script = Path(__file__).resolve().parents[1] / "deploy.sh"
+    violations = deploy_env_violations(ship_script.read_text()) if ship_script.exists() else []
+    rep.add("The deploy script writes no routing pin",
+            FAIL if violations else PASS,
+            "; ".join(violations) if violations else
+            "no SOLO_JETSON_MODE, and DECISION_MODEL_PATTERN admits glm")
     if args.skip_remote:
         rep.add("Deployment", INFO, "skipped (--skip-remote)")
     else:
