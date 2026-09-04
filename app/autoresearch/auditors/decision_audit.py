@@ -27,7 +27,23 @@ logger = logging.getLogger(__name__)
 #       term. Also reports which axis confidence tracks (frequency vs
 #       magnitude) and excludes DEGRADED_ARTIFACT from the cohort. The
 #       two-bucket term scored the live desk ~1.0 while tau says 0.50.
-SCORE_VERSION = "v5"
+#   v6 (2026-09-04): the per-cycle judge subscore now CARRIES WEIGHT
+#       (PER_CYCLE_JUDGE_WEIGHT) instead of being computed, displayed and
+#       ignored. Every term in v5 was a 30-day rolling cohort, so the score
+#       was structurally incapable of responding to the cycle it was auditing:
+#       it printed 82.4 for twelve consecutive cycles (and 86.5 for seven
+#       before that). Worse, 70% of that weight -- win rate and risk -- came
+#       from the WIN/LOSS rows only, and the live 30d window held 29 of those
+#       against 372 HOLD rows: four directional outcomes were setting most of
+#       the number. Scores either side of this change are NOT comparable.
+SCORE_VERSION = "v6"
+
+# How much of the decision score the this-cycle judge carries. Deliberately a
+# minority share: it is a single LLM's grade over one cycle's decisions, so it
+# should be able to move the number without being able to dominate it. The
+# rolling outcome terms remain the majority because they are the only ones
+# anchored to what actually happened to the money.
+PER_CYCLE_JUDGE_WEIGHT = 0.25
 
 
 def _bucket_rank_tau(qualified: dict, value_of) -> float | None:
@@ -384,23 +400,51 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
         score = 0.5
         outcome_stats = {"scoring_method": "fallback_error", "error": str(outcome_err)}
 
+    # Per-cycle judge subscore: the rolling outcome terms cannot move on a
+    # single cycle (30d cohort), which made twelve consecutive cycles score
+    # byte-identically at 82.4. This is the fast, this-cycle-only signal.
+    per_cycle_judge = None
+    judged_n = 0
+    try:
+        row = mongo_query.agg_row('decision_evaluations', {'cycle_id': cycle_id, 'final_quality_score': {'$ne': None}}, [('avg', 'final_quality_score'), ('count', None)])
+        # Type-check both halves before trusting them. This term now carries
+        # weight, so anything that merely SURVIVES float() must not become a
+        # grade: float(MagicMock()) is 1.0, which silently scored a mocked
+        # store as a perfect 20/100 judge result, and a real store returning
+        # a Decimal or a string would be just as wrong in the other direction.
+        # A value outside the judge's own 0-5 scale is not a judge result.
+        if (row
+                and isinstance(row[1], int) and not isinstance(row[1], bool) and row[1] > 0
+                and isinstance(row[0], (int, float)) and not isinstance(row[0], bool)
+                and 0.0 <= float(row[0]) <= 5.0):
+            per_cycle_judge = round(float(row[0]) * 20.0, 1)  # 0-5 → 0-100
+            judged_n = row[1]
+    except Exception:
+        pass
+
+    # v6: give it weight. Until now it was computed, rendered as a headline on
+    # the AutoResearch panel, and multiplied by nothing — so the score the
+    # dashboard led with could not respond to the cycle it was auditing. When
+    # the cycle has no judged decisions the weight is not redistributed to a
+    # guess: the outcome component stands alone, exactly as in v5.
+    outcome_component = score
+    if per_cycle_judge is not None:
+        score = (
+            (1.0 - PER_CYCLE_JUDGE_WEIGHT) * outcome_component
+            + PER_CYCLE_JUDGE_WEIGHT * (per_cycle_judge / 100.0)
+        )
+
+    # Critical findings discount the WHOLE score, judge term included — a
+    # cycle with a critical issue is not rescued by a good grade on it.
     critical_issues = [i for i in issues if i.get("severity") == "critical"]
     if critical_issues:
         score *= max(0.5, 1.0 - len(critical_issues) * 0.2)
 
-    # Per-cycle judge subscore: the rolling outcome terms cannot move on a
-    # single cycle (30d cohort), which made 16 consecutive cycles score
-    # byte-identically. This is the fast, this-cycle-only signal alongside it.
-    per_cycle_judge = None
-    try:
-        row = mongo_query.agg_row('decision_evaluations', {'cycle_id': cycle_id, 'final_quality_score': {'$ne': None}}, [('avg', 'final_quality_score'), ('count', None)])
-        if row and row[1]:
-            per_cycle_judge = round(float(row[0]) * 20.0, 1)  # 0-5 → 0-100
-    except Exception:
-        pass
-
     return {
         "score": round(score, 3),
+        "outcome_component": round(outcome_component, 3),
+        "per_cycle_judge_weight": PER_CYCLE_JUDGE_WEIGHT if per_cycle_judge is not None else 0.0,
+        "per_cycle_judge_n": judged_n,
         "score_version": SCORE_VERSION,
         "per_cycle_judge_score": per_cycle_judge,
         "buy": buy,
