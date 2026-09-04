@@ -81,3 +81,8 @@ scripts/test_v3_agent.py
 # would not have shipped the checkout in the image.)
 .worktrees/
 backfill_blocked_labels_undo.json
+
+# Session planning notes: not code, and the Dockerfile copies the working
+# tree, so an untracked plan file here would land in the image and block every
+# ship on the uncommitted-changes guard.
+.agents/
