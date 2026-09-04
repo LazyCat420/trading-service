@@ -246,8 +246,14 @@ def derive_debate_frame(desk: Any) -> dict:
         add(
             90, "DATA_SUFFICIENCY",
             "Is there enough verified evidence to take a position at all? "
-            "Argue whether the gaps are peripheral or load-bearing. "
-            "'Insufficient data' is a legitimate verdict here, not a cop-out.",
+            "NAME which gaps are load-bearing FOR THIS THESIS and say what "
+            "each one would change if it were filled. A gap in a figure the "
+            "thesis does not rest on is context, not a verdict. If a "
+            "load-bearing input is genuinely absent, say so plainly — that is "
+            "a legitimate verdict. Check the snapshot before you argue a "
+            "field is unknown: a value marked CARRIED FORWARD is on file with "
+            "its own date, and one marked N/A BY CONSTRUCTION is undefined "
+            "for this balance sheet rather than missing from our research.",
             score.get("not_scoreable_reason")
             or (f"pillar coverage {coverage}% is below the 40% line"
                 if isinstance(coverage, (int, float)) and coverage < 40

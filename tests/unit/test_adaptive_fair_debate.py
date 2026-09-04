@@ -538,3 +538,54 @@ class TestGapKeying:
             "raw": 0, "distinct": 0, "estimates": 0, "keys": []}
         assert distinct_data_gaps(None)["raw"] == 0
 
+
+class TestTheDataPropositionAsksRatherThanAnswers:
+    """A frame names the QUESTION; it must not name the winner.
+
+    The proposition used to end "'Insufficient data' is a legitimate verdict
+    here, not a cop-out" — priority 90, so it is in almost every frame it fires
+    for, and the block footer tells the debaters that material outside the
+    framed questions "does not decide the debate". The bear is separately
+    instructed to attack gaps and the bull to concede them, and the judge's
+    anti-bear-bias correction (rule 6, written after the bear won 72-94% of 288
+    debates) was scoped to unanswered independent risks — not to propositions.
+    So a gap COUNT arrived pre-declared as a legitimate bear verdict.
+    """
+
+    def _proposition(self):
+        frame = derive_debate_frame(_Desk(cycle_metadata=_score(band="NOT_SCOREABLE")))
+        return [f for f in frame["frames"] if f["key"] == "DATA_SUFFICIENCY"][0]["proposition"]
+
+    def test_it_does_not_pre_declare_the_bears_conclusion(self):
+        assert "not a cop-out" not in self._proposition()
+
+    def test_it_demands_the_gaps_be_named_and_tied_to_the_thesis(self):
+        p = self._proposition()
+        assert "load-bearing" in p and "THIS THESIS" in p
+        assert "what each one would change" in p or "would change if it were filled" in p
+
+    def test_insufficient_data_is_still_available_as_a_verdict(self):
+        """The signal is being scoped, not removed. A genuinely absent
+        load-bearing input must still be able to win."""
+        p = self._proposition()
+        assert "legitimate verdict" in p
+
+    def test_it_points_at_the_two_labels_that_are_not_gaps(self):
+        p = self._proposition()
+        assert "CARRIED FORWARD" in p and "N/A BY CONSTRUCTION" in p
+
+
+def test_the_judges_anti_bias_rule_covers_framed_propositions():
+    """Rule 6 corrected a measured bear bias but named only independent risks,
+    so a DATA_SUFFICIENCY frame routed around it."""
+    from pathlib import Path
+
+    judge = (Path(__file__).resolve().parents[2]
+             / "app" / "v3" / "agents" / "debate_judge.py").read_text()
+    rule6 = judge[judge.index("AN UNANSWERED ATTACK DOES NOT WIN"):
+                  judge.index("A CONCEDING BULL IS NOT A LOSING BULL")]
+
+    assert "framed proposition" in rule6
+    assert "DATA_SUFFICIENCY" in rule6
+    assert "count of gaps is not by itself a verdict" in rule6
+
