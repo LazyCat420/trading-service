@@ -30,6 +30,7 @@ already has enough of them.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,96 @@ _MIN_RR = 2.0
 
 _BULLISH = {"BULLISH", "BUY", "LONG"}
 _BEARISH = {"BEARISH", "SELL", "SHORT"}
+
+
+#: Field names a gap sentence may be ABOUT. Three desks each write their own
+#: prose about the same missing column, so the raw list triple-counts: on
+#: 2026-09-03 DELL's 16 gaps were 9 distinct things, with ROE/debt-to-equity
+#: named three times and the short-float conflict three times.
+#:
+#: Word-bounded on purpose — `roa` must not match "roadmap". A sentence that
+#: matches nothing keys on its own first 60 characters, so two desks phrasing
+#: the same novel gap differently still count twice; that is the safe
+#: direction, since the count only ever OPENS a debate.
+_GAP_FIELD_KEYS: tuple[tuple[str, "re.Pattern[str]"], ...] = tuple(
+    (key, re.compile(pattern))
+    for key, pattern in (
+        ("debt_to_equity", r"\bdebt[ _-]?to[ _-]?equity\b|\bd/e\b|\bdebt_to_equity\b"),
+        ("short_float_pct", r"\bshort[ _-]?float\b|\bshort_float_pct\b"),
+        ("price_to_book", r"\bp/b\b|\bprice[ _-]?to[ _-]?book\b"),
+        ("forward_pe", r"\bforward[ _-]?p/?e\b"),
+        ("pe_ratio", r"\b(?:ttm[ _-]?)?p/e\b|\bpe[ _-]?ratio\b"),
+        ("peg_ratio", r"\bpeg\b"),
+        ("current_ratio", r"\bcurrent[ _-]?ratio\b"),
+        ("quick_ratio", r"\bquick[ _-]?ratio\b"),
+        ("gross_margin", r"\bgross[ _-]?margin\b"),
+        ("oper_margin", r"\boperating[ _-]?margin\b|\boper[ _-]?margin\b"),
+        ("profit_margin", r"\bnet[ _-]?margin\b|\bprofit[ _-]?margin\b"),
+        ("eps_growth_qoq", r"\beps[ _-]?growth\b|\beps_growth_qoq\b"),
+        ("target_price", r"\btarget[ _-]?price\b"),
+        ("reverse_dcf", r"\breverse[ _-]?dcf\b"),
+        ("roic", r"\broic\b"),
+        ("roe", r"\broe\b"),
+        ("roa", r"\broa\b"),
+    )
+)
+
+_GAP_PREFIX = re.compile(r"^\s*(?:\[(?:BLOCKING|MATERIAL|MINOR)\]\s*)?(?:datagap\s*:\s*)?",
+                         re.IGNORECASE)
+
+
+def distinct_data_gaps(gaps: Any) -> dict:
+    """Count what is MISSING, not how many sentences mention it.
+
+    The count used to be `len()` over the concatenated `data_gaps` lists of
+    three artifacts, and it decides whether the desk argues DATA_SUFFICIENCY at
+    all. Every desk writes its own prose about the same absent column, so the
+    number scaled with how many analysts spoke rather than with how much was
+    unknown: DELL 2026-09-03 recorded 16, of which ROE/debt-to-equity was three
+    sentences, the short-float conflict three, and the reverse-DCF note two.
+
+    `Estimate:` entries are counted separately and excluded. They are the
+    quant's own working notes ("SMA-20 taken from desk notes, not recomputed"),
+    written into the same list because there is nowhere else to put them; they
+    are not absent data and must not open a data debate.
+
+    Returns {"raw", "distinct", "estimates", "keys"} — the raw number is kept
+    so the frame can show both and a reader can see the compression.
+    """
+    raw_list = [g for g in (gaps or []) if g]
+    estimates = 0
+    keys: list[str] = []
+    seen: set[str] = set()
+
+    for gap in raw_list:
+        text = _GAP_PREFIX.sub("", str(gap)).strip().lower()
+        text = " ".join(text.split())
+        if not text:
+            continue
+        if text.startswith("estimate:"):
+            estimates += 1
+            continue
+        # EARLIEST match wins, not first-in-table. A gap sentence names its
+        # subject and then explains around it — "ROIC NOT ON FILE, moat pillar
+        # relies on gross margin trend instead" is a gap about roic, and
+        # table-order matching keyed it to gross_margin and merged it with the
+        # genuinely separate gross-margin gap.
+        hits = [
+            (m.start(), i, k)
+            for i, (k, pattern) in enumerate(_GAP_FIELD_KEYS)
+            if (m := pattern.search(text))
+        ]
+        key = min(hits)[2] if hits else text[:60]
+        if key not in seen:
+            seen.add(key)
+            keys.append(key)
+
+    return {
+        "raw": len(raw_list),
+        "distinct": len(keys),
+        "estimates": estimates,
+        "keys": keys,
+    }
 
 
 def _artifact(desk: Any, name: str) -> dict:
@@ -142,17 +233,15 @@ def derive_debate_frame(desk: Any) -> dict:
     # ── Data sufficiency: "not enough on file" is a legitimate verdict ──
     band = str(score.get("band") or "").strip().upper()
     coverage = score.get("coverage_pct")
-    gaps = [
-        g for g in (
-            list(note.get("data_gaps") or [])
-            + list(fundamental.get("data_gaps") or [])
-            + list(quant.get("data_gaps") or [])
-        ) if g
-    ]
+    gap_stats = distinct_data_gaps(
+        list(note.get("data_gaps") or [])
+        + list(fundamental.get("data_gaps") or [])
+        + list(quant.get("data_gaps") or [])
+    )
     if (
         band == "NOT_SCOREABLE"
         or (isinstance(coverage, (int, float)) and coverage < 40)
-        or len(gaps) >= 6
+        or gap_stats["distinct"] >= 6
     ):
         add(
             90, "DATA_SUFFICIENCY",
@@ -162,7 +251,11 @@ def derive_debate_frame(desk: Any) -> dict:
             score.get("not_scoreable_reason")
             or (f"pillar coverage {coverage}% is below the 40% line"
                 if isinstance(coverage, (int, float)) and coverage < 40
-                else f"{len(gaps)} data gaps recorded across the research"),
+                else (f"{gap_stats['distinct']} distinct data gaps "
+                  f"({gap_stats['raw']} raw mentions across three desks"
+                  + (f", {gap_stats['estimates']} estimate notes excluded"
+                     if gap_stats["estimates"] else "")
+                  + ")")),
         )
 
     # ── Cross-desk disagreement: name it instead of averaging it away ──
@@ -258,6 +351,9 @@ def derive_debate_frame(desk: Any) -> dict:
         "frames": frames,
         "keys": [f["key"] for f in frames],
         "considered": len(candidates),
+        # Surfaced so a reader (and a test) can see the compression without
+        # re-parsing the rendered `because` string.
+        "data_gaps": gap_stats,
     }
 
 

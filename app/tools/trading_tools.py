@@ -360,7 +360,6 @@ async def get_earnings_data_tool(ticker: str) -> str:
 )
 async def get_finviz_fundamentals_tool(ticker: str) -> str:
     from app.collectors.finviz_scraper import collect_fundamentals
-    from app.db import mongo_store
     import json
 
     try:
@@ -369,11 +368,16 @@ async def get_finviz_fundamentals_tool(ticker: str) -> str:
         except Exception as ce:
             logger.info("[TradingTools] Live finviz scrape skipped (%s), reading stored fundamentals from MongoDB", ce)
 
-        docs = mongo_store.find_docs("fundamentals", {"ticker": ticker}, sort=[("snapshot_date", -1)], limit=1)
-        if docs:
-            doc = docs[0]
-            doc.pop("_id", None)
-            return json.dumps(doc, default=str)
+        # The COALESCED snapshot, not the newest raw row. Different vendors
+        # write different subsets of the same columns, so a raw newest-row read
+        # hands the agent whatever the last writer happened to carry — on
+        # 2026-09-03 that was DELL's four-field earnings-date stub, and the
+        # desk argued the whole cycle about ratios that were in the store.
+        from app.quant.fundamental_block import latest_fundamentals
+
+        snapshot = latest_fundamentals(ticker)
+        if snapshot:
+            return json.dumps(snapshot, default=str)
         return json.dumps({"error": "Failed to collect fundamentals from finviz"})
     except Exception as e:
         logger.error("[TradingTools] Finviz fundamentals failed for %s: %s", ticker, e)

@@ -3,7 +3,9 @@ Finnhub Collector — Fetches news, analyst targets, earnings calendar.
 
 Pure data collector. No LLM calls. No processing.
 Writes to: news_articles (via news_collector proxy), fundamentals
-(target_price, recom_score, earnings_date — merged into today's row).
+(target_price, recom_score, earnings_date — merged into the newest EXISTING
+row; this collector never creates a fundamentals row, see
+_merge_into_fundamentals).
 Requires: FINNHUB_API_KEY in .env (free tier = 60 calls/min)
 """
 
@@ -44,20 +46,46 @@ async def collect_news(ticker: str, days_back: int = 7) -> int:
 
 
 def _merge_into_fundamentals(ticker: str, fields: dict) -> None:
-    """Upsert a partial field set into today's fundamentals row.
+    """Merge a partial field set into the newest EXISTING fundamentals row.
 
-    COALESCE keeps whatever another source already wrote and only fills
-    the gaps — these collectors supply fields (targets, recs, earnings
-    dates) the primary yfinance/finviz writers may have missed.
+    THIS MUST NOT CREATE A ROW. It used to key on today's date, so on any day
+    the full snapshot collector had not run — every fast-path cycle skips
+    `collect_fundamentals` — an earnings-date lookup wrote a four-field
+    document `{ticker, snapshot_date, source, earnings_date}` for TODAY. Since
+    every reader takes the newest row, that stub then hid the previous day's
+    full snapshot and reported all 23 verified ratios as NOT ON FILE.
+
+    Measured 2026-09-03: the fundamental analyst's own `get_upcoming_events`
+    call created DELL's stub mid-cycle at 19:07:27, and the debate that
+    followed argued about "16 data gaps" against a 41-field snapshot sitting
+    one document away. NVDA and DKS had the same stub from the same path.
+
+    Keying on the newest existing row is one rule with no branch: it IS today's
+    row whenever today's row exists, and yesterday's when it does not — which
+    is where a target or an earnings date belongs anyway, since it describes
+    the same company on the same snapshot.
+
+    `source` is deliberately NOT written: this collector supplies a few fields,
+    it does not author the row, and stamping it relabelled yfinance-shaped rows
+    as finnhub ones (DELL's 09-02 row still carries the wrong label).
     """
-    today = datetime.date.today()
-    key = {'ticker': ticker.upper(), 'snapshot_date': today}
-    # `ON CONFLICT (ticker, snapshot_date) DO UPDATE SET c = COALESCE(EXCLUDED.c,
-    # fundamentals.c)` — a non-NULL incoming value wins, a NULL leaves the
-    # stored value alone. Omitting the None-valued fields from the $set is that
-    # semantic; on an insert they are simply absent (NULL).
-    doc = {'ticker': ticker.upper(), 'snapshot_date': today, 'source': 'finnhub'}
-    doc.update({c: v for c, v in fields.items() if v is not None})
+    doc = {c: v for c, v in fields.items() if v is not None}
+    if not doc:
+        return
+
+    rows = mongo_store.find_docs(
+        'fundamentals', {'ticker': ticker.upper()},
+        sort=[('snapshot_date', -1)], limit=1,
+    ) or []
+    if not rows:
+        logger.info(
+            "[finnhub] %s: no fundamentals snapshot on file — %s not merged "
+            "(a supplement must not be the only row for a ticker)",
+            ticker, ", ".join(sorted(doc)),
+        )
+        return
+
+    key = {'ticker': ticker.upper(), 'snapshot_date': rows[0].get('snapshot_date')}
     mongo_store.upsert_doc('fundamentals', key, doc)
 
 

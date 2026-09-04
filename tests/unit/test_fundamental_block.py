@@ -7,13 +7,204 @@ because it quoted the FORWARD P/E as the trailing one. Mislabelling and
 invention look identical downstream, and neither was catchable.
 """
 
+from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
 from app.quant.fundamental_block import (
     VERIFIED_NUMERIC_FIELDS,
     build_fundamental_block,
+    latest_fundamentals,
     reconcile_fundamental_metrics,
 )
+
+# ── DELL as the store actually held it on 2026-09-03 ────────────────────────
+#
+# Three real rows, in the shape Mongo returns them (snapshot_date is a naive
+# DATETIME, which is what killed the staleness gate). The desk read only the
+# first of these and reported every ratio NOT ON FILE.
+#
+#   09-03  4 fields   the earnings-date stub, written mid-cycle at 19:07:27
+#                     by the fundamental analyst's own get_upcoming_events call
+#   09-02  41 fields  the real snapshot; price_to_book -227.55, roic absent
+#   08-31  57 fields  finviz's supplement, the ONLY row carrying roic
+_DELL_STUB = {
+    "ticker": "DELL", "snapshot_date": datetime(2026, 9, 3),
+    "source": "finnhub", "earnings_date": datetime(2026, 11, 23),
+}
+_DELL_FULL = {
+    "ticker": "DELL", "snapshot_date": datetime(2026, 9, 2), "source": "finnhub",
+    "pe_ratio": 23.1, "forward_pe": 17.56, "price_to_book": -227.55432,
+    "current_ratio": 0.946, "gross_margin": 0.1909, "oper_margin": 0.0857,
+    "roa": 0.0833, "roe": None, "roic": None, "debt_to_equity": None,
+}
+_DELL_FINVIZ = {
+    "ticker": "DELL", "snapshot_date": datetime(2026, 8, 31), "source": "finviz",
+    "pe_ratio": 22.4, "price_to_book": -215.91307, "roic": 0.3704,
+    "current_ratio": 0.95, "roa": 0.0833,
+}
+_DELL_ROWS = [_DELL_STUB, _DELL_FULL, _DELL_FINVIZ]  # newest first, as sorted
+
+
+def _store(rows):
+    """Stand in for mongo_store.find_docs, honouring the $gte window only."""
+    def find_docs(collection, query, sort=None, limit=None, **kw):
+        assert collection == "fundamentals"
+        out = list(rows)
+        window = (query.get("snapshot_date") or {}).get("$gte")
+        if window is not None:
+            out = [
+                r for r in out
+                if (r["snapshot_date"].date()
+                    if isinstance(r["snapshot_date"], datetime)
+                    else r["snapshot_date"]) >= window
+            ]
+        return out[:limit] if limit else out
+    return find_docs
+
+
+class TestTheSnapshotIsCoalescedNotJustTheNewestRow:
+    """Different vendors write different columns of the same table, and a
+    supplement can create a row of its own. Reading one row therefore reports
+    whatever the last writer happened to carry — measured over 1,152 tickers
+    on 2026-09-03, the newest row lacked `roic` for 991 of them and an older
+    row inside the window held it for 946."""
+
+    def test_a_field_missing_from_the_newest_row_comes_from_an_older_one(self):
+        with patch("app.db.mongo_store.find_docs", _store(_DELL_ROWS)):
+            b = latest_fundamentals("DELL")
+
+        assert b["roic"] == 0.3704
+        assert b["field_as_of"]["roic"] == {
+            "as_of": date(2026, 8, 31), "source": "finviz",
+        }
+
+    def test_the_newest_non_null_value_wins(self):
+        """Coalescing must not resurrect a superseded number."""
+        with patch("app.db.mongo_store.find_docs", _store(_DELL_ROWS)):
+            b = latest_fundamentals("DELL")
+
+        assert b["pe_ratio"] == 23.1, "the 08-31 value 22.4 must not win"
+        assert "pe_ratio" not in b.get("field_as_of", {})
+
+    def test_a_supplement_stub_does_not_become_the_snapshot(self):
+        """The 4-field row is newest, but it dates nothing: it carries no
+        verified field. Letting it anchor would report a row written minutes
+        ago as today's fundamentals."""
+        with patch("app.db.mongo_store.find_docs", _store(_DELL_ROWS)):
+            b = latest_fundamentals("DELL")
+
+        assert b["as_of"] == date(2026, 9, 2)
+        assert b["source"] == "finnhub"
+        # ...while the field the stub DID carry is still used.
+        assert b["earnings_date"] == date(2026, 11, 23)
+
+    def test_age_is_computed_from_a_mongo_datetime(self):
+        """THE DEAD GATE: date.today() - datetime raises TypeError, the bare
+        except set stale=False, and no row had ever been called stale."""
+        old_row = dict(_DELL_FULL,
+                       snapshot_date=datetime.now() - timedelta(days=90))
+        with patch("app.db.mongo_store.find_docs", _store([old_row])):
+            b = latest_fundamentals("DELL")
+
+        assert b["age_days"] == 90
+        assert b["stale"] is True
+
+    def test_rows_outside_the_window_are_not_coalesced(self):
+        """A carried-forward value is bounded by the staleness window; beyond
+        it the field is honestly absent."""
+        ancient = dict(_DELL_FINVIZ,
+                       snapshot_date=datetime.now() - timedelta(days=100))
+        recent = dict(_DELL_FULL, snapshot_date=datetime.now())
+        with patch("app.db.mongo_store.find_docs", _store([recent, ancient])):
+            b = latest_fundamentals("DELL")
+
+        assert b.get("roic") is None
+        assert "roic" not in b.get("field_as_of", {})
+
+    def test_no_row_at_all_is_still_none(self):
+        with patch("app.db.mongo_store.find_docs", _store([])):
+            assert latest_fundamentals("NOPE") is None
+
+
+class TestUndefinedIsNotMissing:
+    """ROE and debt-to-equity have no meaning against negative book equity, and
+    both vendors return null. Printing that as NOT ON FILE told the desk our
+    collection had failed: on 2026-09-03 the bear argued DELL's "ROE and
+    debt-to-equity NOT ON FILE for a second consecutive cycle" as a
+    load-bearing gap, which it will be, every cycle, forever."""
+
+    def test_negative_equity_makes_roe_and_de_not_applicable(self):
+        with patch("app.quant.fundamental_block.compute_fundamental_baseline",
+                   return_value=_baseline(price_to_book=-227.55, roe=None,
+                                          debt_to_equity=None)):
+            out = build_fundamental_block("DELL")
+
+        assert "negative shareholders' equity" in out
+        assert "N/A BY CONSTRUCTION" in out
+        not_on_file = [ln for ln in out.splitlines() if "NOT ON FILE (report" in ln]
+        assert not_on_file, out
+        assert "roe" not in not_on_file[0] and "debt_to_equity" not in not_on_file[0]
+
+    def test_a_positive_book_still_reports_roe_as_missing(self):
+        with patch("app.quant.fundamental_block.compute_fundamental_baseline",
+                   return_value=_baseline(price_to_book=3.2, roe=None,
+                                          debt_to_equity=None)):
+            out = build_fundamental_block("TEST")
+
+        assert "negative shareholders' equity" not in out
+        not_on_file = [ln for ln in out.splitlines() if "NOT ON FILE (report" in ln][0]
+        assert "roe" in not_on_file and "debt_to_equity" in not_on_file
+
+    def test_an_absent_price_to_book_is_not_negative_equity(self):
+        """An ETF carries no ratios at all; absence must not read as negative."""
+        with patch("app.quant.fundamental_block.compute_fundamental_baseline",
+                   return_value=_baseline(price_to_book=None, roe=None,
+                                          debt_to_equity=None)):
+            out = build_fundamental_block("QQQM")
+
+        assert "negative shareholders' equity" not in out
+        assert "roe" in [ln for ln in out.splitlines() if "NOT ON FILE (report" in ln][0]
+
+    def test_a_vendor_supplied_value_prints_even_with_negative_equity(self):
+        """Only ABSENCE is relabelled. A vendor that does compute a negative
+        ROE is reporting a real number and it must survive."""
+        with patch("app.quant.fundamental_block.compute_fundamental_baseline",
+                   return_value=_baseline(price_to_book=-227.55, roe=-0.85,
+                                          debt_to_equity=None)):
+            out = build_fundamental_block("DELL")
+
+        assert "-85.00%" in out
+        returns = [ln for ln in out.splitlines() if ln.startswith("- Returns:")][0]
+        assert "N/A" not in returns
+
+
+class TestCarriedForwardValuesCarryTheirDate:
+    def test_the_block_names_them(self):
+        with patch("app.quant.fundamental_block.compute_fundamental_baseline",
+                   return_value=_baseline(
+                       roic=0.3704,
+                       field_as_of={"roic": {"as_of": date(2026, 8, 31),
+                                             "source": "finviz"}})):
+            out = build_fundamental_block("DELL")
+
+        assert "CARRIED FORWARD" in out
+        assert "roic" in out and "2026-08-31" in out and "finviz" in out
+
+    def test_a_carried_field_is_not_also_reported_missing(self):
+        with patch("app.quant.fundamental_block.compute_fundamental_baseline",
+                   return_value=_baseline(
+                       roic=0.3704,
+                       field_as_of={"roic": {"as_of": date(2026, 8, 31),
+                                             "source": "finviz"}})):
+            out = build_fundamental_block("DELL")
+
+        not_on_file = [ln for ln in out.splitlines() if "NOT ON FILE (report" in ln][0]
+        assert "roic" not in not_on_file
+
+    def test_no_carried_fields_means_no_extra_line(self):
+        with patch("app.quant.fundamental_block.compute_fundamental_baseline",
+                   return_value=_baseline()):
+            assert "CARRIED FORWARD" not in build_fundamental_block("TEST")
 
 
 def _baseline(**over):

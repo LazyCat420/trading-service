@@ -17,6 +17,7 @@ from app.v3.debate_frame import (
     MAX_FRAMES,
     build_debate_frame_block,
     derive_debate_frame,
+    distinct_data_gaps,
 )
 
 _ORCHESTRATOR = Path(__file__).resolve().parents[2] / "app" / "v3" / "orchestrator.py"
@@ -393,3 +394,147 @@ def test_every_agents_numbered_rules_number_once():
                 offenders.append(f"{mod_info.name}: rule number {n} repeats")
             seen.add(n)
     assert not offenders, "; ".join(offenders)
+
+
+# ── The gap count must measure what is missing, not who spoke ───────────────
+#
+# DELL's real data_gaps lists from cycle-v3-1788486930 (2026-09-03), verbatim,
+# split across the three artifacts the frame reads. The desk recorded 16 and
+# the bear argued "16 gaps are recorded, and the load-bearing ones are not
+# peripheral" — but ROE/debt-to-equity is three sentences, the short-float
+# conflict is three, the reverse-DCF note is two, and two entries are the
+# quant's own working notes rather than absent data.
+_DELL_NOTE_GAPS = [
+    "DataGap: debt_to_equity and ROE still null in screener — load-bearing items from prior cycle remain unverified",
+    "DataGap: reverse-DCF implied growth (24.7%/yr) vs realized EBIT CAGR (13.5%) unverified against the new $192B guidance",
+    "DataGap: short_float_pct conflict — screener 4.64% vs pre-collected 0.05%; unresolved",
+    "DataGap: Reddit feed truncated; social chatter 19 posts/0 engagements — retail read unavailable",
+    "DataGap: AI server margins and backlog conversion timeline not quantified in available news",
+]
+_DELL_FUNDAMENTAL_GAPS = [
+    "DataGap: ROE NOT ON FILE (2nd consecutive cycle) — load-bearing for profitability pillar",
+    "DataGap: ROIC NOT ON FILE — moat pillar relies on gross margin trend + peer screener comparison instead",
+    "DataGap: debt-to-equity NOT ON FILE (2nd consecutive cycle) — leverage unverified; only current ratio 0.95 / quick ratio 0.61 on file",
+    "DataGap: 5-year gross margin trend unavailable from current tools — moat trend assessed from annual revenue/NI trajectory instead",
+    "DataGap: short_float_pct conflict unresolved — snapshot 4.64% vs pre-collected 0.05%; stored snapshot value used",
+    "DataGap: reverse-DCF implied growth (24.7%/yr NOPAT) vs realized EBIT CAGR (13.5%/yr) unverified against new $192B guide",
+]
+_DELL_QUANT_GAPS = [
+    "Estimate: SMA-20 $462 and SMA-50 $437 pullback zones taken from desk notes/pre-collected technicals, not recomputed from raw history this cycle.",
+    "Estimate: analog study (15 prior >15% 2-day pops) uses 252 rows of Polygon history; small sample, NW t=0.73 — indicative only.",
+    "debt_to_equity and ROE not on file (2nd consecutive cycle) — leverage unverified; not load-bearing for the NEUTRAL call.",
+    "Short-float conflict (screener 4.64% vs pre-collected 0.05%) unresolved.",
+    "Polygon price history returned row-count metadata only; equation ran on the service-side df, so swing-structure/trendline work beyond stored levels was not possible this cycle.",
+]
+
+
+def _dell_desk():
+    return _Desk(
+        desk_note={"data_gaps": _DELL_NOTE_GAPS},
+        fundamental_report={"data_gaps": _DELL_FUNDAMENTAL_GAPS},
+        quant_report={"data_gaps": _DELL_QUANT_GAPS},
+    )
+
+
+def test_the_dell_desk_counts_distinct_gaps_not_mentions():
+    frame = derive_debate_frame(_dell_desk())
+    stats = frame["data_gaps"]
+
+    assert stats["raw"] == 16
+    assert stats["estimates"] == 2
+    # 9, and each merge is explained rather than merely pinned:
+    #   roe            x3  (note, fundamental, quant)
+    #   debt_to_equity x3  — same three sentences, keyed by their subject
+    #   short_float_pct x3
+    #   reverse_dcf    x2
+    # leaving roic, gross_margin, and three prose-only gaps (reddit feed,
+    # AI-server margins, polygon row-count).
+    assert stats["distinct"] == 9, stats["keys"]
+    for field in ("roe", "debt_to_equity", "short_float_pct", "reverse_dcf",
+                  "roic", "gross_margin"):
+        assert stats["keys"].count(field) == 1, f"{field}: {stats['keys']}"
+
+
+def test_the_rendered_reason_shows_both_numbers():
+    frame = derive_debate_frame(_dell_desk())
+    because = [f for f in frame["frames"] if f["key"] == "DATA_SUFFICIENCY"][0]["because"]
+
+    assert "9 distinct data gaps" in because
+    assert "16 raw mentions" in because
+    assert "2 estimate notes excluded" in because
+
+
+def test_the_same_gap_from_three_desks_is_one_gap():
+    """Six sentences about two missing columns must not open a data debate."""
+    pair = ["DataGap: ROE NOT ON FILE", "DataGap: debt-to-equity NOT ON FILE"]
+    desk = _Desk(desk_note={"data_gaps": list(pair)},
+                 fundamental_report={"data_gaps": list(pair)},
+                 quant_report={"data_gaps": list(pair)})
+    frame = derive_debate_frame(desk)
+
+    assert frame["data_gaps"] == {
+        "raw": 6, "distinct": 2, "estimates": 0,
+        "keys": ["roe", "debt_to_equity"],
+    }
+    assert "DATA_SUFFICIENCY" not in frame["keys"]
+
+
+def test_estimate_notes_do_not_open_a_data_debate():
+    """The quant's working notes live in data_gaps because there is nowhere
+    else to put them. They are not absent data."""
+    notes = [f"Estimate: level {i} taken from stored data, not recomputed"
+             for i in range(6)]
+    frame = derive_debate_frame(_Desk(quant_report={"data_gaps": notes}))
+
+    assert frame["data_gaps"]["estimates"] == 6
+    assert frame["data_gaps"]["distinct"] == 0
+    assert "DATA_SUFFICIENCY" not in frame["keys"]
+
+
+def test_six_genuinely_distinct_gaps_still_open_the_debate():
+    """The signal is not being removed — only the triple-counting."""
+    gaps = ["DataGap: ROE NOT ON FILE", "DataGap: ROIC NOT ON FILE",
+            "DataGap: debt-to-equity NOT ON FILE", "DataGap: PEG NOT ON FILE",
+            "DataGap: target price NOT ON FILE",
+            "DataGap: no filings retrieved this cycle"]
+    frame = derive_debate_frame(_Desk(fundamental_report={"data_gaps": gaps}))
+
+    assert frame["data_gaps"]["distinct"] == 6
+    assert "DATA_SUFFICIENCY" in frame["keys"]
+
+
+class TestGapKeying:
+    def test_a_gap_keys_on_the_field_it_is_about(self):
+        stats = distinct_data_gaps([
+            "DataGap: debt_to_equity and ROE still null in screener",
+            "ROE NOT ON FILE (2nd consecutive cycle)",
+            "Short-float conflict (screener 4.64% vs 0.05%) unresolved.",
+            "DataGap: short_float_pct conflict — screener 4.64%",
+        ])
+        assert stats["keys"] == ["debt_to_equity", "roe", "short_float_pct"]
+
+    def test_the_subject_of_the_sentence_wins_not_the_aside(self):
+        """"ROIC NOT ON FILE — moat pillar relies on gross margin trend" is a
+        gap about ROIC. Matching in table order keyed it to gross_margin and
+        merged it with the genuinely separate gross-margin gap."""
+        stats = distinct_data_gaps([
+            "DataGap: ROIC NOT ON FILE — moat pillar relies on gross margin trend instead",
+            "DataGap: 5-year gross margin trend unavailable from current tools",
+        ])
+        assert stats["keys"] == ["roic", "gross_margin"]
+
+    def test_a_field_name_inside_a_word_does_not_match(self):
+        assert distinct_data_gaps(["DataGap: product roadmap unclear"])["keys"] \
+            == ["product roadmap unclear"]
+
+    def test_a_severity_tag_and_the_datagap_prefix_are_stripped(self):
+        stats = distinct_data_gaps([
+            "[MATERIAL] DataGap: ROE NOT ON FILE", "DataGap: roe not on file",
+        ])
+        assert stats == {"raw": 2, "distinct": 1, "estimates": 0, "keys": ["roe"]}
+
+    def test_an_empty_list_is_not_a_gap(self):
+        assert distinct_data_gaps([]) == {
+            "raw": 0, "distinct": 0, "estimates": 0, "keys": []}
+        assert distinct_data_gaps(None)["raw"] == 0
+

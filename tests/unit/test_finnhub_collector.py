@@ -115,3 +115,69 @@ async def test_collect_all(mock_news, mock_targets, mock_earnings, mock_trends):
     assert result["analyst_targets"] is True
     assert result["earnings_events"] == 2
     assert result["recommendation_snapshots"] == 1
+
+
+# ── The supplement must never be the only row ───────────────────────────────
+#
+# `_merge_into_fundamentals` keyed on TODAY's date, so on any day the full
+# snapshot collector had not run — every fast-path cycle skips it — an
+# earnings-date lookup CREATED a four-field row for today. Every reader takes
+# the newest row, so that stub then hid the previous day's 41-field snapshot
+# and reported all 23 verified ratios as NOT ON FILE. Measured 2026-09-03:
+# DELL's stub was written mid-cycle at 19:07:27 by the fundamental analyst's
+# own get_upcoming_events call, and the debate that followed argued about
+# "16 data gaps" against a full snapshot sitting one document away.
+import datetime as _dt
+
+from app.collectors.finnhub_collector import _merge_into_fundamentals
+
+
+def test_merge_writes_into_the_newest_existing_row(mock_db):
+    mock_db.find_docs.return_value = [
+        {"ticker": "DELL", "snapshot_date": _dt.date(2026, 9, 2)}
+    ]
+    _merge_into_fundamentals("DELL", {"earnings_date": _dt.date(2026, 11, 23)})
+
+    mock_db.upsert_doc.assert_called_once()
+    _, key, doc = mock_db.upsert_doc.call_args[0]
+    assert key == {"ticker": "DELL", "snapshot_date": _dt.date(2026, 9, 2)}, (
+        "keying on today creates a stub row that hides the real snapshot"
+    )
+    assert doc == {"earnings_date": _dt.date(2026, 11, 23)}
+
+
+def test_merge_does_not_relabel_the_rows_source(mock_db):
+    """Stamping source=finnhub relabelled yfinance-shaped rows; DELL's 09-02
+    row still carries the wrong label from this."""
+    mock_db.find_docs.return_value = [
+        {"ticker": "DELL", "snapshot_date": _dt.date(2026, 9, 2)}
+    ]
+    _merge_into_fundamentals("DELL", {"target_price": 556.13})
+
+    _, _, doc = mock_db.upsert_doc.call_args[0]
+    assert "source" not in doc
+    assert "ticker" not in doc and "snapshot_date" not in doc
+
+
+def test_merge_skips_a_ticker_with_no_snapshot(mock_db):
+    mock_db.find_docs.return_value = []
+    _merge_into_fundamentals("NEWCO", {"earnings_date": _dt.date(2026, 11, 23)})
+
+    mock_db.upsert_doc.assert_not_called()
+
+
+def test_merge_uses_todays_row_when_it_exists(mock_db):
+    today = _dt.date.today()
+    mock_db.find_docs.return_value = [{"ticker": "DELL", "snapshot_date": today}]
+    _merge_into_fundamentals("DELL", {"recom_score": 1.82})
+
+    _, key, _ = mock_db.upsert_doc.call_args[0]
+    assert key["snapshot_date"] == today
+
+
+def test_merge_with_nothing_to_write_does_not_touch_the_store(mock_db):
+    _merge_into_fundamentals("DELL", {"target_price": None})
+
+    mock_db.find_docs.assert_not_called()
+    mock_db.upsert_doc.assert_not_called()
+
