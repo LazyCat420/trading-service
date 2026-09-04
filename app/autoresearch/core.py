@@ -346,6 +346,28 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         _update_ar_state(report_id, phase="done")
         return {"id": report_id, "overall_score": round(overall, 1), "status": "done"}
 
+    except asyncio.CancelledError:
+        # The container was told to stop mid-audit. CancelledError is a
+        # BaseException, so it skips `except Exception` below and lands
+        # straight in `finally` — which used to see status=='running' and
+        # stamp the report DONE (`_update_ar_state(running=False)` maps
+        # False -> 'done'). Three of the last 25 reports carried
+        # status='done', phase='judge_eval' and no scores at all, and the
+        # panel rendered a green "done" badge beside three red 0 score cards
+        # that then plotted as dips on the trend sparkline.
+        #
+        # A run that was killed is not a run that finished. Name it, and
+        # re-raise so the caller's own cancellation is not swallowed.
+        logger.warning(
+            "[AUTORESEARCH] Cancelled mid-run (report %s) — marking interrupted",
+            report_id,
+        )
+        _update_ar_state(report_id, error="cancelled mid-run", phase="interrupted")
+        try:
+            mongo_store.update_docs('autoresearch_reports', {'id': report_id}, {'$set': {'status': 'interrupted'}})
+        except Exception:
+            pass
+        raise
     except Exception as e:
         logger.error("[AUTORESEARCH] Failed: %s", e, exc_info=True)
         _update_ar_state(report_id, error=str(e), phase="error")
@@ -355,11 +377,20 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
             pass
         return {"error": str(e)}
     finally:
+        # Backstop for any other BaseException (SystemExit, a KeyboardInterrupt
+        # from a hand-run) that reaches here with the report still 'running'.
+        # The discriminator is EVIDENCE, not the exception type: a report with
+        # no overall_score never reached the scoring write at the end of the
+        # try block, so it cannot honestly be called done.
         try:
-            status = mongo_query.find_row('autoresearch_reports', {'id': report_id}, ['status'])
-            if status and status[0] == 'running':
-                _update_ar_state(report_id, running=False)
-        except:
+            row = mongo_query.find_row(
+                'autoresearch_reports', {'id': report_id}, ['status', 'overall_score'])
+            if row and row[0] == 'running':
+                if row[1] is None:
+                    _update_ar_state(report_id, status='interrupted', phase='interrupted')
+                else:
+                    _update_ar_state(report_id, running=False)
+        except Exception:
             pass
 
 
