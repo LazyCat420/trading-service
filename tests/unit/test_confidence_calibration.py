@@ -139,5 +139,17 @@ def test_no_map_yields_no_claim():
 def test_score_version_was_bumped():
     """The calibration term changed, so cycles either side are not
     comparable on it. An unbumped version makes that jump look like an
-    improvement — the exact failure the stamp exists to prevent."""
-    assert SCORE_VERSION == "v5"
+    improvement — the exact failure the stamp exists to prevent.
+
+    Asserted as a FLOOR, not an equality. `== "v5"` caught the revert it was
+    written for, but it also failed the next legitimate bump (v6, 2026-09-04,
+    the per-cycle judge term) — a guard that goes red for being superseded
+    trains people to edit it without reading it. The floor still fails if the
+    calibration change is reverted, and survives honest formula changes, each
+    of which carries its own entry in the SCORE_VERSION changelog.
+    """
+    assert SCORE_VERSION.startswith("v")
+    assert int(SCORE_VERSION[1:]) >= 5, (
+        f"SCORE_VERSION is {SCORE_VERSION}: the calibration change that made "
+        "cycles non-comparable is not stamped"
+    )
