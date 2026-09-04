@@ -171,7 +171,7 @@ class Settings(BaseSettings):
     # this case-insensitive substring; update it when the decision model is
     # deliberately switched (last switch: gemma→deepseek, 2026-08-03).
     # Supports pipe-delimited values (e.g. "deepseek|nemotron").
-    DECISION_MODEL_PATTERN: str = "deepseek|nemotron"
+    DECISION_MODEL_PATTERN: str = "deepseek|nemotron|glm"
 
     # Solo-Jetson mode: Route all trading pipeline agents (decision + collector)
     # to the Jetson Orin AGX (vllm) when DGX Spark is offline or in local mode.

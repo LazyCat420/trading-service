@@ -108,3 +108,57 @@ class TestSmartRouting:
 
         with pytest.raises(pac.ModelContractError):
             await pac.resolve_default_model_for_agent("v3_regime_engine")
+
+    @pytest.mark.asyncio
+    async def test_glm_on_dgx_spark_selected_when_pattern_allows_glm(self, monkeypatch):
+        """When pattern includes glm, GLM-5.3-Flash-EXL3 on DGX Spark is successfully selected."""
+        monkeypatch.setattr(pac, "llm", _endpoint_stub(jetson=True, dgx_spark=True))
+        monkeypatch.setattr(settings, "SOLO_JETSON_MODE", False)
+        monkeypatch.setattr(settings, "DECISION_MODEL_PATTERN", "deepseek|nemotron|glm")
+
+        async def mock_get_live_model(url, force_refresh=False):
+            if "dgx" in url:
+                return "GLM-5.3-Flash-EXL3"
+            return "nemotron35"
+
+        monkeypatch.setattr(pac, "get_live_model_from_vllm", mock_get_live_model)
+
+        model, provider = await pac.resolve_default_model_for_agent("v3_regime_engine")
+        assert provider == "vllm-2"
+        assert model == "GLM-5.3-Flash-EXL3"
+
+    @pytest.mark.asyncio
+    async def test_dgx_spark_contract_mismatch_falls_back_to_jetson_nemotron(self, monkeypatch):
+        """When DGX Spark has an unapproved model, it seamlessly falls back to Nemotron on Jetson."""
+        monkeypatch.setattr(pac, "llm", _endpoint_stub(jetson=True, dgx_spark=True))
+        monkeypatch.setattr(settings, "SOLO_JETSON_MODE", False)
+        monkeypatch.setattr(settings, "DECISION_MODEL_PATTERN", "deepseek|nemotron|glm")
+
+        async def mock_get_live_model(url, force_refresh=False):
+            if "dgx" in url:
+                return "unapproved-qwen-model"
+            return "nemotron35"
+
+        monkeypatch.setattr(pac, "get_live_model_from_vllm", mock_get_live_model)
+
+        # DGX fails contract -> falls back to Jetson nemotron35 which matches nemotron!
+        model, provider = await pac.resolve_default_model_for_agent("v3_regime_engine")
+        assert provider == "vllm"
+        assert model == "nemotron35"
+
+    @pytest.mark.asyncio
+    async def test_both_boxes_fail_contract_raises_contract_error(self, monkeypatch):
+        """When all candidate boxes fail the contract pattern, ModelContractError is raised."""
+        monkeypatch.setattr(pac, "llm", _endpoint_stub(jetson=True, dgx_spark=True))
+        monkeypatch.setattr(settings, "SOLO_JETSON_MODE", False)
+        monkeypatch.setattr(settings, "DECISION_MODEL_PATTERN", "deepseek|nemotron")
+
+        async def mock_get_live_model(url, force_refresh=False):
+            if "dgx" in url:
+                return "unapproved-model-1"
+            return "unapproved-model-2"
+
+        monkeypatch.setattr(pac, "get_live_model_from_vllm", mock_get_live_model)
+
+        with pytest.raises(pac.ModelContractError):
+            await pac.resolve_default_model_for_agent("v3_regime_engine")

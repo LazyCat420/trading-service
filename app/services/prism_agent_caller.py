@@ -516,48 +516,55 @@ async def resolve_default_model_for_agent(
     for ep_key, prov in candidates:
         ep = llm._endpoints.get(ep_key)
         if not ep or not ep.enabled or not ep.url:
-            last_error = RuntimeError(f"VLLM endpoint '{ep_key}' is not configured or disabled.")
+            if not last_error:
+                last_error = RuntimeError(f"VLLM endpoint '{ep_key}' is not configured or disabled.")
             continue
         try:
             discovered_model = await get_live_model_from_vllm(ep.url, force_refresh=force_refresh)
-            chosen_endpoint = ep_key
-            chosen_provider = prov
-            break
         except (ModelUnavailableError, RuntimeError, Exception) as exc:
             logger.warning(
                 "[SmartRouting] Endpoint '%s' unavailable (%s) — attempting fallback if available.",
                 ep_key, exc
             )
             last_error = exc
+            continue
+
+        # Decision agents run on dgx_spark or jetson fallback.
+        # Normal Jetson collector/janitor roles are model-agnostic by design.
+        name_lower = (agent_name or "").lower()
+        collector_keywords = (
+            "janitor", "curator", "summarizer", "scout", "purge",
+            "maintenance", "consensus", "ticker_validator"
+        )
+        is_collector = any(kw in name_lower for kw in collector_keywords)
+        must_check_contract = (not is_collector) or (ep_key == "jetson" and solo_jetson)
+
+        if must_check_contract:
+            pattern = (getattr(_settings, "DECISION_MODEL_PATTERN", "") or "").strip().lower()
+            if pattern:
+                patterns = [p.strip() for p in pattern.split("|") if p.strip()]
+                model_lower = str(discovered_model).lower()
+                if not any(p in model_lower for p in patterns):
+                    contract_err = ModelContractError(
+                        f"{ep_key} is serving {discovered_model!r}, which does not match "
+                        f"DECISION_MODEL_PATTERN={pattern!r}. Refusing to run {agent_name} "
+                        f"against a model the decision agents were not built for."
+                    )
+                    logger.warning(
+                        "[SmartRouting] Endpoint '%s' model contract violation: %s — attempting fallback if available.",
+                        ep_key, contract_err
+                    )
+                    last_error = contract_err
+                    continue
+
+        chosen_endpoint = ep_key
+        chosen_provider = prov
+        break
 
     if not chosen_endpoint or not discovered_model:
-        if isinstance(last_error, ModelUnavailableError):
+        if isinstance(last_error, (ModelUnavailableError, ModelContractError)):
             raise last_error
         raise ModelUnavailableError(f"No vLLM endpoints available: {last_error}")
-
-    # Decision agents run on dgx_spark or jetson fallback.
-    # Normal Jetson collector/janitor roles are model-agnostic by design.
-    name_lower = (agent_name or "").lower()
-    collector_keywords = (
-        "janitor", "curator", "summarizer", "scout", "purge",
-        "maintenance", "consensus", "ticker_validator"
-    )
-    is_collector = any(kw in name_lower for kw in collector_keywords)
-    must_check_contract = (not is_collector) or (chosen_endpoint == "jetson" and solo_jetson)
-
-    if must_check_contract:
-        pattern = (getattr(_settings, "DECISION_MODEL_PATTERN", "") or "").strip().lower()
-        if pattern:
-            patterns = [p.strip() for p in pattern.split("|") if p.strip()]
-            model_lower = str(discovered_model).lower()
-            if not any(p in model_lower for p in patterns):
-                raise ModelContractError(
-                    f"{chosen_endpoint} is serving {discovered_model!r}, which does not match "
-                    f"DECISION_MODEL_PATTERN={pattern!r}. Refusing to run {agent_name} "
-                    f"against a model the decision agents were not built for — another "
-                    f"workload has the box, or the decision model was switched without "
-                    f"updating the pattern."
-                )
 
     return discovered_model, chosen_provider
 
