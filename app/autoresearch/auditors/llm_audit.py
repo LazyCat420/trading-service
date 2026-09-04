@@ -5,28 +5,69 @@ from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
+# Terminal outcomes that mean the agent run itself failed. A row whose outcome
+# was downgraded (e.g. a second artifact failure becomes DATA_GAP so the desk
+# is not aborted) still carries its failure_reason — count those too, or the
+# downgrade hides the failure from this audit exactly the way it hides it from
+# _check_abort.
+_FAILED_OUTCOMES = ("AGENT_ERROR", "TIMED_OUT")
+
 
 def _audit_llm_traces(cycle_id: str) -> dict:
     """Score LLM performance = availability + output quality, not just uptime.
 
-    The old formula was fail_rate only, which pinned the score at 100 whenever
-    every call merely *returned* — truncated, ungrounded, or low-quality output
-    scored the same as excellent output. Blend:
-      - availability (0.5): 1 - 2*fail_rate from the in-process tracker
+    Availability is measured from THIS cycle's `v3_agent_telemetry` rows (one
+    per agent attempt, cycle_id-keyed). It used to read the in-process
+    LLMTracker singleton, which lost its only writer in the fa7cee3 SDK
+    migration (2026-06-25) and read `total_calls=0` on every cycle forever —
+    and 0 calls scored as availability 1.0, so the audit reported a perfect
+    LLM on zero evidence while telling the reflection LLM "LLM calls: 0".
+    (The audit also runs in the eval worker, a different process from the
+    cycle, so an in-memory counter was the wrong instrument even when wired.)
+
+    Blend:
+      - availability (0.5): 1 - 2*fail_rate over this cycle's agent runs;
+        None (not 1.0) when the cycle has no telemetry rows at all
       - judge quality (0.3): decision_evaluations.final_quality_score (0-5,
         LLM-as-judge over real decisions), 7d average
       - eval quality (0.2): eval_scores.final_score (0-100 trace evals), 7d avg
-    Quality components fall back to availability when their tables are thin,
-    so cold starts don't punish or inflate.
+    The score is the weighted average renormalized over the components that
+    have evidence; a component with no evidence contributes nothing rather
+    than borrowing another component's number. No evidence anywhere -> 0.5
+    ("could not measure") plus a named issue — never a silent perfect score.
     """
     issues = []
     try:
-        from app.monitoring.llm_tracker import tracker
-        stats = tracker.get_stats()
-        total_calls = stats.get("total_calls", 0)
-        failed = stats.get("failed_calls", 0)
-        fail_rate = (failed / total_calls) if total_calls else 0.0
-        availability = max(0.0, 1.0 - fail_rate * 2)
+        cycle_filter = {"cycle_id": cycle_id}
+        total_calls = mongo_query.count("v3_agent_telemetry", cycle_filter)
+        failed = mongo_query.count("v3_agent_telemetry", {
+            "cycle_id": cycle_id,
+            "$or": [
+                {"outcome": {"$in": list(_FAILED_OUTCOMES)}},
+                {"failure_reason": {"$ne": None}},
+            ],
+        })
+        # Context only: the per-decision LLM ledger (~1 row per cycle since
+        # the per-call logging died). It cannot express failure, so it never
+        # feeds fail_rate — but "0 telemetry AND 0 ledger rows" is the
+        # difference between "cycle made no calls" and "telemetry is broken".
+        llm_calls_logged = mongo_query.count("llm_audit_logs", cycle_filter)
+
+        if total_calls > 0:
+            fail_rate = failed / total_calls
+            availability = max(0.0, 1.0 - fail_rate * 2)
+        else:
+            # No evidence is not health. Refuse to compute, and say so.
+            fail_rate = None
+            availability = None
+            issues.append({
+                "issue": (
+                    f"No per-cycle LLM activity evidence for {cycle_id}: "
+                    f"0 rows in v3_agent_telemetry, {llm_calls_logged} in "
+                    f"llm_audit_logs — availability unmeasured"
+                ),
+                "severity": "warning",
+            })
 
         judge_avg = None
         eval_avg = None
@@ -60,11 +101,25 @@ def _audit_llm_traces(cycle_id: str) -> dict:
         except Exception as q_err:
             logger.debug("[LLM-AUDIT] Quality component lookup skipped: %s", q_err)
 
-        current_score = (
-            0.5 * availability
-            + 0.3 * (judge_avg if judge_avg is not None else availability)
-            + 0.2 * (eval_avg if eval_avg is not None else availability)
-        )
+        # Weighted average over the components that actually have evidence.
+        components = [
+            (0.5, availability),
+            (0.3, judge_avg),
+            (0.2, eval_avg),
+        ]
+        live = [(w, v) for w, v in components if v is not None]
+        if live:
+            weight_sum = sum(w for w, _ in live)
+            current_score = sum(w * v for w, v in live) / weight_sum
+        else:
+            current_score = 0.5
+            issues.append({
+                "issue": (
+                    "No LLM evidence at all (no cycle telemetry, no 7d judge "
+                    "or eval rows) — score is the could-not-measure default"
+                ),
+                "severity": "warning",
+            })
 
         # Trend drift vs prior reports (sourced from autoresearch_reports —
         # the old subsystem_benchmarks module was deleted in the V3 purge).
@@ -85,8 +140,8 @@ def _audit_llm_traces(cycle_id: str) -> dict:
         else:
             avg_score = current_score
 
-        if fail_rate > 0.1:
-            issues.append({"issue": f"LLM failure rate: {fail_rate:.0%}", "severity": "warning"})
+        if fail_rate is not None and fail_rate > 0.1:
+            issues.append({"issue": f"LLM failure rate: {fail_rate:.0%} ({failed}/{total_calls} agent runs this cycle)", "severity": "warning"})
         if judge_avg is not None and judge_avg < 0.6:
             issues.append({"issue": f"LLM-judge decision quality low: {judge_avg:.0%} (7d avg)", "severity": "warning"})
         if deepeval_dead:
@@ -99,8 +154,10 @@ def _audit_llm_traces(cycle_id: str) -> dict:
             "score": round(current_score, 3),
             "total_calls": total_calls,
             "failed_calls": failed,
-            "fail_rate": round(fail_rate, 3),
-            "availability": round(availability, 3),
+            "llm_calls_logged": llm_calls_logged,
+            "source": "v3_agent_telemetry",
+            "fail_rate": round(fail_rate, 3) if fail_rate is not None else None,
+            "availability": round(availability, 3) if availability is not None else None,
             "judge_quality_7d": round(judge_avg, 3) if judge_avg is not None else None,
             "eval_quality_7d": round(eval_avg, 3) if eval_avg is not None else None,
             "historical_average": round(avg_score, 3),
@@ -108,4 +165,10 @@ def _audit_llm_traces(cycle_id: str) -> dict:
         }
     except Exception as e:
         logger.warning("[LLM-AUDIT] Failed to audit traces: %s", e)
-        return {"score": 0.5, "issues": []}
+        return {
+            "score": 0.5,
+            "issues": [{
+                "issue": f"LLM audit itself failed ({type(e).__name__}: {e}) — score is the could-not-measure default",
+                "severity": "warning",
+            }],
+        }

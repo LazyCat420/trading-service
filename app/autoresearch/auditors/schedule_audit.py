@@ -53,14 +53,48 @@ def _audit_schedule_health() -> dict:
         if intervals:
             result["avg_interval_hours"] = round(sum(intervals) / len(intervals), 1)
 
+        # Pre-market means 7-9 AM in US-Eastern. Two honesty fixes over the
+        # original probe: (1) cron hours are registered with the scheduler's
+        # LOCAL timezone (Pacific on this host), so the raw hour must be
+        # converted to ET before comparing — the old raw compare could never
+        # match a genuinely pre-market job; (2) system jobs live in the
+        # APScheduler engine, not cycle_schedules, so their next-run times
+        # count too — one agent-created evening cron used to be enough to
+        # trip "no pre-market schedule" while the engine was full of morning
+        # jobs.
+        from zoneinfo import ZoneInfo
+        _et = ZoneInfo("America/New_York")
+
+        def _premarket_et(dt) -> bool:
+            return 7 <= dt.astimezone(_et).hour < 9
+
+        try:
+            from app.services.cycle_scheduler import local_tz
+        except Exception:
+            local_tz = timezone.utc
+
         for r in active_rows:
             if r[2] == "cron" and r[3]:
                 cron_parts = r[3].split()
                 if len(cron_parts) >= 2:
                     try:
                         hour = int(cron_parts[1])
-                        if 7 <= hour <= 9: result["has_premarket"] = True
-                    except ValueError: pass
+                        local_dt = datetime.now(local_tz).replace(
+                            hour=hour, minute=0, second=0, microsecond=0)
+                        if _premarket_et(local_dt):
+                            result["has_premarket"] = True
+                    except ValueError:
+                        pass
+
+        for next_run_iso in engine_jobs.values():
+            if not next_run_iso:
+                continue
+            try:
+                if _premarket_et(datetime.fromisoformat(next_run_iso)):
+                    result["has_premarket"] = True
+                    break
+            except ValueError:
+                continue
 
         now = datetime.now(timezone.utc)
         for r in active_rows:
@@ -85,7 +119,10 @@ def _audit_schedule_health() -> dict:
         if not result["has_premarket"] and result["active_count"] > 0:
             result["issues"].append({
                 "type": "no_premarket", "severity": "info",
-                "detail": "No pre-market (7-9 AM ET) schedule found."
+                "detail": (
+                    "No pre-market (7-9 AM ET) run found in agent schedules "
+                    f"or the {len(engine_jobs)} engine jobs' next runs."
+                )
             })
     except Exception as e:
         logger.debug("Schedule health audit failed: %s", e)

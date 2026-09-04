@@ -43,12 +43,31 @@ async def _reflect(audit_bundle: dict) -> dict:
 
     outcome_stats = dec_q.get("outcome_stats", {})
     if outcome_stats.get("scoring_method") == "outcome_based":
+        # The cohort is resolved DECISIONS, most of which are holds. Print the
+        # whole breakdown: an earlier version printed only total + W/L/F, so
+        # the reflection LLM was handed "100 resolved trades" next to a 9-trade
+        # breakdown (the other 91 rows were HOLD_* outcomes it never saw) and
+        # faithfully reported the system as internally inconsistent.
+        total = outcome_stats.get('total_resolved', 0)
+        traded = (outcome_stats.get('wins', 0) + outcome_stats.get('losses', 0)
+                  + outcome_stats.get('flats', 0))
+        holds = (outcome_stats.get('holds_right', 0)
+                 + outcome_stats.get('holds_miss', 0))
+        hold_acc = outcome_stats.get('hold_accuracy')
+        cap_note = " (window capped at 100 — true 30d count may be higher)" if total >= 100 else ""
         prompt += (
             f"\n=== PREDICTION ACCURACY (last 30 days) ===\n"
-            f"Resolved trades: {outcome_stats.get('total_resolved', 0)}\n"
-            f"Win rate: {outcome_stats.get('win_rate', 0):.0%} "
-            f"({outcome_stats.get('wins', 0)}W / {outcome_stats.get('losses', 0)}L / {outcome_stats.get('flats', 0)}F)\n"
-            f"Avg win: +{outcome_stats.get('avg_win_pnl', 0):.1f}% | Avg loss: -{outcome_stats.get('avg_loss_pnl', 0):.1f}%\n"
+            f"Resolved decisions: {total}{cap_note} = "
+            f"{traded} executed trades + {holds} hold calls\n"
+            f"Executed trades: {outcome_stats.get('wins', 0)}W / "
+            f"{outcome_stats.get('losses', 0)}L / {outcome_stats.get('flats', 0)}F, "
+            f"win rate {outcome_stats.get('win_rate', 0):.0%} "
+            f"(basis: {outcome_stats.get('win_rate_basis', 'ex_flat_ex_hold')})\n"
+            f"Hold calls: {outcome_stats.get('holds_correct', 0)} correct + "
+            f"{outcome_stats.get('holds_avoided_decline', 0)} avoided-decline / "
+            f"{outcome_stats.get('holds_miss', 0)} missed"
+            + (f", hold accuracy {hold_acc:.0%}\n" if hold_acc is not None else "\n")
+            + f"Avg win: +{outcome_stats.get('avg_win_pnl', 0):.1f}% | Avg loss: -{outcome_stats.get('avg_loss_pnl', 0):.1f}%\n"
             f"Conviction calibration: {outcome_stats.get('calibration_score', 0):.0%}\n"
             f"Risk score: {outcome_stats.get('risk_score', 0):.0%}\n"
             f"=== END PREDICTION ACCURACY ===\n\n"
@@ -68,8 +87,18 @@ async def _reflect(audit_bundle: dict) -> dict:
         )
     ]
 
+    # total_calls counts this cycle's agent runs (v3_agent_telemetry). When the
+    # audit could not measure (no telemetry rows), say "unmeasured" — a
+    # fabricated 0 here once led the reflection LLM to conclude the decision
+    # engine never ran on a perfectly healthy cycle.
+    _calls = llm_a.get('total_calls')
+    if llm_a.get('availability') is None and not _calls:
+        llm_line = "Agent LLM runs this cycle: unmeasured (no telemetry rows)"
+    else:
+        llm_line = (f"Agent LLM runs this cycle: {_calls or 0}, "
+                    f"failed runs: {llm_a.get('failed_calls', 0)}")
     prompt += (
-        f"LLM calls: {llm_a.get('total_calls', 0)}, failures: {llm_a.get('failed_calls', 0)}\n"
+        f"{llm_line}\n"
         f"Duration: {perf.get('total_ms', 0) / 1000:.1f}s\n"
         f"Recovery failures: {recovery.get('total_failures', 0)}\n"
         f"{sched_line}\n"

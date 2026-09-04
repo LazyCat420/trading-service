@@ -191,6 +191,15 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
             },
         }
 
+        # The full outcome breakdown, persisted whole. The client's Decision
+        # Outcomes strip looks for `outcome_stats` and the subset above lacks
+        # the W/L/F + hold counts, so its chips never rendered — the only
+        # surviving framing was the reflection LLM's prose.
+        perf_metrics["outcome_stats"] = {
+            k: _jsonsafe(v)
+            for k, v in decision_quality.get("outcome_stats", {}).items()
+        }
+
         # What each stated confidence has actually earned. Reported every
         # cycle because the gap is the finding: 15.8 points of overstatement
         # and an inverted top bucket are invisible in a single ECE number.
