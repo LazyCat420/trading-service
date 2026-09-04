@@ -29,6 +29,11 @@ GOODHART_WINDOW_DAYS = 7
 GOODHART_TRIGGER_RATE = 0.10   # ≥10% hallucination rate with enough volume
 GOODHART_MIN_EVALS = 10
 
+# A noise-floor measurement older than this is reported as stale. Two weeks is
+# twice the weekly refresh cadence, so one missed run is tolerated and two are
+# not.
+VARIANCE_STALE_AFTER_DAYS = 14
+
 
 def _read_spec_raw() -> tuple[dict | None, str | None]:
     """Active spec with env-over-file precedence."""
@@ -353,6 +358,23 @@ async def variance_runs():
             }
             for r in rows
         ]
+        # How old the newest real measurement is. The noise floor is what every
+        # experiment result is measured against, and until the weekly job was
+        # registered nothing refreshed it: on 2026-09-04 the only row in
+        # variance_runs was a single 4-run measurement from 2026-07-20. A
+        # 46-day-old baseline is a constant wearing a measurement's name, so
+        # say the age rather than leaving the reader to compute it.
+        done = [r for r in runs if r["status"] == "done" and r["created_at"]]
+        age_days = None
+        if done:
+            try:
+                newest = datetime.fromisoformat(done[0]["created_at"])
+                if newest.tzinfo is None:
+                    newest = newest.replace(tzinfo=timezone.utc)
+                age_days = round((datetime.now(timezone.utc) - newest).total_seconds() / 86400, 1)
+            except ValueError:
+                age_days = None
+
         return {
             "runs": runs,
             "measured_desks": sorted({r["ticker"] for r in runs if r["status"] == "done"}),
@@ -360,6 +382,10 @@ async def variance_runs():
             "in_progress": dict(_ACTIVE) if _ACTIVE["running"] else None,
             "baseline": variance_mod.DOCUMENTED_BASELINE,
             "confidence_noise_band_pts": variance_mod.NOISE_BAND_CONFIDENCE_PTS,
+            "newest_run_age_days": age_days,
+            "refresh_schedule": "weekly, Sunday 03:10 local (variance_noise_floor_weekly)",
+            "stale": age_days is None or age_days > VARIANCE_STALE_AFTER_DAYS,
+            "stale_after_days": VARIANCE_STALE_AFTER_DAYS,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as e:

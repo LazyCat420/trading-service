@@ -1087,6 +1087,31 @@ class SchedulerService:
 
 
 
+            # ── Decision-variance noise floor (weekly) ──
+            # The noise floor every experiment result is measured against was
+            # one hand-run measurement from 2026-07-19 sitting in variance_runs,
+            # 46 days stale by 2026-09-04, because run_and_persist had no
+            # scheduled caller at all — only a manual POST and a script. A
+            # baseline nothing refreshes is a constant wearing a
+            # measurement's name. Sunday 03:10 local, off the trading path.
+            try:
+                scheduler.add_job(
+                    SchedulerService._run_variance_baseline,
+                    trigger=CronTrigger(day_of_week="sun", hour=3, minute=10,
+                                        timezone=local_tz),
+                    id="variance_noise_floor_weekly",
+                    replace_existing=True,
+                    misfire_grace_time=3600,
+                    coalesce=True,
+                )
+                logger.info(
+                    "[SCHEDULER] Registered weekly decision-variance baseline (Sun 03:10)"
+                )
+            except Exception as e:
+                logger.warning(
+                    "[SCHEDULER] Failed to register variance baseline: %s", e
+                )
+
             # ── Background Ticker Validation ──
             try:
                 scheduler.add_job(
@@ -1841,6 +1866,50 @@ class SchedulerService:
             await evaluate_watches()
         except Exception as e:
             logger.error("[SCHEDULER] Watch Desk evaluation failed: %s", e)
+
+    @staticmethod
+    async def _run_variance_baseline():
+        """Re-measure the decision desk's noise floor on one recent desk.
+
+        Six replays of the decision synthesizer over a frozen desk copy. It
+        answers the only question that makes an A/B result meaningful: how much
+        does this desk move when NOTHING changes? Cheap relative to what it
+        guards — six calls a week against a full extra decision-agent call per
+        ticker per cycle, which is what the challenger experiment cost.
+
+        Picks the most recently updated desk rather than a fixed ticker: a
+        pinned ticker measures the noise floor of one name forever, and the
+        desks the experiments actually run on move.
+        """
+        if cycle_control.is_paused:
+            logger.info("[SCHEDULER] Skipping variance baseline: System is PAUSED.")
+            return
+        try:
+            from datetime import timedelta as _td
+            from app.autoresearch.variance import run_and_persist
+            from app.db import mongo_store as _ms
+
+            cutoff = datetime.now(timezone.utc) - _td(days=14)
+            desks = _ms.find_docs("shared_desk", {"updated_at": {"$gte": cutoff}})
+            tickers = [d.get("ticker") for d in desks if d.get("ticker")]
+            if not tickers:
+                logger.info("[SCHEDULER] Variance baseline: no desk in the last 14d")
+                return
+            ticker = max(
+                desks, key=lambda d: d.get("updated_at") or cutoff
+            ).get("ticker")
+            logger.info("[SCHEDULER] Variance baseline starting on %s", ticker)
+            report = await run_and_persist(None, ticker, 6)
+            logger.info(
+                "[SCHEDULER] Variance baseline %s: flip rate %s, conf stdev %s",
+                ticker,
+                report.get("action_flip_rate"),
+                report.get("confidence_stdev"),
+            )
+        except LookupError as e:
+            logger.info("[SCHEDULER] Variance baseline skipped: %s", e)
+        except Exception as e:
+            logger.error("[SCHEDULER] Variance baseline failed: %s", e)
 
     @staticmethod
     async def _run_background_validation():
