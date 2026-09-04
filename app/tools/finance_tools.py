@@ -180,7 +180,22 @@ async def get_finnhub_news(ticker: str) -> str:
         since = datetime.now(timezone.utc) - timedelta(days=days)
         docs = mongo_store.find_docs(
             "news_articles",
-            {"ticker": ticker, "published_at": {"$gte": since}},
+            {
+                "ticker": ticker,
+                "published_at": {"$gte": since},
+                # A row the write gate marked `thin` (empty summary) or
+                # `discarded` (captcha / block page) has no body to extract
+                # facts from, so it renders as a bare "Title | Publisher |
+                # Date" line the agent cannot tell from a real article — while
+                # still consuming one of the 15 slots, and outranking a
+                # full-bodied article whenever its title happens to name the
+                # ticker. `$nin` also admits rows written before the gate
+                # existed, whose field is absent. Precedent: watch_desk.py.
+                # Small today by measurement (24 `discarded` of 22,160 rows in
+                # the last 14 days, none reaching a live ticker's window) —
+                # this closes the path, it does not repair a live outage.
+                "quality_status": {"$nin": ["thin", "discarded"]},
+            },
             sort=[("published_at", -1)],
             limit=15,
         )

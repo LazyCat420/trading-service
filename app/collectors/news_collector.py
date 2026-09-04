@@ -183,32 +183,68 @@ COMPANY_TICKERS = {
 }
 
 
+#: A three-sentence headline translation. The Jetson answered these in ~16 s
+#: against the old 5 s deadline, so 59 of them "failed" in one cycle while the
+#: box completed every one — the work was done, thrown away, and paid for.
+#: Measured on cycle-v3-1788479270, 2026-09-03.
+_TRANSLATE_TIMEOUT_S = 30.0
+
+
 async def _translate_foreign_text(text: str, publisher: str) -> str:
-    """Use the LLM to translate foreign text to English."""
+    """Translate a foreign headline/summary to English via the tool-less path.
+
+    Deliberately `chat_toolless` (prism's `/chat`) and NOT `call_prism_agent`
+    (`/agent`). Measured 2026-09-03: every call through `/agent` carried
+    ~25,900 input tokens for a ~50-token translation, because prism attaches
+    the MCP catalog (~21k) server-side and injects the persona's stored
+    memories — ten near-duplicate "user is a financial translator" entries,
+    each of which was itself created by a previous translation's
+    `memory:extract`. A collector job was writing agent memories about the
+    news it read. `/chat` carries neither.
+
+    It also resolved as a DECISION agent until 2026-09-03: "translator" is in
+    no entry of prism_agent_registry.AGENT_ID_MAP, so it ran under the janitor
+    persona, and its name matched no collector keyword, so routing sent it to
+    the DGX Spark first. It is light work; COLLECTOR_KEYWORDS now says so.
+    """
     if not text or len(text.strip()) < 5:
         return text
-    
-    from app.services.prism_agent_caller import call_prism_agent
-    
-    prompt = f"You are a professional financial translator. Translate the following news snippet from {publisher} into English. Only return the English translation, no other text or explanation.\n\nText: {text}"
-    
+
+    from app.services.prism_agent_caller import (
+        chat_toolless,
+        resolve_default_model_for_agent,
+    )
+
+    prompt = (f"Translate the following news snippet from {publisher} into English. "
+              f"Only return the English translation, no other text or explanation."
+              f"\n\nText: {text}")
+
     try:
-        reply, _, _ = await asyncio.wait_for(
-            call_prism_agent(
-                agent_id="translator",
-                user_message=prompt,
-                fallback_system_prompt="You are a professional financial translator. Output only the requested translation.",
-                fallback_agent_name="Translator",
-                temperature=0.1,
+        model, provider = await resolve_default_model_for_agent("translator")
+        resp = await asyncio.wait_for(
+            chat_toolless(
+                provider=provider,
+                model=model,
+                system_prompt="You are a professional financial translator. Output only the requested translation.",
+                user_prompt=prompt,
                 max_tokens=1000,
+                timeout_seconds=_TRANSLATE_TIMEOUT_S,
             ),
-            timeout=5.0,
+            timeout=_TRANSLATE_TIMEOUT_S + 5,
         )
+        reply = (resp or {}).get("response") or ""
         if reply and len(reply.strip()) > 5:
             return reply.strip()
+        logger.warning("[news] Translation returned nothing usable for %s — keeping the original", publisher)
+    except asyncio.TimeoutError:
+        # The box is still working on it; we abandon the RESULT, not silently
+        # the request. Named separately so a deadline problem never again
+        # reads as the same line as a transport failure.
+        logger.warning("[news] Translation exceeded %.0fs for %s — keeping the original",
+                       _TRANSLATE_TIMEOUT_S, publisher)
     except Exception as e:
-        logger.warning("[news] Translation failed/timed out for %s: %s", publisher, e)
-    
+        logger.warning("[news] Translation failed for %s: %s", publisher, e)
+
     return text
 
 

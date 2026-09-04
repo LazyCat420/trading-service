@@ -715,6 +715,11 @@ class PipelineService:
         cls._state.update({
             "status": "starting",
             "cycle_id": cycle_id,
+            # Stamped HERE, where the run begins. Its only writer used to be the
+            # post-gatekeeper block, so the elapsed clock started after the news
+            # scrape and every duration a reader saw was short by the longest
+            # stretch of the cycle (11m32s on cycle-v3-1788479270).
+            "started_at": datetime.now(timezone.utc).isoformat(),
             "agent_locale": agent_locale,
             "prism_overrides": prism_overrides,
             "progress": f"Screening watchlist for top {max_tickers or 'auto'} setups...",
@@ -958,9 +963,20 @@ class PipelineService:
                     # $group carries the same min/max; the subtraction of two
                     # BSON dates yields milliseconds directly, so there is no
                     # epoch conversion to mirror.
+                    # "discovery" IS the collection phase. Nothing has ever
+                    # emitted "collecting" — discovery_emit hardcodes
+                    # "discovery" — so this loop matched no rows for it and
+                    # EVERY cycle_benchmarks.collect_ms ever written is NULL,
+                    # while the scrape is the longest single stretch of a cycle
+                    # (11m32s on cycle-v3-1788479270, measured 2026-09-03).
+                    _PHASE_SOURCE = {"collecting": ["collecting", "discovery", "gatekeeper"],
+                                     "analyzing": ["analyzing"],
+                                     "trading": ["trading"]}
+                    _phase_of = {src: dest for dest, srcs in _PHASE_SOURCE.items() for src in srcs}
+                    _bounds: dict[str, list] = {}
                     for row in mongo_store.aggregate("pipeline_events", [
                         {"$match": {"cycle_id": cycle_id,
-                                    "phase": {"$in": ["collecting", "analyzing", "trading"]}}},
+                                    "phase": {"$in": list(_phase_of)}}},
                         {"$group": {"_id": "$phase",
                                     "lo": {"$min": "$timestamp"},
                                     "hi": {"$max": "$timestamp"}}},
@@ -968,12 +984,22 @@ class PipelineService:
                         lo, hi = row.get("lo"), row.get("hi")
                         if lo is None or hi is None:
                             continue
+                        dest = _phase_of.get(row["_id"])
+                        if dest is None:
+                            continue
                         try:
-                            phase_ms[row["_id"]] = int((hi - lo).total_seconds() * 1000)
+                            cur = _bounds.setdefault(dest, [lo, hi])
+                            cur[0] = min(cur[0], lo)
+                            cur[1] = max(cur[1], hi)
                         except (AttributeError, TypeError):
                             # Timestamps written as strings by an older writer
                             # subtract to nothing useful; leave the phase None
                             # rather than record a fabricated duration.
+                            continue
+                    for dest, (lo, hi) in _bounds.items():
+                        try:
+                            phase_ms[dest] = int((hi - lo).total_seconds() * 1000)
+                        except (AttributeError, TypeError):
                             continue
                 except Exception as ph_err:
                     logger.warning("[PipelineService] phase-ms derivation failed (non-fatal): %s", ph_err)
@@ -1262,7 +1288,18 @@ class PipelineService:
                             try:
                                 cls._state.update({
                                     "progress": f"[DISCOVERY] {detail}",
-                                    "phase": "discovery"
+                                    "phase": "discovery",
+                                    # The run IS running. Until 2026-09-03 status
+                                    # stayed "starting" from dispatch until the
+                                    # gatekeeper finished — the whole news scrape,
+                                    # 11m32s on cycle-v3-1788479270 — so the
+                                    # control bar showed "Starting…" and no Stop
+                                    # button for the longest stretch of a cycle.
+                                    # The frontend was a faithful mirror; the
+                                    # backend was the one saying "starting".
+                                    # PHASE still says discovery, which is what a
+                                    # reader needs to know WHAT is running.
+                                    "status": "running",
                                 })
                                 cls.save_state()
                             except Exception:
@@ -2114,7 +2151,11 @@ class PipelineService:
                 "tickers": tickers,
                 "progress": f"Starting V3 cycle for {len(tickers)} tickers",
                 "phase": "running",
-                "started_at": datetime.now(timezone.utc).isoformat(),
+                # NOT re-stamped: the cycle started when it was dispatched, and
+                # overwriting this here made the elapsed timer jump back to zero
+                # after the gatekeeper, hiding the scrape from every duration a
+                # reader sees. Kept only as a fallback when dispatch left none.
+                "started_at": cls._state.get("started_at") or datetime.now(timezone.utc).isoformat(),
                 "finished_at": None,
                 "error": None
             })

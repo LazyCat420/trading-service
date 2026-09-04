@@ -48,7 +48,6 @@ EXPECTED_RESOLUTION = {
     "CUSTOM_MEMORY_BRIEFER_AGENT": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "CUSTOM_MORNING_BRIEFING_AGENT": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "CUSTOM_V3_JUNIOR_ANALYST": "CUSTOM_V3_JUNIOR_ANALYST",
-    "Translator": "CUSTOM_SYSTEM_JANITOR_AGENT",
     "audit_worker": "CUSTOM_SYSTEM_JANITOR_AGENT",
     "autoresearch_reflection": "CUSTOM_SYNTHESIZER_AGENT",
     "chief_auditor": "CUSTOM_META_AUDIT_AGENT",
@@ -62,12 +61,19 @@ EXPECTED_RESOLUTION = {
     "query_decomposer": "CUSTOM_SYSTEM_JANITOR_AGENT",
     "skillopt_optimizer": "CUSTOM_SYSTEM_JANITOR_AGENT",
     "strategy_evaluator": "CUSTOM_SYSTEM_JANITOR_AGENT",
-    "translator": "CUSTOM_SYSTEM_JANITOR_AGENT",
 }
 
 #: The subset with no explicit mapping — running as the fallback persona.
+# "Translator"/"translator" LEFT this set on 2026-09-03 — they are no longer
+# call_prism_agent callers at all. The foreign-feed translator moved to
+# chat_toolless (`/chat`): through `/agent` it was paying ~25,900 input tokens
+# for a three-sentence translation, because prism attaches the MCP catalog and
+# injects the persona's memories server-side, and it wrote a new memory per
+# call (1,723 on the janitor persona). It was in no AGENT_ID_MAP entry, so the
+# request ledger filed it under CUSTOM_SYSTEM_JANITOR_AGENT — which is why a
+# "janitor agent" appeared to run during every news scrape.
 UNMAPPED_CALLERS = {
-    "Translator", "translator", "audit_worker", "equation_lab",
+    "audit_worker", "equation_lab",
     "judge_evaluator", "memory_briefer", "memory_consolidator",
     "query_decomposer", "skillopt_optimizer", "strategy_evaluator",
 }
