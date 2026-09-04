@@ -43,6 +43,40 @@ class FailureReason(Enum):
 # ── DeepEval metric thresholds (override via env or Settings) ──
 FAITHFULNESS_THRESHOLD = float(os.environ.get("FAITHFULNESS_THRESHOLD", "0.7"))
 RELEVANCY_THRESHOLD = float(os.environ.get("RELEVANCY_THRESHOLD", "0.5"))
+# How far below its threshold a grounding metric must fall before the red card
+# costs the WHOLE score. A metric sitting just under the line is a doubt; a
+# metric near zero is an ungrounded answer, and those are not the same finding.
+GROUNDING_TOTAL_LOSS_AT = float(os.environ.get("GROUNDING_TOTAL_LOSS_AT", "0.0"))
+
+
+def grounding_shortfall(score: float, threshold: float) -> float:
+    """How badly a grounding metric missed, normalised to 0..1.
+
+    0.0 sitting just under `threshold`, 1.0 at GROUNDING_TOTAL_LOSS_AT (and
+    anywhere below it). Module level so the penalty is testable without an
+    LLM: the whole point of the change is that this number is no longer a
+    boolean.
+    """
+    span = threshold - GROUNDING_TOTAL_LOSS_AT
+    if span <= 0:
+        return 1.0
+    return max(0.0, min(1.0, (threshold - float(score)) / span))
+
+
+def apply_red_card_penalty(base_score: float, shortfalls: list[float],
+                           has_red_cards: bool) -> tuple[float, float]:
+    """(final_score, penalty) for a judged decision.
+
+    A red card deducts in proportion to how far below threshold the metric
+    actually sat, rather than zeroing the score outright. A card with no
+    score behind it keeps the old conservative full penalty.
+    """
+    if not has_red_cards:
+        return base_score, 0.0
+    penalty = max(shortfalls) if shortfalls else 1.0
+    return round(base_score * (1.0 - penalty), 2), penalty
+
+
 # Max seconds to wait for a single DeepEval metric call before treating as error
 DEEPEVAL_TIMEOUT_SEC = float(os.environ.get("DEEPEVAL_TIMEOUT_SEC", "180"))
 # Max retries per DeepEval metric call before recording a red card
@@ -352,6 +386,11 @@ async def evaluate_decision(decision_id: str) -> bool:
 
         # 5. Grounding checks — in-house judge
         red_cards = []
+        # How far below threshold each red card sat, normalised to 0..1 where
+        # 1.0 means the metric bottomed out. Kept parallel to red_cards so the
+        # penalty can be graded instead of binary — see the note at the
+        # final_quality_score computation below.
+        red_card_shortfalls: list[float] = []
         infra_errors = []
 
         grounding, grounding_infra_err = await _run_grounding_judge(
@@ -362,11 +401,17 @@ async def evaluate_decision(decision_id: str) -> bool:
                 red_cards.append(
                     f"Faithfulness Failure (GroundingJudge): {grounding['faithfulness_reason'] or grounding['faithfulness_score']}"
                 )
+                red_card_shortfalls.append(
+                    grounding_shortfall(grounding["faithfulness_score"], FAITHFULNESS_THRESHOLD)
+                )
                 if failure_reason == FailureReason.NONE:
                     failure_reason = FailureReason.FAITHFULNESS
             if grounding["relevancy_score"] < RELEVANCY_THRESHOLD:
                 red_cards.append(
                     f"Answer Relevancy Failure (GroundingJudge): {grounding['relevancy_reason'] or grounding['relevancy_score']}"
+                )
+                red_card_shortfalls.append(
+                    grounding_shortfall(grounding["relevancy_score"], RELEVANCY_THRESHOLD)
                 )
                 if failure_reason == FailureReason.NONE:
                     failure_reason = FailureReason.RELEVANCY
@@ -458,9 +503,27 @@ async def evaluate_decision(decision_id: str) -> bool:
         oracle_score = float(oracle_results["completeness_score"])
 
         base_score = round((llm_score + oracle_score) / 2.0, 2)
-        final_quality_score = 0 if red_cards else base_score
+        # A red card used to zero the score outright. Measured over the seven
+        # days to 2026-09-04: 7 of 22 judged decisions were zeroed while their
+        # judge_a_score was 3.5-4.5, dragging the 7d judge mean from 4.19
+        # (83.8%) to 2.92 (58.3%). That single binary rule was simultaneously
+        # firing the "LLM-judge decision quality low" finding, costing LLM
+        # Performance ~7.6 points, and tripping the Goodhart tripwire (7/22 =
+        # 32% against a 10% rate) -- three dashboard indicators moved by one
+        # if-statement. Reading the seven card texts, at least three said the
+        # claims WERE supported and red-carded anyway.
+        #
+        # The card still deducts, proportionally to how far below threshold the
+        # metric actually sat: a hair under the line barely moves the score, a
+        # metric at zero still takes the whole thing. A red card with no score
+        # behind it (none exist today, but the list is append-only) keeps the
+        # old conservative full penalty.
+        final_quality_score, penalty = apply_red_card_penalty(
+            base_score, red_card_shortfalls, bool(red_cards)
+        )
 
         evidence = oracle_results["checklist"].copy()
+        evidence["red_card_penalty"] = round(penalty, 3)
         if failure_reason != FailureReason.NONE:
             evidence["failure_reason"] = failure_reason.value
         if infra_errors:
