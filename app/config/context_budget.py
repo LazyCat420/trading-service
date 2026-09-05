@@ -119,16 +119,30 @@ class ContextBudget:
 
 
 def _effective_from_raw(raw_tokens: int) -> int:
-    """Return the *effective* context budget — the portion of the raw context
-    window where the model maintains high-quality attention.
+    """Return the *effective* context budget: raw, clamped to a ceiling.
 
-    Research ("Lost in the Middle", Liu et al. 2024) shows open-weight models
-    degrade significantly past 50-60% of their raw max_model_len.  We apply
-    a 50% discount and cap at 65536 tokens (64K) to keep all pipeline agents
-    in the high-quality attention zone.
+    ⚠ THIS FUNCTION IS NOT ON A PRODUCTION PATH (audited 2026-09-05). Its only
+    caller is `register_model_context` below, whose own documented caller —
+    `vllm_client.discover_roles()` — was deleted in `c82526b` when the vLLM
+    client was migrated to `prism_agent_caller`. Nothing in `app/` calls
+    either, so `_budget_cache` is empty at runtime and `get_context_budget()`
+    always returns `_DEFAULT_BUDGET` (raw = effective = 128_000) without ever
+    passing through this function. Changing the ceiling here therefore changes
+    no live request. `tests/unit/test_context_governance.py::
+    test_the_ceiling_reaches_no_production_caller` fails the day that stops
+    being true, which is the day the ceiling needs a real capacity test.
 
-    This triggers earlier compression and head-tail truncation, which is
-    strictly better than letting the model silently degrade or timeout.
+    HISTORY, because the previous docstring described a policy that is two
+    generations gone and misled an audit. It once applied a 50% discount and
+    capped at 65_536, citing "Lost in the Middle" (Liu et al. 2024) on
+    attention decay past 50-60% of max_model_len. The discount was later
+    removed (EFFECTIVE_RATIO 1.0) and the cap raised to 128_000, then to an
+    env-overridable 1_000_000 in `1f7b66f` (2026-09-04) to let a 1M-window box
+    be used. The prose was not updated at either step.
+
+    Note the ceiling is read from the environment on EVERY call, not at import,
+    so an operator can change it without a restart — and a non-numeric value
+    raises ValueError at the call site rather than at boot.
     """
     EFFECTIVE_RATIO = 1.0       # Expand to 100% of raw context
     MAX_BUDGET_CEILING = int(os.getenv("MAX_CONTEXT_BUDGET_CEILING", "1000000"))   # Up to 1M tokens ceiling

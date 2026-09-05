@@ -41,15 +41,71 @@ class TestContextBudget:
         assert fetched.model_id == "test-model-32k"
 
     def test_effective_from_raw_scaling(self):
-        """Effective context should return raw context up to a 128k cap."""
+        """Raw context passes through, up to the configured ceiling.
+
+        The ceiling was a hardcoded 128_000 until `1f7b66f` (2026-09-04) made it
+        `int(os.getenv("MAX_CONTEXT_BUDGET_CEILING", "1000000"))`. This test
+        still asserted 128_000 and went red on master; it was not run.
+
+        It now reads the ceiling from the module instead of transcribing it, so
+        a deliberate change to the default does not break the test while an
+        accidental change to the SHAPE (a discount reapplied, the min() dropped,
+        a non-numeric env value swallowed) still does.
+        """
+        from app.config import context_budget
         from app.config.context_budget import _effective_from_raw
 
-        # Asserts 100% of raw context up to a 128K hard cap
+        ceiling = context_budget._effective_from_raw(10**12)
+        assert ceiling > 0, "the ceiling must bound something"
+
+        # Below the ceiling: raw passes through undiscounted (EFFECTIVE_RATIO 1.0).
         assert _effective_from_raw(8192) == 8192
         assert _effective_from_raw(32768) == 32768
-        assert _effective_from_raw(131072) == 128000
-        assert _effective_from_raw(262144) == 128000
-        assert _effective_from_raw(1048576) == 128000
+        assert _effective_from_raw(ceiling - 1) == ceiling - 1
+
+        # At and above it: clamped, never exceeded.
+        assert _effective_from_raw(ceiling) == ceiling
+        assert _effective_from_raw(ceiling * 2) == ceiling
+
+    def test_the_context_ceiling_is_env_overridable(self, monkeypatch):
+        """`MAX_CONTEXT_BUDGET_CEILING` is read per call, not at import."""
+        from app.config.context_budget import _effective_from_raw
+
+        monkeypatch.setenv("MAX_CONTEXT_BUDGET_CEILING", "50000")
+        assert _effective_from_raw(1048576) == 50000
+        monkeypatch.setenv("MAX_CONTEXT_BUDGET_CEILING", "200000")
+        assert _effective_from_raw(1048576) == 200000
+
+    def test_the_ceiling_reaches_no_production_caller(self):
+        """AUDIT 2026-09-05 — this whole path is dead, and that is the finding.
+
+        `_effective_from_raw` is called only by `register_model_context`, whose
+        documented caller `vllm_client.discover_roles()` was deleted in
+        `c82526b`. Nothing in `app/` calls either, so `get_context_budget()`
+        always returns the hardcoded `_DEFAULT_BUDGET` and the 1M ceiling above
+        changes no request in production.
+
+        This test exists so the claim is CHECKED rather than remembered. When
+        someone re-wires model discovery, this goes red and the audit note in
+        the plan (step 1, item 2) becomes stale in a visible way.
+        """
+        import pathlib
+        import re
+
+        app = pathlib.Path(__file__).resolve().parents[2] / "app"
+        callers = []
+        for py in app.rglob("*.py"):
+            if py.name == "context_budget.py":
+                continue
+            text = py.read_text(encoding="utf-8", errors="ignore")
+            if re.search(r"\bregister_model_context\b", text):
+                callers.append(str(py.relative_to(app)))
+        assert callers == [], (
+            "register_model_context has a caller again "
+            f"({callers}) — the context ceiling is no longer dead code, so "
+            "the 1M default now reaches real requests and needs the capacity "
+            "test the audit deferred."
+        )
 
     def test_compressor_threshold_is_75_percent(self):
         """Compressor threshold should be 75% of effective context."""
