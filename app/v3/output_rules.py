@@ -81,6 +81,41 @@ _PSEUDO_TOOL_CALL_RE = re.compile(
     r"[({\[]",
 )
 
+# A tool call the transport failed to PARSE. Not the model going off-script:
+# the model emitted its provider's native tool-call syntax and the inference
+# server handed it back as message content because it was launched without a
+# tool-call parser for that family.
+#
+# MEASURED 2026-09-04/05, cycle-v3-1788565070: the Gold Spark was swapped to
+# `deepseek-v4-flash-vision-exp` served by **SGLang with no
+# `--tool-call-parser deepseekv4`**. Every one of 83 agent runs came back
+# carrying `<|DSML|tool_calls><|DSML|invoke name="mcp__...">` in the TEXT with
+# `tool_calls` empty and prism's `toolsUsed` false. `classify_output` matched
+# the narration markers ("let me ", "i'll ") and called all 53 firings
+# NARRATED_NO_ARTIFACT, the tool-less repair pass then produced an artifact
+# from the pre-collected briefing alone, and the runs were booked SUCCESS with
+# quality 80-88. Zero rows reached `agent_tool_telemetry` for the whole cycle,
+# so every instrument read "no tool failures".
+#
+# SEARCHED, not matched from the start: the markup follows the model's prose
+# preamble, so an anchored regex (which is what _PSEUDO_TOOL_CALL_RE is) can
+# never see it. Checked BEFORE the JSON probes because Qwen/Hermes wrap their
+# call in `<tool_call>{...}` — balanced JSON that `_LOOKS_LIKE_JSON` would
+# claim, sending a transport failure to UNCLASSIFIED.
+#
+# One entry per family we can actually be served by; adding a family here is
+# cheaper than the four days this cost.
+_UNPARSED_TOOL_CALL_RE = re.compile(
+    r"<[|\uff5c]DSML[|\uff5c]tool_calls>"      # DeepSeek V4 (and V3.2)
+    r"|<[|\uff5c]DSML[|\uff5c]invoke\s+name="  # ...a lone invoke, no wrapper
+    r"|<\|tool\u2581calls\u2581begin\|>"        # DeepSeek R1
+    r"|<tool_call>\s*\{"                        # Qwen / Hermes
+    r"|\[TOOL_CALLS\]"                          # Mistral
+    r"|<\|python_tag\|>"                        # Llama 3.1
+    r"|<function=[\w.-]+>",                     # Llama 3.2 / xLAM
+    re.IGNORECASE,
+)
+
 # First-person planning. The tell of the 233-run majority class: the model is
 # announcing the step it is ABOUT to take, which means the buffer is a
 # transcript of intent rather than a report. Lowercased before matching.
@@ -119,6 +154,12 @@ class OutputRule:
     directive: str
     quote_previous: bool = True
     exhausted: bool = False
+    #: The TRANSPORT failed, not the model. The tool-less repair pass must not
+    #: run for these: re-asking a model that never got its tool results to
+    #: "answer from what you already found" produces an artifact built from the
+    #: prompt alone, and the run is then recorded as a SUCCESS. Failing loudly
+    #: is the point — the desk degrades where somebody can see it.
+    transport_failure: bool = False
 
 
 # ── The rules ───────────────────────────────────────────────────────────
@@ -171,6 +212,20 @@ NARRATED_NO_ARTIFACT = OutputRule(
         "not call tools. Emit the artifact itself as your entire reply."
     ),
     exhausted=True,
+)
+
+UNPARSED_TOOL_CALL = OutputRule(
+    name="UNPARSED_TOOL_CALL",
+    directive=(
+        "Your previous reply contained a tool call in your model's native "
+        "syntax, which the inference server returned as text instead of "
+        "executing. This is a transport fault on our side, not yours."
+    ),
+    # Never shown back to the model: the repair pass does not run for this
+    # class at all (see `transport_failure`), so the directive exists to name
+    # the class in the log and the firing row, not to ask for a retry.
+    quote_previous=False,
+    transport_failure=True,
 )
 
 TRUNCATED_JSON = OutputRule(
@@ -234,7 +289,7 @@ UNCLASSIFIED = OutputRule(
 RULE_NAMES = frozenset({
     EMPTY_RESPONSE.name, PROVIDER_ERROR.name, PSEUDO_TOOL_CALL.name,
     NARRATED_NO_ARTIFACT.name, TRUNCATED_JSON.name, PROSE_REPORT.name,
-    WRONG_SHAPE.name, UNCLASSIFIED.name,
+    WRONG_SHAPE.name, UNCLASSIFIED.name, UNPARSED_TOOL_CALL.name,
 })
 
 #: The artifact PARSED — so no rule fired — but failed schema validation.
@@ -333,6 +388,13 @@ def classify_output(text: str | None, *, wrong_shape: bool = False) -> OutputRul
     # already requires the line to OPEN with an identifier butting against a
     # bracket. A model that narrates for 3k chars and then signs off with one
     # pseudo call still hit the same wall as one that emitted only the call.
+    # Before BOTH the pseudo-call probe and the JSON probes. A native tool call
+    # returned as text is a transport fault and is not repairable by re-asking
+    # the model; every probe below would mislabel it (the DeepSeek shape as
+    # narration, the Qwen shape as JSON).
+    if _UNPARSED_TOOL_CALL_RE.search(stripped):
+        return UNPARSED_TOOL_CALL
+
     if _PSEUDO_TOOL_CALL_RE.match(stripped):
         return PSEUDO_TOOL_CALL
 

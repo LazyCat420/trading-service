@@ -1381,7 +1381,22 @@ async def run_v3_agent(
         if artifact is None:
             rule = classify_output(final_text, wrong_shape=wrong_shape)
 
-        if artifact is None and final_text and bool(tool_whitelist):
+        # A TRANSPORT fault is not repairable by re-asking. The tool-less
+        # repair exists to recover an artifact from research the model has
+        # ALREADY done; when the inference server handed the model's tool call
+        # back as text, no tool ever ran, so the "repair" writes a report out
+        # of the briefing in the prompt and the run is booked SUCCESS with a
+        # quality score in the eighties. That is what happened to all 12
+        # tickers of cycle-v3-1788565070. Let it fail where it can be seen.
+        if artifact is None and rule is not None and rule.transport_failure:
+            logger.error(
+                "[V3Runner] %s: %s for %s (%d chars) — the inference server "
+                "returned the model's tool call as TEXT. Refusing the tool-less "
+                "repair: there is no research to repair from. Check the box's "
+                "tool-call parser (see app/v3/output_rules.py).",
+                agent_name, rule.name, desk.ticker, len(final_text or ""),
+            )
+        elif artifact is None and final_text and bool(tool_whitelist):
             logger.warning(
                 "[V3Runner] %s: %s for %s (%d chars) — attempting tool-less "
                 "artifact repair",
