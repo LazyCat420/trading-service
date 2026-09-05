@@ -408,6 +408,31 @@ def _check_decision_drift(cycle_id: str) -> list[str]:
     )]
 
 
+#: Agents whose result is cached or whose role does not require a tool.
+#:
+#: SHARED BY BOTH NO-RESEARCH CHECKS, and it did not used to be. This set was
+#: defined below `_check_agent_cost` and consulted only by the cycle-level
+#: check, so the two disagreed about which agents are expected not to research.
+#:
+#: MEASURED 2026-09-05 over 1,633 agent runs / 16 days at the 20k threshold:
+#: 193 fires, of which **62 landed on cycles that researched normally** — and
+#: `v3_regime_engine` alone was **29 of those 62 (47%)**. Its result is
+#: classified once and reused for the whole cycle ("Regime CONTRADICTORY
+#: (classified once for this cycle)"), so one loop and zero tool calls is its
+#: CORRECT behaviour, at 26,009-36,435 prompt tokens. Flagging it is flagging
+#: the design.
+#:
+#: The remaining false positives (junior 14, bull_defense 11, quant 3,
+#: valuation 2, board 2, bear 1) are genuine single-turn runs on healthy
+#: cycles and are deliberately NOT excluded here — they need a judgement about
+#: whether a tool-carrying agent answering in one turn is signal, which is a
+#: different question from an agent that never had tools to call.
+_NON_RESEARCHING_AGENTS = frozenset({
+    "contradiction_shadow",
+    "v3_regime_engine",
+})
+
+
 def _check_agent_cost(cycle_id: str) -> list[str]:
     """Flag an agent that spent heavily without calling a single tool."""
     from app.db import mongo_store
@@ -424,6 +449,8 @@ def _check_agent_cost(cycle_id: str) -> list[str]:
     out = []
     for d in docs:
         name = d.get("_id")
+        if name in _NON_RESEARCHING_AGENTS:
+            continue
         tok = d.get("tok")
         loops = d.get("loops")
         threshold = DELIBERATION_NO_RESEARCH_TOKENS if name in DELIBERATION_AGENTS else COST_NO_RESEARCH_TOKENS
@@ -433,14 +460,6 @@ def _check_agent_cost(cycle_id: str) -> list[str]:
                 agent=name, tokens=int(tok), avg_loops=float(loops or 0),
             ))
     return out
-
-
-#: Agents whose result is cached or whose role does not require a tool. Counted
-#: in the roster but never the reason the cycle is flagged.
-_NON_RESEARCHING_AGENTS = frozenset({
-    "contradiction_shadow",
-    "v3_regime_engine",
-})
 
 
 def _check_cycle_did_research(cycle_id: str) -> list[str]:
