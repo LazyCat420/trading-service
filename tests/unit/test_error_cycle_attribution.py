@@ -202,6 +202,12 @@ class TestCycleStampsItsId:
             PipelineService, "_state", {}
         ), patch(
             "app.services.llm_preflight.llm_can_answer", _preflight_ok
+        ), patch(
+            # The tool probe makes a real HTTP call to the box. Unstubbed it
+            # reached the live Gold Spark from the test suite and returned its
+            # (correct) "no tool-call parser" verdict, aborting this probe
+            # cycle before it could stamp anything.
+            "app.services.llm_preflight.tool_calls_are_parsed", _preflight_ok
         ):
             await PipelineService._run_all_v3("cycle-v3-probe", ["AAPL"])
 

@@ -113,6 +113,8 @@ async def test_confidence_threshold_gating():
          patch("app.services.pipeline_state.PipelineStateDB.save_state") as mock_save_state, \
          patch("app.services.llm_preflight.llm_can_answer",
                new_callable=AsyncMock, return_value=(True, "unit test: probe mocked")), \
+         patch("app.services.llm_preflight.tool_calls_are_parsed",
+               new_callable=AsyncMock, return_value=(True, "unit test: tool probe mocked")), \
          patch("app.trading.paper_trader.buy", new_callable=AsyncMock) as mock_buy, \
          patch("app.trading.paper_trader.sell", new_callable=AsyncMock) as mock_sell:
 
