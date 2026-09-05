@@ -231,6 +231,20 @@ def test_the_runtime_entry_point_warns_on_a_mismatch(caplog):
         with caplog.at_level(logging.WARNING, logger="app.v3.reconciliation"):
             reconciliation.reconcile_and_report("c")
 
-    assert any("DISAGREE" in r.getMessage() for r in caplog.records)
+    mine = [r for r in caplog.records if r.name == "app.v3.reconciliation"]
+    assert any("DISAGREE" in r.getMessage() for r in mine)
     # Recorded, not paged — item 26 warns the first mismatch may be a person.
-    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    #
+    # SCOPED TO THIS LOGGER, and that scoping is the fix for a real flake.
+    # `caplog` captures every propagated record, not only the logger named in
+    # `at_level`. Whenever another test in the same xdist worker had already
+    # armed the DB log handler, `mongo_store.ensure_indexes` tripped the
+    # `block_production_mongo` guard and swallowed it into a NON-FATAL
+    # `logger.error(...)`. That unrelated ERROR landed in `caplog.records` and
+    # failed this assertion — a test failing on worker scheduling, for a
+    # record emitted by a module it does not touch.
+    #
+    # Reproduced deterministically 2026-09-05:
+    #   pytest tests/unit/test_db_logger_boot.py tests/unit/test_open_items_wave2.py
+    # fails; either file alone passes.
+    assert not [r for r in mine if r.levelno >= logging.ERROR]
