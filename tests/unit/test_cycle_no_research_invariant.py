@@ -133,17 +133,54 @@ class TestItCannotFireOnNoise:
         assert recorded == []
 
 
-class TestTheOldCheckCouldNotSeeIt:
-    def test_the_cost_floor_is_far_above_the_observed_runs(self):
-        """The mechanism of the miss, asserted.
+#: The sglang runs that motivated this check, per `v3_agent_telemetry`:
+#: 37_260-48_538 prompt tokens at exactly 1.0 loops.
+_OBSERVED_MAX_AVG_TOKENS = 48_538
 
-        `_check_agent_cost` fires above `COST_NO_RESEARCH_TOKENS` at <=1 loop.
-        The sglang runs averaged 37_260-48_538 tokens at exactly 1.0 loops, so
-        the AND could never be true.
+
+class TestWhyBothChecksExist:
+    """The per-agent and cycle-level no-research checks overlap on purpose.
+
+    This class used to assert `COST_NO_RESEARCH_TOKENS == 150_000` as the
+    mechanism of the miss. That number was lowered to 20_000 on 2026-09-04, in
+    the same commit window as this check, which made the assertion fail FOR
+    HAVING BEEN FIXED — a control pinned to a constant that the work moved.
+    What follows pins the properties instead, so either threshold may move
+    again without silently invalidating the cycle-level check.
+    """
+
+    def test_the_per_agent_check_now_catches_the_observed_shape(self):
+        """The hole this check was born from is closed on the per-agent side.
+
+        Documents WHY the per-agent row is no longer the miss: at 20k, a
+        ~40k/1-loop run is above the floor. If someone raises the threshold
+        back over the observed runs, this goes red and says so.
         """
-        assert invariants.COST_NO_RESEARCH_TOKENS == 150_000
-        observed_max_avg_tokens = 48_538
-        assert observed_max_avg_tokens < invariants.COST_NO_RESEARCH_TOKENS
+        assert _OBSERVED_MAX_AVG_TOKENS > invariants.COST_NO_RESEARCH_TOKENS
+
+    def test_the_cycle_check_does_not_depend_on_the_per_agent_threshold(self, recorded):
+        """The cycle-level check must fire on a total outage at ANY threshold.
+
+        Driven at both the historical 150k and the current 20k. If the cycle
+        check ever inherited the per-agent floor, one of these would go silent.
+        """
+        for floor in (150_000, 20_000, 1):
+            recorded.clear()
+            with patch.object(invariants, "COST_NO_RESEARCH_TOKENS", floor):
+                assert _drive(_runs(12), 0) == [invariants.KIND_CYCLE_NO_RESEARCH], (
+                    f"cycle check went silent at COST_NO_RESEARCH_TOKENS={floor}"
+                )
+            assert len(recorded) == 1
+
+    def test_a_partial_failure_is_the_per_agent_checks_job_not_this_one(self, recorded):
+        """The two checks are not redundant.
+
+        One agent losing its tools while the cycle researches normally is
+        invisible here by construction — the trigger is zero tool calls across
+        the WHOLE cycle. That shape is what the per-agent row is for.
+        """
+        assert _drive(_runs(12), 1) == []
+        assert recorded == []
 
     def test_the_new_check_is_registered_in_the_cycle_sweep(self):
         """A check nothing calls is not a check."""

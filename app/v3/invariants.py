@@ -258,10 +258,23 @@ DELIBERATION_AGENTS = {
     "v3_debate_judge",
 }
 
-#: A WHOLE CYCLE that called no tool at all. This is the shape
-#: `COST_NO_RESEARCH_TOKENS` above cannot see: it needs >150k tokens at <=1
-#: loop, and the failure that motivated this one spends ~40k at exactly 1 loop,
-#: so it was silent on every agent of every ticker.
+#: A WHOLE CYCLE that called no tool at all.
+#:
+#: THIS OVERLAPS `COST_NO_RESEARCH_TOKENS` ABOVE, DELIBERATELY. When this check
+#: was written that threshold was 150k, so it was blind to the ~40k/1-loop runs
+#: below; the same day it was lowered to 20k, which now catches them. Neither
+#: check subsumes the other and both are kept:
+#:
+#:   * per-agent fires when ONE agent loses its tools while the rest of the
+#:     cycle researches normally — a partial failure this check cannot see,
+#:     because its trigger is zero tool calls across the WHOLE cycle.
+#:   * this one fires when the box, not the agent, is broken. It is the only
+#:     signal that separates "an outage" from "N independent agent anomalies".
+#:
+#: A totally broken cycle therefore records both: ~N per-agent rows and one
+#: cycle row. That costs rows, not pages — `record_violation` writes to
+#: `v3_invariant_violations` and never alerts — and the cycle row is the one
+#: that names the outage.
 #:
 #: MEASURED 2026-09-05 over the 11 days to that date, tool rows per LLM agent
 #: run, by cycle:
@@ -442,7 +455,9 @@ def _check_cycle_did_research(cycle_id: str) -> list[str]:
     `quality_scorer` and was recorded SUCCESS. 117 agent runs, 12 HOLD
     decisions, and every existing instrument read healthy:
 
-      * `_check_agent_cost` needs >150k tokens; these runs were ~40k.
+      * `_check_agent_cost` needed >150k tokens at the time; these runs were
+        ~40k. (It is 20k as of 2026-09-04 and would now fire per agent — but
+        only on the total-outage shape, not on one agent losing its tools.)
       * `cycle_audit.check_tool_failures` grades the rows it finds and returns
         INFO "no tool calls yet" when it finds none.
       * `llm_audit`'s availability counts a repaired run as a success.
