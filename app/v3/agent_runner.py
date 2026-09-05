@@ -2299,3 +2299,36 @@ def _record_telemetry(
         "provider": provider,
     }
     desk.record_agent_telemetry(entry)
+
+    # FLUSH NOW, not at the next desk save.
+    #
+    # MEASURED 2026-09-05 on the GLM cycle cycle-v3-1788642086: after the
+    # junior, fundamental and quant analysts had all COMPLETED on three
+    # tickers — 35 tool calls spent — `v3_agent_telemetry` held 0 rows and
+    # `shared_desk` held 0 rows. Every entry lived only on the in-memory desk
+    # until the first `save_desk`, which lands after the whole analyst chain.
+    #
+    # `flush_agent_telemetry` already existed for exactly this reason and its
+    # docstring says the desk "flushes as it progresses" — but its only
+    # trigger was `save_desk`, so the granularity was the PHASE, not the
+    # agent. The 71 desks with no cost record it was written to fix (up to
+    # ~47M tokens, ~14.5% of true spend) are still reachable in that window.
+    #
+    # Confirmed against 16 days of finished cycles: 7 of 132 carry ZERO
+    # telemetry rows, and 5 of those 7 are `stopped` — killed mid-flight
+    # before any desk saved. `cycle-v3-1788630137`, stopped by the operator
+    # on 2026-09-05 with 9 tickers in flight, lost the cost of all of them.
+    #
+    # Idempotent (`flush_agent_telemetry` marks what it wrote and skips it
+    # next time), so `save_desk` and the end-of-pipeline `persist_telemetry`
+    # keep working unchanged and simply find nothing pending. Never raises:
+    # cost accounting must not be able to fail an agent that succeeded.
+    try:
+        from app.v3.telemetry import flush_agent_telemetry
+
+        flush_agent_telemetry(desk)
+    except Exception as exc:  # noqa: BLE001 — an observer must not break a run
+        logger.warning(
+            "[V3Runner] telemetry flush after %s failed (row stays pending "
+            "for the next save): %s", agent_name, exc,
+        )
