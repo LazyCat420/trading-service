@@ -31,7 +31,7 @@ caller listed, so the pending rows stay tuples — same shape the old cursor
 yielded, which is why the row literals below are unchanged.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -229,7 +229,14 @@ def captured(monkeypatch):
 def test_batch_resolver_feeds_memory(captured):
     created = datetime(2026, 8, 1, tzinfo=timezone.utc)
     row = ("do-1", "AAPL", "BUY", 100.0, created, "cycle-v3-9", 82)
-    with _patch_db([row]), patch("app.quant.returns.latest_close", return_value=110.0):
+    # Seam moved 2026-09-05: the resolver prices at the HORIZON
+    # (`close_on_or_after`), not at whatever `latest_close` happens to be on
+    # the day the sweep runs. Patching the old name here left the mock
+    # orphaned and the test hitting the real accessor.
+    with _patch_db([row]), patch(
+        "app.quant.returns.close_on_or_after",
+        return_value=(110.0, datetime(2026, 8, 8, tzinfo=timezone.utc)),
+    ):
         stats = outcome_tracker.resolve_pending_outcomes()
 
     assert stats["resolved"] == 1
@@ -291,3 +298,66 @@ def test_a_failing_sink_never_propagates(monkeypatch, sinks):
     )
     # The episode half still ran — one broken sink must not silence the other.
     assert episodes.calls and episodes.calls[0][0] == "cycle-7"
+
+
+class TestTheSevenDayContractIsHonoured:
+    """A card that says "7-day" must be priced at entry + 7 days.
+
+    MEASURED 2026-09-05 over 2,694 resolved rows (`resolved_at - created_at`):
+    median 43.0 days against a stated 7. 1,932 (71.7%) resolved beyond 30 days;
+    only 699 (25.9%) fell inside the contract. The resolver used
+    `latest_close`, so the horizon was "whenever the sweep ran".
+    """
+
+    def test_the_price_is_taken_at_the_horizon_not_today(self, captured):
+        """The exact defect: the accessor is asked for entry + 7 days."""
+        created = datetime(2026, 8, 1, tzinfo=timezone.utc)
+        row = ("do-h", "AAPL", "BUY", 100.0, created, "cycle-v3-h", 70)
+        seen = {}
+
+        def _spy(ticker, when, *a, **k):
+            seen["when"] = when
+            return 110.0, when
+
+        with _patch_db([row]), patch(
+            "app.quant.returns.close_on_or_after", side_effect=_spy
+        ):
+            outcome_tracker.resolve_pending_outcomes()
+
+        assert seen["when"] == created + timedelta(
+            days=outcome_tracker.RESOLVE_AFTER_DAYS
+        ), "resolver did not price at entry + the stated horizon"
+
+    def test_a_row_with_no_bar_at_the_horizon_stays_unresolved(self, captured):
+        """Missing market data must not resolve against a much later price.
+
+        Leaving it pending is the honest outcome; resolving it late is how the
+        43-day median happened.
+        """
+        created = datetime(2026, 8, 1, tzinfo=timezone.utc)
+        row = ("do-n", "AAPL", "BUY", 100.0, created, "cycle-v3-n", 70)
+        with _patch_db([row]), patch(
+            "app.quant.returns.close_on_or_after", return_value=(None, None)
+        ):
+            stats = outcome_tracker.resolve_pending_outcomes()
+
+        assert stats["resolved"] == 0
+        assert captured == []
+
+    def test_the_resolved_row_records_the_horizon_it_used(self, captured):
+        """`resolved_at` alone cannot distinguish an on-contract row from a
+        late one, which is what made the mismatch invisible."""
+        created = datetime(2026, 8, 1, tzinfo=timezone.utc)
+        priced_at = datetime(2026, 8, 8, tzinfo=timezone.utc)
+        row = ("do-r", "AAPL", "BUY", 100.0, created, "cycle-v3-r", 70)
+
+        with _patch_db([row]), patch("app.quant.returns.close_on_or_after",
+                                     return_value=(110.0, priced_at)):
+            stats = outcome_tracker.resolve_pending_outcomes()
+        assert stats["resolved"] == 1
+
+        import inspect
+
+        src = inspect.getsource(outcome_tracker.resolve_pending_outcomes)
+        assert "'exit_date': exit_date" in src, "the bar the price came from is not stored"
+        assert "'horizon_days': RESOLVE_AFTER_DAYS" in src, "the contract is not stored"

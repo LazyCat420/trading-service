@@ -301,6 +301,72 @@ def forward_window(ticker: str, start, sessions: int) -> list[float] | None:
     return closes
 
 
+#: How far past the horizon date a bar may sit and still be accepted as "the
+#: close at the horizon". Covers a weekend plus a long holiday weekend; beyond
+#: that the market data is missing rather than merely non-trading, and the
+#: honest answer is to leave the row unresolved.
+HORIZON_GRACE_DAYS = 5
+
+
+def close_on_or_after(ticker: str, when, grace_days: int = HORIZON_GRACE_DAYS
+                      ) -> tuple[float | None, "datetime | None"]:
+    """The first close at or after `when`. Returns (close, its date).
+
+    THE CONTRACT THIS EXISTS FOR. `decision_outcomes` rows are stamped with a
+    7-day horizon and every card in the panel says "7-day". Resolution used
+    `latest_close`, i.e. whatever the price happens to be on the day the
+    resolver gets around to the row — so the horizon was "whenever the sweep
+    ran", not "entry + 7 days".
+
+    MEASURED 2026-09-05 over 2,694 resolved rows, `resolved_at - created_at`:
+
+        >30 days      1,932   71.7%     <- the actual population
+        7.0-7.9 days    699   25.9%     <- the stated contract
+        <7 days          37    1.4%
+        8-30 days        26    1.0%
+
+        median 43.0 days against a stated 7.
+
+    Three quarters of every "7-day outcome" was a six-week outcome wearing a
+    one-week label, and every win rate and decision score built on that cohort
+    inherited the mismatch.
+
+    Weekends and holidays are why this is "on or after" rather than an exact
+    date match: the horizon frequently lands on a day with no bar. `grace_days`
+    bounds how far it will walk forward, so a genuinely missing stretch of
+    market data returns (None, None) and the row stays unresolved instead of
+    silently resolving against a price weeks later — which is the defect.
+
+    Uses the same `_one_vendor` pin as `latest_close` and `forward_window`, so
+    a dual-source ticker cannot resolve against one vendor here and another
+    somewhere else.
+    """
+    from datetime import timedelta as _td
+
+    from app.db import mongo_store
+
+    ticker = ticker.strip().upper()
+    docs = mongo_store.find_docs(
+        "price_history",
+        _one_vendor(ticker, {
+            "ticker": ticker,
+            "close": {"$gt": 0},
+            "date": {"$gte": when, "$lte": when + _td(days=int(grace_days))},
+        }),
+        sort=[("date", 1)],
+        limit=1,
+    )
+    if not docs:
+        return None, None
+    val = docs[0].get("close")
+    if val is None:
+        return None, None
+    val = float(val)
+    if not (val == val and val > 0):
+        return None, None
+    return val, docs[0].get("date")
+
+
 def forward_move_pct(ticker: str, start, sessions: int) -> float | None:
     """Percent move over an exact `sessions`-bar forward window, or None."""
     w = forward_window(ticker, start, sessions)

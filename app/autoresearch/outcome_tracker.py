@@ -436,16 +436,36 @@ def resolve_pending_outcomes() -> dict:
         for (outcome_id, ticker, action, entry_price, created_at,
              cycle_id, confidence) in pending:
             try:
-                from app.quant.returns import latest_close
+                # THE HORIZON IS entry + RESOLVE_AFTER_DAYS, NOT "today".
+                #
+                # This read used `latest_close(ticker)` — whatever the price
+                # happened to be on the day the sweep reached the row. The
+                # cutoff above only decides WHEN a row becomes eligible; it
+                # never bounded how late the price could be.
+                #
+                # MEASURED 2026-09-05 over 2,694 resolved rows
+                # (`resolved_at - created_at`): median 43.0 days against a
+                # stated 7, with 1,932 (71.7%) resolving beyond 30 days and
+                # only 699 (25.9%) inside the 7-day contract the panel prints
+                # on every card. Every win rate and decision score built on
+                # this cohort measured a six-week horizon labelled one week.
+                #
+                # `close_on_or_after` walks forward past weekends/holidays but
+                # is grace-bounded, so a genuinely missing stretch of price
+                # data leaves the row UNRESOLVED rather than resolving it
+                # against a price weeks past the horizon.
+                from app.quant.returns import close_on_or_after
 
-                _px = latest_close(ticker)
-                price_row = (_px,) if _px is not None else None
+                horizon = created_at + timedelta(days=RESOLVE_AFTER_DAYS)
+                exit_price, exit_date = close_on_or_after(ticker, horizon)
 
-                if not price_row or price_row[0] is None:
-                    logger.debug("[OUTCOME] Cannot resolve %s — no current price for %s", outcome_id, ticker)
+                if exit_price is None:
+                    logger.debug(
+                        "[OUTCOME] Cannot resolve %s — no %s close within the "
+                        "grace window after the %s horizon",
+                        outcome_id, ticker, horizon.date(),
+                    )
                     continue
-
-                exit_price = price_row[0]
 
                 if entry_price is None or entry_price == 0:
                     logger.debug("[OUTCOME] Cannot resolve %s — invalid entry_price", outcome_id)
@@ -471,7 +491,13 @@ def resolve_pending_outcomes() -> dict:
                     )
 
                 now_res = datetime.now(timezone.utc)
-                mongo_store.update_docs('decision_outcomes', {'id': outcome_id}, {'$set': {'exit_price': round(exit_price, 4), 'pnl_pct': round(pnl_pct, 2), 'outcome': outcome, 'resolved_at': now_res}})
+                # `exit_date` is the bar the price came from and
+                # `horizon_days` the contract it was resolved under. Without
+                # them the row records only WHEN THE SWEEP RAN (`resolved_at`),
+                # which is exactly the ambiguity that let a 43-day median hide
+                # behind a "7-day" label — an auditor could not tell a
+                # contract-honouring row from a late one.
+                mongo_store.update_docs('decision_outcomes', {'id': outcome_id}, {'$set': {'exit_price': round(exit_price, 4), 'pnl_pct': round(pnl_pct, 2), 'outcome': outcome, 'resolved_at': now_res, 'exit_date': exit_date, 'horizon_days': RESOLVE_AFTER_DAYS}})
                 resolved += 1
 
                 write_outcome_to_memory(
