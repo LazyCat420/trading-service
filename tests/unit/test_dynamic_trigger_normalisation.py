@@ -139,6 +139,17 @@ async def test_create_trigger_stores_the_normalised_setup(monkeypatch):
                         lambda c, d, **kw: wrote.append((c, d)))
     monkeypatch.setattr(order_triggers.mongo_store, "update_docs",
                         lambda *a, **kw: None)
+    # `create_trigger` now asks whether the condition is ALREADY true before
+    # arming (2026-09-05), which reads the last close and the technicals
+    # column, so this test has to say what the market looked like. `sma_50_rise`
+    # fires when price CROSSES ABOVE the average, so a price of $140 under a
+    # $145 SMA-50 is a watch that has not yet triggered — which is the state
+    # this test is about. (Getting this backwards is what the new guard is for:
+    # at $150 the same setup is already true and the row is stored inactive.)
+    monkeypatch.setattr(order_triggers, "_get_current_price",
+                        lambda t: (140.0, "fixture"))
+    monkeypatch.setattr(order_triggers, "_current_metric",
+                        lambda t, col: 145.0)
 
     out = await order_triggers.create_trigger(
         bot_id="b", ticker="AAPL", trigger_type="dynamic", trigger_price=0.0,
@@ -148,3 +159,5 @@ async def test_create_trigger_stores_the_normalised_setup(monkeypatch):
     doc = wrote[0][1][0]
     assert doc["dynamic_trigger_type"] == "sma_50_rise"
     assert dynamic_trigger_is_evaluable(doc["dynamic_trigger_type"])
+    assert doc["active"] is True, "price is below the level; the watch is real"
+    assert doc["inert_reason"] is None

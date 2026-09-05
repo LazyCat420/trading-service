@@ -8,6 +8,8 @@ import uuid
 import logging
 from datetime import datetime, timezone, timedelta
 
+from pymongo.errors import PyMongoError
+
 from app.trading.paper_trader import _get_current_price
 from app.db import mongo_query, mongo_store
 
@@ -85,6 +87,87 @@ def dynamic_trigger_is_evaluable(setup: str) -> bool:
     if parts[0] == "rsi":
         return "oversold" in setup or "overbought" in setup
     return any(word in setup for word in ("drop", "below", "rise", "above"))
+
+
+def _metric_column_for(setup: str) -> str:
+    """The technicals column a dynamic setup reads, or "" if it reads none."""
+    parts = (setup or "").split("_")
+    return f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else ""
+
+
+def _current_metric(ticker: str, metric_col: str) -> float | None:
+    """Newest value of one technicals column, or None."""
+    try:
+        row = mongo_query.find_row(
+            'technicals', {'ticker': ticker}, [metric_col], sort=[('date', -1)])
+    except PyMongoError as e:
+        # PyMongoError, not Exception. A blanket catch here would swallow the
+        # test suite's own production-Mongo tripwire (a RuntimeError), which is
+        # how a guard stops being able to see the thing it exists to detect.
+        logger.debug("[TRIGGER] %s: could not read %s: %s", ticker, metric_col, e)
+        return None
+    if not row or row[0] is None:
+        return None
+    try:
+        return float(row[0])
+    except (TypeError, ValueError):
+        return None
+
+
+def dynamic_condition_is_met(
+    setup: str,
+    value: float | None,
+    *,
+    current_price: float | None,
+    metric_val: float | None,
+    highest_price: float | None = None,
+) -> tuple[bool, str]:
+    """Is this dynamic setup's condition true RIGHT NOW?
+
+    Returns `(met, inert_reason)`. `inert_reason` is non-empty only when the
+    setup cannot be evaluated at all, and `met` is then False — "cannot tell"
+    and "not met" are different facts and the caller must be able to separate
+    them, which a bare bool cannot do.
+
+    ONE DEFINITION. `check_triggers` evaluates the live condition through this
+    function and `create_trigger` asks it whether the condition is ALREADY true
+    before arming a watch. Those two must never drift: a creation guard that
+    computed "already true" differently from the checker would arm watches the
+    checker fires instantly, which is the exact defect this was extracted to
+    fix.
+    """
+    setup = (setup or "").strip()
+    if not setup or current_price is None:
+        return False, ""
+
+    if setup == "trailing_drop":
+        if not highest_price or highest_price <= 0 or value is None:
+            return False, ""
+        return current_price <= highest_price * (1 - value), ""
+
+    if not (setup.startswith("sma_") or setup.startswith("rsi_")):
+        return False, "is not an sma_/rsi_/trailing_drop setup"
+
+    metric_col = _metric_column_for(setup)
+    if metric_col not in _TRIGGER_METRIC_COLUMNS:
+        return False, f"reads {metric_col or '?'}, which is not a technicals column"
+
+    if metric_val is None:
+        return False, ""
+
+    if setup.startswith("rsi_"):
+        threshold = float(value or 0.0)
+        if "oversold" in setup:
+            return metric_val <= (threshold or 30.0), ""
+        if "overbought" in setup:
+            return metric_val >= (threshold or 70.0), ""
+        return False, "is an RSI setup naming neither oversold nor overbought"
+
+    if "drop" in setup or "below" in setup:
+        return current_price < metric_val, ""
+    if "rise" in setup or "above" in setup:
+        return current_price > metric_val, ""
+    return False, "names no direction the checker understands"
 
 
 def _note_inert_trigger(trigger_id: str, ticker: str, setup: str, why: str) -> None:
@@ -223,6 +306,62 @@ async def create_trigger(
                          f"or trailing_drop."
             }
 
+    # A WATCH FOR SOMETHING THAT IS ALREADY TRUE IS NOT A WATCH.
+    #
+    # MEASURED 2026-09-04/05. A HOLD on SWBI at 58% confidence armed
+    # `sma_50_drop @ 14.42` while the desk's own report said "Price: $12.89 |
+    # SMA_50: $14.42 (price BELOW)". The condition was satisfied at the instant
+    # of creation, so the checker fired it on its first sweep past the 30-minute
+    # cooldown, spawned an `edge_case_dynamic` cycle for that same ticker, which
+    # HELD again and armed the same trigger — a loop that ran three cycles in
+    # the hour before it was caught (SWBI -> LULU -> SWBI) and had 12 more
+    # already-true triggers queued behind it.
+    #
+    # The cooldown below in `check_triggers` was written against this exact
+    # symptom and can only DELAY it: it postpones the first fire by 30 minutes
+    # and does nothing about the second. The condition has to be judged when the
+    # watch is set.
+    #
+    # The row is still WRITTEN, deactivated, carrying its reason. Refusing
+    # outright would delete the desk's stated condition, which is the failure
+    # the normalisation block above was added to stop — and "the desk asked to
+    # watch for a thing that had already happened" is a fact worth being able
+    # to count.
+    already_met = False
+    if trigger_type == "dynamic" and dynamic_trigger_type:
+        try:
+            current_price, _ = _get_current_price(ticker)
+        except PyMongoError as e:
+            # Fail OPEN: an unreadable price is not evidence the condition is
+            # false, and a store outage must not stop the desk recording its
+            # condition. The armed trigger is then no worse than today.
+            logger.warning(
+                "[TRIGGER] %s: price unreadable (%s) — arming %r without the "
+                "already-true check.", ticker, e, dynamic_trigger_type)
+            current_price = None
+        metric_val = None
+        if dynamic_trigger_type.startswith(("sma_", "rsi_")):
+            metric_col = _metric_column_for(dynamic_trigger_type)
+            if metric_col in _TRIGGER_METRIC_COLUMNS:
+                metric_val = _current_metric(ticker, metric_col)
+        already_met, _why = dynamic_condition_is_met(
+            dynamic_trigger_type, dynamic_trigger_value,
+            current_price=current_price, metric_val=metric_val,
+            # A fresh trailing_drop has no high-water mark yet, so its
+            # condition cannot be "already true" — seeding the mark with the
+            # current price is what `check_triggers` does on first sight.
+            highest_price=current_price,
+        )
+        if already_met:
+            logger.warning(
+                "[TRIGGER] %s: dynamic setup %r @ %s is ALREADY TRUE at price "
+                "%s (metric %s) — storing it INACTIVE. An armed watch would "
+                "fire on the next sweep and spawn a cycle for a condition the "
+                "desk could already see.",
+                ticker, dynamic_trigger_type, dynamic_trigger_value,
+                current_price, metric_val,
+            )
+
     trigger_id = f"trg-{uuid.uuid4().hex[:10]}"
     now = datetime.now(timezone.utc)
 
@@ -247,7 +386,8 @@ async def create_trigger(
         'trailing_pct': trailing_pct,
         'highest_price': highest_price,
         'reason': reason,
-        'active': True,
+        'active': not already_met,
+        'inert_reason': 'condition_already_met' if already_met else None,
         'created_at': now,
         'created_by': created_by,
         'dynamic_trigger_type': dynamic_trigger_type,
@@ -255,7 +395,8 @@ async def create_trigger(
     }])
 
     logger.info(
-        "[TRIGGER] Created %s trigger for %s: %s @ $%.2f (id=%s, by=%s)",
+        "[TRIGGER] %s %s trigger for %s: %s @ $%.2f (id=%s, by=%s)",
+        "Created" if not already_met else "Recorded INACTIVE",
         trigger_type,
         ticker,
         action,
@@ -275,6 +416,8 @@ async def create_trigger(
         "trailing_pct": trailing_pct,
         "reason": reason,
         "created_by": created_by,
+        "active": not already_met,
+        "inert_reason": "condition_already_met" if already_met else None,
     }
 
 
@@ -364,58 +507,27 @@ async def check_triggers(bot_id: str) -> list[dict]:
 
         elif trigger_type == "dynamic":
             if dynamic_trigger_type and dynamic_trigger_value is not None:
-                if dynamic_trigger_type.startswith("sma_") or dynamic_trigger_type.startswith("rsi_"):
-                    parts = dynamic_trigger_type.split("_")
-                    metric_col = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else ""
-                    if metric_col not in _TRIGGER_METRIC_COLUMNS:
-                        _note_inert_trigger(
-                            trigger_id, ticker, dynamic_trigger_type,
-                            f"reads {metric_col or '?'}, which is not a technicals column",
-                        )
-                    else:
-                        tech_row = mongo_query.find_row('technicals', {'ticker': ticker}, [metric_col], sort=[('date', -1)])
-
-                        if tech_row and tech_row[0] is not None:
-                            metric_val = float(tech_row[0])
-                            if parts[0] == "rsi":
-                                threshold = float(dynamic_trigger_value or 0.0)
-                                if "oversold" in dynamic_trigger_type:
-                                    if not threshold:
-                                        threshold = 30.0
-                                    triggered = metric_val <= threshold
-                                elif "overbought" in dynamic_trigger_type:
-                                    if not threshold:
-                                        threshold = 70.0
-                                    triggered = metric_val >= threshold
-                                else:
-                                    _note_inert_trigger(
-                                        trigger_id, ticker, dynamic_trigger_type,
-                                        "is an RSI setup naming neither oversold nor overbought",
-                                    )
-                            elif "drop" in dynamic_trigger_type or "below" in dynamic_trigger_type:
-                                triggered = current_price < metric_val
-                            elif "rise" in dynamic_trigger_type or "above" in dynamic_trigger_type:
-                                triggered = current_price > metric_val
-                            else:
-                                _note_inert_trigger(
-                                    trigger_id, ticker, dynamic_trigger_type,
-                                    "names no direction the checker understands",
-                                )
-
-                elif dynamic_trigger_type == "trailing_drop":
+                # trailing_drop keeps its high-water mark BEFORE the predicate
+                # runs; the predicate is pure and does not write.
+                if dynamic_trigger_type == "trailing_drop":
                     if highest_price is None or current_price > highest_price:
                         highest_price = current_price
                         mongo_store.update_docs('price_triggers', {'id': trigger_id}, {'$set': {'highest_price': highest_price}})
-                    
-                    if highest_price and highest_price > 0:
-                        trail_price = highest_price * (1 - dynamic_trigger_value)
-                        triggered = current_price <= trail_price
 
-                else:
+                metric_val = None
+                if dynamic_trigger_type.startswith(("sma_", "rsi_")):
+                    metric_col = _metric_column_for(dynamic_trigger_type)
+                    if metric_col in _TRIGGER_METRIC_COLUMNS:
+                        metric_val = _current_metric(ticker, metric_col)
+
+                triggered, inert_why = dynamic_condition_is_met(
+                    dynamic_trigger_type, dynamic_trigger_value,
+                    current_price=current_price, metric_val=metric_val,
+                    highest_price=highest_price,
+                )
+                if inert_why:
                     _note_inert_trigger(
-                        trigger_id, ticker, dynamic_trigger_type,
-                        "is not an sma_/rsi_/trailing_drop setup",
-                    )
+                        trigger_id, ticker, dynamic_trigger_type, inert_why)
 
         if triggered:
             logger.warning(
