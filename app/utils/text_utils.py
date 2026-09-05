@@ -67,6 +67,49 @@ def _is_placeholder_json(d: dict) -> bool:
 _LOOKS_LIKE_JSON = re.compile(r'\{[^{}]{0,400}?"[\w .-]{1,64}"\s*:', re.DOTALL)
 
 
+# A tool call the transport failed to PARSE.
+#
+# LIVES HERE, not in app/v3/output_rules.py, for the same reason
+# `_LOOKS_LIKE_JSON` does: TWO readers must agree about the same buffer.
+# `classify_output` uses it to name the failure class and
+# `_malformed_fallback` below uses it to REFUSE to scrape that buffer. A
+# second copy would let the classifier call a buffer a transport fault
+# while the parser was busy manufacturing a decision out of it. Not the model going off-script:
+# the model emitted its provider's native tool-call syntax and the inference
+# server handed it back as message content because it was launched without a
+# tool-call parser for that family.
+#
+# MEASURED 2026-09-04/05, cycle-v3-1788565070: the Gold Spark was swapped to
+# `deepseek-v4-flash-vision-exp` served by **SGLang with no
+# `--tool-call-parser deepseekv4`**. Every one of 83 agent runs came back
+# carrying `<|DSML|tool_calls><|DSML|invoke name="mcp__...">` in the TEXT with
+# `tool_calls` empty and prism's `toolsUsed` false. `classify_output` matched
+# the narration markers ("let me ", "i'll ") and called all 53 firings
+# NARRATED_NO_ARTIFACT, the tool-less repair pass then produced an artifact
+# from the pre-collected briefing alone, and the runs were booked SUCCESS with
+# quality 80-88. Zero rows reached `agent_tool_telemetry` for the whole cycle,
+# so every instrument read "no tool failures".
+#
+# SEARCHED, not matched from the start: the markup follows the model's prose
+# preamble, so an anchored regex (which is what _PSEUDO_TOOL_CALL_RE is) can
+# never see it. Checked BEFORE the JSON probes because Qwen/Hermes wrap their
+# call in `<tool_call>{...}` — balanced JSON that `_LOOKS_LIKE_JSON` would
+# claim, sending a transport failure to UNCLASSIFIED.
+#
+# One entry per family we can actually be served by; adding a family here is
+# cheaper than the four days this cost.
+_UNPARSED_TOOL_CALL_RE = re.compile(
+    r"<[|\uff5c]DSML[|\uff5c]tool_calls>"      # DeepSeek V4 (and V3.2)
+    r"|<[|\uff5c]DSML[|\uff5c]invoke\s+name="  # ...a lone invoke, no wrapper
+    r"|<\|tool\u2581calls\u2581begin\|>"        # DeepSeek R1
+    r"|<tool_call>\s*\{"                        # Qwen / Hermes
+    r"|\[TOOL_CALLS\]"                          # Mistral
+    r"|<\|python_tag\|>"                        # Llama 3.1
+    r"|<function=[\w.-]+>",                     # Llama 3.2 / xLAM
+    re.IGNORECASE,
+)
+
+
 def _malformed_fallback(cleaned: str) -> dict | None:
     """Last-resort parser for markdown analysis reports.
 
@@ -94,6 +137,29 @@ def _malformed_fallback(cleaned: str) -> dict | None:
             "[text_utils] declining the prose fallback: the response contains "
             "a JSON object that failed to parse (%d chars). Scraping it with "
             "regexes would manufacture fields the model never emitted.",
+            len(cleaned),
+        )
+        return None
+
+    # The SAME refusal, for a buffer holding no JSON at all: a tool call the
+    # inference server handed back as text.
+    #
+    # MEASURED 2026-09-05 on cycle-v3-1788565070/ZS. The Board's reply was
+    # 8,223 chars of narration ending in an unexecuted `<|DSML|tool_calls>`
+    # block. It contains no JSON, so the guard above passed it through, and
+    # this scraper returned {action: HOLD, confidence: 62, reasoning: "I'll
+    # analyze ZS for th..."} — a schema-clean Board verdict assembled by regex
+    # out of a sentence the model wrote on its way to fetching the data. It
+    # reached `trade_results` carrying no stop_loss, no take_profit and no
+    # conviction_vector, and nothing downstream could tell it from a real vote.
+    #
+    # A model that is still asking for its data has not decided anything.
+    if _UNPARSED_TOOL_CALL_RE.search(cleaned):
+        logger.warning(
+            "[text_utils] declining the prose fallback: the response carries a "
+            "tool call the server returned as TEXT (%d chars). The model was "
+            "mid-research; scraping a verdict out of it would invent a "
+            "decision it never made.",
             len(cleaned),
         )
         return None

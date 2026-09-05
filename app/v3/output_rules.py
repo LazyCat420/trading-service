@@ -47,7 +47,7 @@ from dataclasses import dataclass
 # The one definition of "the model was writing JSON, whatever else is in the
 # buffer". Private in text_utils and deliberately imported rather than copied —
 # see THE ONE DEFINITION RULE above.
-from app.utils.text_utils import _LOOKS_LIKE_JSON
+from app.utils.text_utils import _LOOKS_LIKE_JSON, _UNPARSED_TOOL_CALL_RE
 
 logger = logging.getLogger(__name__)
 
@@ -81,40 +81,6 @@ _PSEUDO_TOOL_CALL_RE = re.compile(
     r"[({\[]",
 )
 
-# A tool call the transport failed to PARSE. Not the model going off-script:
-# the model emitted its provider's native tool-call syntax and the inference
-# server handed it back as message content because it was launched without a
-# tool-call parser for that family.
-#
-# MEASURED 2026-09-04/05, cycle-v3-1788565070: the Gold Spark was swapped to
-# `deepseek-v4-flash-vision-exp` served by **SGLang with no
-# `--tool-call-parser deepseekv4`**. Every one of 83 agent runs came back
-# carrying `<|DSML|tool_calls><|DSML|invoke name="mcp__...">` in the TEXT with
-# `tool_calls` empty and prism's `toolsUsed` false. `classify_output` matched
-# the narration markers ("let me ", "i'll ") and called all 53 firings
-# NARRATED_NO_ARTIFACT, the tool-less repair pass then produced an artifact
-# from the pre-collected briefing alone, and the runs were booked SUCCESS with
-# quality 80-88. Zero rows reached `agent_tool_telemetry` for the whole cycle,
-# so every instrument read "no tool failures".
-#
-# SEARCHED, not matched from the start: the markup follows the model's prose
-# preamble, so an anchored regex (which is what _PSEUDO_TOOL_CALL_RE is) can
-# never see it. Checked BEFORE the JSON probes because Qwen/Hermes wrap their
-# call in `<tool_call>{...}` — balanced JSON that `_LOOKS_LIKE_JSON` would
-# claim, sending a transport failure to UNCLASSIFIED.
-#
-# One entry per family we can actually be served by; adding a family here is
-# cheaper than the four days this cost.
-_UNPARSED_TOOL_CALL_RE = re.compile(
-    r"<[|\uff5c]DSML[|\uff5c]tool_calls>"      # DeepSeek V4 (and V3.2)
-    r"|<[|\uff5c]DSML[|\uff5c]invoke\s+name="  # ...a lone invoke, no wrapper
-    r"|<\|tool\u2581calls\u2581begin\|>"        # DeepSeek R1
-    r"|<tool_call>\s*\{"                        # Qwen / Hermes
-    r"|\[TOOL_CALLS\]"                          # Mistral
-    r"|<\|python_tag\|>"                        # Llama 3.1
-    r"|<function=[\w.-]+>",                     # Llama 3.2 / xLAM
-    re.IGNORECASE,
-)
 
 # First-person planning. The tell of the 233-run majority class: the model is
 # announcing the step it is ABOUT to take, which means the buffer is a

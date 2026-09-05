@@ -184,3 +184,51 @@ class TestTheRepairPassRefusesIt:
             "the transport-failure branch must precede the repair branch"
         )
         assert "elif artifact is None and final_text and bool(tool_whitelist):" in src
+
+
+class TestTheProseFallbackRefusesIt:
+    """The second door into the same failure.
+
+    `classify_output` only runs when parsing FAILED. On 2026-09-05 the Board's
+    ZS reply — 8,223 chars of narration ending in an unexecuted DSML block —
+    parsed "successfully" because `_malformed_fallback` scraped
+    `{action: HOLD, confidence: 62}` out of the prose, so no rule ever fired
+    and the run was a SUCCESS. That verdict reached `trade_results` with no
+    stop_loss, no take_profit and no conviction_vector.
+
+    The fallback already declines a buffer containing JSON, for exactly this
+    reason ("scraping it with regexes would manufacture fields the model never
+    emitted"). A DSML buffer contains no JSON, so it walked past that guard.
+    """
+
+    def test_a_verdict_is_not_scraped_out_of_an_unexecuted_tool_call(self):
+        from app.utils.text_utils import _malformed_fallback
+
+        buf = (
+            "I'll analyze ZS for the board. Based on the desk I'm going with "
+            "HOLD, confidence 62.\n\n" + SGLANG_DSML_BUFFER.split("\n\n", 1)[1]
+        )
+        assert _malformed_fallback(buf) is None
+
+    def test_a_genuine_markdown_report_is_still_recovered(self):
+        """The control. This fallback exists for a persona that ignored the
+        JSON instruction and wrote a report; that case must keep working."""
+        from app.utils.text_utils import _malformed_fallback
+
+        out = _malformed_fallback(
+            "## Decision\naction: HOLD\nconfidence: 62\n"
+            "reasoning: the thesis is intact but entry is extended."
+        )
+        assert out and out.get("action") == "HOLD"
+
+    def test_both_readers_share_one_pattern(self):
+        """`classify_output` and the parser must agree about the same buffer.
+
+        A second copy of the pattern would let the classifier name a transport
+        fault while the parser manufactured a decision from it — which is the
+        arrangement that produced the ZS row.
+        """
+        from app.utils import text_utils
+        from app.v3 import output_rules
+
+        assert output_rules._UNPARSED_TOOL_CALL_RE is text_utils._UNPARSED_TOOL_CALL_RE
