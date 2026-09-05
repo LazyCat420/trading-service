@@ -36,14 +36,22 @@ import inspect
 import pytest
 
 from app.v3 import agent_runner
-from app.v3.output_rules import (
-    NARRATED_NO_ARTIFACT,
-    PROSE_REPORT,
-    RULE_NAMES,
-    TRUNCATED_JSON,
-    UNPARSED_TOOL_CALL,
-    classify_output,
-)
+from app.v3.output_rules import RULE_NAMES, classify_output
+
+# Imported by NAME, not by symbol, and every assertion below compares
+# `rule.name` strings rather than object identity. That is deliberate: on the
+# pre-fix module `UNPARSED_TOOL_CALL` does not exist, and a `from … import`
+# of it would make this file fail COLLECTION. A collection error proves the
+# symbol is missing; it does not prove the assertions would have caught the
+# defect. Written this way, every test below fails on its own assert against
+# `328de48` — which is the control that matters.
+#
+# Verified 2026-09-05 against 328de48: **13 failed, 4 passed, 0 errors.** The
+# four that pass on the old code are the ones asserting behaviour the fix does
+# not change — narration stays narration, prose stays prose, truncation stays
+# truncation, and the anchored pseudo-call regex still cannot match. They are
+# controls on the blast radius, not evidence for the fix.
+UNPARSED = "UNPARSED_TOOL_CALL"
 
 # The real buffer, byte for byte. Note the FULLWIDTH VERTICAL LINE (U+FF5C) in
 # the DSML markers — a regex written with the ASCII pipe alone does not match
@@ -72,11 +80,11 @@ SGLANG_NARRATION_ONLY = SGLANG_DSML_BUFFER.split("<｜DSML")[0]
 
 class TestTheTransportFaultIsNamed:
     def test_the_stored_sglang_buffer_is_a_transport_fault(self):
-        assert classify_output(SGLANG_DSML_BUFFER) is UNPARSED_TOOL_CALL
+        assert classify_output(SGLANG_DSML_BUFFER).name == UNPARSED
 
     def test_the_narration_half_alone_is_still_narration(self):
         """The control. The old classifier saw ONLY this half."""
-        assert classify_output(SGLANG_NARRATION_ONLY) is NARRATED_NO_ARTIFACT
+        assert classify_output(SGLANG_NARRATION_ONLY).name == "NARRATED_NO_ARTIFACT"
 
     @pytest.mark.parametrize(
         "family,buffer",
@@ -99,7 +107,7 @@ class TestTheTransportFaultIsNamed:
     )
     def test_every_family_we_can_be_served_by(self, family, buffer):
         """One box swap is all it takes; the next one will not be DeepSeek."""
-        assert classify_output(buffer) is UNPARSED_TOOL_CALL, family
+        assert classify_output(buffer).name == UNPARSED, family
 
     def test_the_qwen_shape_would_otherwise_be_swallowed_by_the_json_probe(self):
         """`<tool_call>{...}` is balanced JSON.
@@ -112,7 +120,7 @@ class TestTheTransportFaultIsNamed:
 
         buf = '<tool_call>{"name": "get_market_data", "arguments": {}}</tool_call>'
         assert _LOOKS_LIKE_JSON.search(buf) is not None
-        assert classify_output(buf) is UNPARSED_TOOL_CALL
+        assert classify_output(buf).name == UNPARSED
 
     def test_the_anchored_pseudo_call_regex_cannot_see_it(self):
         """Why a new rule and not a widened old one.
@@ -129,21 +137,22 @@ class TestTheTransportFaultIsNamed:
         assert classify_output(
             "The company reported revenue of $4.2B, up 12% year over year, and "
             "the function of the CFO is unchanged."
-        ) is PROSE_REPORT
+        ).name == "PROSE_REPORT"
 
     def test_a_truncated_artifact_is_still_truncation(self):
-        assert classify_output('{"summary": "abc", "conf') is TRUNCATED_JSON
+        assert classify_output('{"summary": "abc", "conf').name == "TRUNCATED_JSON"
 
     def test_the_name_is_in_the_shared_namespace(self):
         """`v3_agent_telemetry.failure_reason` joins `v3_guardrail_firings` on
         these strings; a class outside the set cannot be counted."""
-        assert UNPARSED_TOOL_CALL.name in RULE_NAMES
+        assert UNPARSED in RULE_NAMES
 
 
 class TestTheRepairPassRefusesIt:
     def test_the_rule_declares_itself_a_transport_failure(self):
-        assert UNPARSED_TOOL_CALL.transport_failure is True
-        assert UNPARSED_TOOL_CALL.quote_previous is False
+        rule = classify_output(SGLANG_DSML_BUFFER)
+        assert getattr(rule, "transport_failure", False) is True
+        assert rule.quote_previous is False
 
     def test_no_other_rule_claims_to_be_a_transport_failure(self):
         """A second transport class would silently disable repair for a shape
@@ -153,9 +162,10 @@ class TestTheRepairPassRefusesIt:
         flagged = {
             r.name
             for r in vars(output_rules).values()
-            if isinstance(r, output_rules.OutputRule) and r.transport_failure
+            if isinstance(r, output_rules.OutputRule)
+            and getattr(r, "transport_failure", False)
         }
-        assert flagged == {"UNPARSED_TOOL_CALL"}
+        assert flagged == {UNPARSED}
 
     def test_the_runner_gates_the_repair_on_the_flag(self):
         """The gate lives in one branch of `run_v3_agent`; assert the source
