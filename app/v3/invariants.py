@@ -247,15 +247,32 @@ DRIFT_MIN_SHIFT_PCT = 25
 #:     v3_decision_synthesizer   29k   loops 1.0
 #:
 #: 20k catches ~30k-36k token single-turn runs where transport drops tools
-#: (e.g. SGLang emitting DSML as text). Deliberation agents (synthesizer, judge)
-#: are exempted up to DELIBERATION_NO_RESEARCH_TOKENS (150k).
+#: (e.g. SGLang emitting DSML as text). Deliberation agents are exempted up to
+#: DELIBERATION_NO_RESEARCH_TOKENS (150k): they reason over what the analysts
+#: already gathered, so a single tool-less turn is their job, not a fault.
 COST_NO_RESEARCH_TOKENS = 20_000
 DELIBERATION_NO_RESEARCH_TOKENS = 150_000
+
+#: MEASURED 2026-09-05 against `v3_agent_telemetry`, 16 days:
+#:
+#:     v3_decision_synthesizer   113 runs   exempt
+#:     v3_debate_judge           103 runs   exempt
+#:     v3_board_of_directors      99 runs   WAS NOT EXEMPT
+#:     v3_board_summary            0 runs   <- name does not exist
+#:     v3_board_consensus          0 runs   <- name does not exist
+#:
+#: `v3_board_summary` and `v3_board_consensus` were introduced by `1f7b66f`
+#: (2026-09-04) and appear NOWHERE else in the tree — not as a module, an
+#: agent registration, a whitelist entry or a telemetry row. Two of the four
+#: exemptions were for agents that have never run, while the board agent that
+#: HAS run 99 times was left to be flagged. Live specimen from the GLM cycle
+#: `cycle-v3-1788642086`: `v3_board_of_directors` SUCCESS, 1 loop, 26,249
+#: prompt tokens — over the 20k floor, so it would have been recorded as
+#: "burned tokens without research" for doing exactly its job.
 DELIBERATION_AGENTS = {
     "v3_decision_synthesizer",
-    "v3_board_summary",
-    "v3_board_consensus",
     "v3_debate_judge",
+    "v3_board_of_directors",
 }
 
 #: A WHOLE CYCLE that called no tool at all.

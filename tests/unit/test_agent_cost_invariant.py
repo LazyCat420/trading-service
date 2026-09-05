@@ -116,3 +116,73 @@ class TestCachedAgentsAreNotFlagged:
             assert "_NON_RESEARCHING_AGENTS" in inspect.getsource(fn), (
                 f"{fn.__name__} does not consult the shared set"
             )
+
+
+class TestTheDeliberationExemptionNamesRealAgents:
+    """`1f7b66f` exempted two agents that do not exist and missed the one that does.
+
+    Measured over 16 days of `v3_agent_telemetry`: `v3_board_summary` 0 runs,
+    `v3_board_consensus` 0 runs, `v3_board_of_directors` 99 runs and NOT
+    exempt. The two ghost names appear nowhere else in the tree.
+    """
+
+    def test_no_exempt_agent_is_a_name_that_exists_nowhere(self):
+        """Every exempted name must appear in the code as a real agent.
+
+        Greps `app/` for each name. A name that exists only inside this set is
+        by construction a typo or a deleted agent, and it silently widens the
+        threshold for nothing while narrowing it for whatever replaced it.
+        """
+        import pathlib
+
+        from app.v3 import invariants
+
+        app = pathlib.Path(invariants.__file__).resolve().parents[1]
+        blobs = [
+            p.read_text(encoding="utf-8", errors="ignore")
+            for p in app.rglob("*.py")
+            if p.name != "invariants.py"
+        ]
+        ghosts = [
+            name for name in invariants.DELIBERATION_AGENTS
+            if not any(name in b for b in blobs)
+        ]
+        assert ghosts == [], (
+            f"exempted agents that exist nowhere in app/: {ghosts} — "
+            "they widen the no-research threshold for a name nothing can emit"
+        )
+
+    def test_the_board_is_exempt(self):
+        """It ran 99 times in 16 days and deliberates; the judge and the
+        synthesizer are exempt for the same reason."""
+        from app.v3 import invariants
+
+        assert "v3_board_of_directors" in invariants.DELIBERATION_AGENTS
+
+    def test_the_board_at_one_loop_is_not_flagged(self):
+        """The real LULU row: SUCCESS, 1 loop, 26,249 tok — over the 20k floor."""
+        from app.v3 import invariants
+
+        recorded = []
+        import unittest.mock as m
+
+        with m.patch.object(invariants.mongo_store, "aggregate",
+                            return_value=[{"_id": "v3_board_of_directors",
+                                           "tok": 26_249, "loops": 1.0}]), \
+             m.patch.object(invariants, "record_violation",
+                            side_effect=lambda k, **d: (recorded.append(k), k)[1]):
+            assert invariants._check_agent_cost("c") == []
+        assert recorded == []
+
+    def test_a_deliberation_agent_over_150k_still_flags(self):
+        """The exemption raises the floor; it does not remove it."""
+        from app.v3 import invariants
+
+        import unittest.mock as m
+        with m.patch.object(invariants.mongo_store, "aggregate",
+                            return_value=[{"_id": "v3_board_of_directors",
+                                           "tok": 160_000, "loops": 1.0}]), \
+             m.patch.object(invariants, "record_violation",
+                            side_effect=lambda k, **d: k):
+            assert invariants._check_agent_cost("c") == [
+                invariants.KIND_AGENT_COST_NO_RESEARCH]
