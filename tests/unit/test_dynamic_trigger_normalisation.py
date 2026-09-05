@@ -116,8 +116,13 @@ async def test_create_trigger_refuses_an_unevaluable_setup(monkeypatch):
     from app.trading import order_triggers
 
     wrote = []
-    monkeypatch.setattr(order_triggers.mongo_store, "insert_docs",
-                        lambda c, d, **kw: wrote.append((c, d)))
+    # price_triggers ONLY: patching mongo_store.insert_docs intercepts every
+    # write in the process, and this module's logger.warning is routed to a
+    # handler that inserts an execution_errors row — which made `assert not
+    # wrote` below fail whenever another test had already installed it.
+    monkeypatch.setattr(
+        order_triggers.mongo_store, "insert_docs",
+        lambda c, d, **kw: wrote.append((c, d)) if c == "price_triggers" else None)
     monkeypatch.setattr(order_triggers.mongo_store, "update_docs",
                         lambda *a, **kw: None)
 
@@ -135,8 +140,13 @@ async def test_create_trigger_stores_the_normalised_setup(monkeypatch):
     from app.trading import order_triggers
 
     wrote = []
-    monkeypatch.setattr(order_triggers.mongo_store, "insert_docs",
-                        lambda c, d, **kw: wrote.append((c, d)))
+    # price_triggers ONLY: patching mongo_store.insert_docs intercepts every
+    # write in the process, and this module's logger.warning is routed to a
+    # handler that inserts an execution_errors row — which made `assert not
+    # wrote` below fail whenever another test had already installed it.
+    monkeypatch.setattr(
+        order_triggers.mongo_store, "insert_docs",
+        lambda c, d, **kw: wrote.append((c, d)) if c == "price_triggers" else None)
     monkeypatch.setattr(order_triggers.mongo_store, "update_docs",
                         lambda *a, **kw: None)
     # `create_trigger` now asks whether the condition is ALREADY true before

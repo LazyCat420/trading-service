@@ -109,9 +109,21 @@ class TestThePredicate:
 class TestTheCreationGuard:
     @pytest.fixture
     def store(self, monkeypatch):
+        """Captures ONLY the price_triggers rows.
+
+        `order_triggers.mongo_store` IS `app.db.mongo_store`, so patching its
+        `insert_docs` intercepts every write in the process — and this module's
+        `logger.warning` calls are routed to a handler that writes an
+        `execution_errors` row (see [db-error-logging-registered-by-accident]).
+        A capture that ignored the collection name therefore returned the log
+        row as `[0]` and the assertions read a document that was never a
+        trigger. Order-dependent, too: it only happened once another test in
+        the session had installed the handler.
+        """
         wrote: list = []
-        monkeypatch.setattr(order_triggers.mongo_store, "insert_docs",
-                            lambda c, d, **kw: wrote.append(d[0]))
+        monkeypatch.setattr(
+            order_triggers.mongo_store, "insert_docs",
+            lambda c, d, **kw: wrote.extend(d) if c == "price_triggers" else None)
         monkeypatch.setattr(order_triggers.mongo_store, "update_docs",
                             lambda *a, **kw: None)
         return wrote
