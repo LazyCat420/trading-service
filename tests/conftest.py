@@ -508,3 +508,117 @@ def _policy_gate_price_history_probe(monkeypatch, request):
     except Exception:  # noqa: BLE001 — module may be unavailable in some envs
         return
     monkeypatch.setattr(_tb, "has_price_history", lambda _t: True, raising=False)
+
+
+# ---------------------------------------------------------------------------
+# Outbound HTTP
+# ---------------------------------------------------------------------------
+
+#: Hosts a unit test may talk to. Loopback only — a test that needs a real
+#: service is an integration test and asks for `live_http` explicitly.
+_ALLOWED_HTTP_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "testserver"})
+
+
+class OutboundHTTPBlocked(RuntimeError):
+    """A unit test tried to reach the network."""
+
+
+@pytest.fixture
+def live_http():
+    """Opt out of `block_outbound_http` for a test that must reach a service.
+
+    The twin of `live_db`. Requesting it overrides the autouse block, so the
+    intent is visible in the test signature rather than buried in a patch.
+    """
+    return True
+
+
+@pytest.fixture(autouse=True)
+def block_outbound_http(request):
+    """Fail any test that opens an outbound HTTP connection.
+
+    THE HOLE THIS CLOSES
+    --------------------
+    `block_production_mongo` above stops a unit test reaching the real
+    database. Nothing stopped one reaching the real *network*, and the gap was
+    not theoretical.
+
+    MEASURED 2026-09-05. The tool-execution pre-flight added in `2c59162`
+    probes the shim URL directly with `httpx`. Two tests that drive a cycle
+    (`test_error_cycle_attribution`, `test_v3_decision_synthesizer`) picked it
+    up transitively and made **live calls to the Gold Spark from the unit
+    suite** — they aborted both probe cycles until `e4cf1da` stubbed them by
+    hand. That commit's own message records the defect and notes that the
+    Mongo guard has no HTTP counterpart.
+
+    Hand-stubbing each new call site does not scale: the next module to add an
+    `httpx.post` inherits the same hole, and the failure is silent when the
+    endpoint happens to answer. Worse, a suite that reaches a live box is
+    order- and availability-dependent — it goes red for reasons that have
+    nothing to do with the code under test.
+
+    Blocks at the transport layer (`httpx` and `requests`), so it catches a
+    client built anywhere: module-level, function-local, or inside an SDK.
+    Loopback is allowed for TestClient-style in-process apps. A test that
+    genuinely needs the network requests `live_http`.
+    """
+    if "live_http" in request.fixturenames:
+        yield
+        return
+
+    import httpx
+
+    real_sync = httpx.Client.send
+    real_async = httpx.AsyncClient.send
+
+    def _check(req):
+        host = (req.url.host or "").lower()
+        if host in _ALLOWED_HTTP_HOSTS:
+            return
+        raise OutboundHTTPBlocked(
+            f"outbound HTTP blocked in a unit test: {req.method} {req.url}\n"
+            "  A unit test must not depend on a live service — it makes the "
+            "suite order- and availability-dependent.\n"
+            "  Stub the client, or request the `live_http` fixture if this "
+            "test genuinely needs the network."
+        )
+
+    def _sync(self, request_, *a, **k):
+        _check(request_)
+        return real_sync(self, request_, *a, **k)
+
+    async def _async(self, request_, *a, **k):
+        _check(request_)
+        return await real_async(self, request_, *a, **k)
+
+    patches = [
+        patch.object(httpx.Client, "send", _sync),
+        patch.object(httpx.AsyncClient, "send", _async),
+    ]
+    try:
+        import requests.adapters
+
+        real_adapter = requests.adapters.HTTPAdapter.send
+
+        def _req(self, request_, *a, **k):
+            from urllib.parse import urlparse
+
+            host = (urlparse(request_.url).hostname or "").lower()
+            if host not in _ALLOWED_HTTP_HOSTS:
+                raise OutboundHTTPBlocked(
+                    f"outbound HTTP blocked in a unit test: "
+                    f"{request_.method} {request_.url}"
+                )
+            return real_adapter(self, request_, *a, **k)
+
+        patches.append(patch.object(requests.adapters.HTTPAdapter, "send", _req))
+    except ImportError:  # requests is optional here
+        pass
+
+    for p in patches:
+        p.start()
+    try:
+        yield
+    finally:
+        for p in patches:
+            p.stop()
