@@ -205,6 +205,7 @@ KIND_UNIVERSE_NOT_COVERED = "ANALYSED_UNIVERSE_NOT_REFRESHED"
 KIND_TOOL_FAILURE_RATE = "TOOL_FAILURE_RATE_CEILING"
 KIND_DECISION_DRIFT = "DECISION_DISTRIBUTION_DRIFT"
 KIND_AGENT_COST_NO_RESEARCH = "AGENT_BURNS_TOKENS_WITHOUT_RESEARCH"
+KIND_CYCLE_NO_RESEARCH = "CYCLE_MADE_NO_TOOL_CALLS"
 KIND_ATTRIBUTION_DECAY = "TELEMETRY_ATTRIBUTION_DECAY"
 KIND_DESK_STALLED = "DESK_STALLED_MID_PIPELINE"
 
@@ -257,6 +258,37 @@ DELIBERATION_AGENTS = {
     "v3_debate_judge",
 }
 
+#: A WHOLE CYCLE that called no tool at all. This is the shape
+#: `COST_NO_RESEARCH_TOKENS` above cannot see: it needs >150k tokens at <=1
+#: loop, and the failure that motivated this one spends ~40k at exactly 1 loop,
+#: so it was silent on every agent of every ticker.
+#:
+#: MEASURED 2026-09-05 over the 11 days to that date, tool rows per LLM agent
+#: run, by cycle:
+#:
+#:     cycle-v3-1788565070  sglang   117 runs      0 rows   ratio 0.00  <- broken
+#:     cycle-v3-1788486930  GLM       20 runs     69 rows   ratio 3.45
+#:     cycle-v3-1788198857  ds0731    56 runs    196 rows   ratio 3.50
+#:     cycle-v3-1788384492  nemotron  38 runs    131 rows   ratio 3.45
+#:     cycle-v3-1788553248  nemotron  12 runs     35 rows   ratio 2.92
+#:     cycle-v3-1788532947  nemotron  10 runs     24 rows   ratio 2.40
+#:
+#: Zero against a healthy floor of 2.40 on the SMALLEST healthy cycle, across
+#: three different models on two boxes. There is no threshold to tune: the
+#: check is `== 0`.
+#:
+#: PER-AGENT was measured too and DELIBERATELY NOT USED as the trigger. Zero
+#: tool calls is normal for several roles — `v3_regime_engine` is 72-100%
+#: zero-tool on every model (its result is cached), `v3_bull_defense` 15% on
+#: deepseek, `v3_junior_analyst` 54% on nemotron (that model answers from the
+#: briefing, which is a model fact, not an outage). A per-agent rule would fire
+#: on healthy cycles, and a check that fires on healthy cycles gets muted, then
+#: ignored, then deleted. The per-agent roster rides in `detail` instead.
+#:
+#: The floor exists only to skip the 3-run aborted cycles: the smallest healthy
+#: cycle observed carries 10 LLM runs.
+NO_RESEARCH_MIN_RUNS = 8
+
 #: Attribution was 100% in June and decayed to 0.6% by 07-27 without anyone
 #: noticing. Below half, the telemetry cannot answer "which agent researches".
 ATTRIBUTION_MIN_PCT = 50
@@ -274,7 +306,7 @@ def check_cycle_complete(*, cycle_id: str) -> list[str]:
         return violations
     for check in (_check_universe_coverage, _check_tool_failure_rates,
                   _check_decision_drift, _check_agent_cost, _check_attribution,
-                  _check_desks_reached_terminal):
+                  _check_desks_reached_terminal, _check_cycle_did_research):
         try:
             violations.extend(check(cycle_id) or [])
         except Exception as e:  # noqa: BLE001
@@ -388,6 +420,64 @@ def _check_agent_cost(cycle_id: str) -> list[str]:
                 agent=name, tokens=int(tok), avg_loops=float(loops or 0),
             ))
     return out
+
+
+#: Agents whose result is cached or whose role does not require a tool. Counted
+#: in the roster but never the reason the cycle is flagged.
+_NON_RESEARCHING_AGENTS = frozenset({
+    "contradiction_shadow",
+    "v3_regime_engine",
+})
+
+
+def _check_cycle_did_research(cycle_id: str) -> list[str]:
+    """The whole cycle called no tool. The desk decided on the briefing alone.
+
+    THE FAILURE THIS EXISTS FOR (2026-09-04/05, cycle-v3-1788565070). The Gold
+    Spark was serving DeepSeek V4 through SGLang launched without
+    `--tool-call-parser deepseekv4`, so every agent's tool call came back as
+    TEXT inside the message content. Nothing executed, nothing was written to
+    `agent_tool_telemetry`, and the tool-less repair pass then produced an
+    artifact out of the pre-collected briefing — which scored 80-88 on
+    `quality_scorer` and was recorded SUCCESS. 117 agent runs, 12 HOLD
+    decisions, and every existing instrument read healthy:
+
+      * `_check_agent_cost` needs >150k tokens; these runs were ~40k.
+      * `cycle_audit.check_tool_failures` grades the rows it finds and returns
+        INFO "no tool calls yet" when it finds none.
+      * `llm_audit`'s availability counts a repaired run as a success.
+
+    An absence cannot be graded by a check that only grades what is present.
+    This one asks for the absence directly.
+    """
+    from app.db import mongo_store
+
+    runs = mongo_store.find_docs(
+        "v3_agent_telemetry",
+        {"cycle_id": cycle_id},
+        projection={"agent_name": 1, "ticker": 1, "loops_used": 1, "outcome": 1},
+    )
+    llm_runs = [
+        r for r in runs
+        if (r.get("agent_name") or "") not in _NON_RESEARCHING_AGENTS
+    ]
+    if len(llm_runs) < NO_RESEARCH_MIN_RUNS:
+        return []
+
+    tool_calls = mongo_store.count_docs("agent_tool_telemetry", {"cycle_id": cycle_id})
+    if tool_calls:
+        return []
+
+    # The roster names WHO went without, so the report does not send a reader
+    # back to the database to find out whether this was one agent or all of
+    # them. Sorted and capped for the same reason STALL_ROSTER_CAP exists.
+    roster = sorted({str(r.get("agent_name") or "?") for r in llm_runs})
+    return [record_violation(
+        KIND_CYCLE_NO_RESEARCH, cycle_id=cycle_id,
+        llm_runs=len(llm_runs), tool_calls=0,
+        agents=roster[:STALL_ROSTER_CAP],
+        tickers=len({str(r.get("ticker") or "") for r in llm_runs if r.get("ticker")}),
+    )]
 
 
 KIND_DESK_ABANDONED = "DESK_ABANDONED_MID_PIPELINE"
