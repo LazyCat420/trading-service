@@ -30,6 +30,7 @@ Usage:
         my_data_block = my_data_block[:budget.data_context_chars]
 """
 
+import os
 import logging
 from dataclasses import dataclass
 
@@ -130,7 +131,7 @@ def _effective_from_raw(raw_tokens: int) -> int:
     strictly better than letting the model silently degrade or timeout.
     """
     EFFECTIVE_RATIO = 1.0       # Expand to 100% of raw context
-    MAX_BUDGET_CEILING = 128000   # 128K tokens ceiling
+    MAX_BUDGET_CEILING = int(os.getenv("MAX_CONTEXT_BUDGET_CEILING", "1000000"))   # Up to 1M tokens ceiling
     return min(int(raw_tokens * EFFECTIVE_RATIO), MAX_BUDGET_CEILING)
 
 

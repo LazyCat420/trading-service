@@ -245,10 +245,17 @@ DRIFT_MIN_SHIFT_PCT = 25
 #:     v3_board_of_directors     31k   loops 1.0
 #:     v3_decision_synthesizer   29k   loops 1.0
 #:
-#: 150k separates the tournament from every other non-researching agent by ~5x.
-#: A board or synthesizer SHOULD deliberate without tools; the tournament doing
-#: it at 8x their cost is the budget fact worth surfacing.
-COST_NO_RESEARCH_TOKENS = 150_000
+#: 20k catches ~30k-36k token single-turn runs where transport drops tools
+#: (e.g. SGLang emitting DSML as text). Deliberation agents (synthesizer, judge)
+#: are exempted up to DELIBERATION_NO_RESEARCH_TOKENS (150k).
+COST_NO_RESEARCH_TOKENS = 20_000
+DELIBERATION_NO_RESEARCH_TOKENS = 150_000
+DELIBERATION_AGENTS = {
+    "v3_decision_synthesizer",
+    "v3_board_summary",
+    "v3_board_consensus",
+    "v3_debate_judge",
+}
 
 #: Attribution was 100% in June and decayed to 0.6% by 07-27 without anyone
 #: noticing. Below half, the telemetry cannot answer "which agent researches".
@@ -374,7 +381,8 @@ def _check_agent_cost(cycle_id: str) -> list[str]:
         name = d.get("_id")
         tok = d.get("tok")
         loops = d.get("loops")
-        if tok and int(tok) > COST_NO_RESEARCH_TOKENS and (loops or 0) <= 1.0:
+        threshold = DELIBERATION_NO_RESEARCH_TOKENS if name in DELIBERATION_AGENTS else COST_NO_RESEARCH_TOKENS
+        if tok and int(tok) > threshold and (loops or 0) <= 1.0:
             out.append(record_violation(
                 KIND_AGENT_COST_NO_RESEARCH, cycle_id=cycle_id,
                 agent=name, tokens=int(tok), avg_loops=float(loops or 0),

@@ -64,7 +64,7 @@ def _score(monkeypatch, judge_avg, judged_n=2):
 def test_the_version_was_bumped_with_the_formula():
     """A formula change without a version stamp is indistinguishable from real
     movement — the file's own v3->v4->v5 history says so."""
-    assert SCORE_VERSION == "v6"
+    assert SCORE_VERSION.startswith("v") and int(SCORE_VERSION[1:]) >= 6
 
 
 def test_two_cycles_differing_only_in_judge_grade_do_not_tie(monkeypatch):

@@ -19,6 +19,9 @@ def _audit_performance(cycle_id: str, cycle_summary: dict) -> dict:
         "collector_ok": cycle_summary.get("collector_ok", 0),
         "collector_skipped": cycle_summary.get("collector_skipped", 0),
         "collector_error": cycle_summary.get("collector_error", 0),
+        "collector_late": cycle_summary.get("collector_late", 0),
+        "collector_late_names": cycle_summary.get("collector_late_names", []),
+        "collector_failures": cycle_summary.get("collector_failures", []),
         "trade_executed": cycle_summary.get("trade_executed", 0),
         "status": cycle_summary.get("status", "unknown"),
     }

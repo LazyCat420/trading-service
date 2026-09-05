@@ -268,7 +268,8 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
             reflection["anomaly"] = True
             reflection["anomaly_detail"] = f"Degenerate sub-scores at 0.0: {', '.join(degenerate_subs)}"
 
-        mongo_store.update_docs('autoresearch_reports', {'id': report_id}, {'$set': {'data_quality_score': round(data_score, 1), 'decision_quality_score': round(decision_score, 1), 'llm_performance_score': round(llm_score, 1), 'overall_score': round(overall, 1), 'data_gaps': json.dumps(data_quality.get("gaps", [])), 'decision_issues': json.dumps(decision_quality.get("issues", [])), 'llm_issues': json.dumps(llm_analysis.get("issues", [])), 'performance_metrics': json.dumps(perf_metrics), 'reflection': json.dumps(reflection), 'recovery_stats': json.dumps(recovery), 'status': 'done'}})
+        score_ver = decision_quality.get("score_version", "v6")
+        mongo_store.update_docs('autoresearch_reports', {'id': report_id}, {'$set': {'score_version': score_ver, 'data_quality_score': round(data_score, 1), 'decision_quality_score': round(decision_score, 1), 'llm_performance_score': round(llm_score, 1), 'overall_score': round(overall, 1), 'data_gaps': json.dumps(data_quality.get("gaps", [])), 'decision_issues': json.dumps(decision_quality.get("issues", [])), 'llm_issues': json.dumps(llm_analysis.get("issues", [])), 'performance_metrics': json.dumps(perf_metrics), 'reflection': json.dumps(reflection), 'recovery_stats': json.dumps(recovery), 'status': 'done'}})
 
         try:
             _store_lessons(reflection, cycle_id)

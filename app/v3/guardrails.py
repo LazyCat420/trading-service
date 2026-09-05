@@ -71,15 +71,21 @@ class V3AgentBudget:
         return max(0, self.max_tool_calls - self.current_tool_calls)
 
 
-# Default budgets per agent role
+# Default budgets per agent role — harmonized with tool_whitelists.py AGENT_BUDGET_OVERRIDES
 AGENT_ROLE_BUDGETS: dict[str, dict[str, int]] = {
-    "junior_analyst": {"max_turns": 10, "max_tool_calls": 15},
+    "junior_analyst": {"max_turns": 7, "max_tool_calls": 15},
     "fundamental_analyst": {"max_turns": 12, "max_tool_calls": 20},
-    "quant_analyst": {"max_turns": 12, "max_tool_calls": 20},
-    "bull_agent": {"max_turns": 3, "max_tool_calls": 0},  # No tools — pure reasoning
-    "bear_agent": {"max_turns": 3, "max_tool_calls": 0},  # No tools — pure reasoning
+    "quant_analyst": {"max_turns": 14, "max_tool_calls": 20},
+    "valuation_analyst": {"max_turns": 6, "max_tool_calls": 10},
+    "bull_agent": {"max_turns": 5, "max_tool_calls": 10},
+    "bear_agent": {"max_turns": 5, "max_tool_calls": 10},
+    "bull_defense": {"max_turns": 4, "max_tool_calls": 10},
+    "debate_judge": {"max_turns": 4, "max_tool_calls": 5},
+    "delta_analyst": {"max_turns": 5, "max_tool_calls": 10},
     "regime_engine": {"max_turns": 5, "max_tool_calls": 8},
-    "board_of_directors": {"max_turns": 5, "max_tool_calls": 3},  # Phase 2: tools enabled for contextual decisions
+    "board_of_directors": {"max_turns": 5, "max_tool_calls": 5},
+    "portfolio_manager": {"max_turns": 5, "max_tool_calls": 10},
+    "decision_synthesizer": {"max_turns": 5, "max_tool_calls": 5},
 }
 
 
