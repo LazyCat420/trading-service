@@ -6,9 +6,19 @@ WHY (ch.97, 2026-08-25): the "maximum one mega-cap per cycle" rule tests
 510 of 1,049 rows (AAPL and TSLA among them) carried no tier at all. The
 enforcement shipped; the data it reads never did.
 
-Reads market caps from yfinance in batches, maps them through the same
-`tier_for_market_cap` the loader uses, and updates ONLY rows whose tier is
-missing (never overwrites an existing tier — `--force` to re-tier everything).
+Two passes, in this order:
+
+  1. FUNDS. Every row whose `asset_class` says ETF/fund is tagged `ETF_TIER`
+     through `ensure_ticker_metadata` — the same authority the gatekeeper's
+     admission path uses, so the script and the gate cannot disagree. No vendor
+     call: the row's own `asset_class` is the evidence. This pass DOES rewrite an
+     existing company tier on a fund — measured 2026-09-06, all 47 tiered ETFs
+     said "micro" (QQQM at $104B) and 38 more had no tier at all, so the
+     mega-cap cap was either blind to them or lying about them.
+  2. COMPANIES. Reads market caps from yfinance in batches, maps them through
+     the same `tier_for_market_cap` the loader uses, and updates ONLY rows whose
+     tier is missing (never overwrites an existing tier — `--force` to re-tier
+     everything). Funds are excluded from this pass.
 
 Usage (inside the trading-service container, or anywhere with MONGO_URI):
     python scripts/backfill_market_cap_tier.py            # missing tiers only
@@ -27,6 +37,11 @@ sys.path.insert(0, ".")
 
 from app.data.sp500_universe import tier_for_market_cap  # noqa: E402
 from app.db import mongo_store  # noqa: E402
+from app.services.ticker_meta import (  # noqa: E402
+    ETF_ASSET_CLASSES,
+    ETF_TIER,
+    ensure_ticker_metadata,
+)
 
 BATCH = 50
 
@@ -38,9 +53,30 @@ def main() -> int:
     ap.add_argument("--only", nargs="*", default=None, help="restrict to these tickers")
     args = ap.parse_args()
 
-    query: dict = {}
+    # ── Pass 1: funds, from the row's own asset_class ─────────────────────
+    fund_query: dict = {"asset_class": {"$in": sorted(ETF_ASSET_CLASSES)}}
+    if args.only:
+        fund_query["ticker"] = {"$in": [t.upper() for t in args.only]}
+    fund_rows = mongo_store.find_docs(
+        "ticker_metadata", fund_query,
+        projection={"ticker": 1, "market_cap_tier": 1, "market_cap": 1, "_id": 0},
+    )
+    funds = sorted(d["ticker"] for d in fund_rows if d.get("ticker"))
+    to_tag = sorted(d["ticker"] for d in fund_rows if d.get("ticker") and d.get("market_cap_tier") != ETF_TIER)
+    print(f"funds: {len(funds)} rows with a fund asset_class; {len(to_tag)} not yet '{ETF_TIER}'")
+    if to_tag:
+        was = {d["ticker"]: d.get("market_cap_tier") for d in fund_rows}
+        for t in to_tag:
+            print(f"  {t}: {was.get(t)!r} -> {ETF_TIER}{' (dry)' if args.dry_run else ''}")
+        if not args.dry_run:
+            tagged = ensure_ticker_metadata(to_tag)
+            missed = [t for t in to_tag if tagged.get(t) != ETF_TIER]
+            print(f"  tagged {len(to_tag) - len(missed)}/{len(to_tag)}" + (f"; MISSED {missed}" if missed else ""))
+
+    # ── Pass 2: companies, from the vendor ────────────────────────────────
+    query: dict = {"ticker": {"$nin": funds}} if funds else {}
     if not args.force:
-        query = {"$or": [{"market_cap_tier": None}, {"market_cap_tier": {"$exists": False}}]}
+        query = {"$and": [query or {}, {"$or": [{"market_cap_tier": None}, {"market_cap_tier": {"$exists": False}}]}]}
     if args.only:
         query = {"$and": [query or {}, {"ticker": {"$in": [t.upper() for t in args.only]}}]}
 
