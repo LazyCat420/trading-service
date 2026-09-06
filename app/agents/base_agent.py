@@ -145,10 +145,13 @@ _seen_usage_keys: set[str] = set()
 def extract_cached_tokens(usage: dict | None) -> int:
     """Prompt tokens served from the provider's prefix cache, whatever it calls it.
 
-    Returns the FIRST populated spelling rather than a sum: a gateway that
-    passes two names for the same figure would otherwise double it. A genuine
-    zero stays zero — a fallback key must not be able to rescue it, or the
-    metric could never go down.
+    Returns the first NON-ZERO spelling rather than a sum: a gateway that
+    passes two names for the same figure would otherwise double it. A zero
+    under one spelling is not an answer — prism always emits
+    `cacheReadInputTokens: 0` — so it falls through to the next spelling, and
+    only an all-zero usage dict reports 0. (The docstring said "first
+    POPULATED" and "a fallback key must not rescue a zero" until 2026-09-06,
+    describing the very behaviour the fix removed.)
     """
     if not isinstance(usage, dict):
         return 0
