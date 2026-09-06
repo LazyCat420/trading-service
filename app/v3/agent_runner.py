@@ -1392,6 +1392,7 @@ async def run_v3_agent(
                 model_override=model_override,
                 prism_overrides=prism_overrides,
                 cost_sink=_cost_sink,
+                soft_deadline_s=timeout_seconds * 0.5,
             ),
             timeout=timeout_seconds,
         )
@@ -1588,6 +1589,7 @@ async def run_v3_agent(
                         model_override=model_override,
                         prism_overrides=prism_overrides,
                         cost_sink=_cost_sink,  # the repair's spend joins the run's
+                        soft_deadline_s=timeout_seconds * 0.5,
                     ),
                     timeout=timeout_seconds,
                 )

@@ -204,6 +204,16 @@ def _canary_check(
         logger.debug("[ToolCanary] check failed (non-fatal): %s", e)
 
 
+#: The bridge's hard per-call cap: MCP_TOOL_DEADLINE_MS in
+#: lazy-agent-service/config.ts (55 000), with SLOW_TOOL_TIMEOUT_MS (40 000) +
+#: ACQUIRE_TIMEOUT_MS (15 000) pinned <= it by that repo's McpDeadline test.
+#: MEASURED 2026-09-06 (cycle-v3-1788660665): get_finnhub_news, screener_query,
+#: get_institutional_holdings and get_earnings_data all died at 49.6-49.8 s —
+#: that mode is this deadline. A failure at >= 90% of it is a deadline hit and
+#: gets ONE named line, which the old per-agent "took too much time" never gave.
+BRIDGE_TOOL_DEADLINE_MS = 55_000
+
+
 def record_tool_call(
     cycle_id: str,
     agent_name: str,
@@ -237,6 +247,13 @@ def record_tool_call(
         cycle_id=cycle_id,
         ticker=ticker,
     )
+
+    if not success and elapsed_ms >= 0.9 * BRIDGE_TOOL_DEADLINE_MS:
+        logger.warning(
+            "[ToolDeadline] %s hit its %ds bridge deadline (%d ms, agent %s%s)",
+            tool_name, BRIDGE_TOOL_DEADLINE_MS // 1000, elapsed_ms, agent_name,
+            f", {ticker}" if ticker else "",
+        )
 
     try:
         now_utc = datetime.now(timezone.utc)

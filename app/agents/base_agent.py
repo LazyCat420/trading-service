@@ -463,6 +463,28 @@ def get_confidence_calibration_context() -> str:
 
 
 
+def slow_run_notice(elapsed_s: float, tool_call_count: int, soft_deadline_s: float | None,
+                    last_tool: str | None, already_warned: bool) -> str | None:
+    """One WARNING per run when it has used half its budget, naming the tool.
+
+    Replaces a level check (`elapsed_s > 180 and tool_call_count > 4`) that
+    re-fired on EVERY tool result at logger.error. MEASURED 2026-09-06,
+    cycle-v3-1788660665: 31 of the cycle's 40 error rows were this one line —
+    fundamental 20x (191-963 s), junior 8x, valuation 2x, bull 1x — and three
+    of the four agents SUCCEEDED. The literal matched no real deadline
+    (read-through 12 s, bridge 30/40 s, MCP 55 s, prism watchdog 300 s, runner
+    600-1800 s); the threshold is now derived from the runner's own timeout.
+    The phrase "took too much time" is kept on purpose: performance_audit
+    excludes it from the recovery histogram by that phrase.
+    """
+    if already_warned or not soft_deadline_s or elapsed_s <= soft_deadline_s:
+        return None
+    return (
+        f"[ManagerAgent] Agent took too much time: {elapsed_s:.0f}s over {tool_call_count} tool "
+        f"turns (soft deadline {soft_deadline_s:.0f}s), last tool {last_tool or '?'} — still running"
+    )
+
+
 async def run_agent(
     agent_name: str,
     ticker: str,
@@ -484,6 +506,7 @@ async def run_agent(
     model_override: str | None = None,
     prism_overrides: dict | None = None,
     cost_sink: dict | None = None,
+    soft_deadline_s: float | None = None,
 ) -> dict:
     """
     Generic agent runner:
@@ -596,6 +619,7 @@ async def run_agent(
 
         t0 = time.time()
         tool_call_count = 0
+        _slow_warned = False  # slow_run_notice fires once per run
         prior_calls = []
         # Each retry starts a fresh transcript: a repair must be built from the
         # attempt that actually failed, not from a discarded earlier one.
@@ -809,12 +833,13 @@ async def run_agent(
             # 200-535s on 08-04 (decode-throughput sharing, not stalling).
             # A real time abort needs a load-scaled threshold (planned); the
             # asyncio 600s ceiling in the runner remains the hard stop.
-            elapsed_s = time.time() - t0
-            if elapsed_s > 180 and tool_call_count > 4:
-                logger.error(
-                    "[ManagerAgent] Agent %s took too much time (%.1fs) over %d tool turns without completing.",
-                    agent_name, elapsed_s, tool_call_count
-                )
+            nonlocal _slow_warned
+            _notice = slow_run_notice(
+                time.time() - t0, tool_call_count, soft_deadline_s, tool_name, _slow_warned,
+            )
+            if _notice:
+                _slow_warned = True
+                logger.warning("%s (agent %s)", _notice, agent_name)
 
         # Pre-call hook, built here so it closes over this run's ticker — the
         # value the model keeps losing to bad JSON escaping.
