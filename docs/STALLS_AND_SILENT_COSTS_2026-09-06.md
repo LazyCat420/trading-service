@@ -291,9 +291,25 @@ enqueued at 18:25 and sampled every 15 s throughout.
 | claim | before | on this cycle |
 |---|---|---|
 | `think` no longer burns a turn | 5, 4 and 3 POLICY_DENIED calls on the three baseline cycles | **3 calls, 3 successes, 0 denied** |
-| the panel does not call a working agent dead | 25 of 101 samples over the client's 300 s threshold, max **522 s** | **0 of 79 samples over 300 s, max 180 s** |
+| the panel does not call a working agent dead | 25 of 101 samples over the client's 300 s threshold, max **522 s**; four gaps over 300 s | **improved, not fixed** — see below |
 | the per-box ceiling is really 2 | `limit_for` returned 4 in the container | verified in the running container: `min_concurrency 4 → limit_for('dgx_spark') 2` |
 | the metadata gate runs on the explicit path | never ran there (74 % of cycles) | fired, and **found a defect**: see the worksheet's first-run section |
+
+**The staleness row, honestly.** For the first 79 samples this read 0 over the
+threshold with a 180 s maximum, and that was reported. It did not hold: at
+18:50:04 the cycle entered a **392 s** gap inside `v3_bear_agent` and the
+sampler's age peaked at **411 s**. The tool-result heartbeat cannot cover that
+turn — bear_agent made three tool calls early and then generated for six
+minutes with nothing to stamp; the latency audit measures it at 2.3 s of tool
+time against a 460 s mean. `v3_bull_defense` (0.0 s of tool time) did the same
+thing later in the cycle.
+
+So the measured result for this criterion is **one gap over 300 s against the
+previous cycle's four, and a 411 s peak against 522 s** — a real improvement
+and not the elimination the first 79 samples suggested. The remainder is fixed
+in `fix/heartbeat-covers-a-quiet-turn`, which moves the beat to where the run
+is awaited so a silent generation stamps anyway; that is not in the deployed
+image, so this cycle could not show it.
 
 The gate's failure is the useful part: JEPQ had no row, the vendor answered
 `quoteType: "ETF"`, `marketCap: null`, `totalAssets: $42.2B`, and the branch —
