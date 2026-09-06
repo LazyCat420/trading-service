@@ -143,3 +143,118 @@ class TestPoolsAreIndependent:
         c = _controller(monkeypatch, DGX_LOADED, JETSON_IDLE)
         async with c.track(label="legacy"):
             assert c.total_active == 1
+
+
+class TestTheCeilingIsACeilingOnTheBoxItRunsOn:
+    """The first version of this cap was invisible in production.
+
+    Every branch of `limit_for` ended in `max(self.min_concurrency, ...)`, and
+    the shipped floor is FOUR (`ADAPTIVE_MIN_CONCURRENCY: int = 4`,
+    app/config/config.py:104; the release script writes the same value into
+    the container's .env). So the effective limit was 4 per box, never 2 — and
+    E1a-2 measured a 25k prompt waiting 284 s and 310 s for its first token
+    beside four holders, with prism's watchdog aborting at 300 s. The cap
+    would have changed nothing about the stalls it was written for.
+
+    These construct the controller the way PRODUCTION constructs it (module
+    defaults, read from settings) instead of the test-only min=1/max=8, and
+    sweep the floor rather than transcribing it.
+    """
+
+    @pytest.mark.parametrize("floor", [1, 2, 3, 4, 6, 8])
+    @pytest.mark.parametrize(
+        "ep",
+        [
+            _Ep("dgx_spark", 6, 0.00, 0, 0),    # idle, healthiest tier
+            _Ep("dgx_spark", 6, 0.70, 5, 0),    # the 23:48:23 line
+            _Ep("dgx_spark", 6, 0.95, 6, 0),    # saturated
+            _Ep("dgx_spark", 6, 0.30, 1, 5),    # queue-backed
+            _Ep("dgx_spark", 99, 0.10, 0, 0),   # a box that advertises more
+        ],
+    )
+    def test_no_floor_can_lift_a_box_past_the_ceiling(self, monkeypatch, floor, ep):
+        c = AdaptiveConcurrencyController(min_concurrency=floor, max_concurrency=8)
+        monkeypatch.setattr(c, "_read_endpoints", lambda: [ep])
+        monkeypatch.setattr(c, "_last_eval", 0.0)
+        assert c.limit_for("dgx_spark") <= MAX_RUNNING_PER_BOX
+
+    def test_the_configured_floor_does_not_lift_it_either(self, monkeypatch):
+        """Derived from settings, not transcribed: whatever the configured
+        floor is, the per-box ceiling still wins."""
+        from app.services.adaptive_concurrency import _MAX, _MIN
+
+        c = AdaptiveConcurrencyController()  # exactly how the singleton is built
+        assert c.min_concurrency == max(1, _MIN)
+        monkeypatch.setattr(c, "_read_endpoints", lambda: [DGX_LOADED, JETSON_IDLE])
+        monkeypatch.setattr(c, "_last_eval", 0.0)
+        for box in ("dgx_spark", "jetson"):
+            assert c.limit_for(box) <= MAX_RUNNING_PER_BOX, (
+                f"{box} got {c.limit_for(box)} with floor {c.min_concurrency} "
+                f"and ceiling {MAX_RUNNING_PER_BOX} (max={_MAX})"
+            )
+
+    def test_an_unpolled_box_is_held_to_the_ceiling_too(self, monkeypatch):
+        c = AdaptiveConcurrencyController()
+        monkeypatch.setattr(c, "_read_endpoints", lambda: [JETSON_IDLE])
+        monkeypatch.setattr(c, "_last_eval", 0.0)
+        assert c.limit_for("a_box_nothing_polled") <= MAX_RUNNING_PER_BOX
+
+
+class TestABoxRunStillCountsAgainstTheGlobalPool:
+    """A box-tracked run increments the global counter but skipped the global
+    check, so `total_active` could exceed `current_limit` — and the callers
+    that never pass a box (the memory consolidator, briefings,
+    VLLMClient.chat) then queue behind runs that were admitted without
+    consulting the pool they are being counted in."""
+
+    @pytest.mark.asyncio
+    async def test_a_run_on_a_second_box_still_waits_for_the_global_pool(self, monkeypatch):
+        # Both boxes saturated: the KV tier drops the GLOBAL limit to the floor
+        # (1 here), while each box's own pool is empty and would admit a run.
+        # The box check alone lets both start, and `total_active` then passes
+        # `current_limit` — which is the pool every box-less caller waits in.
+        c = _controller(
+            monkeypatch,
+            _Ep("dgx_spark", 6, 0.95, 6, 0),
+            _Ep("jetson", 6, 0.95, 6, 0),
+        )
+        # `current_limit` is the cached figure; force the re-evaluation the
+        # acquirer itself performs so the precondition is the real one.
+        assert c._maybe_update_limit() == 1, "fixture must force a global limit of one"
+        first = asyncio.Event()
+
+        async def hold():
+            async with c.track(label="dgx-agent", box="dgx_spark"):
+                first.set()
+                await asyncio.sleep(0.3)
+
+        t = asyncio.create_task(hold())
+        await first.wait()
+        assert c.total_active == 1
+        # A DIFFERENT box, so its own pool is empty — only the global pool can
+        # hold this back, and it must.
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.1):
+                async with c.track(label="jetson-agent", box="jetson"):
+                    pass
+        assert c.total_active <= c._maybe_update_limit()
+        await t
+
+    @pytest.mark.asyncio
+    async def test_a_box_less_caller_is_not_starved_by_box_runs(self, monkeypatch):
+        """The consolidator names no box. It must still get the slot the global
+        pool has room for."""
+        c = _controller(monkeypatch, DGX_LOADED, JETSON_IDLE)
+        first = asyncio.Event()
+
+        async def hold():
+            async with c.track(label="dgx-agent", box="dgx_spark"):
+                first.set()
+                await asyncio.sleep(0.3)
+
+        t = asyncio.create_task(hold())
+        await first.wait()
+        async with asyncio.timeout(0.5):
+            async with c.track(label="memory_consolidator"):
+                assert c.total_active <= c._maybe_update_limit()
+        await t

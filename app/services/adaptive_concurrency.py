@@ -92,8 +92,18 @@ class AdaptiveConcurrencyController:
 
         async with self._cv:
             while True:
-                # 1. Request limit check
-                limit_ok = (self._box_active.get(box, 0) < self.limit_for(box)) if box else (self._active_tasks_count < self._maybe_update_limit())
+                # 1. Request limit check.
+                #
+                # A box run must clear BOTH pools: its own box AND the global
+                # one it is about to be counted in. The first version checked
+                # only the box, so `_active_tasks_count` could pass
+                # `current_limit` and the callers that never name a box (the
+                # memory consolidator, briefings, VLLMClient.chat) queued
+                # behind runs admitted without consulting the pool they filled.
+                global_ok = self._active_tasks_count < self._maybe_update_limit()
+                limit_ok = (
+                    global_ok and self._box_active.get(box, 0) < self.limit_for(box)
+                ) if box else global_ok
                 # 2. Token budget check: heavy non-high priority requests must fit in budget
                 # (or run immediately if no other tasks are running to prevent deadlock)
                 budget_ok = True
@@ -171,25 +181,42 @@ class AdaptiveConcurrencyController:
     def limit_for(self, box: str) -> int:
         """This box's limit from THIS box's metrics — the same KV tiers as the
         global figure, applied to one endpoint, then capped at
-        MAX_RUNNING_PER_BOX. Unknown/unpolled box: the ceiling."""
+        MAX_RUNNING_PER_BOX. Unknown/unpolled box: the ceiling.
+
+        The ceiling is a CEILING. `min_concurrency` is the floor of the GLOBAL
+        pool — four in the shipped config (`ADAPTIVE_MIN_CONCURRENCY: int = 4`,
+        app/config/config.py:104, written into the container's .env by the
+        release script) — and a global floor must not lift a box above what
+        that box was measured to sustain. The first version of this function
+        ended every branch in `max(self.min_concurrency, ...)`, which made the
+        real limit 4 per box and never 2: precisely the concurrency at which
+        E1a-2 measured 284 s and 310 s to first token against prism's 300 s
+        watchdog. It would have prevented none of the stalls it was written
+        for, and no test caught it because they all built the controller with
+        min_concurrency=1.
+        """
+        ceiling = max(1, MAX_RUNNING_PER_BOX)
         ep = self._endpoint(box)
         if ep is None:
-            return max(self.min_concurrency, MAX_RUNNING_PER_BOX)
-        cap = min(int(getattr(ep, "max_concurrent", 0) or MAX_RUNNING_PER_BOX), MAX_RUNNING_PER_BOX)
-        cap = max(self.min_concurrency, cap)
+            return ceiling
+        # The per-box floor is the global floor clamped to the ceiling, so a
+        # tight-cache tier still cannot return more than the box can take.
+        floor = max(1, min(self.min_concurrency, ceiling))
+        cap = min(int(getattr(ep, "max_concurrent", 0) or ceiling), ceiling)
+        cap = max(floor, cap)
         waiting = int(getattr(ep, "requests_waiting", 0) or 0)
         running = int(getattr(ep, "requests_running", 0) or 0)
         if waiting > 0 and running > 0 and waiting >= running:
-            return self.min_concurrency
+            return floor
         remaining = 1.0 - float(getattr(ep, "cache_usage", 0.0) or 0.0)
         if remaining <= 0.20:
-            return self.min_concurrency
+            return floor
         if remaining <= 0.40:
-            return max(self.min_concurrency, min(2, cap))
+            return max(floor, min(2, cap))
         if remaining >= 0.80:
             return cap
         ratio = (remaining - 0.40) / 0.40
-        return max(self.min_concurrency, min(cap, self.min_concurrency + int(ratio * (cap - self.min_concurrency))))
+        return max(floor, min(cap, floor + int(ratio * (cap - floor))))
 
     def _compute_limit(self) -> int:
         """Compute concurrency limit from live vLLM /metrics data.
