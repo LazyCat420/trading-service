@@ -155,3 +155,45 @@ adequate; if the compute ever grows again, the guard will not say so. A faithful
 stand-in is a single C-level call (`sum(range(N))`), which makes the thread
 version fail — i.e. that guard can only be made honest together with a move to a
 process, or by asserting the compute's wall time instead.
+
+
+## Check #9 — a TIMED_OUT row said the run cost nothing (found 03:03 UTC, same cycle)
+
+The ABT fundamental analyst ran the full agent timeout. Its telemetry row,
+verbatim:
+
+    outcome=TIMED_OUT  loops_used=0  prompt_tokens=0  token_usage=0
+    cost_partial=False  elapsed_ms=1800068  failure_reason=TIMEOUT
+
+`agent_tool_telemetry` holds **18 tool calls** for that agent on that ticker
+in that cycle, the last at 02:45:12 — eighteen minutes before the timeout at
+03:03:45 (the agent was waiting on the model, no stall classification fired
+for it; the SCHD bull agent's stall in the same window WAS classified transient
+and retried to SUCCESS — check #14 PASS).
+
+`6586589` (B2) fixed "the crash row said it cost nothing" for the CRASH path by
+attaching `partial_cost` to the escaping exception. The timeout path is a
+sibling seam that fix could not reach: `asyncio.wait_for` cancels the run —
+`run_agent` attaches the cost to the CancelledError — and raises its OWN
+`TimeoutError` to the runner, which nothing decorated. The CANCELLED (stop
+requested) path had the same hardcoded zeros. A patch fitted to one seam parks
+the residual on the others.
+
+**Fix:** `run_agent(cost_sink=...)` — the RUNNER owns a dict and passes it in;
+`run_agent` uses THAT dict as its accumulator (not a copy), so timeout, cancel
+and crash all read the same numbers from the same place. The artifact-repair
+call passes the same sink so its spend joins the run's. Crash path keeps the
+exception attribute as a fallback for a run_agent that predates the sink.
+
+Tests (`test_timed_out_row_carries_its_cost.py`, 5): TIMED_OUT, CANCELLED and
+AGENT_ERROR rows each carry `cost_partial=True` and the spent tokens/loops;
+`run_agent` accepts `cost_sink`; the accumulator ALIASES the sink (AST). Tool
+count and elapsed are the production row; the token figure is synthetic
+because the row that motivated the test recorded none. Red first: 5 of 5.
+Sabotage, each caught: TIMED_OUT handler back to zeros; base_agent copies the
+sink; CANCELLED loses `cost_partial`; runner stops passing the sink; crash path
+ignores the sink. Neighbouring runner tests (81) green.
+
+Also exercised this cycle: **#11 PASS** — the phase-abort page landed as one
+`fund_alerts` row (`v3_phase_abort`, warning, ABT), 0 "Failed to record fund
+alert" rows.

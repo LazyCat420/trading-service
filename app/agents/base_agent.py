@@ -468,6 +468,7 @@ async def run_agent(
     parent_agent_session_id: str | None = None,
     model_override: str | None = None,
     prism_overrides: dict | None = None,
+    cost_sink: dict | None = None,
 ) -> dict:
     """
     Generic agent runner:
@@ -539,7 +540,17 @@ async def run_agent(
     # that sums prompt_tokens — while GOOG's dead bull agent (2026-09-05) had
     # made 7 tool calls and put two full 24k-token prefills through the box.
     # Filled in _agent_llm_call's finally, read by the runner's except.
-    partial_cost: dict = {"tokens": 0, "loops": 0, "tool_calls": 0}
+    #
+    # `cost_sink` (2026-09-06): when the caller passes a dict, THAT dict is the
+    # accumulator — not a copy. Attaching the cost to the escaping exception
+    # only reaches a caller that sees that exception; `asyncio.wait_for` cancels
+    # this coroutine and raises its OWN TimeoutError, so the ABT fundamental
+    # analyst on cycle-v3-1788660665 died at 1,800,068 ms with 18 tool calls
+    # in `agent_tool_telemetry` and a row saying tokens=0 loops=0. The caller
+    # owning the dict reads it whatever exception it happens to catch.
+    partial_cost: dict = cost_sink if cost_sink is not None else {}
+    for _k in ("tokens", "loops", "tool_calls"):
+        partial_cost.setdefault(_k, 0)
 
     # Delays 5s/10s/20s/40s (~75s total) so agent calls survive a lazy-tool
     # (prism-proxy) container redeploy instead of failing the whole pipeline.
