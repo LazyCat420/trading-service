@@ -1381,7 +1381,7 @@ async def run_v3_agent(
         # cancelling the run (ABT fundamental analyst, cycle-v3-1788660665:
         # 1,800,068 ms, 18 tool calls, row said tokens=0 loops=0).
         result = await asyncio.wait_for(
-            run_agent(
+            _with_heartbeat(run_agent(
                 agent_name=agent_name,
                 ticker=desk.ticker,
                 cycle_id=cycle_id,
@@ -1395,7 +1395,7 @@ async def run_v3_agent(
                 cost_sink=_cost_sink,
                 soft_deadline_s=timeout_seconds * 0.5,
                 deadline_monotonic=t_start + timeout_seconds,
-            ),
+            ), cycle_id),
             timeout=timeout_seconds,
         )
 
@@ -1574,7 +1574,7 @@ async def run_v3_agent(
                 # back in (so it is larger), but runs tool-less (so the schemas
                 # are gone). Reusing the first call's budget would be wrong twice.
                 repair_result = await asyncio.wait_for(
-                    run_agent(
+                    _with_heartbeat(run_agent(
                         agent_name=agent_name,
                         ticker=desk.ticker,
                         cycle_id=cycle_id,
@@ -1593,7 +1593,7 @@ async def run_v3_agent(
                         cost_sink=_cost_sink,  # the repair's spend joins the run's
                         soft_deadline_s=timeout_seconds * 0.5,
                         deadline_monotonic=t_start + timeout_seconds,
-                    ),
+                    ), cycle_id),
                     timeout=timeout_seconds,
                 )
                 repair_text = repair_result.get("response", "")
@@ -2406,6 +2406,44 @@ def _retry_was_refused(exc: BaseException, refused_type: type) -> bool:
             if v is not None and (isinstance(v, refused_type) or type(v).__name__ == name):
                 return True
     return name in str(exc)
+
+
+#: How often a run in flight stamps `pipeline_state.updated_at`. Deliberately
+#: the store's own throttle: faster only burns calls it will drop, slower
+#: leaves a gap the throttle would have allowed.
+_HEARTBEAT_INTERVAL_S = 30.0
+
+
+async def _with_heartbeat(awaitable, cycle_id: str):
+    """Run `awaitable`, stamping the cycle's liveness while it is in flight.
+
+    The heartbeat added on 2026-09-06 rides on `record_tool_call`, which was
+    the right seam for the gaps that existed then — all four >300 s gaps in
+    cycle-v3-1788682529 contained tool calls. It is not enough. OBSERVED on
+    cycle-v3-1788719122: one gap of 392 s (18:50:04 → 18:56:36) inside
+    `v3_bear_agent`, which made three tool calls early and then generated for
+    six minutes with nothing to stamp. The debate agents are the quiet ones —
+    2.3 s of tool time against a 460 s mean run.
+
+    So the beat belongs where the run is awaited. The task is cancelled when
+    the run finishes, fails or is itself cancelled, and a failing stamp is
+    swallowed: a liveness signal must never be able to end a run.
+    """
+    from app.services.pipeline_state import PipelineStateDB
+
+    async def _beat():
+        while True:
+            await asyncio.sleep(_HEARTBEAT_INTERVAL_S)
+            try:
+                PipelineStateDB.heartbeat(cycle_id)
+            except Exception:  # noqa: BLE001 — never let liveness break a run
+                pass
+
+    task = asyncio.create_task(_beat())
+    try:
+        return await awaitable
+    finally:
+        task.cancel()
 
 
 def _crash_reason(exc: BaseException) -> str:
