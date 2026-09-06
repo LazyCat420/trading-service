@@ -394,19 +394,43 @@ class BootService:
 
     @classmethod
     async def _sp500_full_refresh(cls, period: str):
-        """One shot: top up price_history for all S&P 500 tickers + recompute sector aggregates."""
+        """One shot: top up price_history for all S&P 500 tickers + recompute sector aggregates.
+
+        The two sector calls go through `_off_the_loop`. They are `async def`
+        with no awaits in their bodies — CPU-bound pandas — so awaiting them
+        directly pins the event loop, and the tool bridge
+        (`agent_tools_router`) is served from that same loop.
+
+        MEASURED 2026-09-05, after the 22:18 UTC deploy. This function ran its
+        immediate post-boot top-up and `compute_sector_performance` held the
+        loop from 22:30:03 to 22:33:33 — **210 seconds**. Eight agent tool
+        calls across three live tickers died in the same second with
+        `elapsed_ms=0` (lazy_web_search, whiteboard_write x3, get_finnhub_news
+        x3): lazy-agent-service's 30 s bridge deadline expired while
+        trading-service could not accept the request at all. Every one
+        succeeded on the re-run 2-6 s later, and three ManagerAgent soft-timers
+        fired in a 300 ms clump as the loop came back.
+
+        `startup_tasks._off_the_loop` documented this exact failure on
+        2026-08-31 and wrapped the BOOT callers; this one — reached ~3 minutes
+        after every boot and again daily post-close — was not swept, because
+        the guard that was supposed to catch it scanned only `startup_tasks.py`.
+        """
         from app.data.sp500_price_collector import collect_sp500_prices
         from app.data.sector_aggregator import (
             compute_sector_performance,
             backfill_sector_performance,
         )
+        from app.services.startup_tasks import _off_the_loop
 
+        # collect_sp500_prices genuinely awaits (network I/O), so it yields and
+        # stays on the loop.
         price_result = await collect_sp500_prices(period=period)
         logger.info(
             "[sp500-refresh] Prices refreshed: %s rows", (price_result or {}).get("total", 0)
         )
-        await backfill_sector_performance()
-        await compute_sector_performance()
+        await _off_the_loop(backfill_sector_performance, "sector backfill")
+        await _off_the_loop(compute_sector_performance, "sector performance")
 
     @classmethod
     async def _sp500_daily_refresh_loop(cls):
