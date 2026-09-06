@@ -1,5 +1,6 @@
-import logging
 import asyncio
+import logging
+import os
 from typing import Any
 
 import httpx
@@ -35,6 +36,13 @@ class ScraperServiceClient:
 
     def __init__(self, base_url: str | None = None):
         self.base_url = (base_url or settings.SCRAPER_SERVICE_URL).rstrip("/")
+        # Shared secret for scraper-service. Empty until the key is rolled out;
+        # the service treats an unset key as "no auth", so an empty header here
+        # is correct during the staged rollout rather than a broken request.
+        self._headers: dict[str, str] = {}
+        key = (os.getenv("SCRAPER_API_KEY") or "").strip()
+        if key:
+            self._headers["X-Scraper-Key"] = key
         self._semaphores: dict[str, asyncio.Semaphore] = {}
         # Failure ledger so callers can distinguish "scraper returned nothing"
         # from "scraper was unreachable". The except→return []/None contract
@@ -91,7 +99,7 @@ class ScraperServiceClient:
         self.calls += 1
         try:
             async with sem:
-                async with httpx.AsyncClient(timeout=self._TIMEOUT_S) as client:
+                async with httpx.AsyncClient(timeout=self._TIMEOUT_S, headers=self._headers) as client:
                     resp = await client.post(f"{self.base_url}/scrape", json=payload)
                     resp.raise_for_status()
                     data = resp.json()
@@ -132,7 +140,7 @@ class ScraperServiceClient:
         self.calls += 1
         try:
             async with sem:
-                async with httpx.AsyncClient(timeout=timeout_s) as client:
+                async with httpx.AsyncClient(timeout=timeout_s, headers=self._headers) as client:
                     resp = await client.post(f"{self.base_url}/collect", json=payload)
                     resp.raise_for_status()
                     data = resp.json()

@@ -29,6 +29,9 @@ from app.scraper.core.rate_limiter import rate_limiter
 
 logger = logging.getLogger(__name__)
 
+# Upper bound on a caller-supplied navigation timeout.
+_MAX_NAV_TIMEOUT_MS = 45_000
+
 # Common article content selectors (ported from news_playwright.py)
 ARTICLE_SELECTORS = [
     "article",
@@ -149,8 +152,11 @@ class PlaywrightEngine(BaseEngine):
                                 lambda route: route.abort(),
                             )
 
-                        # Navigate
-                        timeout_ms = options.get("timeout", 20000)
+                        # Navigate. CLAMPED: `timeout` comes straight off the
+                        # wire, and an unbounded value pins a browser (and an
+                        # async slot, and ~100 pids) for as long as the caller
+                        # asks — 24h is a legal int.
+                        timeout_ms = min(int(options.get("timeout", 20000) or 20000), _MAX_NAV_TIMEOUT_MS)
                         await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
 
                         # Stealth: human-like behavior

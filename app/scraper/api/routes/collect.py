@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from app.scraper.api.schemas import CollectRequest, CollectResponse
+from app.scraper.core.url_guard import UnsafeUrlError, check_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -168,6 +169,19 @@ async def _collect_news(req: CollectRequest) -> CollectResponse:
     from app.scraper.collectors.news_collector import NewsCollector, _serialize_article
 
     collector = NewsCollector()
+
+    # Feed URLs are caller-supplied and reach httpx exactly like /scrape's url,
+    # so they get the same scheme/private-address guard. Without it, /collect
+    # was an unguarded second door to the internal network.
+    try:
+        for name, feed in (req.feeds or {}).items():
+            check_url(feed, field=f"feeds[{name}]")
+        if req.feed_url:
+            check_url(req.feed_url, field="feed_url")
+    except UnsafeUrlError as exc:
+        return CollectResponse(
+            source="news", count=0, items=[], success=False, error=str(exc),
+        )
 
     if req.feeds:
         # Multi-feed mode

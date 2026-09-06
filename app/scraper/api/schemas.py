@@ -34,7 +34,14 @@ class ScrapeResponse(BaseModel):
 
 
 class BatchRequest(BaseModel):
-    jobs: list[ScrapeRequest]
+    # `jobs` was unbounded while max_concurrency was capped, which is the wrong
+    # way round: 20 concurrent Chromiums is ~2000 tasks by this repo's own
+    # arithmetic (docker-compose.yml), against a pids_limit of 1024 for the
+    # whole container. One legal request could therefore reproduce the pid
+    # exhaustion that took the NAS down twice — from the LAN, unauthenticated.
+    jobs: list[ScrapeRequest] = Field(..., max_length=50)
+    # Browser concurrency is additionally capped process-wide in
+    # playwright_engine; this bound is per-request and cannot see other requests.
     max_concurrency: int = Field(default=5, ge=1, le=20)
 
 
