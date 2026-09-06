@@ -116,7 +116,42 @@ existing guard `test_boot_compute_does_not_block_the_loop.py` uses
 The compute itself reads `price_history` with **no date bound**: 4,365,690 rows
 for 509 tickers, joined in Python (`join_rows` is deliberately not `$lookup`),
 to use only the latest date with 30-period lookbacks. A 90-day bound is 33,355
-rows. Candidate fixes under measurement (`bench_sector_pin.py`, real function,
-real Mongo, the one write patched to a recorder): thread vs process × full vs
-bounded, plus sector-by-sector equality of bounded vs full output. Operator
-instruction: measure first, then fix. Result to be appended here.
+rows. Operator instruction: measure first, then fix.
+
+### Bench result (real function, real store, the one write patched to a recorder)
+
+| strategy | wall | loop max gap | gaps > 1 s | output |
+|---|---|---|---|---|
+| thread + full (today's code) | 179.7 s | 3.49 s | 5 | 11 sectors |
+| thread + 90-day bound | **1.3 s** | **0.08 s** | 0 | **identical** to full, all 11 |
+| process + full | 163.3 s | 0.79 s | 0 | 11 sectors |
+| process + 90-day bound | 2.4 s | 0.47 s | 0 | identical to full |
+
+Bench box: WSL, Mongo over LAN — the 53 s production gap did not reproduce here
+(3.49 s max); the NAS container is slower and its read is the same 4.37M rows.
+A process pool frees the loop and keeps the 163 s / 9 GB read. The bound removes
+the read, and the result is identical sector by sector.
+
+### Shipped (`2fd8895`): `SECTOR_PERF_WINDOW_DAYS = 90`
+
+`compute_sector_performance` now reads `price_history` with
+`{"date": {"$gte": now - 90d}}`. 30 rows ≈ 42 calendar days; 90 leaves room
+for holiday clusters. `backfill_sector_performance` keeps its full read on
+purpose (it writes every historical date, and skips itself when history exists).
+Tests (`test_sector_compute_reads_a_bounded_window.py`): the query carries a
+lower bound; the bound is 60–200 days; bounded output == unbounded output on a
+400-day synthetic panel ending today. Red first on the empty filter. Sabotage:
+30-day bound → margin test fails; bound removed → both bound tests fail; a
+20-day bound that cuts INTO the lookback → the equality test fails, so it is not
+a tautology. The fixture's first draft ended in February and the bound cut
+everything — it now ends today.
+
+### Still open
+
+`test_boot_compute_does_not_block_the_loop.py` uses `time.sleep` as its stand-in.
+That releases the GIL, so the guard cannot see the C-level class in the table
+above and was green through the 53 s stall. With a 1.3 s compute the thread is
+adequate; if the compute ever grows again, the guard will not say so. A faithful
+stand-in is a single C-level call (`sum(range(N))`), which makes the thread
+version fail — i.e. that guard can only be made honest together with a move to a
+process, or by asserting the compute's wall time instead.
