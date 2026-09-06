@@ -55,6 +55,36 @@ async def _attempt(fail_with=None):
 
 
 @pytest.mark.asyncio
+async def test_a_failure_before_the_callee_can_classify_still_closes_the_gate(monkeypatch):
+    """Moving the stamp after the outcome opened a second hole.
+
+    `run_ticker_consolidation` classifies only what its OWN inner try catches.
+    `get_active_canonical_memories` runs before that try, so a store blip there
+    escapes to `maybe_consolidate`'s outer handler — which logged and stamped
+    nothing. The cooldown then never closed and the ticker re-attempted on
+    every cycle, which is worse than the six hours this fix was written to
+    save. Master's pre-call stamp closed the gate whatever happened.
+    """
+    _clock(monkeypatch)
+    reached = {"n": 0}
+
+    def _blip(*a, **k):
+        reached["n"] += 1
+        raise RuntimeError("mongo blip")
+
+    for _ in range(3):
+        with patch.object(c, "get_unpromoted_observations", return_value=FIVE_OBS), \
+             patch.object(c, "get_active_canonical_memories", _blip):
+            await c.maybe_consolidate("NBIS")
+
+    assert reached["n"] == 1, (
+        f"the store was reached {reached['n']}x — the gate never closed, so "
+        "every cycle re-attempts a consolidation that just failed"
+    )
+    assert "NBIS" in c._last_attempt
+
+
+@pytest.mark.asyncio
 async def test_a_dropped_socket_does_not_burn_the_six_hour_cooldown(monkeypatch):
     now = _clock(monkeypatch)
     assert await _attempt(fail_with=DISCONNECT) == 1

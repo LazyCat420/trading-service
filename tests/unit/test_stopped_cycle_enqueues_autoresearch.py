@@ -125,3 +125,66 @@ class TestEveryTailAsksForItsReflection:
         i = src.index("def _persist_summary(")
         body = src[i : src.index("def _started_at_or_fallback", i)]
         assert "partial_summary_fields(" in body
+
+
+class TestWhatTheReportIsAbout:
+    """Narrowing `tickers_final` only helps if the consumer reads it. The
+    consumer used `x or y`, which cannot tell "stopped before any desk
+    finished" (an explicit empty list) from "old summary, key absent" — so the
+    one case the narrowing exists for fell straight back to the full requested
+    list."""
+
+    def test_a_cycle_stopped_before_any_desk_finished_analyses_nothing(self):
+        from app.autoresearch.core import _tickers_for
+
+        summary = {
+            "tickers_requested": ["AVGO", "LULU"],
+            **ps.partial_summary_fields("stopped", ["AVGO", "LULU"], [], counts_source="store"),
+        }
+        assert summary["tickers_final"] == []
+        assert _tickers_for(summary) == [], (
+            "an empty tickers_final means empty — falling back to the requested "
+            "list makes the report claim desks that never ran"
+        )
+
+    def test_a_missing_key_still_falls_back(self):
+        from app.autoresearch.core import _tickers_for
+
+        assert _tickers_for({"tickers_requested": ["AVGO"]}) == ["AVGO"]
+
+    def test_a_narrowed_list_is_used_as_given(self):
+        from app.autoresearch.core import _tickers_for
+
+        assert _tickers_for(
+            {"tickers_final": ["AVGO"], "tickers_requested": ["AVGO", "LULU"]}
+        ) == ["AVGO"]
+
+
+class TestAPartialCycleIsNotAnAnomaly:
+    """A stopped cycle has nothing to score, so 0.0 sub-scores are the honest
+    answer. Flagging them puts a false "degenerate" on every deliberate STOP —
+    and narrowing `tickers_final` to an empty list makes that reachable."""
+
+    def test_zero_scores_on_a_partial_cycle_are_expected(self):
+        from app.autoresearch.core import _degenerate_anomaly
+
+        assert _degenerate_anomaly(["data", "decision", "llm"], partial=True) is None
+
+    def test_zero_scores_on_a_completed_cycle_are_still_an_anomaly(self):
+        from app.autoresearch.core import _degenerate_anomaly
+
+        detail = _degenerate_anomaly(["data"], partial=False)
+        assert detail and "data" in detail
+
+    def test_a_healthy_completed_cycle_has_no_anomaly(self):
+        from app.autoresearch.core import _degenerate_anomaly
+
+        assert _degenerate_anomaly([], partial=False) is None
+
+    def test_the_report_records_whether_the_cycle_was_partial(self):
+        import inspect
+
+        from app.autoresearch import core
+
+        src = inspect.getsource(core.run_autoresearch)
+        assert 'reflection["partial_cycle"]' in src

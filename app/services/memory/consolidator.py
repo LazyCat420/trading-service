@@ -91,7 +91,22 @@ async def maybe_consolidate(ticker: str) -> None:
         # Stamp AFTER the outcome is known. A transient transport failure
         # re-opens the gate after TRANSIENT_RETRY_SECONDS; success and every
         # non-transient failure keep the full cooldown.
-        outcome = await run_ticker_consolidation(ticker, observations=observations)
+        try:
+            outcome = await run_ticker_consolidation(ticker, observations=observations)
+        except Exception as e:
+            # An exception that ESCAPES the callee is still an attempt.
+            # `run_ticker_consolidation` classifies only what its own inner try
+            # catches; a store blip in `get_active_canonical_memories`, which
+            # runs before it, lands here — and with the stamp moved after the
+            # outcome, the gate never closed at all: the ticker re-attempted on
+            # every cycle instead of once every six hours.
+            from lazycat.resilience import FailureType, classify_exception
+
+            outcome = "transient" if classify_exception(e) is FailureType.TRANSIENT else "failed"
+            logger.warning(
+                "Consolidation for %s failed before it could classify itself (%s): %s",
+                ticker, outcome, e,
+            )
         if outcome == "transient":
             _last_attempt[ticker] = now - CONSOLIDATION_COOLDOWN_SECONDS + TRANSIENT_RETRY_SECONDS
         else:
