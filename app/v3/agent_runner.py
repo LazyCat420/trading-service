@@ -2275,8 +2275,7 @@ async def run_v3_agent(
         # A refused retry is its own class: the run was healthy enough to be
         # retried but the wall clock could not fit it. Name it so the ledger
         # can count "we gave up on purpose" apart from "the provider crashed".
-        from app.agents.base_agent import RetryBudgetExhausted
-        _reason = RETRY_BUDGET_EXHAUSTED if _retry_was_refused(e, RetryBudgetExhausted) else RUNNER_EXCEPTION
+        _reason = _crash_reason(e)
         _record_telemetry(desk, agent_name, elapsed_ms,
                           _spent_loops, _spent_tokens, "AGENT_ERROR",
                           # `prompt_tokens` is the field every audit probe and
@@ -2374,19 +2373,49 @@ def _parse_artifact(
 def _retry_was_refused(exc: BaseException, refused_type: type) -> bool:
     """True when a RetryBudgetExhausted is anywhere in what escaped: the
     exception itself, its __cause__ chain, or the per-attempt records
-    aresilient_call attaches to its ResilientCallError."""
+    aresilient_call attaches to its ResilientCallError.
+
+    The record carries the class NAME, not the exception. `AttemptRecord`
+    (lazycat/resilience.py:116) is a dataclass of `attempt`, `exception_type:
+    str`, `exception_msg`, `failure_type`, `elapsed_ms`, `timestamp` — there is
+    no exception object on it, `ResilientCallError` sets no `__cause__`, and
+    `str(exc)` names only the failure TYPE ("last_type=fatal"). The first
+    version looked for an `exception`/`error`/`exc` attribute, found nothing on
+    any real record, and so returned False for every refusal that ever
+    happened: each one was filed as RUNNER_EXCEPTION, and the reason this fix
+    exists never appeared in a single row.
+    """
+    name = refused_type.__name__
     seen = []
     cur = exc
     while cur is not None and cur not in seen:
         seen.append(cur)
         cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
+    if any(isinstance(x, refused_type) or type(x).__name__ == name for x in seen):
+        return True
     for rec in (getattr(exc, "attempts", None) or []):
+        recorded = rec.get("exception_type") if isinstance(rec, dict) else getattr(rec, "exception_type", None)
+        if recorded == name:
+            return True
+        # Tolerate a record that does carry the exception itself.
         for attr in ("exception", "error", "exc"):
-            v = getattr(rec, attr, None) if not isinstance(rec, dict) else rec.get(attr)
-            if v is not None:
-                seen.append(v)
-    return any(isinstance(x, refused_type) or type(x).__name__ == refused_type.__name__ for x in seen) \
-        or refused_type.__name__ in str(exc)
+            v = rec.get(attr) if isinstance(rec, dict) else getattr(rec, attr, None)
+            if v is not None and (isinstance(v, refused_type) or type(v).__name__ == name):
+                return True
+    return name in str(exc)
+
+
+def _crash_reason(exc: BaseException) -> str:
+    """RETRY_BUDGET_EXHAUSTED when the run refused a retry it could not finish,
+    RUNNER_EXCEPTION otherwise.
+
+    Its own function because the `except` block it serves sits 1,600 lines
+    inside `run_v3_agent`, where nothing can reach it: replacing the reason
+    with a bare RUNNER_EXCEPTION there left every test green.
+    """
+    from app.agents.base_agent import RetryBudgetExhausted
+
+    return RETRY_BUDGET_EXHAUSTED if _retry_was_refused(exc, RetryBudgetExhausted) else RUNNER_EXCEPTION
 
 
 def _spent(sink: dict | None, fallback: dict | None = None) -> tuple[int, int]:

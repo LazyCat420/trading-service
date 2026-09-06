@@ -91,6 +91,74 @@ def test_the_reason_is_in_the_namespace_and_the_runner_uses_it():
     src = inspect.getsource(agent_runner)
     assert "RETRY_BUDGET_EXHAUSTED" in src and "RetryBudgetExhausted" in src
 
+
+def _escaped_error_as_production_raises_it():
+    """The exception that actually reaches the runner's `except`.
+
+    Not a RetryBudgetExhausted: `aresilient_call` swallows the attempt's
+    exception and raises its own ResilientCallError, whose per-attempt records
+    carry only the class NAME as a string. `__cause__` and `__context__` are
+    empty and the class name is absent from `str(exc)` — so the first version
+    of `_retry_was_refused`, which looked for an `exception`/`error`/`exc`
+    attribute on each record, returned False for every real refusal and every
+    refused run was filed as a crash.
+    """
+    from lazycat.resilience import AttemptRecord, FailureType, ResilientCallError
+
+    return ResilientCallError(
+        "All 5 attempts failed",
+        attempts=[
+            AttemptRecord(1, "PrismTransientHarnessError", STALL,
+                          FailureType.TRANSIENT, 1_343_762, 0.0),
+            AttemptRecord(2, "RetryBudgetExhausted",
+                          f"{ABT_SECONDS_LEFT}s left, need {RETRY_MIN_BUDGET_S:.0f}s",
+                          FailureType.FATAL, 1, 0.0),
+        ],
+        last_failure_type=FailureType.FATAL,
+        func_name="run_agent.<locals>._agent_llm_call",
+    )
+
+
+class TestTheRefusalReachesTheLedger:
+    """Refusing the retry is only half the fix: the row has to say so, or the
+    only visible difference between a refusal and a crash is the timing."""
+
+    def test_the_shape_that_defeated_the_first_version(self):
+        exc = _escaped_error_as_production_raises_it()
+        assert exc.__cause__ is None and exc.__context__ is None
+        assert "RetryBudgetExhausted" not in str(exc)
+        assert not any(
+            getattr(r, attr, None) for r in exc.attempts for attr in ("exception", "error", "exc")
+        ), "AttemptRecord carries the type as a STRING; there is no exception object to find"
+
+    def test_the_escaped_error_is_recognised_as_a_refusal(self):
+        assert agent_runner._retry_was_refused(
+            _escaped_error_as_production_raises_it(), RetryBudgetExhausted
+        ) is True
+
+    def test_the_crash_reason_is_the_refusal(self):
+        assert agent_runner._crash_reason(
+            _escaped_error_as_production_raises_it()
+        ) == RETRY_BUDGET_EXHAUSTED
+
+    def test_an_ordinary_crash_is_still_a_crash(self):
+        from app.v3.output_rules import RUNNER_EXCEPTION
+        assert agent_runner._crash_reason(RuntimeError("boom")) == RUNNER_EXCEPTION
+
+    def test_a_refusal_raised_directly_is_also_recognised(self):
+        from app.v3.output_rules import RUNNER_EXCEPTION
+        assert agent_runner._crash_reason(
+            RetryBudgetExhausted("no budget")
+        ) == RETRY_BUDGET_EXHAUSTED
+        assert agent_runner._crash_reason(ValueError("x")) == RUNNER_EXCEPTION
+
+    def test_the_runner_asks_the_helper_rather_than_naming_a_reason(self):
+        """Guards the mutation that made the whole ledger half inert: replacing
+        the call site with a bare RUNNER_EXCEPTION left every other test green."""
+        import inspect
+        src = inspect.getsource(agent_runner)
+        assert "_crash_reason(e)" in src
+
 def test_the_runner_hands_the_deadline_to_every_run_agent_call():
     import inspect
     src = inspect.getsource(agent_runner)
