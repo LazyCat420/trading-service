@@ -43,7 +43,7 @@ def _rows(since=None):
             continue
         for i, t in enumerate(TICKERS):
             close = 100 + i * 10 + (d % 17) * 0.5 - (d % 5)
-            out.append((t, date, close, 1_000_000 + d * 1000 + i, "Sector%d" % (i % 2), 1e9 * (i + 1)))
+            out.append((t, date, close, 1_000_000 + d * 1000 + i, "Sector%d" % (i % 2), 1e9 * (i + 1), "yfinance"))
     return out
 
 

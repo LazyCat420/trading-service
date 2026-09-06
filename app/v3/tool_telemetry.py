@@ -59,6 +59,11 @@ from app.db import mongo_store
 _META_TOOLS = frozenset({
     "discover_and_enable_tools", "enable_tools", "search_tools", "think",
     "emit_structured_output", "list_artifacts",
+    # Read-only force-adds measured succeeding on v3 agents over 14 days
+    # (2026-09-06 tool-surface audit); each was logging OFF-WHITELIST on every
+    # call, the line meant for a breach. `write_datastore` is deliberately NOT
+    # here: it writes, query_datastore is denied, and its canary line is real.
+    "read_url", "search_web", "list_directory", "read_mcp_resource",
 })
 
 # Reaching any of these from a trading agent is a security regression, not

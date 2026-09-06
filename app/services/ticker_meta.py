@@ -21,6 +21,12 @@ ETF_TIER = "etf"
 # `asset_class` values that mean "a fund, not an operating company".
 ETF_ASSET_CLASSES = frozenset({"etf", "etn", "fund", "mutualfund"})
 
+# The vendor's own word for it. yfinance `.info["quoteType"]` is one of EQUITY,
+# ETF, MUTUALFUND, INDEX, CURRENCY, CRYPTOCURRENCY, FUTURE, OPTION; these are
+# the ones that mean "fund", mapped onto the `asset_class` spelling the row
+# uses. A fund answers "how big" with `totalAssets`, never `marketCap`.
+FUND_QUOTE_TYPES = {"ETF": "etf", "MUTUALFUND": "mutualfund", "ETN": "etn"}
+
 
 def get_ticker_meta(tickers: list[str]) -> dict[str, dict]:
     """{ticker: {"sector": str|None, "tier": str|None}} for the given tickers from MongoDB."""
@@ -180,7 +186,7 @@ def ensure_ticker_metadata(tickers: list[str] | None) -> dict[str, str]:
 
     filled: list[str] = []
     for tkr in unresolved:
-        cap, from_vendor = None, False
+        cap, from_vendor, info = None, False, {}
         if vendor_available:
             try:
                 # fast_info first: it avoids the heavyweight .info scrape and
@@ -195,10 +201,37 @@ def ensure_ticker_metadata(tickers: list[str] | None) -> dict[str, str]:
                         except Exception:  # noqa: BLE001
                             cap = None
                 if not cap:
-                    cap = (yf.Ticker(tkr).info or {}).get("marketCap")
+                    info = yf.Ticker(tkr).info or {}
+                    cap = info.get("marketCap")
                 from_vendor = bool(cap)
             except Exception as e:  # noqa: BLE001 — fail open, per ticker
                 logger.warning("[TickerMeta] %s: market-cap lookup failed: %s", tkr, e)
+
+        # A fund with no row. The branch above asked one question — how big
+        # is it — and a fund answers that with `totalAssets`, not `marketCap`,
+        # so every cold fund came back "no market cap from the vendor or on
+        # the row — left untiered" and nothing was written: no row, no tier,
+        # no asset_class, indistinguishable from a company nobody looked up.
+        # OBSERVED on the first verification cycle, cycle-v3-1788719122
+        # (2026-09-06 11:25:26): JEPQ, `quoteType: "ETF"`, `marketCap: null`,
+        # `totalAssets: 42,209,615,872`. The `.info` call already made carries
+        # the answer; ask it.
+        asset_class = FUND_QUOTE_TYPES.get(str(info.get("quoteType") or "").strip().upper())
+        if asset_class:
+            fields = {"asset_class": asset_class, "market_cap_tier": ETF_TIER}
+            assets = info.get("totalAssets") or info.get("netAssets")
+            if assets:
+                fields["market_cap"] = assets
+            if info.get("longName"):
+                fields["name"] = info["longName"]
+            if _persist(tkr, fields):
+                out[tkr] = ETF_TIER
+                filled.append(tkr)
+                logger.info(
+                    "[TickerMeta] %s: the vendor names it %s — tiered %r, %s of assets",
+                    tkr, info.get("quoteType"), ETF_TIER, assets or "unknown size",
+                )
+            continue
 
         if not cap:
             # The vendor had nothing. The row may still hold a usable cap —

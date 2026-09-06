@@ -1687,6 +1687,7 @@ async def run_v3_agent(
             _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage,
                               outcome.value,
                               sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
+                              cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
                               model_used=model_used, provider=provider_used,
                               attempt_no=attempt_no,
                               failure_reason=rule.name if rule else UNCLASSIFIED.name,
@@ -1775,6 +1776,7 @@ async def run_v3_agent(
                 )
                 _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "AGENT_ERROR",
                                   sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
+                                  cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
                                   model_used=model_used, provider=provider_used,
                                   attempt_no=attempt_no,
                                   failure_reason=SCHEMA_INVALID,
@@ -1836,6 +1838,7 @@ async def run_v3_agent(
                 _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage,
                                   outcome.value,
                                   sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
+                                  cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
                                   model_used=model_used, provider=provider_used,
                                   attempt_no=attempt_no,
                                   failure_reason=SCHEMA_INVALID,

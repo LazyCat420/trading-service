@@ -125,24 +125,36 @@ async def compute_sector_performance():
     # price_history INNER JOIN ticker_metadata ON ticker, S&P 500 members with a
     # non-null sector — bounded to the window the maths can actually use.
     since = datetime.now(timezone.utc) - timedelta(days=SECTOR_PERF_WINDOW_DAYS)
-    cols = ["ticker", "date", "close", "volume", "sector", "market_cap"]
+    cols = ["ticker", "date", "close", "volume", "sector", "market_cap", "source"]
     rows = mongo_query.join_rows(
         "price_history", {"date": {"$gte": since}}, "ticker",
         "ticker_metadata", "ticker",
         {"sp500": True, "sector": {"$ne": None}},
-        left_fields=["ticker", "date", "close", "volume"],
+        left_fields=["ticker", "date", "close", "volume", "source"],
         right_fields=["sector", "market_cap"],
         select=[("l", "ticker"), ("l", "date"), ("l", "close"),
-                ("l", "volume"), ("r", "sector"), ("r", "market_cap")],
+                ("l", "volume"), ("r", "sector"), ("r", "market_cap"),
+                ("l", "source")],
         sort=[("date", pymongo.ASCENDING)],
     )
     import pandas as pd
+
+    from app.quant.returns import keep_dominant_source
 
     df = pd.DataFrame(rows, columns=cols)
 
     if df.empty:
         logger.warning("No price data found. Cannot compute sector performance.")
         return "No data"
+
+    # One vendor per ticker, as `_prices_on` above already does. price_history
+    # is keyed (ticker, date, source), and MEASURED 2026-09-06 45 of 509 S&P
+    # names carried two vendors across the same dates (LULU, AVGO, C, GOOG,
+    # NVDA: 124 rows over 62 trading days). Over the interleaved rows
+    # `pct_change(periods=30)` reached back 15 trading days, not 30, and the
+    # sector momentum fed to the regime engine was wrong for a tenth of the
+    # universe.
+    df = keep_dominant_source(df).drop(columns=["source"])
 
     # Convert date to datetime
     df["date"] = pd.to_datetime(df["date"])

@@ -38,6 +38,26 @@ no `ticker_metadata` row**, which is the hole e9711979 closes.
    >300 s gaps in the sampled cycle contained tool calls, so the tool-result
    path covers them; worst gap 522 s → 323 s.
 
+## First observed run — cycle-v3-1788719122 (enqueued 18:25 UTC, JEPQ + AMD)
+
+Deployed image `aa5a6832`. Criterion 8 **FAILED on the first run**, and the
+failure was the informative kind: the explicit-path gate fired (new code), the
+vendor was asked about JEPQ, and the gate logged
+
+    [TickerMeta] JEPQ: no market cap from the vendor or on the row — left untiered
+    [PipelineService] explicit tickers ['JEPQ', 'AMD'] tiered: {'AMD': 'mega'}
+
+and wrote no row. The vendor's answer for JEPQ was `quoteType: "ETF"`,
+`marketCap: null`, `totalAssets: 42,209,615,872` — the branch asked only for a
+market cap, which a fund never has, and never asked what the instrument was.
+Fixed the same hour (`fix/cold-fund-is-a-fund`, red-first on the verbatim
+`.info`), lands after this cycle completes. The cycle itself continued with
+JEPQ analysed as an untiered name, which is exactly the "silent disappearance
+with no row" signature the worksheet named as FAIL.
+
+Criterion 7 on the same run, first 13 samples: max state age **40 s**
+(previous cycle: 522 s). The heartbeat is holding.
+
 ## Running the observed cycle
 
 Explicit tickers, because that path now runs the metadata gate and makes the
