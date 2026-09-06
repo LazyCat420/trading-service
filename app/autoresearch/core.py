@@ -215,7 +215,7 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
             logger.debug("[AR] calibration map unavailable: %s", e)
 
         _update_ar_state(report_id, phase="recovery")
-        recovery = _audit_recovery()
+        recovery = _audit_recovery(cycle_id)
         exec_errors = _audit_execution_errors(cycle_id)
 
         _update_ar_state(report_id, phase="reflection")
