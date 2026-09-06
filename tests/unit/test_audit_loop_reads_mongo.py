@@ -158,17 +158,23 @@ def test_namespaced_and_framework_tools_are_not_breaches(audit):
 
 
 def test_a_real_breach_is_counted_and_a_blocked_attempt_is_marked(audit):
+    # The breach example was `search_web` until 2026-09-06, when it turned out
+    # to be framework-injected like `think`: 557 calls by 8 agents, 548 of them
+    # successful, and on NO agent's whitelist — a tool unreachable unless prism
+    # force-adds it. It joined `_META_TOOLS`, so it is no longer a breach and
+    # cannot serve as one here. `get_finnhub_news` is granted to other agents
+    # and not to this one, which is what a real breach looks like.
     boundaries = {"v3_junior_analyst": {"get_market_data"}}
     calls = [
-        ("v3_junior_analyst", "search_web", "AAPL", False, ""),
-        ("v3_junior_analyst", "search_web", "MSFT", False, ""),
+        ("v3_junior_analyst", "get_finnhub_news", "AAPL", False, ""),
+        ("v3_junior_analyst", "get_finnhub_news", "MSFT", False, ""),
         ("v3_junior_analyst", "write_file", "AAPL", False, "POLICY_DENIED"),
         # An agent with no whitelist on record is not audited, so its calls
         # are not breaches.
-        ("contradiction_shadow", "search_web", "AAPL", False, ""),
+        ("contradiction_shadow", "get_finnhub_news", "AAPL", False, ""),
     ]
     got = audit.breaches(calls, boundaries)
-    assert ("v3_junior_analyst", "search_web", 2, 0, False) in got
+    assert ("v3_junior_analyst", "get_finnhub_news", 2, 0, False) in got
     assert ("v3_junior_analyst", "write_file", 1, 1, True) in got, (
         "a forbidden tool must be labelled as such, and a denial that HELD "
         "must not be filed as an executed breach"
