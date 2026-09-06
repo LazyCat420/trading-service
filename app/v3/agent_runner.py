@@ -36,6 +36,8 @@ from app.v3.artifacts import (
 )
 from app.v3.output_rules import (
     CANCELLED as REASON_CANCELLED,
+    NON_LATIN_PROSE_THRESHOLD,
+    prose_script_share,
     FAILURE_REASONS,
     RUNNER_EXCEPTION,
     SCHEMA_INVALID,
@@ -1419,7 +1421,30 @@ async def run_v3_agent(
         # designed against.
         fragment: dict | None = None
         wrong_shape = False
-        if artifact is not None and _is_wrong_shape(artifact_type, artifact):
+        # A parsed artifact written in another language. It is SHAPED correctly,
+        # so nothing downstream objects — but every English prose heuristic that
+        # reads it (extract_dynamic_trigger_from_text, disposition tokens, the
+        # contradiction shadow) silently finds nothing, and the pipeline
+        # proceeds as though the reasoning said nothing at all.
+        #
+        # MEASURED 2026-09-06: ZS's Board on cycle-v3-1788646388 returned
+        # BUY @ 71% with quality 87 and a `final_decision` 33.5% CJK — the only
+        # such artifact in 1,421 whiteboard entries over 16 days, but 1 of 4 GLM
+        # boards. Routed through the SAME repair path as a fragment, because it
+        # is one cheap tool-less turn: the analysis exists, it is in the wrong
+        # language. If the repair does not land the ORIGINAL is restored below
+        # — a Chinese decision is still a decision, and dropping it would turn a
+        # legibility problem into a dead desk.
+        if artifact is not None and prose_script_share(artifact) > NON_LATIN_PROSE_THRESHOLD:
+            wrong_shape = True
+            logger.warning(
+                "[V3Runner] %s: %s for %s is %.0f%% non-Latin script — routing "
+                "to the tool-less repair for an English rewrite",
+                agent_name, artifact_type, desk.ticker,
+                prose_script_share(artifact) * 100,
+            )
+            fragment, artifact = artifact, None
+        elif artifact is not None and _is_wrong_shape(artifact_type, artifact):
             wrong_shape = True
             logger.warning(
                 "[V3Runner] %s: parsed output is not a %s — it carries none of "

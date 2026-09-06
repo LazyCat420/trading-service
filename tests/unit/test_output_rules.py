@@ -251,3 +251,145 @@ def test_an_analysis_that_mentions_a_provider_error_is_not_one():
     from app.v3.output_rules import PROVIDER_ERROR
 
     assert classify_output(text) is not PROVIDER_ERROR
+
+
+# ── An artifact written in another language ────────────────────────────────
+#
+# MEASURED 2026-09-06 (Appendix K.9). ZS's `v3_board_of_directors` on
+# cycle-v3-1788646388 ran 5 turns / 120,554 prompt tokens / 687 s, returned
+# BUY @ 71%, and scored **quality 87**. Its chat line opens
+#
+#     CONTRADICTORY 机制：矛盾在于一份表现超预期并上调指引的财报，却被市场定价为业绩不及预期。
+#
+# — 56.8% CJK over the 600-char message — and the persisted
+# `whiteboard_entries.final_decision` is 33.5% CJK over 2,062 chars (the Latin
+# part is JSON keys and numbers).
+#
+# It is the ONLY CJK artifact in 1,421 whiteboard entries over 16 days across
+# four models — but 1 of 4 GLM boards. Nothing noticed: no validator, output
+# rule or scorer looks at output language (`grep -i language|cjk|ascii` across
+# artifact_validators, output_rules and quality_scorer finds only a
+# hedging-WORD check). Every English prose heuristic downstream —
+# extract_dynamic_trigger_from_text, disposition._PULLBACK_TOKENS, the
+# contradiction shadow's text matching — returns "no match" on Chinese and the
+# pipeline proceeds as though the reasoning said nothing.
+#
+# The synthesizer DID recover the content (its trade_decision is 0% CJK and
+# quotes the board's figures correctly) at a cost of 6 loops / 98,806 tokens /
+# 766 s against SNOW's 1 loop / 25,404 / 235 s on the same stage.
+
+ZS_BOARD_CJK = (
+    "CONTRADICTORY 机制：矛盾在于一份表现超预期并上调指引的财报，却被市场定价为业绩不及预期。"
+    "根据 9 月 5 日对 9 月 3 日 Q4 FY26 报告的报道验证：所有季度指标均超预期，"
+    "FY27 调整后 EPS 指引比共识高出约 6%，GAAP 净亏损在 Q4 收窄至 340 万美元。"
+)
+
+
+class TestNonLatinScript:
+    def test_the_zs_board_text_is_flagged(self):
+        from app.v3.output_rules import NON_LATIN_SCRIPT, classify_output
+
+        assert classify_output(ZS_BOARD_CJK, wrong_shape=True) is NON_LATIN_SCRIPT
+
+    def test_english_prose_is_not_flagged(self):
+        from app.v3.output_rules import NON_LATIN_SCRIPT, classify_output
+
+        english = (
+            "CONTRADICTORY regime resolved via sizing, not denial. GOOG trades "
+            "at TTM P/E 17.0 against a forward 22.57, and the ad-tech ruling "
+            "removed the breakup overhang."
+        )
+        assert classify_output(english, wrong_shape=True) is not NON_LATIN_SCRIPT
+
+    def test_a_chinese_company_name_in_english_prose_is_not_flagged(self):
+        """The gate is about the LANGUAGE the analysis is written in, not about
+        whether a non-Latin character appears. A desk note naming 比亚迪 in an
+        otherwise English paragraph is correct output."""
+        from app.v3.output_rules import NON_LATIN_SCRIPT, classify_output
+
+        mixed = (
+            "BYD (比亚迪) reported a 12% revenue increase this quarter, which "
+            "supports the growth pillar of the thesis. The competitive position "
+            "against Tesla in the domestic market remains the key uncertainty, "
+            "and the margin trajectory is the number to watch into the next "
+            "print. Nothing in the filing changes the valuation case."
+        )
+        assert classify_output(mixed, wrong_shape=True) is not NON_LATIN_SCRIPT
+
+    def test_the_rule_asks_for_english_and_quotes_the_previous_reply(self):
+        """Unlike a transport failure, the model DID produce the analysis — it
+        just wrote it in the wrong language, so showing it back is exactly what
+        makes the repair cheap."""
+        from app.v3.output_rules import NON_LATIN_SCRIPT
+
+        assert NON_LATIN_SCRIPT.quote_previous is True
+        assert not NON_LATIN_SCRIPT.transport_failure
+        assert "english" in NON_LATIN_SCRIPT.directive.lower()
+
+    def test_a_transport_marker_still_wins(self):
+        """Ordering: prism's injected error can itself contain any script, and
+        must never be re-asked as a language problem."""
+        from app.v3.output_rules import PROVIDER_ERROR, classify_output
+
+        # The verbatim 23:20:53 line from cycle-v3-1788646388, with CJK
+        # appended. `_PROVIDER_ERROR_MARKER` requires "on iteration", so the
+        # fixture has to be the real text — an invented one is not a control.
+        assert classify_output(
+            "⚠️ **Error:** The model provider encountered an error on iteration 3: "
+            "`Provider stream stalled: no data received for 300s` 机制机制机制机制",
+            wrong_shape=True,
+        ) is PROVIDER_ERROR
+
+
+class TestProseScriptShare:
+    def test_it_measures_prose_not_keys_or_numbers(self):
+        """A JSON artifact is mostly ASCII structure. Measuring the whole blob
+        would put a fully-Chinese artifact under the threshold and the gate
+        would never fire — the denominator decides the answer here."""
+        from app.v3.output_rules import prose_script_share
+
+        artifact = {
+            "action": "BUY",
+            "confidence": 71,
+            "summary": ZS_BOARD_CJK,
+            "risk_flags": ["估值风险", "竞争加剧"],
+            "stop_loss": 151.8,
+        }
+        assert prose_script_share(artifact) > 0.30
+
+    def test_an_english_artifact_scores_zero(self):
+        from app.v3.output_rules import prose_script_share
+
+        assert prose_script_share(
+            {"action": "BUY", "confidence": 71, "summary": "A clean English thesis."}
+        ) == 0.0
+
+    def test_it_walks_nested_prose(self):
+        from app.v3.output_rules import prose_script_share
+
+        assert prose_script_share(
+            {"pillars": {"valuation": {"note": ZS_BOARD_CJK}}}
+        ) > 0.30
+
+    def test_cyrillic_and_arabic_count_too(self):
+        from app.v3.output_rules import prose_script_share
+
+        assert prose_script_share({"s": "Оценка риска высока для этой позиции"}) > 0.5
+        assert prose_script_share({"s": "تقييم المخاطر مرتفع لهذا المركز"}) > 0.5
+
+    @pytest.mark.parametrize("junk", [None, {}, [], "", 0, {"a": None}, {"a": 1}])
+    def test_junk_is_zero_not_an_error(self, junk):
+        from app.v3.output_rules import prose_script_share
+
+        assert prose_script_share(junk) == 0.0
+
+    def test_a_ticker_heavy_artifact_is_not_diluted_into_a_false_negative(self):
+        """A short Chinese summary alongside long English tool output must
+        still register — the share is over PROSE, and both are prose."""
+        from app.v3.output_rules import prose_script_share
+
+        share = prose_script_share({
+            "summary": "机制：矛盾在于一份表现超预期的财报。",
+            "detail": "x" * 400,
+        })
+        assert 0.0 < share < 0.10

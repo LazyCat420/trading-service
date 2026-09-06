@@ -194,6 +194,22 @@ UNPARSED_TOOL_CALL = OutputRule(
     transport_failure=True,
 )
 
+NON_LATIN_SCRIPT = OutputRule(
+    name="NON_LATIN_SCRIPT",
+    # The model DID the analysis — it wrote it in the wrong language. Unlike a
+    # transport failure there is real work in the buffer, so quoting it back is
+    # exactly what makes the repair one cheap turn instead of a re-run.
+    directive=(
+        "Your previous artifact was written in a language other than English. "
+        "Every downstream reader of this desk — the trigger extractor, the "
+        "disposition parser, the contradiction shadow, the dashboard — reads "
+        "English and silently finds nothing in any other script. Rewrite the "
+        "SAME artifact with the same figures, the same verdict and the same "
+        "confidence, in English."
+    ),
+    quote_previous=True,
+)
+
 TRUNCATED_JSON = OutputRule(
     name="TRUNCATED_JSON",
     # A truncated artifact is a max_tokens problem, NOT a turn-budget one, so
@@ -321,6 +337,63 @@ def _json_is_truncated(text: str) -> bool:
     return depth > 0 or in_string
 
 
+#: Unicode blocks that mean "this analysis is not in English". CJK, Cyrillic,
+#: Arabic, Hebrew, Devanagari, Thai, Hangul, Hiragana/Katakana.
+_NON_LATIN_RE = re.compile(
+    "[\u0590-\u05ff\u0600-\u06ff\u0900-\u097f\u0e00-\u0e7f"
+    "\u0400-\u04ff\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]"
+)
+
+#: Share of an artifact's PROSE that may be non-Latin before it is treated as a
+#: language failure. Comfortably above a company name or a quoted headline
+#: (measured: an English paragraph naming 比亚迪 scores ~0.02) and far below a
+#: report actually written in another language (the ZS board: 0.34).
+NON_LATIN_PROSE_THRESHOLD = 0.05
+
+
+def prose_script_share(artifact: object) -> float:
+    """Fraction of an artifact's PROSE written in a non-Latin script.
+
+    Walks nested values and measures only the string LEAVES, never the keys:
+    a JSON artifact is mostly ASCII structure, so scoring the serialised blob
+    would put a fully-Chinese report under any sane threshold and the gate
+    would never fire. The denominator is the whole answer here.
+
+    Never raises — this runs on the decision path.
+
+    MEASURED 2026-09-06: ZS's Board on cycle-v3-1788646388 returned BUY @ 71%
+    with quality 87, its persisted `final_decision` 33.5% CJK. It is the only
+    such artifact in 1,421 whiteboard entries over 16 days, and 1 of 4 GLM
+    boards. Nothing looked: no validator, output rule or scorer reads output
+    language, while every English prose heuristic downstream returns "no match"
+    on Chinese and the pipeline proceeds as though the reasoning said nothing.
+    """
+    strings: list[str] = []
+
+    def _walk(node: object, depth: int = 0) -> None:
+        if depth > 8 or len(strings) > 500:
+            return
+        if isinstance(node, str):
+            if node.strip():
+                strings.append(node)
+        elif isinstance(node, dict):
+            for value in node.values():
+                _walk(value, depth + 1)
+        elif isinstance(node, (list, tuple)):
+            for value in node:
+                _walk(value, depth + 1)
+
+    try:
+        _walk(artifact)
+    except Exception:  # noqa: BLE001 — a language probe never blocks a cycle
+        return 0.0
+
+    blob = "".join(strings)
+    if not blob:
+        return 0.0
+    return len(_NON_LATIN_RE.findall(blob)) / len(blob)
+
+
 def classify_output(text: str | None, *, wrong_shape: bool = False) -> OutputRule:
     """Name the failure class of an unparseable (or wrong-shaped) agent reply.
 
@@ -342,6 +415,15 @@ def classify_output(text: str | None, *, wrong_shape: bool = False) -> OutputRul
     # position, not mere presence — see _PROVIDER_ERROR_MARKER.
     if _PROVIDER_ERROR_MARKER in stripped[:_PROVIDER_ERROR_WINDOW].lower():
         return PROVIDER_ERROR
+
+    # Language is checked before `wrong_shape` for a parsed artifact: an
+    # artifact written in another language is SHAPED correctly and would be
+    # mislabelled WRONG_SHAPE, sending a repair directive that asks the model
+    # to fix a structure that was never broken.
+    if wrong_shape and _NON_LATIN_RE.search(stripped):
+        share = len(_NON_LATIN_RE.findall(stripped)) / max(len(stripped), 1)
+        if share > NON_LATIN_PROSE_THRESHOLD:
+            return NON_LATIN_SCRIPT
 
     # Checked before the JSON probes: `wrong_shape` means parsing SUCCEEDED, so
     # the buffer does contain balanced JSON and every probe below would

@@ -152,3 +152,81 @@ async def test_a_failed_repair_is_recorded_as_failed_not_as_untried():
 
     assert outcome == PhaseOutcome.AGENT_ERROR
     assert fired[0][1]["detail"]["repaired"] is False
+
+
+# ── A non-Latin artifact goes through repair, and survives a failed one ─────
+#
+# MEASURED 2026-09-06, ZS on cycle-v3-1788646388: the Board returned BUY @ 71%
+# with quality 87 and a `final_decision` 33.5% CJK. See test_output_rules.py
+# for the full background.
+
+_ZS_CJK_SUMMARY = (
+    "机制：矛盾在于一份表现超预期并上调指引的财报，却被市场定价为业绩不及预期。"
+    "根据 9 月 5 日的报道验证：所有季度指标均超预期。"
+)
+
+
+class TestANonLatinArtifactIsRepaired:
+    def test_the_runner_routes_it_like_a_fragment(self):
+        """The seam, read from source: it must be handled BEFORE the
+        wrong-shape branch, or an artifact that is correctly shaped but in the
+        wrong language is labelled WRONG_SHAPE and told to fix a structure that
+        was never broken."""
+        import inspect
+
+        from app.v3 import agent_runner
+
+        src = inspect.getsource(agent_runner.run_v3_agent)
+        assert "prose_script_share(artifact)" in src
+        assert src.index("prose_script_share(artifact)") < src.index(
+            "_is_wrong_shape(artifact_type, artifact)"
+        ), "the language check runs after the shape check"
+
+    def test_a_failed_repair_restores_the_original_rather_than_dropping_it(self):
+        """A Chinese decision is still a decision. Dropping it would turn a
+        legibility problem into a dead desk — the opposite of the fix."""
+        import inspect
+
+        from app.v3 import agent_runner
+
+        src = inspect.getsource(agent_runner.run_v3_agent)
+        assert "artifact = fragment" in src, (
+            "the fragment-restore path is gone; a failed language repair would "
+            "discard a real decision"
+        )
+
+    def test_the_threshold_is_shared_with_the_classifier(self):
+        """One authority. A runner that routed at 5% while classify_output
+        labelled at 20% would send artifacts into a repair pass that then
+        called them WRONG_SHAPE."""
+        from app.v3 import agent_runner
+        from app.v3.output_rules import NON_LATIN_PROSE_THRESHOLD
+
+        assert agent_runner.NON_LATIN_PROSE_THRESHOLD is NON_LATIN_PROSE_THRESHOLD
+
+    def test_an_english_artifact_is_not_routed(self):
+        from app.v3.output_rules import (
+            NON_LATIN_PROSE_THRESHOLD,
+            prose_script_share,
+        )
+
+        english = {
+            "action": "BUY", "confidence": 71,
+            "summary": "A verified beat-and-raise priced like a miss.",
+            "risk_flags": ["Guidance deceleration may not be fully priced"],
+        }
+        assert prose_script_share(english) <= NON_LATIN_PROSE_THRESHOLD
+
+    def test_the_zs_specimen_is_routed(self):
+        from app.v3.output_rules import (
+            NON_LATIN_PROSE_THRESHOLD,
+            prose_script_share,
+        )
+
+        zs = {
+            "action": "BUY", "confidence": 71,
+            "summary": _ZS_CJK_SUMMARY,
+            "risk_flags": ["估值风险"],
+            "stop_loss": 151.8, "take_profit": 200.0,
+        }
+        assert prose_script_share(zs) > NON_LATIN_PROSE_THRESHOLD
