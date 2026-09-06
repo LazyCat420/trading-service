@@ -272,6 +272,11 @@ RULE_NAMES = frozenset({
     EMPTY_RESPONSE.name, PROVIDER_ERROR.name, PSEUDO_TOOL_CALL.name,
     NARRATED_NO_ARTIFACT.name, TRUNCATED_JSON.name, PROSE_REPORT.name,
     WRONG_SHAPE.name, UNCLASSIFIED.name, UNPARSED_TOOL_CALL.name,
+    # Added 2026-09-06 with the rule. tests/unit/test_failure_reason_namespace
+    # caught the first version of that change, which declared the rule and
+    # forgot this set — `_record_telemetry` would have filed every language
+    # repair as UNCLASSIFIED. The guard was red; this is the fix.
+    NON_LATIN_SCRIPT.name,
 })
 
 #: The artifact PARSED — so no rule fired — but failed schema validation.
