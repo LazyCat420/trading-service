@@ -662,6 +662,12 @@ def maybe_shadow_gatekeeper(
         return False
 
 
+# Share of scraper-service calls that must error before a sweep is an OUTAGE
+# rather than a degraded run. Not 1.0: a sweep where 90% of calls fail is an
+# outage in every sense that matters, and the 100% test could be defeated by a
+# single lucky call.
+_SCRAPER_OUTAGE_RATE = 0.5
+
 class PipelineService:
     _state = PipelineStateDB.default_state()
     _cycle_task = None
@@ -1553,22 +1559,36 @@ class PipelineService:
                         try:
                             from app.collectors.news_collector import collect_all
                             from app.services.scraper_client import scraper_client
-                            scraper_client.reset_failures()
+                            # A DELTA, not reset+read: this singleton is shared
+                            # by nine call sites, so a concurrent nightly sweep
+                            # used to land its failures in this cycle's count.
+                            rec = scraper_client.sweep()
                             total_scraped = await collect_all(emit_cb=discovery_emit)
-                            # A sweep where every scraper-service call errored is an
-                            # outage, not an empty result — don't stamp it ✅ ok.
-                            if scraper_client.failures and not total_scraped:
+                            # Judge the sweep on the FAILURE RATE, not on
+                            # "errored at all AND wrote nothing".
+                            #
+                            # `total_scraped` counts articles WRITTEN, so it is
+                            # 0 for a perfectly healthy sweep whose articles
+                            # were all duplicates — two cycles 20 minutes apart
+                            # do exactly that. The old test therefore stamped
+                            # ❌ FAILED on a healthy re-run that hit one blip,
+                            # and stamped ⚠️ degraded (status "ok") on a sweep
+                            # where 300 of 320 calls errored but one article
+                            # happened to be new.
+                            if rec.failure_rate >= _SCRAPER_OUTAGE_RATE:
                                 discovery_emit(
                                     "scraper_err",
-                                    f"❌ Scraper sweep FAILED: {scraper_client.failures} scraper-service "
-                                    f"calls errored, 0 articles (last: {scraper_client.last_error})",
+                                    f"❌ Scraper sweep FAILED: {rec.failures} of {rec.calls} "
+                                    f"scraper-service calls errored ({rec.failure_rate:.0%}), "
+                                    f"{total_scraped} new articles (last: {rec.last_error})",
                                     "error",
                                 )
-                            elif scraper_client.failures:
+                            elif rec.failed:
                                 discovery_emit(
                                     "scraper_done",
                                     f"⚠️ News scraper sweep degraded: collected {total_scraped} articles, "
-                                    f"{scraper_client.failures} calls errored (last: {scraper_client.last_error})",
+                                    f"{rec.failures} of {rec.calls} calls errored "
+                                    f"({rec.failure_rate:.0%}, last: {rec.last_error})",
                                     "ok",
                                 )
                             else:

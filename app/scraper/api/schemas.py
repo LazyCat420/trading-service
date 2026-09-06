@@ -77,3 +77,10 @@ class CollectResponse(BaseModel):
     count: int
     items: list[dict[str, Any]]
     error: str | None = None
+    # ScrapeResponse has carried `success` since 89787da2 ("auto (failed)" was
+    # still reporting success=True); this side had no such field, so a collector
+    # that swallowed every exception produced a response byte-identical to a
+    # source that was genuinely quiet: {"count": 0, "items": [], "error": null}.
+    # Defaults True so every existing construction stays correct — the route
+    # sets it False on the paths that already know they failed.
+    success: bool = True

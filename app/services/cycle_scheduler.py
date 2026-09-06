@@ -130,6 +130,26 @@ scheduler = AsyncIOScheduler(
 )
 
 
+
+def _log_sweep(name: str, outcome: str, rec) -> None:
+    """Log a scheduled sweep, naming the scraper failures it actually incurred.
+
+    Every one of these used to log a bare count — "YouTube channel sweep: 0
+    transcripts stored". During a scraper-service outage that is exactly what a
+    genuinely quiet night prints, so the 0 closed a question a blank would have
+    opened. `pipeline_service` was the ONLY reader of the failure ledger in the
+    whole app; these sweeps ran blind.
+    """
+    if rec.failed:
+        logger.warning(
+            "[SCHEDULER] %s: %s — but %d of %d scraper-service calls errored "
+            "(%.0f%%, last: %s); treat the count as a floor, not a result",
+            name, outcome, rec.failures, rec.calls, rec.failure_rate * 100, rec.last_error,
+        )
+    else:
+        logger.info("[SCHEDULER] %s: %s", name, outcome)
+
+
 class SchedulerService:
     @staticmethod
     def _is_market_hours() -> bool:
@@ -1582,9 +1602,11 @@ class SchedulerService:
         discovery never ran). Bounded to keep the scrape load modest."""
         try:
             from app.collectors.youtube_collector import collect_all
+            from app.services.scraper_client import scraper_client
 
+            rec = scraper_client.sweep()
             total = await collect_all(max_videos=3, days_back=7, max_queries=10)
-            logger.info("[SCHEDULER] YouTube channel sweep: %s transcripts stored", total)
+            _log_sweep("YouTube channel sweep", f"{total} transcripts stored", rec)
         except Exception as e:
             logger.error("[SCHEDULER] YouTube channel sweep failed: %s", e)
 
@@ -1645,9 +1667,11 @@ class SchedulerService:
         scraper-service, plus StockTwits for active watchlist tickers)."""
         try:
             from app.collectors.twitter_collector import collect_all as collect_twitter
+            from app.services.scraper_client import scraper_client
 
+            rec = scraper_client.sweep()
             n = await collect_twitter()
-            logger.info("[SCHEDULER] Twitter/fintwit sweep: %s posts", n)
+            _log_sweep("Twitter/fintwit sweep", f"{n} posts", rec)
         except Exception as e:
             logger.error("[SCHEDULER] Twitter sweep failed: %s", e)
         try:
@@ -1698,9 +1722,11 @@ class SchedulerService:
         """
         try:
             from app.collectors.reddit_collector import run_reddit_purge_discovery
+            from app.services.scraper_client import scraper_client
 
+            rec = scraper_client.sweep()
             count = await run_reddit_purge_discovery(limit=15)
-            logger.info("[SCHEDULER] Reddit trending sweep stored %d ticker(s)", count)
+            _log_sweep("Reddit trending sweep", f"{count} ticker(s) stored", rec)
         except Exception as e:
             logger.error("[SCHEDULER] Reddit trending sweep failed: %s", e)
 

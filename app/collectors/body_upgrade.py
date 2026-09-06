@@ -194,6 +194,14 @@ async def upgrade_bodies(candidates: list[tuple[str | None, str | None]]) -> dic
                 failures += 1
                 logger.debug("[body_upgrade] failed for %s: %s", url, e)
                 return
+            if not body:
+                # `_scrape_article_body_via_service` signals failure by RETURNING
+                # "" — it catches nothing and raises nothing. So the `except`
+                # above could never fire, and the alarm line below printed
+                # "0 fetch error(s)" through a total scraper outage while also
+                # blaming the time budget it had not spent.
+                failures += 1
+                return
             if body and len(body) >= MIN_BODY_CHARS:
                 bodies[url] = body
                 _body_cache_put(url, body)

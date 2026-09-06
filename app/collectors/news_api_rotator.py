@@ -343,8 +343,12 @@ class NewsApiRotator:
         self,
         provider: ProviderConfig,
         query: str,
-    ) -> list[NewsArticle]:
-        """Route to scraper-service to fetch from provider."""
+    ) -> list[NewsArticle] | None:
+        """Route to scraper-service to fetch from provider.
+
+        Returns None when the call never reached the provider (scraper-service
+        errored), and a list — possibly empty — when it did.
+        """
         from app.services.scraper_client import scraper_client
 
         if provider.name == "finnhub":
@@ -372,7 +376,10 @@ class NewsApiRotator:
             )
         except Exception as e:
             logger.warning("[rotator] Failed to collect from scraper-service for %s: %s", provider.name, e)
-            return []
+            # None, not []: "we never reached the provider" and "the provider
+            # answered with nothing" must be distinguishable, because only one
+            # of them should spend a quota slot. See fetch_news.
+            return None
 
         articles = []
         for item in items:
@@ -444,6 +451,17 @@ class NewsApiRotator:
                 continue
             try:
                 articles = await self._fetch_from_provider(provider, query)
+                if articles is None:
+                    # The scraper never reached this provider, so no quota was
+                    # spent upstream and none should be spent here. Consuming
+                    # unconditionally meant a scraper outage burned every
+                    # provider's daily budget in milliseconds, and the rotator
+                    # then skipped them all as "exhausted" once it recovered.
+                    logger.warning(
+                        "[rotator] %s unreachable via scraper-service — quota not consumed",
+                        provider.name,
+                    )
+                    continue
                 await quota.consume()
                 for a in articles[:max_per_provider]:
                     if a.url and a.url not in seen_urls:

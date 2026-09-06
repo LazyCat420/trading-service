@@ -55,13 +55,17 @@ async def collect(req: CollectRequest):
             return await _collect_finnews(req)
         else:
             return CollectResponse(
-                source=req.source, count=0, items=[],
+                source=req.source, count=0, items=[], success=False,
                 error=f"Unknown source: {req.source}",
             )
     except Exception as e:
+        # Everything reaching here is a SERVER fault — a collector raised. The
+        # response is still 200 (callers rely on that), but it must not look
+        # like an empty result: success=False plus `error` is what lets
+        # scraper_client tell an outage from a quiet source.
         logger.error(f"[collect] {req.source} error: {e}", exc_info=True)
         return CollectResponse(
-            source=req.source, count=0, items=[],
+            source=req.source, count=0, items=[], success=False,
             error=str(e),
         )
 
@@ -92,7 +96,7 @@ async def _collect_reddit(req: CollectRequest) -> CollectResponse:
 
     if not req.subreddits:
         return CollectResponse(
-            source="reddit", count=0, items=[],
+            source="reddit", count=0, items=[], success=False,
             error="subreddits list is required for reddit collection",
         )
 
@@ -151,7 +155,7 @@ async def _collect_youtube(req: CollectRequest) -> CollectResponse:
         )
     else:
         return CollectResponse(
-            source="youtube", count=0, items=[],
+            source="youtube", count=0, items=[], success=False,
             error="Either 'channels' or 'query' is required for youtube collection",
         )
 
@@ -174,7 +178,7 @@ async def _collect_news(req: CollectRequest) -> CollectResponse:
         articles = await collector.collect_feed(feed_name, req.feed_url)
     else:
         return CollectResponse(
-            source="news", count=0, items=[],
+            source="news", count=0, items=[], success=False,
             error="Either 'feed_url' or 'feeds' dict is required for news collection",
         )
 
@@ -273,7 +277,7 @@ async def _collect_kannapedia(req: CollectRequest) -> CollectResponse:
 
     if not rsp_numbers:
         return CollectResponse(
-            source="kannapedia", count=0, items=[],
+            source="kannapedia", count=0, items=[], success=False,
             error="No RSP numbers found. Provide rsp_numbers or a search query.",
         )
 
@@ -293,7 +297,7 @@ async def _collect_leafly(req: CollectRequest) -> CollectResponse:
 
     if not req.query:
         return CollectResponse(
-            source="leafly", count=0, items=[],
+            source="leafly", count=0, items=[], success=False,
             error="query is required for leafly collection",
         )
 
@@ -302,7 +306,7 @@ async def _collect_leafly(req: CollectRequest) -> CollectResponse:
     
     if not data:
         return CollectResponse(
-            source="leafly", count=0, items=[],
+            source="leafly", count=0, items=[], success=False,
             error=f"No Leafly data found for query: {req.query}",
         )
 
@@ -317,7 +321,7 @@ async def _collect_duckduckgo(req: CollectRequest) -> CollectResponse:
 
     if not req.query:
         return CollectResponse(
-            source="duckduckgo", count=0, items=[],
+            source="duckduckgo", count=0, items=[], success=False,
             error="query is required for duckduckgo collection",
         )
 
