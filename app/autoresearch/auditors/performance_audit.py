@@ -177,6 +177,14 @@ def _audit_recovery(cycle_id: str) -> dict:
         }
 
     events.sort(key=lambda e: (e.get("at") is None, e.get("at")))
+    # The store hands back datetimes; core.py writes this dict with json.dumps.
+    # Sorting above needs the datetime, the writer needs a string — convert
+    # AFTER the sort. The first live run of this function (cycle-v3-1788660665)
+    # took the whole autoresearch report to `error` on exactly this TypeError.
+    for e in events:
+        at = e.get("at")
+        if hasattr(at, "isoformat"):
+            e["at"] = at.isoformat()
     stats["by_type"] = dict(by_type)
     stats["by_agent"] = dict(by_agent)
     stats["total_failures"] = sum(by_type.values())

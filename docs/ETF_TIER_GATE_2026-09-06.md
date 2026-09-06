@@ -197,3 +197,56 @@ ignores the sink. Neighbouring runner tests (81) green.
 Also exercised this cycle: **#11 PASS** — the phase-abort page landed as one
 `fund_alerts` row (`v3_phase_abort`, warning, ABT), 0 "Failed to record fund
 alert" rows.
+
+
+## Check #4 — the first live run of recovery_stats took down the report (terminal, 03:54 UTC)
+
+The autoresearch report for this cycle:
+
+    status=error  phase=error
+    error="Object of type datetime is not JSON serializable"
+
+`core.py:272` writes `'recovery_stats': json.dumps(recovery)`; `56356ec` (B3)
+had just made `_audit_recovery` return `recent_events` whose `"at"` is the
+cycle_audit_log row's raw BSON datetime. Three minutes of audit work, then the
+whole report — data quality, decision quality, LLM scores — went to `error`.
+B3's tests built rows WITH datetimes and asserted counts, types and ordering,
+but never handed the dict to the writer's serializer. A test that proves the
+shape of a result must also prove it survives the one operation every consumer
+performs on it.
+
+**Fix (`ed62fa1`, branch `fix/autoresearch-json`):** convert `at` to ISO AFTER
+the sort. Tests (`test_recovery_stats_are_json_serializable.py`, 3): the stats
+survive `json.dumps`; events stay time-ordered after conversion; a row with no
+timestamp still serializes and sorts last. Red first 2 of 3; conversion removed
+→ red; the prior 18 recovery tests still pass. The report for
+`cycle-v3-1788660665` itself is lost (it errored before scoring); the next cycle
+is the first that can show `recovery_stats.total_failures` non-zero — this one
+would have counted 2 (the SCHD stall, the ABT timeout).
+
+## Terminal verdict table — cycle-v3-1788660665
+
+27 agents, 26 SUCCESS, 1 TIMED_OUT (ABT fundamental). SCHD BUY 83.512 @ $34.81
+(conf 72), NBIS HOLD (conf 63), ABT aborted. 83 tool calls. 40 error rows: 31
+slow-tool, 3 agent-timeout, 3 prism-disconnect, 2 prism-500, 1 prism-stall.
+
+| # | check | verdict | evidence |
+|---|---|---|---|
+| 1 | signal_weights_source | PASS | 2 rows, both `model`, 4 keys, sum 1 |
+| 2 | ranked_pool + selected_ranks | PASS | 40 rows desc, ranks SCHD 2 / ABT 15 / NBIS 16, pool 126 |
+| 3 | deep retrieval iff judge < 60 | PASS | SCHD judge 58 → start + done events, no others |
+| 4 | recovery_stats on the report | **FAIL** | report `error`: datetime not serializable — fixed `ed62fa1` |
+| 5 | cached_tokens on GLM | PASS by explanation | 22 GLM rows all 0; usage-keys line names `cacheReadInputTokens`, the reader reads it — the value from vllm-2 is 0 |
+| 6 | boot refresh does not pin the loop | **FAIL** | 53 s silence in a 160 s compute; 0 bridge timeouts — fixed `2fd8895` |
+| 7 | Last update cell | wired, not watched | SSE `updated_at` → `fmtAge` in source; lazy chunk not located on :3030 |
+| 8 | stopped-path summary | PASS on the DONE path only | trade_executed 1 == fills 1; the STOPPED path is not exercised — needs a stopped cycle |
+| 9 | dead row carries cost | **FAIL** | ABT TIMED_OUT: 18 tool calls, tokens 0, cost_partial false — fixed `6b08c11`. The checker's first version queried AGENT_ERROR only and printed NOT EXERCISED |
+| 10 | noise floor | PASS | 0 violations |
+| 11 | fund_alerts | PASS | 1 row `v3_phase_abort`/warning/ABT, 0 rejections. Checker's first version printed NOT EXERCISED |
+| 12 | metadata gate | **FAIL** | SCHD untiered, cap ran blind — fixed `cc52d04` + 85-row migration. Checker's first version printed PASS on an empty set |
+| 13 | language gate | NOT EXERCISED | 0 non-Latin artifacts, 0 firings |
+| 14 | stall classification | PASS | 2 stall rows, classified transient, retried, agent SUCCESS. Checker's first version printed NOT EXERCISED |
+
+Four checker verdicts were wrong before the by-hand pass (12 vacuous PASS; 9,
+11, 14 false NOT EXERCISED). The instrument was repaired in place; every
+verdict above was confirmed by a direct query.
