@@ -283,6 +283,23 @@ right cycle, honestly zero. **Check #4 PASS live.** The same cycle logged
 "took too much time" 5× on a healthy one-ticker run (F5's target, still on the
 deployed code at that hour).
 
+## Live proof on the deployed fixes — cycle-v3-1788719122
+
+Deployed `master@aa5a6832` at 18:21 UTC; the observed cycle (JEPQ + AMD) was
+enqueued at 18:25 and sampled every 15 s throughout.
+
+| claim | before | on this cycle |
+|---|---|---|
+| `think` no longer burns a turn | 5, 4 and 3 POLICY_DENIED calls on the three baseline cycles | **3 calls, 3 successes, 0 denied** |
+| the panel does not call a working agent dead | 25 of 101 samples over the client's 300 s threshold, max **522 s** | **0 of 79 samples over 300 s, max 180 s** |
+| the per-box ceiling is really 2 | `limit_for` returned 4 in the container | verified in the running container: `min_concurrency 4 → limit_for('dgx_spark') 2` |
+| the metadata gate runs on the explicit path | never ran there (74 % of cycles) | fired, and **found a defect**: see the worksheet's first-run section |
+
+The gate's failure is the useful part: JEPQ had no row, the vendor answered
+`quoteType: "ETF"`, `marketCap: null`, `totalAssets: $42.2B`, and the branch —
+which only ever asked "how big is it" — logged "left untiered" and wrote
+nothing. Fixed in `f0b7ea25`, red-first on that verbatim `.info`.
+
 ## Store findings from the verification audit (2026-09-06, read-only)
 
 Measured while preparing the observed verification run. None of these are
