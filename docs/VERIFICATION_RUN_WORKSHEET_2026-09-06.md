@@ -1,5 +1,60 @@
 # Verification-run worksheet — one fully observed cycle
 
+## Baseline: three cycles graded on the CURRENT deployment
+
+`scripts/collect_cycle_bundle.py <cycle_id>` collects the bundle and grades it.
+Run against every cycle that completed while this pass was being written, all
+of them on the code that is deployed today (none of this branch):
+
+| cycle | finished (UTC) | verdicts |
+|---|---|---|
+| cycle-v3-1788674782 | 06:46 | 9 PASS, 1 FAIL, 2 NOT EXERCISED |
+| cycle-v3-1788682529 | 09:04 | 9 PASS, 1 FAIL, 2 NOT EXERCISED |
+| cycle-v3-1788699598 | 13:40 | 9 PASS, 1 FAIL, 2 NOT EXERCISED |
+
+The same three verdicts every time, which is the useful part:
+
+- **PASS** — reached `done`; summary, `trade_results`, `trade_fills` and the
+  `pipeline_events` timeline agree; exactly one AUTORESEARCH command and one
+  `done` report per cycle; `recovery_stats` on the right cycle and honestly
+  zero; no zero-cost non-success agent row; no 30-minute agent.
+- **FAIL** — denied `think`: 5, 4 and 3 calls. Fixed on this branch (75e4e27).
+- **NOT EXERCISED** — `recent_events` empty (no failure occurred, so the ISO
+  repair is unproven) and no fund among the selected tickers.
+
+Two of the three were Watch Desk trips on the explicit-ticker path, so the
+metadata gate never ran: **EXLS completed a full cycle on 09-06 and still has
+no `ticker_metadata` row**, which is the hole e9711979 closes.
+
+## Decisions taken (operator, 2026-09-06)
+
+1. **`think` — restored.** Double-checked before shipping: a denied call costs
+   0.98 turns (mean 1.14 think calls per run), and an allowed one cost 1.28
+   against a mean of 1.26. The turn is spent either way, so the deny bought
+   nothing. 75e4e27.
+2. **ETF — gate the explicit-ticker path.** e9711979. Makes criterion 8
+   deterministic: an operator-forced fund is now classified before analysis.
+3. **UI — fix the server heartbeat.** a7b85bc. Measured, not assumed: all four
+   >300 s gaps in the sampled cycle contained tool calls, so the tool-result
+   path covers them; worst gap 522 s → 323 s.
+
+## Running the observed cycle
+
+Explicit tickers, because that path now runs the metadata gate and makes the
+ETF branch deterministic:
+
+    {"tickers": ["JEPQ", "AMD"], "collect": true, "analyze": true,
+     "trade": true, "dynamic_selection_mode": false}
+
+`JEPQ` has **no `ticker_metadata` row**, so it exercises the persist branch
+(vendor lookup → `asset_class: etf` → `market_cap_tier: etf`) rather than the
+already-correct branch every other fund would take. `AMD` is a tiered company
+in the same run, which proves the gate did not simply disable selection.
+
+Budget roughly 45–60 minutes per ticker: cycle-v3-1788682529 took 49 minutes
+for one.
+
+
 Written 2026-09-06, BEFORE the run. Every criterion below states where its
 evidence is read from, what PASS looks like, and what FAIL looks like. A
 criterion with no stated failure signature is not a criterion.
