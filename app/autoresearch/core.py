@@ -82,14 +82,37 @@ def _collect_learning_signals(cycle_id: str) -> dict:
     return signals
 
 
+def _tickers_for(cycle_summary: dict) -> list:
+    """The names this report is about.
+
+    An explicit empty `tickers_final` MEANS empty. A cycle stopped before any
+    desk finished narrows the list to nothing (pipeline_service.partial_
+    summary_fields), and `x or y` reads that as absent and falls back to
+    `tickers_requested` — the full requested list the narrowing exists to stop
+    claiming. Only a MISSING key falls back.
+    """
+    final = cycle_summary.get("tickers_final")
+    if isinstance(final, list):
+        return final
+    return cycle_summary.get("tickers_requested") or []
+
+
+def _degenerate_anomaly(degenerate_subs: list[str], partial: bool) -> str | None:
+    """The detail line for a zero-score anomaly, or None when it is expected.
+
+    A partial cycle has nothing to score: it was stopped, so a 0.0 sub-score is
+    the honest answer, not an anomaly. Flagging it would put a false
+    "degenerate" on every deliberate STOP.
+    """
+    if not degenerate_subs or partial:
+        return None
+    return f"Degenerate sub-scores at 0.0: {', '.join(degenerate_subs)}"
+
+
 async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
     """Main entry point: run full autoresearch after a cycle."""
     report_id = f"ar-{uuid.uuid4().hex[:12]}"
-    tickers = (
-        cycle_summary.get("tickers_final")
-        or cycle_summary.get("tickers_requested")
-        or []
-    )
+    tickers = _tickers_for(cycle_summary)
 
     try:
         from app.utils.trace import set_trace_id
@@ -260,13 +283,21 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
             degenerate_subs.append("decision")
         if llm_score == 0.0:
             degenerate_subs.append("llm")
-        if degenerate_subs:
+        partial_cycle = bool(cycle_summary.get("partial"))
+        reflection["partial_cycle"] = partial_cycle
+        anomaly_detail = _degenerate_anomaly(degenerate_subs, partial_cycle)
+        if anomaly_detail:
             logger.warning(
                 "[AUTORESEARCH] DEGENERATE SCORES: %s at 0.0 — Flagging as anomaly.",
                 ", ".join(degenerate_subs)
             )
             reflection["anomaly"] = True
-            reflection["anomaly_detail"] = f"Degenerate sub-scores at 0.0: {', '.join(degenerate_subs)}"
+            reflection["anomaly_detail"] = anomaly_detail
+        elif degenerate_subs:
+            logger.info(
+                "[AUTORESEARCH] %s at 0.0 on a PARTIAL cycle — expected, not an anomaly.",
+                ", ".join(degenerate_subs)
+            )
 
         score_ver = decision_quality.get("score_version", "v6")
         mongo_store.update_docs('autoresearch_reports', {'id': report_id}, {'$set': {'score_version': score_ver, 'data_quality_score': round(data_score, 1), 'decision_quality_score': round(decision_score, 1), 'llm_performance_score': round(llm_score, 1), 'overall_score': round(overall, 1), 'data_gaps': json.dumps(data_quality.get("gaps", [])), 'decision_issues': json.dumps(decision_quality.get("issues", [])), 'llm_issues': json.dumps(llm_analysis.get("issues", [])), 'performance_metrics': json.dumps(perf_metrics), 'reflection': json.dumps(reflection), 'recovery_stats': json.dumps(recovery), 'status': 'done'}})

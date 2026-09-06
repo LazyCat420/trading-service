@@ -28,6 +28,13 @@ NEW_EPISODIC_THRESHOLD = 5
 # leaves the observations unpromoted, should-consolidate stays true, and the
 # 8k-token consolidation call re-fires on EVERY subsequent cycle.
 CONSOLIDATION_COOLDOWN_SECONDS = 6 * 3600
+#: After a TRANSIENT failure (a dropped socket, a 5xx, a timeout — whatever the
+#: SDK's classify_exception calls transient) the gate re-opens this soon
+#: instead of after the full cooldown. MEASURED 2026-09-06, cycle-v3-1788660665
+#: 03:51:27: "Failed consolidation for NBIS: Server disconnected without
+#: sending a response" — the stamp was written BEFORE the call, so one socket
+#: cost the ticker six hours of memory consolidation.
+TRANSIENT_RETRY_SECONDS = 10 * 60
 _last_attempt: dict[str, float] = {}
 
 CONSOLIDATION_SYSTEM_PROMPT = """
@@ -81,8 +88,29 @@ async def maybe_consolidate(ticker: str) -> None:
         observations = get_unpromoted_observations(ticker)
         if len(observations) < NEW_EPISODIC_THRESHOLD:
             return
-        _last_attempt[ticker] = now
-        await run_ticker_consolidation(ticker, observations=observations)
+        # Stamp AFTER the outcome is known. A transient transport failure
+        # re-opens the gate after TRANSIENT_RETRY_SECONDS; success and every
+        # non-transient failure keep the full cooldown.
+        try:
+            outcome = await run_ticker_consolidation(ticker, observations=observations)
+        except Exception as e:
+            # An exception that ESCAPES the callee is still an attempt.
+            # `run_ticker_consolidation` classifies only what its own inner try
+            # catches; a store blip in `get_active_canonical_memories`, which
+            # runs before it, lands here — and with the stamp moved after the
+            # outcome, the gate never closed at all: the ticker re-attempted on
+            # every cycle instead of once every six hours.
+            from lazycat.resilience import FailureType, classify_exception
+
+            outcome = "transient" if classify_exception(e) is FailureType.TRANSIENT else "failed"
+            logger.warning(
+                "Consolidation for %s failed before it could classify itself (%s): %s",
+                ticker, outcome, e,
+            )
+        if outcome == "transient":
+            _last_attempt[ticker] = now - CONSOLIDATION_COOLDOWN_SECONDS + TRANSIENT_RETRY_SECONDS
+        else:
+            _last_attempt[ticker] = now
     except Exception as e:
         logger.warning("maybe_consolidate(%s) failed (non-fatal): %s", ticker, e)
 
@@ -221,8 +249,19 @@ async def run_ticker_consolidation(ticker: str, observations: list | None = None
 
     except asyncio.TimeoutError:
         logger.error(f"Timeout during consolidation for {ticker}")
+        return "transient"
     except Exception as e:
         logger.error(f"Failed consolidation for {ticker}: {e}")
+        # One classifier for "was that the transport or the model" — the same
+        # one aresilient_call uses, so this never disagrees with a retry.
+        try:
+            from lazycat.resilience import FailureType, classify_exception
+            if classify_exception(e) == FailureType.TRANSIENT:
+                return "transient"
+        except Exception:  # noqa: BLE001 — classification must not mask the error
+            pass
+        return "failed"
+    return "ok"
 
 
 # _parse_json_response removed — use app.utils.text_utils.parse_json_response

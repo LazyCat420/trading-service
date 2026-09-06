@@ -204,6 +204,16 @@ def _canary_check(
         logger.debug("[ToolCanary] check failed (non-fatal): %s", e)
 
 
+#: The bridge's hard per-call cap: MCP_TOOL_DEADLINE_MS in
+#: lazy-agent-service/config.ts (55 000), with SLOW_TOOL_TIMEOUT_MS (40 000) +
+#: ACQUIRE_TIMEOUT_MS (15 000) pinned <= it by that repo's McpDeadline test.
+#: MEASURED 2026-09-06 (cycle-v3-1788660665): get_finnhub_news, screener_query,
+#: get_institutional_holdings and get_earnings_data all died at 49.6-49.8 s —
+#: that mode is this deadline. A failure at >= 90% of it is a deadline hit and
+#: gets ONE named line, which the old per-agent "took too much time" never gave.
+BRIDGE_TOOL_DEADLINE_MS = 55_000
+
+
 def record_tool_call(
     cycle_id: str,
     agent_name: str,
@@ -220,6 +230,19 @@ def record_tool_call(
     Non-fatal: all exceptions are caught and logged. Tool telemetry
     should never abort a pipeline.
     """
+    # The cycle's liveness heartbeat rides here. `pipeline_state.updated_at`
+    # otherwise only advances when `emit()` names a phase, so an agent's tool
+    # loop looks like silence: sampling the live cycle-v3-1788682529 every 15 s
+    # found the state 522 s old at its worst while agents worked normally, past
+    # the client's 300 s running-stale threshold. Every >300 s gap in that
+    # cycle contained tool calls, so this is where the signal is. Throttled to
+    # one write per 30 s inside PipelineStateDB, and scoped to this cycle_id.
+    try:
+        from app.services.pipeline_state import PipelineStateDB
+
+        PipelineStateDB.heartbeat(cycle_id)
+    except Exception:  # noqa: BLE001 — never let a heartbeat break a tool call
+        pass
     # ── Off-whitelist canary (2026-07-25) ──
     # The 2026-07-22 meta-tool lockdown (bad7904) closed a real hole: agents
     # had reached execute_command / write_file / execute_python through
@@ -237,6 +260,13 @@ def record_tool_call(
         cycle_id=cycle_id,
         ticker=ticker,
     )
+
+    if not success and elapsed_ms >= 0.9 * BRIDGE_TOOL_DEADLINE_MS:
+        logger.warning(
+            "[ToolDeadline] %s hit its %ds bridge deadline (%d ms, agent %s%s)",
+            tool_name, BRIDGE_TOOL_DEADLINE_MS // 1000, elapsed_ms, agent_name,
+            f", {ticker}" if ticker else "",
+        )
 
     try:
         now_utc = datetime.now(timezone.utc)

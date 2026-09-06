@@ -94,7 +94,25 @@ _V3_DENIED_TOOLS = (
     "execute_skill",
     "write_file",
     "query_datastore",
-    "think",
+    #
+    # `think` was here from 2026-09-02 (51892a90) to 2026-09-06, added to SAVE
+    # turns. It cost them instead. MEASURED on `agent_tool_telemetry` over the
+    # four days it was denied:
+    #
+    #   301 POLICY_DENIED calls across 261 agent runs — 68.9% of the 379 agent
+    #   runs that made any tool call. 30 runs spent 2 turns on it, 2 spent 4.
+    #
+    # and the turn is spent whether or not we allow the call:
+    #
+    #                       mean loops − non-think tool calls   mean think calls
+    #   denied  (>= 09-03)  1.83 with think vs 0.85 without      1.14
+    #   allowed (08-18..02) 2.21 with think vs 0.93 without      1.26
+    #
+    # i.e. ~1 turn per call either way. The model has already emitted the call
+    # by the time the policy sees it, so denying it does not recover the turn —
+    # it only replaces the scratchpad with an error. Outcomes were identical on
+    # both sides (224/226 SUCCESS denied, 504/504 allowed), and rule 7 named it
+    # explicitly the whole time without changing the models' behaviour.
 )
 
 #: Serialized PolicyRule shape prism reconstructs in registerCustom():
@@ -164,9 +182,8 @@ _V3_COMMON_GUIDELINES = """
 7. The platform advertises tools beyond the ones listed for your role. These
    are DENIED by policy and every call is rejected before it runs, wasting a
    turn you cannot get back: execute_command, execute_javascript,
-   execute_skill, write_file, query_datastore, think. Do not call think
-   (your model already reasons natively). For any calculation use execute_python,
-   which IS permitted and sandboxed.
+   execute_skill, write_file, query_datastore. Do not call them. For any
+   calculation use execute_python, which IS permitted and sandboxed.
 8. If you emit your artifact with emit_structured_output, "data" must be a JSON
    OBJECT, not a string, and not your artifact's fields at the top level:
      RIGHT: {"data": {"verdict": "BUY", "confidence": 78}}

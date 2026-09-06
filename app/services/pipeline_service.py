@@ -392,6 +392,75 @@ def resolve_trigger_registration(
     return {"sell_side": has_position, "dynamic": True}
 
 
+def partial_summary_fields(status: str, tickers_final, results, counts_source: str) -> dict:
+    """The three summary fields that must say WHICH desks finished.
+
+    MEASURED 2026-09-06 (cycle-v3-1788668370, stopped after AVGO bought while
+    LULU's bear agent was mid-turn): the summary carried `tickers_final:
+    ["AVGO", "LULU"]` — the REQUESTED list — so a reader could not tell that
+    LULU never reached a decision. When the counts were rebuilt from the store
+    (`counts_source == "store"`), the store is also the only honest list of
+    finished desks. Gather-path lists are left alone: a None entry there is a
+    desk that ran and failed, not one that never ran.
+
+    `partial` is the flag a consumer needs (autoresearch, dashboards) instead of
+    matching status strings.
+    """
+    finished = [
+        r.get("ticker") for r in (results or [])
+        if isinstance(r, dict) and r.get("ticker")
+    ]
+    narrowed = finished if counts_source == "store" else list(tickers_final or [])
+    return {
+        "partial": status in ("stopped", "error"),
+        "tickers": list(narrowed),
+        "tickers_final": list(narrowed),
+    }
+
+
+def enqueue_autoresearch(cycle_id: str, cycle_summary: dict | None) -> str | None:
+    """Ask the eval worker for this cycle's reflection. One enqueue, one shape.
+
+    Called from EVERY terminal tail of the cycle — done, stopped, error. Until
+    2026-09-06 only the done tail did this; STOP raises CancelledError through
+    the ticker loop, the handler wrote the summary as a statement and discarded
+    it, and a stopped cycle that BOUGHT (AVGO on cycle-v3-1788668370, LULU on
+    cycle-v3-1788642086) never got a reflection or recovery_stats.
+
+    The payload is a dict, never a JSON string: the poller reads
+    payload["cycle_id"] (eval_worker.py) and a string silently does not match.
+    Returns the job id, or None when there is nothing to enqueue or the store
+    refused — never raises into a cycle tail.
+    """
+    if not cycle_summary:
+        return None
+    try:
+        import uuid as _uuid
+
+        job_id = f"job_{_uuid.uuid4().hex[:8]}"
+        # module-level mongo_store, NOT a function-local import: a local import
+        # walks past the module attribute a test (or a tripwire) patches.
+        mongo_store.upsert_doc(
+            "system_commands",
+            {"id": job_id},
+            {
+                "id": job_id,
+                "command_type": "AUTORESEARCH",
+                "payload": {"cycle_id": cycle_id, "cycle_summary": cycle_summary},
+                "status": "pending",
+                "created_at": datetime.now(timezone.utc),
+            },
+        )
+        logger.info(
+            "[PipelineService] Cycle summary saved; autoresearch enqueued (%s) status=%s partial=%s",
+            job_id, cycle_summary.get("status"), cycle_summary.get("partial"),
+        )
+        return job_id
+    except Exception as ar_err:  # noqa: BLE001 — a cycle tail must never die here
+        logger.error("[PipelineService] Post-cycle autoresearch enqueue failed: %s", ar_err)
+        return None
+
+
 def recover_ticker_results_from_store(cycle_id: str) -> list[dict]:
     """Rebuild the per-ticker result dicts from what the cycle already persisted.
 
@@ -1022,6 +1091,9 @@ class PipelineService:
                     "urgency": kwargs.get("urgency") or None,
                     "counts_source": counts_source,
                     **summarize_ticker_results(results),
+                    # Which desks actually finished, and whether this cycle is
+                    # partial — see partial_summary_fields.
+                    **partial_summary_fields(status, tickers_final, results, counts_source),
                 }
                 # The dedicated column readers (debug_cycle.py, audits) need the
                 # buckets outside summary_json too.
@@ -1395,6 +1467,33 @@ class PipelineService:
 
                     if max_tickers:
                         tickers = list(tickers)[:max_tickers]
+
+                    # The metadata gate runs here too, not only under the
+                    # gatekeeper. MEASURED over 21 days: 143 of 194 cycles
+                    # (74%) took THIS path — a Watch Desk trip or an operator
+                    # request — and only 17 ever reached `GATEKEEPER_SELECTED`.
+                    # So the backfill that keeps a fund out of a company tier,
+                    # and keeps any name from being traded with no
+                    # `ticker_metadata` row at all, was running on about one
+                    # cycle in ten. ZS (bought 09-06) and SE (bought 08-12,
+                    # sold 09-05) still have no row.
+                    #
+                    # Fails open exactly as the gatekeeper's call does: an
+                    # unreachable vendor leaves the names as they are.
+                    try:
+                        from app.services.ticker_meta import ensure_ticker_metadata
+
+                        _tiered = ensure_ticker_metadata(list(tickers))
+                        logger.info(
+                            "[PipelineService] explicit tickers %s tiered: %s",
+                            list(tickers), _tiered,
+                        )
+                    except Exception as _e:  # noqa: BLE001
+                        logger.warning(
+                            "[PipelineService] explicit-ticker metadata gate failed "
+                            "(non-fatal): %s", _e,
+                        )
+
                     emit(
                         "gatekeeper", "explicit_tickers",
                         f"🎯 Explicit ticker request honored: {tickers} (discovery & gatekeeper bypassed)",
@@ -2859,35 +2958,7 @@ class PipelineService:
                 await asyncio.to_thread(maybe_alert_degraded_streak)
             except Exception as _da_err:  # noqa: BLE001
                 logger.warning("[PipelineService] degraded-streak check failed: %s", _da_err)
-            try:
-                if cycle_summary:
-                    import uuid as _uuid
-                    job_id = f"job_{_uuid.uuid4().hex[:8]}"
-                    from app.db import mongo_store
-                    now_utc = datetime.now(timezone.utc)
-                    # One enqueue, one shape. The conversion left two writers
-                    # here: writes_mongo() upserted the job with a dict
-                    # payload, and writes_pg() -- which also lands in Mongo now
-                    # -- inserted the SAME job id again with the payload
-                    # json.dumps()'d to a string. The poller reads
-                    # payload["cycle_id"], which works on the dict and silently
-                    # does not on the string.
-                    mongo_store.upsert_doc(
-                        "system_commands",
-                        {"id": job_id},
-                        {
-                            "id": job_id,
-                            "command_type": "AUTORESEARCH",
-                            "payload": {"cycle_id": cycle_id, "cycle_summary": cycle_summary},
-                            "status": "pending",
-                            "created_at": now_utc,
-                        }
-                    )
-                    logger.info(
-                        "[PipelineService] Cycle summary saved; autoresearch enqueued (%s)", job_id
-                    )
-            except Exception as ar_err:
-                logger.error("[PipelineService] Post-cycle autoresearch enqueue failed: %s", ar_err)
+            enqueue_autoresearch(cycle_id, cycle_summary)
 
             # Whiteboard retention — boards were never deleted before (the
             # default_cycle accumulator and superseded versions grew forever).
@@ -2979,12 +3050,16 @@ class PipelineService:
             # unwound first — so the counts come from what the cycle already
             # persisted. Without this the summary reports 0 trades for a cycle
             # that executed one (LULU, cycle-v3-1788642086).
-            _persist_summary(
+            stopped_summary = _persist_summary(
                 "stopped", tickers,
                 recover_ticker_results_from_store(cycle_id),
                 error="Cycle stopped/cancelled",
                 counts_source="store",
             )
+            # A stopped cycle that traded still needs its reflection and its
+            # recovery_stats; the summary is flagged partial so the consumer
+            # knows which desks finished.
+            enqueue_autoresearch(cycle_id, stopped_summary)
             try:
                 from app.services.bench_reporter import emit_bench_run
                 bench_run_id = cls._state.get("bench_run_id") or f"tc-{cycle_id}"
@@ -3010,12 +3085,13 @@ class PipelineService:
             })
             # Same reasoning as the cancel path above: a cycle that crashed
             # after trading still traded.
-            _persist_summary(
+            error_summary = _persist_summary(
                 "error", tickers,
                 recover_ticker_results_from_store(cycle_id),
                 error=str(e),
                 counts_source="store",
             )
+            enqueue_autoresearch(cycle_id, error_summary)
             try:
                 from app.services.bench_reporter import emit_bench_run
                 bench_run_id = cls._state.get("bench_run_id") or f"tc-{cycle_id}"

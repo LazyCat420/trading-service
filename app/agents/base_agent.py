@@ -9,6 +9,8 @@ LLM only analyzes — never calculates.
 import datetime
 import logging
 
+import os
+import time as _mono
 from app.config import settings
 
 from app.utils.text_utils import parse_json_response, sanitize_ascii
@@ -46,6 +48,28 @@ class PrismTransientHarnessError(RuntimeError):
 # Registered by NAME, which is how lazycat.resilience matches, so importing
 # this module is enough — no import cycle back into the SDK's internals.
 _resilience.RETRYABLE_EXCEPTION_NAMES.add("PrismTransientHarnessError")
+
+
+class RetryBudgetExhausted(RuntimeError):
+    """The run's wall clock cannot fit another attempt; refused before it starts.
+
+    MEASURED 2026-09-06 (ABT v3_fundamental_analyst, cycle-v3-1788660665):
+    attempt 1 took 22 min to reach iteration 10 and stalled; attempt 2 was
+    started with 447 s of an 1800 s budget left, in a fresh conversation, and
+    was killed by asyncio.wait_for at its iteration 4 — eight more minutes of a
+    shared box for a desk that was aborted anyway (and the server finished the
+    iteration for the dead client). NON-retryable by name so aresilient_call
+    stops on it at once.
+    """
+
+
+_resilience.NON_RETRYABLE_EXCEPTION_NAMES.add("RetryBudgetExhausted")
+
+#: Minimum wall-clock left for a retry to be worth starting. One watchdog
+#: window (300 s) plus a 25k prefill under load (E1a: 23-91 s idle, 165 s
+#: beside two decoding neighbours) plus something to answer with. Analyst
+#: runs measured 200-963 s in the same cycle.
+RETRY_MIN_BUDGET_S = float(os.environ.get("RETRY_MIN_BUDGET_S", "600"))
 
 #: Phrases in a prism harness error that mean the request never reached a GPU
 #: (or died in transit). Everything else — a refused prompt, an exhausted
@@ -121,10 +145,13 @@ _seen_usage_keys: set[str] = set()
 def extract_cached_tokens(usage: dict | None) -> int:
     """Prompt tokens served from the provider's prefix cache, whatever it calls it.
 
-    Returns the FIRST populated spelling rather than a sum: a gateway that
-    passes two names for the same figure would otherwise double it. A genuine
-    zero stays zero — a fallback key must not be able to rescue it, or the
-    metric could never go down.
+    Returns the first NON-ZERO spelling rather than a sum: a gateway that
+    passes two names for the same figure would otherwise double it. A zero
+    under one spelling is not an answer — prism always emits
+    `cacheReadInputTokens: 0` — so it falls through to the next spelling, and
+    only an all-zero usage dict reports 0. (The docstring said "first
+    POPULATED" and "a fallback key must not rescue a zero" until 2026-09-06,
+    describing the very behaviour the fix removed.)
     """
     if not isinstance(usage, dict):
         return 0
@@ -140,18 +167,33 @@ def extract_cached_tokens(usage: dict | None) -> int:
             return None
         return int(value) if value >= 0 else None
 
+    # First NON-ZERO spelling wins, flat keys before nested ones. Not "first
+    # present": prism's usage accumulator (CostCalculator.createUsageAccumulator)
+    # initialises cacheReadInputTokens to 0 and ALWAYS emits it, so on every
+    # local-vLLM run the first present key is a 0 that would short-circuit the
+    # OpenAI-shaped fallback below — measured 2026-09-06, cycle-v3-1788660665:
+    # 22 GLM rows, all 0, fingerprint "cacheCreationInputTokens,cacheReadInput
+    # Tokens,inputTokens,...". Still not a sum: two spellings of one figure must
+    # not double it, and a genuine all-zero stays 0.
+    saw_any = False
     for key in _CACHED_TOKEN_KEYS:
         if key in usage:
             found = _as_int(usage.get(key))
             if found is not None:
-                return found
+                saw_any = True
+                if found > 0:
+                    return found
 
     for container, inner in _CACHED_TOKEN_NESTED:
         nested = usage.get(container)
         if isinstance(nested, dict) and inner in nested:
             found = _as_int(nested.get(inner))
             if found is not None:
-                return found
+                saw_any = True
+                if found > 0:
+                    return found
+    if saw_any:
+        return 0
 
     return 0
 
@@ -448,6 +490,28 @@ def get_confidence_calibration_context() -> str:
 
 
 
+def slow_run_notice(elapsed_s: float, tool_call_count: int, soft_deadline_s: float | None,
+                    last_tool: str | None, already_warned: bool) -> str | None:
+    """One WARNING per run when it has used half its budget, naming the tool.
+
+    Replaces a level check (`elapsed_s > 180 and tool_call_count > 4`) that
+    re-fired on EVERY tool result at logger.error. MEASURED 2026-09-06,
+    cycle-v3-1788660665: 31 of the cycle's 40 error rows were this one line —
+    fundamental 20x (191-963 s), junior 8x, valuation 2x, bull 1x — and three
+    of the four agents SUCCEEDED. The literal matched no real deadline
+    (read-through 12 s, bridge 30/40 s, MCP 55 s, prism watchdog 300 s, runner
+    600-1800 s); the threshold is now derived from the runner's own timeout.
+    The phrase "took too much time" is kept on purpose: performance_audit
+    excludes it from the recovery histogram by that phrase.
+    """
+    if already_warned or not soft_deadline_s or elapsed_s <= soft_deadline_s:
+        return None
+    return (
+        f"[ManagerAgent] Agent took too much time: {elapsed_s:.0f}s over {tool_call_count} tool "
+        f"turns (soft deadline {soft_deadline_s:.0f}s), last tool {last_tool or '?'} — still running"
+    )
+
+
 async def run_agent(
     agent_name: str,
     ticker: str,
@@ -469,6 +533,8 @@ async def run_agent(
     model_override: str | None = None,
     prism_overrides: dict | None = None,
     cost_sink: dict | None = None,
+    soft_deadline_s: float | None = None,
+    deadline_monotonic: float | None = None,
 ) -> dict:
     """
     Generic agent runner:
@@ -554,8 +620,25 @@ async def run_agent(
 
     # Delays 5s/10s/20s/40s (~75s total) so agent calls survive a lazy-tool
     # (prism-proxy) container redeploy instead of failing the whole pipeline.
+    _attempt_counter = {"n": 0}
+
     @aresilient_call(retries=5, backoff="exponential", base_delay=5.0, max_delay=60.0)
     async def _agent_llm_call():
+        # Budget-aware retry: the wrapper cannot see the runner's deadline, so
+        # the attempt checks it. Past attempt 1, refuse to start when the time
+        # left cannot fit a run — see RetryBudgetExhausted.
+        _attempt_counter["n"] += 1
+        if _attempt_counter["n"] > 1 and deadline_monotonic is not None:
+            _left = deadline_monotonic - _mono.monotonic()
+            if _left < RETRY_MIN_BUDGET_S:
+                logger.warning(
+                    "[BaseAgent] %s: attempt %d refused — %.0fs left of the run's budget, "
+                    "a retry needs >= %.0fs", agent_name, _attempt_counter["n"], _left, RETRY_MIN_BUDGET_S,
+                )
+                raise RetryBudgetExhausted(
+                    f"{agent_name}: {_left:.0f}s left after attempt {_attempt_counter['n'] - 1}; "
+                    f"a retry needs >= {RETRY_MIN_BUDGET_S:.0f}s"
+                )
         from app.agents.tool_whitelists import get_agent_tools, get_agent_budget_turns
 
         # Extract overrides from Settings panel
@@ -581,6 +664,7 @@ async def run_agent(
 
         t0 = time.time()
         tool_call_count = 0
+        _slow_warned = False  # slow_run_notice fires once per run
         prior_calls = []
         # Each retry starts a fresh transcript: a repair must be built from the
         # attempt that actually failed, not from a discarded earlier one.
@@ -794,12 +878,13 @@ async def run_agent(
             # 200-535s on 08-04 (decode-throughput sharing, not stalling).
             # A real time abort needs a load-scaled threshold (planned); the
             # asyncio 600s ceiling in the runner remains the hard stop.
-            elapsed_s = time.time() - t0
-            if elapsed_s > 180 and tool_call_count > 4:
-                logger.error(
-                    "[ManagerAgent] Agent %s took too much time (%.1fs) over %d tool turns without completing.",
-                    agent_name, elapsed_s, tool_call_count
-                )
+            nonlocal _slow_warned
+            _notice = slow_run_notice(
+                time.time() - t0, tool_call_count, soft_deadline_s, tool_name, _slow_warned,
+            )
+            if _notice:
+                _slow_warned = True
+                logger.warning("%s (agent %s)", _notice, agent_name)
 
         # Pre-call hook, built here so it closes over this run's ticker — the
         # value the model keeps losing to bad JSON escaping.

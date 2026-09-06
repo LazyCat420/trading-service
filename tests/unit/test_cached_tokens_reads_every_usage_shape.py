@@ -124,3 +124,35 @@ class TestTheRunHelperUsesIt:
             f"{offenders} — local models report a different key and would "
             "read as a flat zero"
         )
+
+
+# ── 2026-09-06: the shape prism ACTUALLY sends for every local-vLLM run ───────
+# Verbatim fingerprint from the container log on cycle-v3-1788660665
+# ("[BaseAgent] provider usage keys seen: ..."). Prism's accumulator
+# (CostCalculator.ts createUsageAccumulator) initialises cacheReadInputTokens to
+# 0 and always emits it, so a first-key-wins reader short-circuits on that 0 and
+# never reaches the OpenAI-shaped fallback. On the cycle every GLM row read 0;
+# the engine (GLM-5.3-Flash-EXL3) returns prompt_tokens_details: None, so today
+# that is the truth — but the reader must not be the reason it stays 0 the day
+# the engine starts reporting.
+GLM_USAGE_UPDATE = {
+    "cacheCreationInputTokens": 0, "cacheReadInputTokens": 0, "inputTokens": 26069,
+    "outputTokens": 412, "reasoningOutputTokens": 0, "requests": 1,
+    "tokensPerSec": 18.4, "totalInputTokens": 26069,
+}
+
+
+def test_the_verbatim_glm_shape_reads_zero_today():
+    assert extract_cached_tokens(dict(GLM_USAGE_UPDATE)) == 0
+
+
+def test_an_always_present_zero_does_not_hide_a_populated_fallback():
+    """The defect: cacheReadInputTokens=0 (accumulator default) beside a real
+    prompt_tokens_details.cached_tokens must yield the real number."""
+    usage = dict(GLM_USAGE_UPDATE, prompt_tokens_details={"cached_tokens": 19_712})
+    assert extract_cached_tokens(usage) == 19_712
+
+
+def test_a_populated_flat_key_still_wins_over_a_nested_one():
+    usage = {"cacheReadInputTokens": 500, "prompt_tokens_details": {"cached_tokens": 999}}
+    assert extract_cached_tokens(usage) == 500

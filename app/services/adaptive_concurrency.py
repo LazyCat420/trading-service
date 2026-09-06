@@ -29,6 +29,7 @@ This is a drop-in replacement for ``asyncio.gather()`` with automatic
 back-pressure. The limit re-evaluates every 5 seconds.
 """
 
+import os
 import asyncio
 import logging
 import time
@@ -45,6 +46,15 @@ _MAX = getattr(settings, "ADAPTIVE_MAX_CONCURRENCY", 4)
 
 # How often (seconds) the controller re-evaluates the limit.
 _REEVALUATE_INTERVAL = 5.0
+
+#: Per-box ceiling on requests we let RUN at once, whatever the KV tiers say.
+#: MEASURED 2026-09-06 (E1a/E1a-2 on gold-spark, GLM): prefills alone serialise
+#: at ~22 s per 25k prompt (4 in flight -> first token in 31/57/76/91 s), but
+#: beside two neighbours mid-DECODE a fresh 25k prompt waited 160-165 s for its
+#: first token at 38% KV — prefill is starved by decode, and prism's watchdog
+#: aborts at 300 s. 16 such stalls in three days, each a full agent restart.
+#: Set from the E1a-2 curve; env-overridable for the next measurement.
+MAX_RUNNING_PER_BOX = int(os.environ.get("MAX_RUNNING_PER_BOX", "2"))
 
 
 # The total active token budget allowed on the cluster
@@ -71,14 +81,29 @@ class AdaptiveConcurrencyController:
         self._active_tokens = 0
         self._cv = asyncio.Condition()
 
-    async def _acquire_slot(self, tokens: int = 0, priority: int = 1):
+        # Per-box pools (2026-09-06). The global pool averaged the KV of every
+        # endpoint and summed their running counts, so an idle Jetson raised the
+        # limit of a saturated Gold Spark. Each box is judged on its own metrics
+        # and capped at MAX_RUNNING_PER_BOX.
+        self._box_active: dict[str, int] = {}
+    async def _acquire_slot(self, tokens: int = 0, priority: int = 1, box: str | None = None):
         is_heavy = tokens >= 10000
         is_high_priority = priority == 0
 
         async with self._cv:
             while True:
-                # 1. Request limit check
-                limit_ok = self._active_tasks_count < self._maybe_update_limit()
+                # 1. Request limit check.
+                #
+                # A box run must clear BOTH pools: its own box AND the global
+                # one it is about to be counted in. The first version checked
+                # only the box, so `_active_tasks_count` could pass
+                # `current_limit` and the callers that never name a box (the
+                # memory consolidator, briefings, VLLMClient.chat) queued
+                # behind runs admitted without consulting the pool they filled.
+                global_ok = self._active_tasks_count < self._maybe_update_limit()
+                limit_ok = (
+                    global_ok and self._box_active.get(box, 0) < self.limit_for(box)
+                ) if box else global_ok
                 # 2. Token budget check: heavy non-high priority requests must fit in budget
                 # (or run immediately if no other tasks are running to prevent deadlock)
                 budget_ok = True
@@ -91,11 +116,14 @@ class AdaptiveConcurrencyController:
 
             self._active_tasks_count += 1
             self._active_tokens += tokens
-
-    async def _release_slot(self, tokens: int = 0):
+            if box:
+                self._box_active[box] = self._box_active.get(box, 0) + 1
+    async def _release_slot(self, tokens: int = 0, box: str | None = None):
         # Decrement synchronously to prevent leaking slots if cancelled during the await
         self._active_tasks_count = max(0, self._active_tasks_count - 1)
         self._active_tokens = max(0, self._active_tokens - tokens)
+        if box:
+            self._box_active[box] = max(0, self._box_active.get(box, 1) - 1)
         try:
             async with self._cv:
                 self._cv.notify_all()
@@ -143,6 +171,52 @@ class AdaptiveConcurrencyController:
         return sum(ep.max_concurrent for ep in self._read_endpoints())
 
     # ── Limit calculation ────────────────────────────────────────────
+
+    def _endpoint(self, box: str):
+        for ep in self._read_endpoints():
+            if getattr(ep, "name", None) == box:
+                return ep
+        return None
+
+    def limit_for(self, box: str) -> int:
+        """This box's limit from THIS box's metrics — the same KV tiers as the
+        global figure, applied to one endpoint, then capped at
+        MAX_RUNNING_PER_BOX. Unknown/unpolled box: the ceiling.
+
+        The ceiling is a CEILING. `min_concurrency` is the floor of the GLOBAL
+        pool — four in the shipped config (`ADAPTIVE_MIN_CONCURRENCY: int = 4`,
+        app/config/config.py:104, written into the container's .env by the
+        release script) — and a global floor must not lift a box above what
+        that box was measured to sustain. The first version of this function
+        ended every branch in `max(self.min_concurrency, ...)`, which made the
+        real limit 4 per box and never 2: precisely the concurrency at which
+        E1a-2 measured 284 s and 310 s to first token against prism's 300 s
+        watchdog. It would have prevented none of the stalls it was written
+        for, and no test caught it because they all built the controller with
+        min_concurrency=1.
+        """
+        ceiling = max(1, MAX_RUNNING_PER_BOX)
+        ep = self._endpoint(box)
+        if ep is None:
+            return ceiling
+        # The per-box floor is the global floor clamped to the ceiling, so a
+        # tight-cache tier still cannot return more than the box can take.
+        floor = max(1, min(self.min_concurrency, ceiling))
+        cap = min(int(getattr(ep, "max_concurrent", 0) or ceiling), ceiling)
+        cap = max(floor, cap)
+        waiting = int(getattr(ep, "requests_waiting", 0) or 0)
+        running = int(getattr(ep, "requests_running", 0) or 0)
+        if waiting > 0 and running > 0 and waiting >= running:
+            return floor
+        remaining = 1.0 - float(getattr(ep, "cache_usage", 0.0) or 0.0)
+        if remaining <= 0.20:
+            return floor
+        if remaining <= 0.40:
+            return max(floor, min(2, cap))
+        if remaining >= 0.80:
+            return cap
+        ratio = (remaining - 0.40) / 0.40
+        return max(floor, min(cap, floor + int(ratio * (cap - floor))))
 
     def _compute_limit(self) -> int:
         """Compute concurrency limit from live vLLM /metrics data.
@@ -249,10 +323,10 @@ class AdaptiveConcurrencyController:
         }
 
     @asynccontextmanager
-    async def track(self, label: str = "unknown", tokens: int = 0, priority: int = 1):
+    async def track(self, label: str = "unknown", tokens: int = 0, priority: int = 1, box: str | None = None):
         """Use as an async context manager for individual tasks."""
         priority_val = priority.value if hasattr(priority, "value") else int(priority)
-        await self._acquire_slot(tokens=tokens, priority=priority_val)
+        await self._acquire_slot(tokens=tokens, priority=priority_val, box=box)
         self._label_active[label] = self._label_active.get(label, 0) + 1
         try:
             # We don't yield the slot explicitly since it's global, just yield control
@@ -263,8 +337,7 @@ class AdaptiveConcurrencyController:
             )
             if self._label_active.get(label, 0) == 0:
                 self._label_active.pop(label, None)
-            await self._release_slot(tokens=tokens)
-
+            await self._release_slot(tokens=tokens, box=box)
     async def gather(
         self,
         tasks: list,
