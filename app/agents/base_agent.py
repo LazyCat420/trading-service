@@ -12,12 +12,81 @@ import logging
 from app.config import settings
 
 from app.utils.text_utils import parse_json_response, sanitize_ascii
+from lazycat import resilience as _resilience
 from app.utils.resilience import aresilient_call
 from app.db import mongo_query
 
 logger = logging.getLogger(__name__)
 
 _active_agents = set()
+
+
+class PrismTransientHarnessError(RuntimeError):
+    """A prism harness error whose text names a TRANSPORT fault.
+
+    Prism injects its failures as an assistant message rather than raising, so
+    a dead socket and a refused prompt arrive through the same channel and, as
+    a plain RuntimeError, got the same FATAL classification. `_should_stop`
+    (FATAL and attempt > 1) then ends the run at attempt 2 of 5.
+
+    MEASURED 2026-09-05, cycle-v3-1788646388: GOOG's bull agent burned 1,238
+    seconds for nothing. A stall on the FIRST token surfaces as an
+    httpx/asyncio error and is TRANSIENT with all five attempts; the identical
+    stall on iteration 3 of prism's server-side loop came back as
+
+        ⚠️ **Error:** The model provider encountered an error on iteration 3:
+        `Provider stream stalled: no data received for 300s`
+
+    and ended the run at 2 of 5. One fault, two retry budgets, decided by which
+    iteration it happened on. Both siblings succeeded on the same stage of the
+    same cycle.
+    """
+
+
+# Registered by NAME, which is how lazycat.resilience matches, so importing
+# this module is enough — no import cycle back into the SDK's internals.
+_resilience.RETRYABLE_EXCEPTION_NAMES.add("PrismTransientHarnessError")
+
+#: Phrases in a prism harness error that mean the request never reached a GPU
+#: (or died in transit). Everything else — a refused prompt, an exhausted
+#: context, an unknown model — is the model's answer and must stay FATAL:
+#: re-sending a 24k-token prompt five times to be refused five times is pure
+#: cost. Unknown markers fail CLOSED, i.e. fatal.
+_TRANSIENT_HARNESS_PHRASES: tuple[str, ...] = (
+    "stalled",
+    "timed out",
+    "timeout",
+    "connect error",
+    "disconnect",
+    "reset",
+    "socket hang up",
+    "econnreset",
+    "502",
+    "503",
+    "504",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+)
+
+
+def classify_prism_harness_error(
+    agent_name: str, resolved_model: str, head: str
+) -> RuntimeError:
+    """Build the exception for a prism harness marker, typed by its cause.
+
+    Returns `PrismTransientHarnessError` when the text names a transport fault
+    (retried on the full budget) and a plain `RuntimeError` otherwise (fatal
+    after one more attempt, unchanged from before).
+    """
+    message = (
+        f"Prism harness error for {agent_name} (model {resolved_model}): "
+        f"{head[:200]}"
+    )
+    lowered = (head or "").lower()
+    if any(phrase in lowered for phrase in _TRANSIENT_HARNESS_PHRASES):
+        return PrismTransientHarnessError(message)
+    return RuntimeError(message)
 
 #: Every spelling of "prompt tokens served from the prefix cache" we have seen
 #: on the wire, most specific first. Providers do not agree, and prism forwards
@@ -465,6 +534,12 @@ async def run_agent(
     # so it was asked to write a report from material containing none. Declared
     # here, OUTSIDE the retry wrapper, so it is still readable at the return.
     tool_transcript: list[dict] = []
+    # What the run had already SPENT when it died. The AGENT_ERROR telemetry row
+    # used to hardcode tokens=0/loops=0, so a crash was free in every ledger
+    # that sums prompt_tokens — while GOOG's dead bull agent (2026-09-05) had
+    # made 7 tool calls and put two full 24k-token prefills through the box.
+    # Filled in _agent_llm_call's finally, read by the runner's except.
+    partial_cost: dict = {"tokens": 0, "loops": 0, "tool_calls": 0}
 
     # Delays 5s/10s/20s/40s (~75s total) so agent calls survive a lazy-tool
     # (prism-proxy) container redeploy instead of failing the whole pipeline.
@@ -944,12 +1019,31 @@ async def run_agent(
             for _marker in _FAILURE_MARKERS:
                 if _marker in _head:
                     _resolution_state["force_refresh"] = True
-                    raise RuntimeError(
-                        f"Prism harness error for {agent_name} (model "
-                        f"{resolved_model}): {_head[:200]}"
+                    # A transport fault and a refusal arrive through the SAME
+                    # channel here (prism injects both as an assistant
+                    # message), so the TYPE has to carry the difference or the
+                    # SDK classifies a stall as FATAL and abandons the run at
+                    # attempt 2 of 5. See classify_prism_harness_error.
+                    raise classify_prism_harness_error(
+                        agent_name, resolved_model, _head
                     )
         finally:
             _active_agents.discard(agent_name)
+            # Snapshot BEFORE unwinding: on the raise path above this is the
+            # only record of what the attempt cost. ACCUMULATED across attempts,
+            # because aresilient_call re-enters this function and every attempt
+            # put a full prefill through the box — GOOG's dead bull made 7 tool
+            # calls on attempt 1 and reached iteration 3 on attempt 2, and
+            # reporting only the last would understate it. `loops` is a
+            # per-attempt notion, so it keeps the largest seen.
+            try:
+                partial_cost["tokens"] += int(getattr(harness, "total_tokens", 0) or 0)
+                partial_cost["tool_calls"] += int(tool_call_count)
+                partial_cost["loops"] = max(
+                    int(partial_cost.get("loops") or 0), int(tool_call_count) + 1
+                )
+            except Exception:  # noqa: BLE001 — accounting must not mask the real error
+                pass
 
         return (
             final_text,
@@ -965,7 +1059,18 @@ async def run_agent(
             getattr(harness, "last_provider", None) or resolved_provider,
         )
 
-    content, tokens, elapsed_ms, loops_used, last_usage, model_used, provider_used = await _agent_llm_call()
+    try:
+        content, tokens, elapsed_ms, loops_used, last_usage, model_used, provider_used = await _agent_llm_call()
+    except BaseException as exc:
+        # Carry the cost out with the exception. aresilient_call wraps the last
+        # failure in a ResilientCallError, so the runner's `except` sees THAT
+        # object and not the RuntimeError underneath; attaching here means the
+        # attribute is on whichever one arrives.
+        try:
+            exc.partial_cost = dict(partial_cost)  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 — some exceptions refuse attributes
+            pass
+        raise
 
     if not content or not str(content).strip():
         # Open item 4 (2026-08-05): the sentinel used to be the ONLY record of

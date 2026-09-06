@@ -130,6 +130,11 @@ def _persist_entries(desk: SharedDesk, entries: list[dict]) -> None:
                 "error_message": entry.get("error_message") or None,
                 "failure_reason": entry.get("failure_reason") or None,
                 "attempt_no": entry.get("attempt_no"),
+                # A crash row's tokens are what the run had SPENT, not what it
+                # completed. This dict is an explicit allowlist, so a field
+                # added to the entry upstream is silently dropped here unless
+                # it is named — which is how a new column goes missing.
+                "cost_partial": bool(entry.get("cost_partial")),
                 "created_at": now_utc,
             }
             for entry in entries

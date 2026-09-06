@@ -2212,9 +2212,28 @@ async def run_v3_agent(
         )
         # `e` used to end here: the row said AGENT_ERROR and the only copy of
         # WHY was a log line in a container that gets replaced on every deploy.
-        _record_telemetry(desk, agent_name, elapsed_ms, 0, 0, "AGENT_ERROR",
+        #
+        # The tokens and loops used to be hardcoded 0/0, which made a crash FREE
+        # in every ledger that sums prompt_tokens — the 20k invariant, the
+        # per-model comparison, the cycle's token total. GOOG's dead bull agent
+        # (2026-09-05, cycle-v3-1788646388) recorded tok=0 loops=0 while
+        # `agent_tool_telemetry` held 7 tool calls for it and vLLM had run two
+        # full 24k-token prefills. `partial_cost` is attached by base_agent to
+        # whatever escapes — the ResilientCallError, not the RuntimeError
+        # underneath — and accumulates across the retry attempts.
+        _cost = getattr(e, "partial_cost", None) or {}
+        _spent_tokens = int(_cost.get("tokens") or 0)
+        _spent_loops = int(_cost.get("loops") or 0)
+        _record_telemetry(desk, agent_name, elapsed_ms,
+                          _spent_loops, _spent_tokens, "AGENT_ERROR",
+                          # `prompt_tokens` is the field every audit probe and
+                          # the 20k invariant actually read; leaving it 0 while
+                          # token_usage was populated would keep the crash free
+                          # in exactly the ledgers that matter.
+                          prompt_tokens=_spent_tokens,
                           attempt_no=attempt_no,
                           failure_reason=RUNNER_EXCEPTION,
+                          cost_partial=True,
                           error_message=f"{type(e).__name__}: {e}")
         return PhaseOutcome.AGENT_ERROR
 
@@ -2317,6 +2336,7 @@ def _record_telemetry(
     attempt_no: int = 1,
     error_message: str = "",
     failure_reason: str | None = None,
+    cost_partial: bool = False,
 ) -> None:
     """Record telemetry for a V3 agent run.
 
@@ -2359,6 +2379,10 @@ def _record_telemetry(
         "prompt_tokens": prompt_tokens,
         "model_used": model_used,
         "provider": provider,
+        # True when the run DIED and these numbers are what it had already
+        # spent rather than what it completed. A consumer summing tokens wants
+        # both; one measuring throughput wants only the completed runs.
+        "cost_partial": bool(cost_partial),
     }
     desk.record_agent_telemetry(entry)
 
