@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -326,6 +327,11 @@ def min_p_kwargs(provider: str | None, model: str | None) -> dict:
         )
         return {}
     return {"min_p": value}
+
+
+class TransientHttpStatus(httpx.HTTPStatusError):
+    """A 429 or 5xx from the prism route — the transport's problem, retried by
+    call_prism_agent; any other 4xx stays a plain HTTPStatusError and is not."""
 
 
 ENDPOINT_PROVIDERS: dict[str, str] = {
@@ -707,28 +713,37 @@ async def call_prism_agent(
             max_tokens = max(4096, max_tokens - est_input_tokens)
         
         bench_task = f"{fallback_agent_name or agent_id}:{ticker}" if ticker else (fallback_agent_name or agent_id)
-        try:
-            resp = await prism_client.call_agent(
-                model=model,
-                messages=messages,
-                system_prompt=FIRM_CONTEXT + (fallback_system_prompt or ""),
-                agent_name=agent_id,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                project=project or settings.PROJECT_NAME,
-                max_iterations=max_iter,
-                provider=provider,
-                thinking_enabled=False,
-                bench_task=bench_task,
-                **min_p_kwargs(provider, model),
-            )
-        except Exception as e:
-            if "404" in str(e) or "not exist" in str(e).lower() or "not found" in str(e).lower():
-                logger.warning(f"[PrismAgentCaller] 404 Model Not Found. Forcing refresh and retrying...")
-                # Fetch fresh model and try exactly one more time
-                fresh_model, _ = await resolve_default_model_for_agent(fallback_agent_name or agent_id, force_refresh=True)
+        # Transport failures are retried here, not just on the agent path.
+        # MEASURED 2026-09-06 (cycle-v3-1788660665): "Server disconnected
+        # without sending a response" (NBIS consolidation) and an HTTP 500 on
+        # this route were each the FINAL answer — nothing wrapped the call. The
+        # SDK's classifier already calls both TRANSIENT; three attempts with
+        # exponential backoff, transient only (a 400 is the model's problem).
+        from lazycat.resilience import aresilient_call
+
+        @aresilient_call(
+            retries=3, backoff="exponential", base_delay=5.0, max_delay=30.0,
+            # Transport only. Without this list the SDK also retries a 400
+            # (DEGRADED) once — a bad request is the model's problem, not the
+            # socket's, and a second identical prefill just spends the box.
+            retryable_types=(
+                httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError,
+                asyncio.TimeoutError, TransientHttpStatus,
+            ),
+        )
+        async def _call_once():
+            try:
+                return await _call_body()
+            except httpx.HTTPStatusError as exc:
+                code = getattr(getattr(exc, "response", None), "status_code", 0) or 0
+                if code == 429 or code >= 500:
+                    raise TransientHttpStatus(str(exc), request=exc.request, response=exc.response) from exc
+                raise
+
+        async def _call_body():
+            try:
                 resp = await prism_client.call_agent(
-                    model=fresh_model,
+                    model=model,
                     messages=messages,
                     system_prompt=FIRM_CONTEXT + (fallback_system_prompt or ""),
                     agent_name=agent_id,
@@ -739,22 +754,44 @@ async def call_prism_agent(
                     provider=provider,
                     thinking_enabled=False,
                     bench_task=bench_task,
-                    **min_p_kwargs(provider, fresh_model),
+                    **min_p_kwargs(provider, model),
                 )
-            else:
-                raise e
+            except Exception as e:
+                if "404" in str(e) or "not exist" in str(e).lower() or "not found" in str(e).lower():
+                    logger.warning(f"[PrismAgentCaller] 404 Model Not Found. Forcing refresh and retrying...")
+                    # Fetch fresh model and try exactly one more time
+                    fresh_model, _ = await resolve_default_model_for_agent(fallback_agent_name or agent_id, force_refresh=True)
+                    resp = await prism_client.call_agent(
+                        model=fresh_model,
+                        messages=messages,
+                        system_prompt=FIRM_CONTEXT + (fallback_system_prompt or ""),
+                        agent_name=agent_id,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        project=project or settings.PROJECT_NAME,
+                        max_iterations=max_iter,
+                        provider=provider,
+                        thinking_enabled=False,
+                        bench_task=bench_task,
+                        **min_p_kwargs(provider, fresh_model),
+                    )
+                else:
+                    raise e
         
-        try:
-            # Prism sets text to null (not missing) on textless turns —
-            # .get("text", "") returns None there, and falling back to
-            # resp.text would hand the caller the raw JSON envelope as if it
-            # were the agent's answer.
-            response_text = (resp.json().get("text") or "").strip()
-        except Exception as parse_err:
-            logger.error("[PrismAgentCaller] %s: response body was not JSON (%s) — returning empty text", agent_id, parse_err)
-            response_text = ""
-        response_text, leaked = strip_reasoning_leak(response_text, agent_id)
-        usage_resp = resp
+            try:
+                # Prism sets text to null (not missing) on textless turns —
+                # .get("text", "") returns None there, and falling back to
+                # resp.text would hand the caller the raw JSON envelope as if it
+                # were the agent's answer.
+                response_text = (resp.json().get("text") or "").strip()
+            except Exception as parse_err:
+                logger.error("[PrismAgentCaller] %s: response body was not JSON (%s) — returning empty text", agent_id, parse_err)
+                response_text = ""
+            response_text, leaked = strip_reasoning_leak(response_text, agent_id)
+            usage_resp = resp
+            return response_text, usage_resp
+
+        response_text, usage_resp = await _call_once()
         if not response_text:
             # A fast empty response indicates a chat-template or reasoning token drop.
             # Retry once with a clean, single-turn [system, user] structure.
