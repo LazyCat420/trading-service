@@ -240,6 +240,14 @@ class BootService:
             mongo_store.update_docs('pipeline_state', {'singleton_id': 'current', 'status': {'$in': ['running', 'blocked', 'starting']}}, {'$set': {'status': 'error', 'error': 'Container restarted unexpectedly'}})
             mongo_store.update_docs('v3_system_commands', {'status': {'$in': ['running', 'pending']}}, {'$set': {'status': 'error', 'error_message': 'Container restarted unexpectedly'}})
             mongo_store.update_docs('system_commands', {'status': {'$in': ['running', 'pending']}}, {'$set': {'status': 'error', 'error_message': 'Container restarted unexpectedly'}})
+            # A report whose worker died mid-audit stayed `running` forever:
+            # the janitor's 30-minute sweep only runs inside a cycle and the
+            # service boots PAUSED, and the client's /autoresearch/status ORs
+            # a `running` report into is_running, so the panel spun on it
+            # indefinitely (report-chain audit, 2026-09-06). `interrupted` is
+            # the vocabulary's own word for a run the container took down —
+            # not `error`, which would say the audit itself failed.
+            mongo_store.update_docs('autoresearch_reports', {'status': 'running'}, {'$set': {'status': 'interrupted', 'error_message': 'Container restarted unexpectedly'}})
         except Exception as e:
             logger.error("[Boot] Failed to reset stuck pipeline state on boot: %s", e)
 
