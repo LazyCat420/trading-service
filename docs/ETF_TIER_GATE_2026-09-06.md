@@ -285,5 +285,17 @@ seeing it. LULU's bear agent was mid-turn and was CANCELLED.
 | 9 (live, CANCELLED path) | fix works, one residual | LULU bear: `cost_partial=True`, `loops_used=2`, 1 tool row, elapsed 549 s — and `prompt_tokens=0`, because the sink's token figure comes from `harness.total_tokens`, which only counts COMPLETED responses; a call cancelled in flight has none. The row is now labelled partial and carries its loops; its token cost for an in-flight prefill is still invisible. Open item: estimate from `sys_prompt_chars + user_prompt_chars` when tokens are 0 and the run died, labelled as an estimate. |
 | 6 (poller) | explained | the 5 s `/metrics` poller is started by the first prism agent call: 0 lines on the quiet boot, 1,056 during this cycle |
 
-Check #4 live (the stopped cycle's autoresearch report with `recovery_stats`
-serialised) is pending the report's completion.
+### Check #4 live — cannot come from a stopped cycle (open item)
+
+Twenty minutes after the STOP: no `autoresearch_reports` row, no
+`[PipelineService] ... autoresearch enqueued` log line. The AUTORESEARCH enqueue
+lives in the normal-completion tail of `_run_all_v3` (pipeline_service.py
+~2861); STOP_CYCLE raises CancelledError through the ticker loop, and a
+cancelled coroutine skips everything after its loop — the summary is written
+by the stopped-path fix (`a775040`), the reflection is not requested. So a
+stopped cycle that BOUGHT (AVGO here, LULU on 2026-09-05) never gets an
+autoresearch reflection or `recovery_stats`. Whether a stopped cycle should be
+reflected on is an operator decision; recorded here, not changed.
+
+Consequence: the first live proof of `ed62fa1` (recovery_stats serialises) is
+the next cycle that reaches `done` — the scheduled one.
