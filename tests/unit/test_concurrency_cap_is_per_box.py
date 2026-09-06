@@ -113,8 +113,11 @@ class TestPoolsAreIndependent:
         tasks = [asyncio.create_task(hold_dgx(ev)) for ev in acquired]
         for ev in acquired:
             await ev.wait()
-        # a jetson run must not wait on dgx's pool
-        async with asyncio.timeout(0.1):
+        # A jetson run must not wait on dgx's pool. The window is generous on
+        # purpose: this asserts that an acquire SUCCEEDS, so a loaded box must
+        # not be able to turn it red. The waits-forever cases below assert the
+        # opposite and can keep a short one.
+        async with asyncio.timeout(1.0):
             async with c.track(label="b", box="jetson"):
                 pass
         for t in tasks:

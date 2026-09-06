@@ -22,6 +22,7 @@ bridge deadline logs one line that names the tool.
 from __future__ import annotations
 
 import logging
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -87,3 +88,104 @@ class TestTheToolDeadlineSignal:
         hard per-call cap every measured 49.7 s call died under."""
         assert BRIDGE_TOOL_DEADLINE_MS == 55_000
         assert 49_753 >= 0.9 * BRIDGE_TOOL_DEADLINE_MS
+
+
+class TestTheNoticeIsActuallyWiredIntoARun:
+    """A pure function nothing calls is a pure function nothing calls.
+
+    Every test above drives `slow_run_notice` directly, so the whole call site
+    inside `run_agent` could be deleted — or the runner could stop passing a
+    deadline — and all of them stayed green while the notice never fired again
+    in production. These drive the REAL hook `run_agent` hands the harness.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_hook_fires_once_across_fourteen_tool_results(self, caplog):
+        import app.agents.base_agent as ba
+
+        captured = {}
+
+        class _FakeHarness:
+            last_usage: dict = {}
+
+            def __init__(self, **kw):
+                captured["hook"] = kw.get("on_tool_result")
+
+            async def run(self, _prompt):
+                hook = captured.get("hook")
+                assert hook is not None, "run_agent handed the harness no tool-result hook"
+                for _ in range(14):
+                    hook("mcp__lazy-agent-service__get_finnhub_news", {}, "ok", False, 49_000)
+                return '{"verdict": "HOLD"}'
+
+        with caplog.at_level(logging.WARNING, logger="app.agents.base_agent"), \
+             patch("lazycat.agent.AgentHarness", _FakeHarness), \
+             patch("app.services.prism_agent_caller.resolve_default_model_for_agent",
+                   new=AsyncMock(return_value=(None, None))), \
+             patch("app.agents.tool_whitelists.get_agent_tools",
+                   return_value=[{"name": "get_market_data"}]):
+            try:
+                await ba.run_agent(
+                    agent_name="v3_fundamental_analyst", ticker="_AUDIT_TEST",
+                    cycle_id="cycle-test", bot_id="b", system_prompt="s",
+                    user_prompt="u", enable_tools=True,
+                    # any elapsed time is past this, so the only thing that can
+                    # keep the count at one is the already-warned guard
+                    soft_deadline_s=0.000001,
+                )
+            except Exception:  # noqa: BLE001 — the run's tail is not under test
+                pass
+
+        notices = [r for r in caplog.records if "took too much time" in r.getMessage()]
+        assert len(notices) == 1, (
+            f"expected exactly one notice across 14 tool results, got {len(notices)}"
+        )
+        assert notices[0].levelname == "WARNING"
+        assert "get_finnhub_news" in notices[0].getMessage()
+
+    @pytest.mark.asyncio
+    async def test_a_run_inside_its_budget_says_nothing(self, caplog):
+        import app.agents.base_agent as ba
+
+        captured = {}
+
+        class _FakeHarness:
+            last_usage: dict = {}
+
+            def __init__(self, **kw):
+                captured["hook"] = kw.get("on_tool_result")
+
+            async def run(self, _prompt):
+                for _ in range(14):
+                    captured["hook"]("screener_query", {}, "ok", False, 1_000)
+                return '{"verdict": "HOLD"}'
+
+        with caplog.at_level(logging.WARNING, logger="app.agents.base_agent"), \
+             patch("lazycat.agent.AgentHarness", _FakeHarness), \
+             patch("app.services.prism_agent_caller.resolve_default_model_for_agent",
+                   new=AsyncMock(return_value=(None, None))), \
+             patch("app.agents.tool_whitelists.get_agent_tools",
+                   return_value=[{"name": "get_market_data"}]):
+            try:
+                await ba.run_agent(
+                    agent_name="v3_fundamental_analyst", ticker="_AUDIT_TEST",
+                    cycle_id="cycle-test", bot_id="b", system_prompt="s",
+                    user_prompt="u", enable_tools=True, soft_deadline_s=900.0,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+        assert [r for r in caplog.records if "took too much time" in r.getMessage()] == []
+
+    def test_the_runner_derives_the_deadline_at_every_call_site(self):
+        """Source-level, and deliberately so: nulling `soft_deadline_s` at both
+        call sites in agent_runner left the whole suite green."""
+        import inspect
+
+        from app.v3 import agent_runner
+
+        src = inspect.getsource(agent_runner)
+        assert src.count("soft_deadline_s=timeout_seconds * 0.5") >= 2, (
+            "both run_agent call sites must derive the soft deadline from the "
+            "runner's own timeout — never a literal, never None"
+        )
