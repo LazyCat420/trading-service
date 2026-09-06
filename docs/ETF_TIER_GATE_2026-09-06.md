@@ -250,3 +250,40 @@ slow-tool, 3 agent-timeout, 3 prism-disconnect, 2 prism-500, 1 prism-stall.
 Four checker verdicts were wrong before the by-hand pass (12 vacuous PASS; 9,
 11, 14 false NOT EXERCISED). The instrument was repaired in place; every
 verdict above was confirmed by a direct query.
+
+
+## Live confirmation after deploy (boot 04:09:57 UTC, master `7bbed69b`)
+
+| item | before (boot 02:08, `138b713`) | after (boot 04:09, `7bbed69b`) |
+|---|---|---|
+| sector compute wall | 160 s (19:26:12 → 19:28:51) | **1.7 s** (21:19:02.49 → 21:19:04.20) |
+| longest container silence inside it | 53 s | bounded by the 1.7 s wall |
+| rows read | 4,365,690 | ≤ 33,355 (90-day window) |
+| `ticker_metadata` funds untiered | 38 | 0 (85 tagged `etf`; BK the only untiered row, a dead symbol) |
+| ETFs carrying a company tier | 47 (`micro`) | 0 |
+
+Both deploys verified inside the container: `ETF_TIER`, `SECTOR_PERF_WINDOW_DAYS`,
+`cost_sink` in `run_agent`, and the `isoformat` conversion in `_audit_recovery`
+all import from the running image. Primary suite at `7bbed69b`: 6,411 passed.
+
+Note on the 5 s vllm-shim metrics poller used as the loop heartbeat in check #6:
+it is CYCLE-scoped, not boot-scoped — 0 `/metrics` lines on the new boot until
+a cycle started. On a quiet boot the compute's own wall time is the only bound
+on loop starvation, which is why the wall time is the number recorded above.
+
+## Follow-up cycle `cycle-v3-1788668370` (04:19 → 05:34 UTC, stopped on purpose)
+
+Gatekeeper selected AVGO (mega) and LULU (large), `tier_unknown: []`. AVGO ran
+the full desk (17 agents SUCCESS), the Board said BUY at 72, the fill landed
+(2.2973 @ $357.92, $822.25) at 05:34:03, and the watcher sent STOP_CYCLE on
+seeing it. LULU's bear agent was mid-turn and was CANCELLED.
+
+| check | verdict | evidence |
+|---|---|---|
+| 8 (stopped path) | **PASS** | `status=stopped`, `counts_source=store`, `trade_executed=1`, `trade_fills=1`, B/S/H 1/0/0 |
+| 12 (live) | PASS, companies only | both selected names tiered, `tier_unknown=[]`; no fund was selected, so the `etf` branch is not yet exercised live |
+| 9 (live, CANCELLED path) | fix works, one residual | LULU bear: `cost_partial=True`, `loops_used=2`, 1 tool row, elapsed 549 s — and `prompt_tokens=0`, because the sink's token figure comes from `harness.total_tokens`, which only counts COMPLETED responses; a call cancelled in flight has none. The row is now labelled partial and carries its loops; its token cost for an in-flight prefill is still invisible. Open item: estimate from `sys_prompt_chars + user_prompt_chars` when tokens are 0 and the run died, labelled as an estimate. |
+| 6 (poller) | explained | the 5 s `/metrics` poller is started by the first prism agent call: 0 lines on the quiet boot, 1,056 during this cycle |
+
+Check #4 live (the stopped cycle's autoresearch report with `recovery_stats`
+serialised) is pending the report's completion.
