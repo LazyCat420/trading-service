@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from app.db import mongo_query
@@ -83,6 +84,53 @@ class PipelineStateDB:
             )
         except Exception as e:
             logger.error("[PipelineStateDB] Failed to save DB core state: %s", e)
+
+    #: Smallest interval between heartbeat stamps. The client's running-stale
+    #: threshold is 300 s; 30 s keeps the age an order of magnitude below it
+    #: for the cost of one tiny update per agent turn.
+    HEARTBEAT_MIN_INTERVAL_S = 30.0
+
+    _last_heartbeat: float = 0.0
+
+    @classmethod
+    def heartbeat(cls, cycle_id: str) -> bool:
+        """Stamp `updated_at` on the running cycle without touching anything else.
+
+        MEASURED 2026-09-06 on the live `cycle-v3-1788682529`, sampling the
+        singleton every 15 s: 25 of 101 samples showed `updated_at` older than
+        the client's 300 s running-stale threshold, peaking at **522 s**, while
+        the agents were working normally and the cycle went on to finish its
+        desks. `updated_at` only advances when `emit()` names a phase, and an
+        agent's tool loop emits nothing — so the panel calls a healthy long
+        turn a dead pipeline.
+
+        Every one of that cycle's four >300 s gaps contained tool calls (7, 6,
+        4 and 4 of them), so stamping from the tool-result path covers them:
+        replaying the merged event+tool timeline drops the worst gap from 522 s
+        to 323 s here, 302 s on cycle-v3-1788660665 and 242 s on
+        cycle-v3-1788674782. One marginal residual survives — an LLM turn that
+        makes no tool call at all, which is the TTFT stall shape the per-box
+        cap addresses from the other side.
+
+        Only stamps the cycle it was given, so a stale caller cannot refresh a
+        cycle that has already moved on. Never raises.
+        """
+        if not cycle_id:
+            return False
+        now = time.monotonic()
+        if now - cls._last_heartbeat < cls.HEARTBEAT_MIN_INTERVAL_S:
+            return False
+        cls._last_heartbeat = now
+        try:
+            mongo_store.update_docs(
+                "pipeline_state",
+                {"singleton_id": cls.SINGLETON_ID, "cycle_id": cycle_id},
+                {"$set": {"updated_at": datetime.now(timezone.utc)}},
+            )
+            return True
+        except Exception as e:  # noqa: BLE001 — a heartbeat must never break a run
+            logger.warning("[PipelineStateDB] heartbeat failed (non-fatal): %s", e)
+            return False
 
     @classmethod
     def append_events(cls, cycle_id: str, events: list[dict]):

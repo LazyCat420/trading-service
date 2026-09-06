@@ -230,6 +230,19 @@ def record_tool_call(
     Non-fatal: all exceptions are caught and logged. Tool telemetry
     should never abort a pipeline.
     """
+    # The cycle's liveness heartbeat rides here. `pipeline_state.updated_at`
+    # otherwise only advances when `emit()` names a phase, so an agent's tool
+    # loop looks like silence: sampling the live cycle-v3-1788682529 every 15 s
+    # found the state 522 s old at its worst while agents worked normally, past
+    # the client's 300 s running-stale threshold. Every >300 s gap in that
+    # cycle contained tool calls, so this is where the signal is. Throttled to
+    # one write per 30 s inside PipelineStateDB, and scoped to this cycle_id.
+    try:
+        from app.services.pipeline_state import PipelineStateDB
+
+        PipelineStateDB.heartbeat(cycle_id)
+    except Exception:  # noqa: BLE001 — never let a heartbeat break a tool call
+        pass
     # ── Off-whitelist canary (2026-07-25) ──
     # The 2026-07-22 meta-tool lockdown (bad7904) closed a real hole: agents
     # had reached execute_command / write_file / execute_python through
