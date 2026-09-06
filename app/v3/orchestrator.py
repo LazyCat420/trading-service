@@ -3100,7 +3100,10 @@ async def _run_agent_with_circuit_breaker(
     from app.config import settings
     timeout = float(settings.ANALYSIS_WORKER_TIMEOUT_SECONDS)
 
-    async with concurrency_controller.track(label="v3_agent"):
+    from app.services.prism_agent_caller import box_for_agent
+    async with concurrency_controller.track(
+        label="v3_agent", box=box_for_agent(getattr(agent_module, "AGENT_NAME", None)),
+    ):
         outcome = await run_v3_agent(
             desk=desk,
             agent_module=agent_module,

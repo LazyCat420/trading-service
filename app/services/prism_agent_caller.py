@@ -354,6 +354,14 @@ COLLECTOR_KEYWORDS: tuple[str, ...] = (
 )
 
 
+def box_for_agent(agent_name: str | None) -> str:
+    """The endpoint a run is ROUTED to by role: collectors Jetson-first, decision
+    agents DGX-first (see the preference rule below). Used to pick the
+    concurrency pool BEFORE the call, so a saturated box is capped on its own
+    numbers. Mirrors, does not replace, the routing."""
+    return "jetson" if is_collector_agent(agent_name) else "dgx_spark"
+
+
 def is_collector_agent(agent_name: str | None) -> bool:
     """True when the agent is light/collector work by name (see COLLECTOR_KEYWORDS)."""
     name_lower = (agent_name or "").lower()
