@@ -1467,6 +1467,33 @@ class PipelineService:
 
                     if max_tickers:
                         tickers = list(tickers)[:max_tickers]
+
+                    # The metadata gate runs here too, not only under the
+                    # gatekeeper. MEASURED over 21 days: 143 of 194 cycles
+                    # (74%) took THIS path — a Watch Desk trip or an operator
+                    # request — and only 17 ever reached `GATEKEEPER_SELECTED`.
+                    # So the backfill that keeps a fund out of a company tier,
+                    # and keeps any name from being traded with no
+                    # `ticker_metadata` row at all, was running on about one
+                    # cycle in ten. ZS (bought 09-06) and SE (bought 08-12,
+                    # sold 09-05) still have no row.
+                    #
+                    # Fails open exactly as the gatekeeper's call does: an
+                    # unreachable vendor leaves the names as they are.
+                    try:
+                        from app.services.ticker_meta import ensure_ticker_metadata
+
+                        _tiered = ensure_ticker_metadata(list(tickers))
+                        logger.info(
+                            "[PipelineService] explicit tickers %s tiered: %s",
+                            list(tickers), _tiered,
+                        )
+                    except Exception as _e:  # noqa: BLE001
+                        logger.warning(
+                            "[PipelineService] explicit-ticker metadata gate failed "
+                            "(non-fatal): %s", _e,
+                        )
+
                     emit(
                         "gatekeeper", "explicit_tickers",
                         f"🎯 Explicit ticker request honored: {tickers} (discovery & gatekeeper bypassed)",

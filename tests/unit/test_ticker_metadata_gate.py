@@ -162,3 +162,26 @@ class TestTheGatekeeperCallsIt:
         assert "ensure_ticker_metadata" in src, (
             "the gatekeeper still reports tier_unknown without acting on it"
         )
+
+    def test_the_explicit_ticker_path_backfills_too(self):
+        """The gate had ONE caller, inside the gatekeeper branch — and MEASURED
+        over 21 days, 143 of 194 cycles (74%) never reach it: a Watch Desk trip
+        or an operator request prints "discovery & gatekeeper bypassed" and goes
+        straight to analysis. So a fund forced onto that path kept a company
+        tier, and a name with no row at all was analysed and traded with none:
+        ZS (bought 2026-09-06) and SE (bought 08-12, sold 09-05) still have no
+        `ticker_metadata` document.
+        """
+        import inspect
+
+        from app.services import pipeline_service
+
+        src = inspect.getsource(pipeline_service)
+        i = src.index("Explicit ticker request honored")
+        # the backfill must run BEFORE the path is pinned, not after
+        head = src[:i]
+        j = head.rindex("if max_tickers:")
+        assert "ensure_ticker_metadata" in head[j:], (
+            "the explicit-ticker path still skips the metadata gate, so 74% of "
+            "cycles trade names the tier gate never saw"
+        )
