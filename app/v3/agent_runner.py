@@ -40,6 +40,7 @@ from app.v3.output_rules import (
     prose_script_share,
     FAILURE_REASONS,
     RUNNER_EXCEPTION,
+    RETRY_BUDGET_EXHAUSTED,
     SCHEMA_INVALID,
     TIMEOUT as REASON_TIMEOUT,
     UNCLASSIFIED,
@@ -1393,6 +1394,7 @@ async def run_v3_agent(
                 prism_overrides=prism_overrides,
                 cost_sink=_cost_sink,
                 soft_deadline_s=timeout_seconds * 0.5,
+                deadline_monotonic=t_start + timeout_seconds,
             ),
             timeout=timeout_seconds,
         )
@@ -1590,6 +1592,7 @@ async def run_v3_agent(
                         prism_overrides=prism_overrides,
                         cost_sink=_cost_sink,  # the repair's spend joins the run's
                         soft_deadline_s=timeout_seconds * 0.5,
+                        deadline_monotonic=t_start + timeout_seconds,
                     ),
                     timeout=timeout_seconds,
                 )
@@ -2269,6 +2272,11 @@ async def run_v3_agent(
         # The sink is the source; the attribute on the exception is the
         # fallback for a run_agent that predates the sink (partial deploy).
         _spent_loops, _spent_tokens = _spent(_cost_sink, getattr(e, "partial_cost", None))
+        # A refused retry is its own class: the run was healthy enough to be
+        # retried but the wall clock could not fit it. Name it so the ledger
+        # can count "we gave up on purpose" apart from "the provider crashed".
+        from app.agents.base_agent import RetryBudgetExhausted
+        _reason = RETRY_BUDGET_EXHAUSTED if _retry_was_refused(e, RetryBudgetExhausted) else RUNNER_EXCEPTION
         _record_telemetry(desk, agent_name, elapsed_ms,
                           _spent_loops, _spent_tokens, "AGENT_ERROR",
                           # `prompt_tokens` is the field every audit probe and
@@ -2277,7 +2285,7 @@ async def run_v3_agent(
                           # in exactly the ledgers that matter.
                           prompt_tokens=_spent_tokens,
                           attempt_no=attempt_no,
-                          failure_reason=RUNNER_EXCEPTION,
+                          failure_reason=_reason,
                           cost_partial=True,
                           error_message=f"{type(e).__name__}: {e}")
         return PhaseOutcome.AGENT_ERROR
@@ -2361,6 +2369,24 @@ def _parse_artifact(
         sanitize_ascii(_preview[-300:]) if len(_preview) > 900 else "(shown above)",
     )
     return None
+
+
+def _retry_was_refused(exc: BaseException, refused_type: type) -> bool:
+    """True when a RetryBudgetExhausted is anywhere in what escaped: the
+    exception itself, its __cause__ chain, or the per-attempt records
+    aresilient_call attaches to its ResilientCallError."""
+    seen = []
+    cur = exc
+    while cur is not None and cur not in seen:
+        seen.append(cur)
+        cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
+    for rec in (getattr(exc, "attempts", None) or []):
+        for attr in ("exception", "error", "exc"):
+            v = getattr(rec, attr, None) if not isinstance(rec, dict) else rec.get(attr)
+            if v is not None:
+                seen.append(v)
+    return any(isinstance(x, refused_type) or type(x).__name__ == refused_type.__name__ for x in seen) \
+        or refused_type.__name__ in str(exc)
 
 
 def _spent(sink: dict | None, fallback: dict | None = None) -> tuple[int, int]:

@@ -9,6 +9,8 @@ LLM only analyzes — never calculates.
 import datetime
 import logging
 
+import os
+import time as _mono
 from app.config import settings
 
 from app.utils.text_utils import parse_json_response, sanitize_ascii
@@ -46,6 +48,28 @@ class PrismTransientHarnessError(RuntimeError):
 # Registered by NAME, which is how lazycat.resilience matches, so importing
 # this module is enough — no import cycle back into the SDK's internals.
 _resilience.RETRYABLE_EXCEPTION_NAMES.add("PrismTransientHarnessError")
+
+
+class RetryBudgetExhausted(RuntimeError):
+    """The run's wall clock cannot fit another attempt; refused before it starts.
+
+    MEASURED 2026-09-06 (ABT v3_fundamental_analyst, cycle-v3-1788660665):
+    attempt 1 took 22 min to reach iteration 10 and stalled; attempt 2 was
+    started with 447 s of an 1800 s budget left, in a fresh conversation, and
+    was killed by asyncio.wait_for at its iteration 4 — eight more minutes of a
+    shared box for a desk that was aborted anyway (and the server finished the
+    iteration for the dead client). NON-retryable by name so aresilient_call
+    stops on it at once.
+    """
+
+
+_resilience.NON_RETRYABLE_EXCEPTION_NAMES.add("RetryBudgetExhausted")
+
+#: Minimum wall-clock left for a retry to be worth starting. One watchdog
+#: window (300 s) plus a 25k prefill under load (E1a: 23-91 s idle, 165 s
+#: beside two decoding neighbours) plus something to answer with. Analyst
+#: runs measured 200-963 s in the same cycle.
+RETRY_MIN_BUDGET_S = float(os.environ.get("RETRY_MIN_BUDGET_S", "600"))
 
 #: Phrases in a prism harness error that mean the request never reached a GPU
 #: (or died in transit). Everything else — a refused prompt, an exhausted
@@ -507,6 +531,7 @@ async def run_agent(
     prism_overrides: dict | None = None,
     cost_sink: dict | None = None,
     soft_deadline_s: float | None = None,
+    deadline_monotonic: float | None = None,
 ) -> dict:
     """
     Generic agent runner:
@@ -592,8 +617,25 @@ async def run_agent(
 
     # Delays 5s/10s/20s/40s (~75s total) so agent calls survive a lazy-tool
     # (prism-proxy) container redeploy instead of failing the whole pipeline.
+    _attempt_counter = {"n": 0}
+
     @aresilient_call(retries=5, backoff="exponential", base_delay=5.0, max_delay=60.0)
     async def _agent_llm_call():
+        # Budget-aware retry: the wrapper cannot see the runner's deadline, so
+        # the attempt checks it. Past attempt 1, refuse to start when the time
+        # left cannot fit a run — see RetryBudgetExhausted.
+        _attempt_counter["n"] += 1
+        if _attempt_counter["n"] > 1 and deadline_monotonic is not None:
+            _left = deadline_monotonic - _mono.monotonic()
+            if _left < RETRY_MIN_BUDGET_S:
+                logger.warning(
+                    "[BaseAgent] %s: attempt %d refused — %.0fs left of the run's budget, "
+                    "a retry needs >= %.0fs", agent_name, _attempt_counter["n"], _left, RETRY_MIN_BUDGET_S,
+                )
+                raise RetryBudgetExhausted(
+                    f"{agent_name}: {_left:.0f}s left after attempt {_attempt_counter['n'] - 1}; "
+                    f"a retry needs >= {RETRY_MIN_BUDGET_S:.0f}s"
+                )
         from app.agents.tool_whitelists import get_agent_tools, get_agent_budget_turns
 
         # Extract overrides from Settings panel
