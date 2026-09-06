@@ -344,6 +344,82 @@ def resolve_trigger_registration(
     return {"sell_side": has_position, "dynamic": True}
 
 
+def recover_ticker_results_from_store(cycle_id: str) -> list[dict]:
+    """Rebuild the per-ticker result dicts from what the cycle already persisted.
+
+    THE FAILURE THIS EXISTS FOR (2026-09-05, cycle-v3-1788642086). The cycle was
+    stopped so a fix could deploy. Before the stop, LULU's desk had finished and
+    TRADED — `orders`, `trade_fills`, `position_lots`, `positions.LULU` qty
+    8.418, its stop/take-profit triggers and a `trade_results` row all agree —
+    and the summary for the same cycle reads:
+
+        status=stopped  buy_count=0  trade_attempted=0  trade_executed=0
+
+    The per-ticker results exist only as the return value of
+    `asyncio.gather(*tasks)`. `CancelledError` unwinds before that assignment,
+    so the handler calls `_persist_summary("stopped", tickers, error=...)` with
+    `results=None` and every count collapses to zero. The `error` path is the
+    same shape. Anything reading `cycle_run_summaries` — the dashboard,
+    autoresearch, `scripts/cycle_audit.py --check` — then sees a cycle that
+    traded nothing while the portfolio carries its position.
+
+    The facts survive the cancellation: `trade_results` and `trade_fills` both
+    carry `cycle_id`. A fill is the authority on execution, not the policy verb,
+    because an EXECUTE_BUY that failed in the executor also has a decision row.
+
+    Never raises: this runs inside a `CancelledError` handler, and replacing a
+    cancellation with a store error would lose the shutdown.
+    """
+    try:
+        decisions = mongo_store.find_docs(
+            "trade_results", {"cycle_id": cycle_id}, limit=200
+        ) or []
+        if not decisions:
+            return []
+        fills = mongo_store.find_docs(
+            "trade_fills", {"cycle_id": cycle_id}, limit=500
+        ) or []
+        filled = {
+            str(f.get("ticker") or "").upper()
+            for f in fills
+            if isinstance(f, dict) and f.get("ticker")
+        }
+
+        out: list[dict] = []
+        for row in decisions:
+            if not isinstance(row, dict):
+                continue
+            ticker = str(row.get("ticker") or "").upper()
+            policy = str(row.get("policy_action") or "")
+            attempted = policy.startswith("EXECUTE_")
+            executed = ticker in filled
+            out.append({
+                "ticker": ticker,
+                "action": str(row.get("action") or "").upper(),
+                "confidence": row.get("confidence"),
+                "trade_attempted": attempted,
+                "trade_executed": executed,
+                "trade_failed": bool(attempted and not executed),
+                # Only a NON-executing policy verb is a reason. `EXECUTE_BUY` is
+                # not a skip reason, and putting it here would land it in the
+                # policy_blocked bucket and invert the meaning of the counts.
+                "no_trade_reason": None if attempted else (policy or None),
+            })
+        logger.info(
+            "[PipelineService] Recovered %d per-ticker result(s) for %s from the "
+            "store (%d executed) — the gather() results were lost with the "
+            "cancellation", len(out), cycle_id,
+            sum(1 for r in out if r["trade_executed"]),
+        )
+        return out
+    except Exception as e:  # noqa: BLE001 — must never mask a cancellation
+        logger.warning(
+            "[PipelineService] Could not recover ticker results for %s "
+            "(non-fatal, counts will be zero): %s", cycle_id, e,
+        )
+        return []
+
+
 def summarize_ticker_results(results) -> dict:
     """Aggregate per-ticker result dicts (from _process_ticker) into the
     action/trade counts recorded in cycle_run_summaries. Non-dict entries
@@ -840,9 +916,16 @@ class PipelineService:
         substitute_demand: dict[str, int] = {}
 
         def _persist_summary(status: str, tickers_final, results=None, error: str | None = None,
-                             report_generated: bool = False):
+                             report_generated: bool = False, counts_source: str = "gather"):
             """Write the cycle_run_summaries row. Counts come from the per-ticker
-            result dicts returned by _process_ticker (None entries are skipped)."""
+            result dicts returned by _process_ticker (None entries are skipped).
+
+            `counts_source` records WHERE those dicts came from: "gather" on the
+            normal path, "store" when a cancellation or crash lost the gather()
+            results and `recover_ticker_results_from_store` rebuilt them. A
+            reader comparing a summary against the book needs to know which,
+            because the store-rebuilt counts are derived from fills rather than
+            from the executor's own return value."""
             try:
                 from app.log_manager import log_manager
                 from app.v3 import collector_stats
@@ -889,6 +972,7 @@ class PipelineService:
                     ),
                     "review_intent": kwargs.get("review_intent") or None,
                     "urgency": kwargs.get("urgency") or None,
+                    "counts_source": counts_source,
                     **summarize_ticker_results(results),
                 }
                 # The dedicated column readers (debug_cycle.py, audits) need the
@@ -2811,7 +2895,16 @@ class PipelineService:
                 "progress": "Cycle stopped by user",
                 "finished_at": datetime.now(timezone.utc).isoformat()
             })
-            _persist_summary("stopped", tickers, error="Cycle stopped/cancelled")
+            # `results` never made it out of gather() — the cancellation
+            # unwound first — so the counts come from what the cycle already
+            # persisted. Without this the summary reports 0 trades for a cycle
+            # that executed one (LULU, cycle-v3-1788642086).
+            _persist_summary(
+                "stopped", tickers,
+                recover_ticker_results_from_store(cycle_id),
+                error="Cycle stopped/cancelled",
+                counts_source="store",
+            )
             try:
                 from app.services.bench_reporter import emit_bench_run
                 bench_run_id = cls._state.get("bench_run_id") or f"tc-{cycle_id}"
@@ -2835,7 +2928,14 @@ class PipelineService:
                 "error": str(e),
                 "finished_at": datetime.now(timezone.utc).isoformat()
             })
-            _persist_summary("error", tickers, error=str(e))
+            # Same reasoning as the cancel path above: a cycle that crashed
+            # after trading still traded.
+            _persist_summary(
+                "error", tickers,
+                recover_ticker_results_from_store(cycle_id),
+                error=str(e),
+                counts_source="store",
+            )
             try:
                 from app.services.bench_reporter import emit_bench_run
                 bench_run_id = cls._state.get("bench_run_id") or f"tc-{cycle_id}"
