@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pymongo
 
@@ -106,14 +106,28 @@ def _minus_one_day(value):
     return value
 
 
+#: How far back `compute_sector_performance` reads. It needs 30 ROWS per ticker
+#: (`pct_change(periods=30)`, `rolling(30)`) and keeps only the latest date, so
+#: ~42 calendar days is the floor; 90 leaves room for holiday clusters and gaps.
+#:
+#: MEASURED 2026-09-06 (cycle-v3-1788660665, check #6): with NO bound this read
+#: was 4,365,690 price_history rows for 509 tickers, joined in Python, 160 s
+#: after every boot, and the loop it shares with the tool bridge logged nothing
+#: for 53 s inside it even from a worker thread. Bounded to 90 days: 33,355
+#: rows, 1.3 s, loop max gap 0.08 s, and the 11 sector rows it writes are
+#: IDENTICAL to the unbounded result (bench on the real function and store).
+#: A process pool was measured too: it frees the loop and keeps the 163 s read.
+SECTOR_PERF_WINDOW_DAYS = 90
+
+
 async def compute_sector_performance():
     logger.info("Computing sector performance...")
-    # Load all price history and metadata into pandas for vectorized operations
-    # price_history INNER JOIN ticker_metadata ON ticker, S&P 500 members
-    # with a non-null sector.
+    # price_history INNER JOIN ticker_metadata ON ticker, S&P 500 members with a
+    # non-null sector — bounded to the window the maths can actually use.
+    since = datetime.now(timezone.utc) - timedelta(days=SECTOR_PERF_WINDOW_DAYS)
     cols = ["ticker", "date", "close", "volume", "sector", "market_cap"]
     rows = mongo_query.join_rows(
-        "price_history", {}, "ticker",
+        "price_history", {"date": {"$gte": since}}, "ticker",
         "ticker_metadata", "ticker",
         {"sp500": True, "sector": {"$ne": None}},
         left_fields=["ticker", "date", "close", "volume"],
