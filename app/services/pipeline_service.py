@@ -2181,7 +2181,24 @@ class PipelineService:
                     _tier_unknown: list[str] = []
                     if len(selected) > 1:
                         try:
-                            from app.services.ticker_meta import get_ticker_meta
+                            from app.services.ticker_meta import (
+                                ensure_ticker_metadata,
+                                get_ticker_meta,
+                            )
+
+                            # Fill the gap BEFORE the cap reads it. A name with
+                            # no `ticker_metadata` row has no tier, so the cap
+                            # below can never see it as a mega-cap, and no
+                            # sector, so the diversity cap treats it as exempt.
+                            # ZS was selected, analysed for 100 minutes and
+                            # BOUGHT on cycle-v3-1788646388 with zero rows in
+                            # that collection; SE, sold the same day, has none
+                            # either. The event was already reporting it as
+                            # `tier_unknown` and nothing acted on the report.
+                            # Fails open: an unreachable vendor leaves the name
+                            # exactly as it is today.
+                            ensure_ticker_metadata(selected)
+
                             _sel_meta = get_ticker_meta(selected)
                             kept, mega_seen = [], 0
                             for t in selected:
