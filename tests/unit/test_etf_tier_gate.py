@@ -140,6 +140,78 @@ class TestTheMisTaggedFortySeven:
         store.update_docs.assert_not_called()
 
 
+# ── verbatim yfinance `.info` for the first observed verification cycle ──────
+# cycle-v3-1788719122, 2026-09-06 11:25:26. JEPQ had no ticker_metadata row at
+# all; the vendor answered this, and the gate logged "no market cap from the
+# vendor or on the row — left untiered" and wrote nothing.
+JEPQ_INFO = {"quoteType": "ETF", "marketCap": None, "totalAssets": 42209615872,
+             "netAssets": 42209616000.0,
+             "longName": "JPMorgan Nasdaq Equity Premium Income ETF",
+             "shortName": "JPMorgan Nasdaq Equity Premium ", "sector": None,
+             "category": "Derivative Income", "fundFamily": "JPMorgan"}
+AMD_INFO = {"quoteType": "EQUITY", "marketCap": 779621105664, "totalAssets": None,
+            "netAssets": None, "longName": "Advanced Micro Devices, Inc.",
+            "sector": "Technology", "category": None, "fundFamily": None}
+
+
+def _vendor_info(infos: dict[str, dict]):
+    """yfinance as it actually answers: fast_info carries a market cap only for
+    an equity; a fund's cap is None there and in .info, while .info names the
+    instrument in `quoteType` and its size in `totalAssets`."""
+    def _ticker(sym):
+        obj = MagicMock()
+        info = infos.get(sym) or {}
+        obj.fast_info = {"marketCap": info.get("marketCap")}
+        obj.info = info
+        return obj
+    mod = MagicMock()
+    mod.Ticker.side_effect = _ticker
+    return mod
+
+
+class TestAColdFundIsStillAFund:
+    """The vendor branch asked one question — how big is it? — and a fund
+    answers that with `totalAssets`, not `marketCap`. So a fund with no row
+    was "left untiered" and never written: no row, no tier, no asset_class,
+    and nothing downstream can tell it from a company nobody has looked up.
+    The `.info` call the branch already makes carries `quoteType`."""
+
+    def test_the_vendor_names_it_a_fund_so_it_is_tiered_etf(self, store):
+        store.find_docs.return_value = []  # no row at all
+        with patch.dict("sys.modules", {"yfinance": _vendor_info({"JEPQ": JEPQ_INFO})}):
+            out = ensure_ticker_metadata(["JEPQ"])
+        assert out == {"JEPQ": ETF_TIER}
+        fields = _written(store)["JEPQ"]
+        assert fields["market_cap_tier"] == ETF_TIER
+        assert fields["asset_class"] == "etf", "the row must say WHY, or the next reader re-derives it"
+        assert fields["market_cap"] == 42209615872, "a fund's size is its assets"
+
+    def test_a_company_in_the_same_run_is_still_tiered_from_its_cap(self, store):
+        store.find_docs.return_value = []
+        with patch.dict("sys.modules", {"yfinance": _vendor_info({"JEPQ": JEPQ_INFO, "AMD": AMD_INFO})}):
+            out = ensure_ticker_metadata(["JEPQ", "AMD"])
+        assert out == {"JEPQ": ETF_TIER, "AMD": "mega"}
+        assert _written(store)["AMD"].get("asset_class") in (None, "stock")
+
+    def test_a_fund_with_no_size_is_still_a_fund(self, store):
+        """quoteType alone decides the class; size only fills market_cap."""
+        store.find_docs.return_value = []
+        info = dict(JEPQ_INFO, totalAssets=None, netAssets=None)
+        with patch.dict("sys.modules", {"yfinance": _vendor_info({"JEPQ": info})}):
+            out = ensure_ticker_metadata(["JEPQ"])
+        assert out == {"JEPQ": ETF_TIER}
+        assert "market_cap" not in _written(store)["JEPQ"]
+
+    def test_an_equity_with_no_cap_is_not_guessed_into_a_fund(self, store):
+        """The old fail-open stays: an equity the vendor cannot size is left alone."""
+        store.find_docs.return_value = []
+        info = dict(AMD_INFO, marketCap=None)
+        with patch.dict("sys.modules", {"yfinance": _vendor_info({"AMD": info})}):
+            out = ensure_ticker_metadata(["AMD"])
+        assert out == {}
+        store.update_docs.assert_not_called()
+
+
 class TestTheTwoAuthoritiesCannotDrift:
     @pytest.mark.parametrize(
         "cap", [0, 1, 299e6, 300e6, 2e9, 10e9, 200e9, 2.4e12, None])
