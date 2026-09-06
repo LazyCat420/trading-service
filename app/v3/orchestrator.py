@@ -1210,25 +1210,13 @@ async def run_v3_pipeline(
                 # debate verdict is low-confidence/conflicted — one extra
                 # small LLM call + a few retrievals, justified exactly where
                 # signals disagree. Non-fatal; synthesizer runs without it.
-                try:
-                    verdict = desk.debate_judge or {}
-                    v_conf = _judge_confidence(verdict)
-                    if v_conf < 60:
-                        from app.services.retrieval_decomposed import build_decomposed_block
-                        deep_block = await build_decomposed_block(
-                            ticker,
-                            f"What are the key risks, catalysts, and conflicting "
-                            f"signals for {ticker}?",
-                        )
-                        if deep_block:
-                            desk.cycle_metadata["deep_retrieval_context"] = deep_block
-                            logger.info(
-                                "[V3] %s: deep retrieval injected for synthesizer "
-                                "(verdict confidence %d)", ticker, v_conf,
-                            )
-                except Exception as deep_err:
-                    logger.debug("[V3] %s: deep retrieval failed (non-fatal): %s",
-                                 ticker, deep_err)
+                deep_block = await run_deep_retrieval_for_synthesizer(
+                    ticker=ticker,
+                    judge_confidence=_judge_confidence(desk.debate_judge or {}),
+                    emit=emit,
+                )
+                if deep_block:
+                    desk.cycle_metadata["deep_retrieval_context"] = deep_block
                 _queue_agent("decision_synthesizer", decision_agent, parent="board_of_directors")
 
     def _queue_debate_phase():
@@ -2581,6 +2569,96 @@ async def _persist_trade_verdict(
                 logger.warning("[V3] %s: Strategy tracking failed (non-fatal): %s", ticker, st_err)
         except Exception as e:
             logger.error("[V3] %s: Failed to persist trade result: %s", ticker, e)
+
+
+async def run_deep_retrieval_for_synthesizer(
+    *,
+    ticker: str,
+    judge_confidence: int,
+    emit: Any,
+    build_block: Any = None,
+) -> str | None:
+    """Decomposed recall for the synthesizer, announced while it runs.
+
+    When the debate judge lands under 60 the synthesizer gets a deep-recall
+    block: one small LLM call that splits a fixed question into sub-queries,
+    then a handful of hybrid retrievals. Returns the block, or None when the
+    gate is shut or the retrieval failed (non-fatal by design — the synthesizer
+    runs without it).
+
+    MEASURED 2026-09-05/06. SNOW's board finished at 23:44:50 and the
+    synthesizer announced itself at 23:48:05 — **195 seconds** in which the
+    pipeline emitted nothing at all and `pipeline_state.progress` still read
+    the Board's chat line. LULU, the cycle before: 181 s. The retrievals take
+    ~2 s of that; the rest is the decomposition call.
+
+    Nothing could see it. It is not an agent, so there is no
+    `v3_agent_telemetry` row, no agent_start/agent_done event and no
+    `[V3Runner]` line, and the synthesizer's own "starting..." emit fires only
+    after this returns. Over 16 days the board->synthesizer gap has a median of
+    0 s on DeepSeek (n=52) and Nemotron (n=31) — the gate mostly stays shut —
+    against n=4, median 160 s on GLM, every desk.
+
+    `build_block` is injectable for tests; production uses
+    `retrieval_decomposed.build_decomposed_block`.
+    """
+    if judge_confidence >= 60:
+        return None
+
+    if build_block is None:
+        from app.services.retrieval_decomposed import build_decomposed_block
+
+        build_block = build_decomposed_block
+
+    emit(
+        "analyzing",
+        f"v3_deep_retrieval_{ticker}",
+        f"🔎 {ticker}: deep retrieval for the synthesizer "
+        f"(debate verdict confidence {judge_confidence} < 60)",
+        status="running",
+        data={"kind": "deep_retrieval_start", "ticker": ticker,
+              "judge_confidence": int(judge_confidence)},
+    )
+
+    t0 = time.monotonic()
+    block: str | None = None
+    status = "ok"
+    detail_tail = ""
+    try:
+        block = await build_block(
+            ticker,
+            f"What are the key risks, catalysts, and conflicting "
+            f"signals for {ticker}?",
+        )
+    except Exception as deep_err:  # noqa: BLE001 — advisory, never blocks a desk
+        status = "error"
+        detail_tail = f" — failed: {str(deep_err)[:120]}"
+        logger.warning(
+            "[V3] %s: deep retrieval failed (non-fatal): %s", ticker, deep_err
+        )
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
+
+    if status == "ok" and not block:
+        status = "warn"
+        detail_tail = " — no chunks"
+
+    emit(
+        "analyzing",
+        f"v3_deep_retrieval_done_{ticker}",
+        f"🔎 {ticker}: deep retrieval finished in {elapsed_ms / 1000:.1f}s"
+        f"{detail_tail}",
+        status=status,
+        data={"kind": "deep_retrieval_done", "ticker": ticker,
+              "elapsed_ms": elapsed_ms, "chars": len(block or "")},
+    )
+
+    if block:
+        logger.info(
+            "[V3] %s: deep retrieval injected for synthesizer "
+            "(verdict confidence %d, %d chars, %dms)",
+            ticker, judge_confidence, len(block), elapsed_ms,
+        )
+    return block
 
 
 def _judge_confidence(verdict: Any) -> int:
