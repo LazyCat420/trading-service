@@ -168,11 +168,19 @@ stops the 30-minute burn."
 ## Report-only (prism / utilities-library, never edited)
 
 - Watchdog at 300 s sits below the measured TTFG tail at ≥ 2 in flight.
-- `LocalModelQueue` has no wait bound; no client stop route for `/agent`, so a
-  dead client's generation runs to completion.
+  CONFIRMED with file:line in `docs/audits/2026-09-06/prism_side.md`; the
+  shim's own comment names `DEFAULT_MAX_CONCURRENT["gold-spark"] = 4` and
+  `QUEUE_TIMEOUT_MS = 120_000` — exactly the 503-after-119.5 s E1a-2 measured.
+- `LocalModelQueue` has no wait bound. CONFIRMED.
+- ~~No client stop route for `/agent`~~ — **wrong as stated.** `POST /agent/stop`
+  exists; the gap is that nothing reaps a session whose client never returns,
+  and trading-service never calls it on cancel. See the prism report.
 - JSON path: no heartbeat, events buffered, nothing returned on client close.
-- `cacheReadInputTokens` default 0 masks "absent"; light-work persona mapping
-  erases the caller's identity in the ledger.
+  CONFIRMED; proxy cliff is 900 s for `/agent`.
+- `cacheReadInputTokens` default 0 masks "absent".
+- ~~Light-work persona mapping erases the caller's identity~~ — **wrong layer.**
+  Prism rejects an unmapped agent with a 400. The collapse into
+  `CUSTOM_SYSTEM_JANITOR_AGENT` is ours: `app/services/prism_agent_registry.py:191-283`.
 **Correction (2026-09-06, later the same day).** An earlier draft of this
 section said "the `think` tool name is model-invented; the 50 s denials are the
 bridge's queue path". Both halves are wrong, and the store says so:
