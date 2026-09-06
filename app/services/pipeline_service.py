@@ -211,6 +211,13 @@ def register_discovery_leads(
     return added
 
 
+#: How many ranked rows the GATEKEEPER_SELECTED event stores. The pool itself
+#: runs 107-125 names; the desks see only the top 12. 40 keeps the event small
+#: while covering the shown shortlist several times over, and `selected_ranks`
+#: carries the true rank of any pick from below the cut.
+_GATEKEEPER_POOL_SNAPSHOT = 40
+
+
 def build_gatekeeper_selected_event(
     *,
     selected: list[str],
@@ -219,6 +226,7 @@ def build_gatekeeper_selected_event(
     degraded: bool,
     tier_unknown: list[str],
     rationale: str = "",
+    ranked_pool: list[dict] | None = None,
 ) -> dict:
     """The event a SUCCESSFUL gatekeeper selection appends.
 
@@ -230,6 +238,41 @@ def build_gatekeeper_selected_event(
     and which selected names the mega-cap cap could not see (missing
     `market_cap_tier`).
     """
+    # ── The ranking the gatekeeper chose FROM ──
+    #
+    # Without it, asking "did the gatekeeper just pick the top of the screen?"
+    # meant reconstructing the shortlist by parsing markdown out of
+    # `shared_desk.cycle_metadata.cycle_candidates_context` across every desk
+    # of the cycle and taking their union (each desk's copy omits its own
+    # ticker) — and even then that is only the top 12 the DESKS see, while the
+    # gatekeeper chooses from the whole scored pool. On 2026-09-06 the audit
+    # first recorded the question as BLOCKED for want of this.
+    #
+    # Ranks are computed against the FULL ranking and only then is the stored
+    # list truncated: a pick from rank 58 must record 58, not `None`, or every
+    # deep pick would read as "outside the pool" and the measurement would be
+    # fiction.
+    rows: list[dict] = []
+    if isinstance(ranked_pool, list):
+        for entry in ranked_pool:
+            if not isinstance(entry, dict):
+                continue
+            tkr = str(entry.get("ticker") or "").upper().strip()
+            if not tkr:
+                continue
+            row = {"ticker": tkr}
+            for field in ("score", "chg", "rvol"):
+                value = entry.get(field)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    row[field] = round(float(value), 4)
+            rows.append(row)
+
+    rank_of = {row["ticker"]: i + 1 for i, row in enumerate(rows)}
+    selected_ranks = {
+        str(t).upper(): rank_of.get(str(t).upper())
+        for t in (selected or [])
+    }
+
     return {
         "ts": datetime.now(timezone.utc).isoformat(),
         "phase": "gatekeeper",
@@ -247,6 +290,11 @@ def build_gatekeeper_selected_event(
             "degraded": bool(degraded),
             "tier_unknown": sorted(set(tier_unknown)),
             "rationale": str(rationale or "")[:500],
+            # Capped so a discovery run over thousands of names cannot bloat
+            # the event document. 40 covers the desks' own top-12 several
+            # times over, and `selected_ranks` carries the deep picks.
+            "ranked_pool": rows[:_GATEKEEPER_POOL_SNAPSHOT],
+            "selected_ranks": selected_ranks,
         },
     }
 
@@ -1448,6 +1496,10 @@ class PipelineService:
                 # An empty pool now means "admit nothing", which is what the
                 # check below enforces.
                 all_pool: dict[str, dict] = {}
+                # Bound before discovery for the same reason `all_pool` is: a
+                # failure inside the scoring block must not turn the
+                # GATEKEEPER_SELECTED emit into an UnboundLocalError.
+                ranked_pool_snapshot: list[dict] = []
                 # Find trending tickers from the last 24h (News, Reddit, YouTube) that aren't in the static watchlist
                 try:
                     from app.processors.ticker_extractor import FALSE_TICKERS
@@ -1814,6 +1866,16 @@ class PipelineService:
                         # semis can't fill half the gatekeeper table. Unknown
                         # sector is exempt from the cap.
                         scored_results.sort(key=lambda x: x["score"], reverse=True)
+                        # The ranking the gatekeeper will choose from, bound
+                        # here so GATEKEEPER_SELECTED can record it. Before
+                        # this, answering "did it just take the top of the
+                        # screen?" meant parsing the desks' rendered candidate
+                        # tables out of shared_desk.cycle_metadata.
+                        ranked_pool_snapshot = [
+                            {"ticker": s_["ticker"], "score": s_["score"],
+                             "chg": s_.get("chg"), "rvol": s_.get("rvol")}
+                            for s_ in scored_results
+                        ]
                         try:
                             from app.services.ticker_meta import get_ticker_meta
                             _meta = get_ticker_meta([s["ticker"] for s in scored_results[:60]])
@@ -2182,6 +2244,7 @@ class PipelineService:
                                     degraded=bool(result.get("degraded")),
                                     tier_unknown=_tier_unknown,
                                     rationale=rationale,
+                                    ranked_pool=ranked_pool_snapshot,
                                 )
                             ])
                         except Exception as _sel_evt_err:  # noqa: BLE001 — telemetry must not abort the cycle
