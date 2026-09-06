@@ -41,7 +41,7 @@ class BatchRequest(BaseModel):
 # ── Collect Endpoints ──
 
 class CollectRequest(BaseModel):
-    source: Literal["reddit", "reddit-purge", "youtube", "news", "rss", "discourse", "xenforo", "kannapedia", "leafly", "duckduckgo", "twitter", "stocktwits", "finnews"]
+    source: Literal["reddit", "reddit-purge", "youtube", "news", "rss", "kannapedia", "leafly", "duckduckgo", "twitter", "stocktwits", "finnews"]
     query: str | None = None
     subreddits: list[str] | None = None
     channels: list[str] | None = None
@@ -65,16 +65,6 @@ class CollectRequest(BaseModel):
     days_back: int | None = None
     require_transcript: bool = True
     stream: bool = False
-    # Forum-specific fields
-    base_url: str | None = None             # Forum base URL (e.g. https://overgrow.com)
-    forum_name: str | None = None           # Display name for the forum
-    subforum_path: str | None = None        # XenForo subforum path (e.g. f/grow-journals.54/)
-    thread_url: str | None = None           # Specific thread URL to scrape posts from
-    topic_id: int | None = None             # Discourse topic ID
-    category_slug: str | None = None        # Discourse category slug
-    category_id: int | None = None          # Discourse category ID
-    tag: str | None = None                  # Discourse tag filter
-    period: str | None = None               # Discourse top period (daily/weekly/monthly)
     rsp_numbers: list[str] | None = None     # Kannapedia RSP numbers to scrape
     # Reddit-purge specific fields
     use_llm: bool = False

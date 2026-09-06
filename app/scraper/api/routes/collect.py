@@ -22,8 +22,6 @@ async def collect(req: CollectRequest):
       - reddit: Posts from subreddits (requires subreddits list)
       - youtube: Video transcripts (requires channels or query)
       - news/rss: Articles from RSS feeds (requires feed_url or feeds dict)
-      - discourse: Posts from Discourse forums (requires base_url)
-      - xenforo: Posts from XenForo forums (requires base_url)
 
     All domain context (which subreddits, which feeds, which keywords)
     comes from the caller — this service has zero domain knowledge.
@@ -43,10 +41,6 @@ async def collect(req: CollectRequest):
             return await _collect_youtube(req)
         elif req.source in ("news", "rss"):
             return await _collect_news(req)
-        elif req.source == "discourse":
-            return await _collect_discourse(req)
-        elif req.source == "xenforo":
-            return await _collect_xenforo(req)
         elif req.source == "kannapedia":
             return await _collect_kannapedia(req)
         elif req.source == "leafly":
@@ -200,133 +194,6 @@ async def _collect_news(req: CollectRequest) -> CollectResponse:
     return CollectResponse(source="news", count=len(items), items=items)
 
 
-async def _collect_discourse(req: CollectRequest) -> CollectResponse:
-    """Collect posts from a Discourse forum (e.g. Overgrow)."""
-    from app.scraper.collectors.discourse_collector import DiscourseCollector, _serialize_forum_post
-
-    if not req.base_url:
-        return CollectResponse(
-            source="discourse", count=0, items=[],
-            error="base_url is required for discourse collection (e.g. https://overgrow.com)",
-        )
-
-    collector = DiscourseCollector(
-        base_url=req.base_url,
-        forum_name=req.forum_name or "discourse",
-    )
-
-    posts = []
-
-    # If thread_url is provided, extract topic_id from it
-    # URL format: https://overgrow.com/t/the-bank-of-stank/38516/1
-    if req.thread_url and not req.topic_id:
-        import re
-        m = re.search(r'/t/[^/]+/(\d+)', req.thread_url)
-        if m:
-            req.topic_id = int(m.group(1))
-
-    if req.topic_id:
-        # Get all posts from a specific topic/thread
-        posts = await collector.get_topic_posts(
-            topic_id=req.topic_id,
-            max_posts=req.limit,
-        )
-    elif req.query:
-        # Search mode
-        posts = await collector.search(
-            query=req.query,
-            category_slug=req.category_slug,
-            tags=[req.tag] if req.tag else None,
-            limit=req.limit,
-        )
-    elif req.tag:
-        # Tag filter mode
-        posts = await collector.get_topics_by_tag(
-            tag=req.tag,
-            limit=req.limit,
-        )
-    elif req.category_slug and req.category_id:
-        # Category mode
-        posts = await collector.get_category_topics(
-            category_slug=req.category_slug,
-            category_id=req.category_id,
-            limit=req.limit,
-        )
-    elif req.period:
-        # Top topics by period
-        posts = await collector.get_top_topics(
-            period=req.period,
-            limit=req.limit,
-        )
-    else:
-        # Default: latest topics
-        posts = await collector.get_latest_topics(limit=req.limit)
-
-    # Apply keyword filter if provided
-    if req.keywords and posts:
-        filtered = []
-        for p in posts:
-            text = f"{p.title} {p.body}".lower()
-            if any(kw.lower() in text for kw in req.keywords):
-                filtered.append(p)
-        posts = filtered
-
-    items = [_serialize_forum_post(p) for p in posts]
-    return CollectResponse(source="discourse", count=len(items), items=items)
-
-
-async def _collect_xenforo(req: CollectRequest) -> CollectResponse:
-    """Collect posts from a XenForo forum (e.g. Rollitup, THCFarmer)."""
-    from app.scraper.collectors.xenforo_collector import XenForoCollector, _serialize_xenforo_post
-
-    if not req.base_url:
-        return CollectResponse(
-            source="xenforo", count=0, items=[],
-            error="base_url is required for xenforo collection (e.g. https://www.rollitup.org)",
-        )
-
-    collector = XenForoCollector(
-        base_url=req.base_url,
-        forum_name=req.forum_name or "xenforo",
-    )
-
-    posts = []
-
-    if req.thread_url:
-        # Scrape all posts from a specific thread
-        posts = await collector.get_thread_posts(
-            thread_url=req.thread_url,
-            max_posts=req.limit,
-        )
-    elif req.query:
-        # Search mode
-        posts = await collector.search(
-            query=req.query,
-            limit=req.limit,
-        )
-    elif req.subforum_path:
-        # Subforum thread listing
-        posts = await collector.get_forum_threads(
-            subforum_path=req.subforum_path,
-            limit=req.limit,
-        )
-    else:
-        return CollectResponse(
-            source="xenforo", count=0, items=[],
-            error="One of 'thread_url', 'query', or 'subforum_path' is required",
-        )
-
-    # Apply keyword filter if provided
-    if req.keywords and posts:
-        filtered = []
-        for p in posts:
-            text = f"{p.title} {p.body}".lower()
-            if any(kw.lower() in text for kw in req.keywords):
-                filtered.append(p)
-        posts = filtered
-
-    items = [_serialize_xenforo_post(p) for p in posts]
-    return CollectResponse(source="xenforo", count=len(items), items=items)
 
 
 async def _collect_kannapedia(req: CollectRequest) -> CollectResponse:
@@ -517,10 +384,6 @@ async def _collect_fallback_stream(req: CollectRequest) -> StreamingResponse:
                 res = await _collect_reddit_purge(req)
             elif req.source in ("news", "rss"):
                 res = await _collect_news(req)
-            elif req.source == "discourse":
-                res = await _collect_discourse(req)
-            elif req.source == "xenforo":
-                res = await _collect_xenforo(req)
             elif req.source == "kannapedia":
                 res = await _collect_kannapedia(req)
             elif req.source == "leafly":

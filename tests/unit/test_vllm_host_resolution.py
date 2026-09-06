@@ -7,6 +7,10 @@ scraper-service ships standalone — so it raised ImportError in every deployed
 scraper. The OCR engine was retired on 2026-08-09 and discovery moved here,
 next to the config layer it actually reads.
 
+The subtree-import guard that outage motivated now lives in
+``tests/unit/test_scraper_subtree_import_closure.py`` — it outgrew this file
+when it was rewritten as an allowlist.
+
 The predecessor's own bug is still worth guarding: VISION_MODEL was unset, so
 the engine defaulted to ``openai/gpt-4o``, every call reached prism as provider
 "openai", and prism answered ``500 {"message":"OPENAI_API_KEY is not set"}``.
@@ -106,27 +110,3 @@ async def test_every_host_down_raises_rather_than_returning_empty():
         with pytest.raises(RuntimeError, match="No vLLM endpoint available"):
             await vh.vllm_targets()
 
-
-def test_the_scraper_subtree_does_not_import_the_trading_app():
-    """The reason OCR was dead for 13 days, as a test.
-
-    scraper-service's deploy.sh stages ONLY app/scraper + app/utils/text_utils
-    (+ the lazycat SDK). Anything under app/scraper that imports app.services
-    or app.db raises ImportError in the deployed image, and the failure surfaces
-    as a generic scrape failure rather than as a missing dependency.
-    """
-    import pathlib
-    import re
-
-    root = pathlib.Path(__file__).resolve().parents[2] / "app" / "scraper"
-    offenders = []
-    pattern = re.compile(r"^\s*(?:from|import)\s+app\.(services|db|v3|agents|collectors)\b",
-                         re.MULTILINE)
-    for path in root.rglob("*.py"):
-        for match in pattern.finditer(path.read_text(encoding="utf-8")):
-            offenders.append(f"{path.relative_to(root.parent.parent)}: app.{match.group(1)}")
-
-    assert not offenders, (
-        "app/scraper must stay free of trading-app imports — scraper-service "
-        "does not ship them:\n  " + "\n  ".join(offenders)
-    )
