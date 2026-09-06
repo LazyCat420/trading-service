@@ -140,18 +140,33 @@ def extract_cached_tokens(usage: dict | None) -> int:
             return None
         return int(value) if value >= 0 else None
 
+    # First NON-ZERO spelling wins, flat keys before nested ones. Not "first
+    # present": prism's usage accumulator (CostCalculator.createUsageAccumulator)
+    # initialises cacheReadInputTokens to 0 and ALWAYS emits it, so on every
+    # local-vLLM run the first present key is a 0 that would short-circuit the
+    # OpenAI-shaped fallback below — measured 2026-09-06, cycle-v3-1788660665:
+    # 22 GLM rows, all 0, fingerprint "cacheCreationInputTokens,cacheReadInput
+    # Tokens,inputTokens,...". Still not a sum: two spellings of one figure must
+    # not double it, and a genuine all-zero stays 0.
+    saw_any = False
     for key in _CACHED_TOKEN_KEYS:
         if key in usage:
             found = _as_int(usage.get(key))
             if found is not None:
-                return found
+                saw_any = True
+                if found > 0:
+                    return found
 
     for container, inner in _CACHED_TOKEN_NESTED:
         nested = usage.get(container)
         if isinstance(nested, dict) and inner in nested:
             found = _as_int(nested.get(inner))
             if found is not None:
-                return found
+                saw_any = True
+                if found > 0:
+                    return found
+    if saw_any:
+        return 0
 
     return 0
 
