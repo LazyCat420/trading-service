@@ -250,3 +250,28 @@ slow-tool, 3 agent-timeout, 3 prism-disconnect, 2 prism-500, 1 prism-stall.
 Four checker verdicts were wrong before the by-hand pass (12 vacuous PASS; 9,
 11, 14 false NOT EXERCISED). The instrument was repaired in place; every
 verdict above was confirmed by a direct query.
+
+
+## Live confirmation after deploy (boot 04:09:57 UTC, master `7bbed69b`)
+
+| item | before (boot 02:08, `138b713`) | after (boot 04:09, `7bbed69b`) |
+|---|---|---|
+| sector compute wall | 160 s (19:26:12 → 19:28:51) | **1.7 s** (21:19:02.49 → 21:19:04.20) |
+| longest container silence inside it | 53 s | bounded by the 1.7 s wall |
+| rows read | 4,365,690 | ≤ 33,355 (90-day window) |
+| `ticker_metadata` funds untiered | 38 | 0 (85 tagged `etf`; BK the only untiered row, a dead symbol) |
+| ETFs carrying a company tier | 47 (`micro`) | 0 |
+
+Both deploys verified inside the container: `ETF_TIER`, `SECTOR_PERF_WINDOW_DAYS`,
+`cost_sink` in `run_agent`, and the `isoformat` conversion in `_audit_recovery`
+all import from the running image. Primary suite at `7bbed69b`: 6,411 passed.
+
+Note on the 5 s vllm-shim metrics poller used as the loop heartbeat in check #6:
+it is CYCLE-scoped, not boot-scoped — 0 `/metrics` lines on the new boot until
+a cycle started. On a quiet boot the compute's own wall time is the only bound
+on loop starvation, which is why the wall time is the number recorded above.
+
+Check #8's STOPPED path and check #12 LIVE are being exercised on the follow-up
+cycle `cycle-v3-1788668370` (started 04:19 UTC, max_tickers 3): stop on the first
+fill, then `cycle_run_summaries.trade_executed` vs `trade_fills` with
+`counts_source == "store"`. Result to be appended.
