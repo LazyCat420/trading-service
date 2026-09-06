@@ -691,6 +691,10 @@ async def run_v3_agent(
     # the flag that already drives the AGENT_ERROR→DATA_GAP degrade below.
     attempt_no = 2 if is_retry else 1
 
+    # Declared before the try below so every failure handler can read it even
+    # when the failure lands before the run_agent call is reached.
+    _cost_sink: dict = {"tokens": 0, "loops": 0, "tool_calls": 0}
+
     # Check for custom agent override execution
     if hasattr(agent_module, "run_custom_agent"):
         try:
@@ -1369,6 +1373,12 @@ async def run_v3_agent(
             tool_whitelist=tool_whitelist,
         )
 
+        # What the run has SPENT so far, owned HERE so every failure handler
+        # below — timeout, cancel, crash — reads the same numbers. The crash
+        # path used to read `e.partial_cost` off the exception; the timeout
+        # path could not, because wait_for raises its own TimeoutError after
+        # cancelling the run (ABT fundamental analyst, cycle-v3-1788660665:
+        # 1,800,068 ms, 18 tool calls, row said tokens=0 loops=0).
         result = await asyncio.wait_for(
             run_agent(
                 agent_name=agent_name,
@@ -1381,6 +1391,7 @@ async def run_v3_agent(
                 enable_tools=bool(tool_whitelist),
                 model_override=model_override,
                 prism_overrides=prism_overrides,
+                cost_sink=_cost_sink,
             ),
             timeout=timeout_seconds,
         )
@@ -1576,6 +1587,7 @@ async def run_v3_agent(
                         enable_tools=False,
                         model_override=model_override,
                         prism_overrides=prism_overrides,
+                        cost_sink=_cost_sink,  # the repair's spend joins the run's
                     ),
                     timeout=timeout_seconds,
                 )
@@ -2198,10 +2210,13 @@ async def run_v3_agent(
             f"⏰ {desk.ticker}: V3 {agent_name} TIMEOUT after {elapsed_ms}ms",
             status="error",
         )
-        _record_telemetry(desk, agent_name, elapsed_ms, 0, 0, "TIMED_OUT",
+        _spent_loops, _spent_tokens = _spent(_cost_sink)
+        _record_telemetry(desk, agent_name, elapsed_ms, _spent_loops, _spent_tokens, "TIMED_OUT",
                           sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
+                          prompt_tokens=_spent_tokens,
                           attempt_no=attempt_no,
                           failure_reason=REASON_TIMEOUT,
+                          cost_partial=True,
                           error_message=f"exceeded the {timeout_seconds:.0f}s agent timeout")
         return PhaseOutcome.TIMED_OUT
 
@@ -2217,9 +2232,12 @@ async def run_v3_agent(
             f"🛑 {desk.ticker}: V3 {agent_name} CANCELLED after {elapsed_ms}ms",
             status="error",
         )
-        _record_telemetry(desk, agent_name, elapsed_ms, 0, 0, "CANCELLED",
+        _spent_loops, _spent_tokens = _spent(_cost_sink)
+        _record_telemetry(desk, agent_name, elapsed_ms, _spent_loops, _spent_tokens, "CANCELLED",
+                          prompt_tokens=_spent_tokens,
                           attempt_no=attempt_no,
                           failure_reason=REASON_CANCELLED,
+                          cost_partial=True,
                           error_message="cancelled — stop requested")
         raise  # Re-raise so orchestrator and pipeline_service see the cancellation
 
@@ -2246,9 +2264,9 @@ async def run_v3_agent(
         # full 24k-token prefills. `partial_cost` is attached by base_agent to
         # whatever escapes — the ResilientCallError, not the RuntimeError
         # underneath — and accumulates across the retry attempts.
-        _cost = getattr(e, "partial_cost", None) or {}
-        _spent_tokens = int(_cost.get("tokens") or 0)
-        _spent_loops = int(_cost.get("loops") or 0)
+        # The sink is the source; the attribute on the exception is the
+        # fallback for a run_agent that predates the sink (partial deploy).
+        _spent_loops, _spent_tokens = _spent(_cost_sink, getattr(e, "partial_cost", None))
         _record_telemetry(desk, agent_name, elapsed_ms,
                           _spent_loops, _spent_tokens, "AGENT_ERROR",
                           # `prompt_tokens` is the field every audit probe and
@@ -2341,6 +2359,13 @@ def _parse_artifact(
         sanitize_ascii(_preview[-300:]) if len(_preview) > 900 else "(shown above)",
     )
     return None
+
+
+def _spent(sink: dict | None, fallback: dict | None = None) -> tuple[int, int]:
+    """(loops, tokens) a run had spent when it died — from the caller-owned
+    sink, or from the attribute an older run_agent attached to its exception."""
+    src = sink if (sink and any(sink.get(k) for k in ("tokens", "loops"))) else (fallback or sink or {})
+    return int(src.get("loops") or 0), int(src.get("tokens") or 0)
 
 
 def _record_telemetry(
