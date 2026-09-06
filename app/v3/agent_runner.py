@@ -29,7 +29,11 @@ from app.v3.guardrails import (
     exit_v3_session,
 )
 from app.utils.text_utils import sanitize_ascii
-from app.v3.artifacts import ARTIFACT_SCHEMAS, validate_artifact
+from app.v3.artifacts import (
+    ARTIFACT_SCHEMAS,
+    normalize_signal_weights,
+    validate_artifact,
+)
 from app.v3.output_rules import (
     CANCELLED as REASON_CANCELLED,
     FAILURE_REASONS,
@@ -241,6 +245,69 @@ def _safe_max_tokens(
             agent_name, e, _REQUESTED_MAX_TOKENS,
         )
         return _REQUESTED_MAX_TOKENS
+
+
+def apply_signal_weights_policy(
+    artifact: dict,
+    *,
+    artifact_type: str,
+    agent_name: str = "",
+    ticker: str = "",
+) -> bool:
+    """Coerce a decision's `signal_weights` to the canonical vector, in place.
+
+    Returns True when the artifact now carries a valid vector, False when it was
+    deliberately left alone — which the caller turns into a schema error.
+
+    Before this existed the runner only acted when `signal_weights` was ABSENT,
+    substituting the equalised default. A vector that was PRESENT but malformed
+    went straight through: an executed ZS BUY (cycle-v3-1788646388) persisted
+    `{'board':.45,'quant':.25,'specific':0,'fundamental':.15,'debate':0,
+    'board_dup':0}` — two invented keys summing to 0.85 — because nothing on the
+    path looked at the shape. See `normalize_signal_weights` for the measured
+    background.
+
+    The "incomplete decision is not salvaged" rule is PRESERVED exactly: a
+    decision missing action/confidence/reasoning is a failed run, and inventing
+    weights for it would let it past the missing-required-fields branch that
+    exists to engage the circuit breaker's retry.
+    """
+    if artifact_type != "trade_decision" or not isinstance(artifact, dict):
+        return False
+
+    raw = artifact.get("signal_weights")
+    supplied = isinstance(raw, dict) and bool(raw)
+
+    if not supplied:
+        complete = (
+            artifact.get("action")
+            and artifact.get("confidence") is not None
+            and str(artifact.get("reasoning") or "").strip()
+        )
+        if not complete:
+            return False
+
+    weights, source = normalize_signal_weights(raw)
+    artifact["signal_weights"] = weights
+    artifact["signal_weights_source"] = source
+
+    if source == "default_equalized":
+        logger.warning(
+            "[V3Runner] %s: trade_decision for %s carried no usable "
+            "signal_weights (%r) — equalized default, stamped "
+            "signal_weights_source=default_equalized",
+            agent_name, ticker, raw,
+        )
+    elif source == "model_normalized":
+        logger.warning(
+            "[V3Runner] %s: trade_decision for %s emitted malformed "
+            "signal_weights %r (sum=%.4f) — renormalized to %r",
+            agent_name, ticker, raw,
+            sum(v for v in raw.values() if isinstance(v, (int, float))
+                and not isinstance(v, bool)),
+            weights,
+        )
+    return True
 
 
 def guard_unshortable_sell(artifact: dict, *, desk: Any, bot_id: str = "") -> dict:
@@ -1637,18 +1704,13 @@ async def run_v3_agent(
 
         # Validate the artifact
         errors = validate_artifact(artifact_type, artifact)
-        if artifact_type == "trade_decision" and isinstance(artifact, dict) and not artifact.get("signal_weights"):
-            if (
-                artifact.get("action")
-                and artifact.get("confidence") is not None
-                and str(artifact.get("reasoning") or "").strip()
+        if artifact_type == "trade_decision" and isinstance(artifact, dict):
+            if not apply_signal_weights_policy(
+                artifact,
+                artifact_type=artifact_type,
+                agent_name=agent_name,
+                ticker=desk.ticker,
             ):
-                logger.warning(
-                    "[V3Runner] %s: trade_decision for %s omitted signal_weights — salvaging with equalized defaults",
-                    agent_name, desk.ticker,
-                )
-                artifact["signal_weights"] = {"quant": 0.25, "fundamental": 0.25, "debate": 0.25, "board": 0.25}
-            else:
                 errors = list(errors) + ["Missing required field: signal_weights (empty)"]
         if errors:
             missing_required = [e for e in errors if e.startswith("Missing required field")]

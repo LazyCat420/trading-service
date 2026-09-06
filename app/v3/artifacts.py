@@ -890,6 +890,109 @@ PORTFOLIO_SCREENER_SCHEMA: dict = {
 }
 
 
+# ── signal_weights: the one shape, and where a vector came from ──────────
+#
+# MEASURED 2026-09-06 over 1,134 `trade_results` rows carrying a weights dict
+# (Appendix M of the trading-cycle audit):
+#
+#     canonical key set {board, quant, fundamental, debate}   1,127
+#     non-canonical key set                                       7
+#     sum outside 1.00 +/- 0.01                                   2
+#     all four equal, and every one of them exactly 0.25         471  (41.5%)
+#
+# Nothing validated any of it. The schema below types `signal_weights` as a
+# bare `{"type": "object"}`; the runner's salvage branch fires only when the
+# field is ABSENT; and `save_trade_result` persists whatever it was handed.
+# The row that proved it matters was an EXECUTED order — ZS BUY 3.0808 @
+# $169.84 on cycle-v3-1788646388 — carrying
+#
+#     {'board': .45, 'quant': .25, 'specific': 0, 'fundamental': .15,
+#      'debate': 0, 'board_dup': 0}                            sum = 0.85
+#
+# two invented keys and a total of 0.85, on the same desk whose Board had
+# answered in Chinese.
+#
+# The 471 equalised rows are the other half: they are the salvage default, and
+# nothing in the row said so, so no consumer could tell a weighting the model
+# chose from one we invented for it. Hence `signal_weights_source`, which is
+# stamped by the CALLER's knowledge of what it was given — never inferred by
+# pattern-matching the values, because 0.25 x 4 is also a legal model answer.
+CANONICAL_SIGNAL_KEYS: tuple[str, ...] = ("board", "quant", "fundamental", "debate")
+
+#: What an absent or unusable vector becomes. Equal weight is not a claim about
+#: the signals; it is the absence of one, which is why it carries a source.
+DEFAULT_EQUALIZED_WEIGHTS: dict[str, float] = {
+    k: round(1.0 / len(CANONICAL_SIGNAL_KEYS), 10) for k in CANONICAL_SIGNAL_KEYS
+}
+
+#: Provenance values. Persisted, so they are a contract, not a log string.
+SIGNAL_WEIGHTS_SOURCES = ("model", "model_normalized", "default_equalized")
+
+
+def normalize_signal_weights(raw: object) -> tuple[dict[str, float], str]:
+    """Coerce any `signal_weights` value into the canonical vector + its source.
+
+    Returns ``(weights, source)`` where `weights` always has exactly
+    CANONICAL_SIGNAL_KEYS, all finite floats >= 0, summing to 1.0, and `source`
+    is one of SIGNAL_WEIGHTS_SOURCES:
+
+      * ``model``            — the model's canonical weights already summed to
+                               1.00 +/- 0.01; values are passed through.
+      * ``model_normalized`` — the model expressed a preference we could read,
+                               but it did not sum to 1 (or a canonical key was
+                               missing). Rescaled, **preserving the model's
+                               ordering** — the repair must not re-rank the
+                               signals, or it is inventing a different decision.
+      * ``default_equalized``— nothing usable was supplied.
+
+    Never raises and never mutates its argument: this runs on the decision path,
+    and a weighting bug must not be able to take down a cycle.
+
+    Non-canonical keys are DROPPED rather than folded into a canonical one.
+    `board_dup` is the reason: it looked like a duplicate of `board`, but we do
+    not know that, and guessing would silently double a signal's weight.
+    """
+    import math as _math
+
+    if not isinstance(raw, dict) or not raw:
+        return dict(DEFAULT_EQUALIZED_WEIGHTS), "default_equalized"
+
+    kept: dict[str, float] = {}
+    for key, value in raw.items():
+        name = str(key).strip().lower()
+        if name not in CANONICAL_SIGNAL_KEYS:
+            continue
+        # bool is an int subclass: True would arrive as 1.0 and read as a
+        # dominant signal. Reject it as the type error it is.
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        number = float(value)
+        if not _math.isfinite(number) or number < 0.0:
+            continue
+        # A repeated key (differing only by case/padding) sums rather than
+        # last-wins, so the order of a dict cannot change the answer.
+        kept[name] = kept.get(name, 0.0) + number
+
+    total = sum(kept.values())
+    if total <= 0.0:
+        return dict(DEFAULT_EQUALIZED_WEIGHTS), "default_equalized"
+
+    complete = len(kept) == len(CANONICAL_SIGNAL_KEYS)
+    if complete and abs(total - 1.0) <= 0.01:
+        return {k: float(kept[k]) for k in CANONICAL_SIGNAL_KEYS}, "model"
+
+    scaled = {k: kept.get(k, 0.0) / total for k in CANONICAL_SIGNAL_KEYS}
+    # Round for storage, then push the rounding residual onto the largest
+    # weight so the persisted vector sums to exactly 1.0. Distributing it
+    # anywhere else could reorder two near-equal signals.
+    weights = {k: round(v, 6) for k, v in scaled.items()}
+    residual = 1.0 - sum(weights.values())
+    if residual:
+        top = max(weights, key=lambda k: (weights[k], k))
+        weights[top] = round(weights[top] + residual, 10)
+    return weights, "model_normalized"
+
+
 TRADE_DECISION_SCHEMA: dict = {
     "type": "object",
     "required": ["action", "confidence", "reasoning"],

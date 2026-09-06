@@ -33,7 +33,27 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
             action = "HOLD"
         confidence = int(verdict.get("confidence", 0))
         reasoning = verdict.get("reasoning", "")
-        signal_weights = verdict.get("signal_weights", {})
+        # The last gate before the database. The runner normalises and stamps
+        # provenance on the V3 path, but `save_trade_result` is reachable from
+        # other callers, and an off-sum vector reached an EXECUTED order once
+        # already (ZS, cycle-v3-1788646388). Re-running the pure function here
+        # is idempotent for anything the runner already fixed.
+        from app.v3.artifacts import (
+            SIGNAL_WEIGHTS_SOURCES,
+            normalize_signal_weights,
+        )
+
+        signal_weights, _derived_source = normalize_signal_weights(
+            verdict.get("signal_weights")
+        )
+        # Prefer what the runner recorded: it saw the ORIGINAL vector, so it
+        # can distinguish "the model said this" from "we rescaled it". By the
+        # time the value reaches here it already sums to 1 and would re-derive
+        # as `model`, erasing the repair.
+        _declared = verdict.get("signal_weights_source")
+        signal_weights_source = (
+            _declared if _declared in SIGNAL_WEIGHTS_SOURCES else _derived_source
+        )
         signal_assessments = verdict.get("signal_assessments", {})
         risk_flags = verdict.get("risk_flags", [])
         stop_loss = verdict.get("stop_loss")
@@ -66,6 +86,7 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
             'confidence': confidence,
             'reasoning': reasoning[:2000] if reasoning else "",
             'signal_weights': signal_weights,
+            'signal_weights_source': signal_weights_source,
             'signal_assessments': signal_assessments,
             'risk_flags': risk_flags,
             'stop_loss': stop_loss,

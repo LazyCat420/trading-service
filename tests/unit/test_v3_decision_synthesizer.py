@@ -87,7 +87,27 @@ def test_save_trade_result_database_logic():
     assert doc["confidence"] == 80
     assert doc["reasoning"] == "Great setup"
     # Structured fields are stored as documents now, not serialized JSONB.
-    assert doc["signal_weights"] == {"quant": 0.4, "fundamental": 0.6}
+    #
+    # `signal_weights` is asserted as PROPERTIES, not as the literal the verdict
+    # supplied. Since 2026-09-06 the saver normalises through
+    # `app.v3.artifacts.normalize_signal_weights`: the canonical four keys are
+    # always present, the vector always sums to 1, and the row carries a
+    # `signal_weights_source`. Transcribing the two-key input here would pin the
+    # OLD contract and fail for having been fixed — which is exactly how this
+    # assertion broke when the normaliser landed.
+    from app.v3.artifacts import CANONICAL_SIGNAL_KEYS
+
+    sw = doc["signal_weights"]
+    assert set(sw) == set(CANONICAL_SIGNAL_KEYS)
+    assert abs(sum(sw.values()) - 1.0) < 1e-9
+    # What the model actually said survives untouched; the keys it omitted are
+    # filled with zero rather than invented.
+    assert sw["quant"] == pytest.approx(0.4)
+    assert sw["fundamental"] == pytest.approx(0.6)
+    assert sw["board"] == 0.0 and sw["debate"] == 0.0
+    # A vector we had to complete is labelled as such, so a reader can tell it
+    # from one the model emitted whole.
+    assert doc["signal_weights_source"] == "model_normalized"
     assert doc["signal_assessments"] == {"quant": "Bullish", "fundamental": "Neutral"}
     assert doc["risk_flags"] == []
 
