@@ -19,6 +19,73 @@ logger = logging.getLogger(__name__)
 
 _active_agents = set()
 
+#: Every spelling of "prompt tokens served from the prefix cache" we have seen
+#: on the wire, most specific first. Providers do not agree, and prism forwards
+#: whatever its adapter produced.
+#:
+#: MEASURED 2026-09-06. The Gold Spark's vLLM /metrics reported **79.6% of
+#: prompt tokens served from the prefix cache** (3.72M of 4.67M, block hit rate
+#: 77.5%, enable_prefix_caching=True) while `v3_agent_telemetry` said the cache
+#: did nothing for it: over 16 days, `cached_tokens > 0` on 566 of 577
+#: deepseek-v4-flash-0731 rows and on **0 of 543** rows across nemotron35,
+#: deepseek-v4-flash-vision-exp and GLM-5.3-Flash-EXL3. We read exactly one key
+#: — `cacheReadInputTokens`, the Bedrock spelling prism forwards for DeepSeek —
+#: so every local model reported a flat zero and any prompt-trimming decision
+#: taken from our own telemetry was taken blind for the boxes we run.
+_CACHED_TOKEN_KEYS: tuple[str, ...] = (
+    "cacheReadInputTokens",      # prism / Bedrock — the only one we used to read
+    "cache_read_input_tokens",
+    "cached_tokens",
+)
+#: Nested variants: (container key, inner key).
+_CACHED_TOKEN_NESTED: tuple[tuple[str, str], ...] = (
+    ("prompt_tokens_details", "cached_tokens"),      # OpenAI / vLLM
+    ("promptTokensDetails", "cachedTokens"),
+)
+
+#: One line per process, not per call: enough for an audit to tell "the
+#: provider does not send it" from "we are not reading it", without adding a
+#: log line to every agent turn.
+_seen_usage_keys: set[str] = set()
+
+
+def extract_cached_tokens(usage: dict | None) -> int:
+    """Prompt tokens served from the provider's prefix cache, whatever it calls it.
+
+    Returns the FIRST populated spelling rather than a sum: a gateway that
+    passes two names for the same figure would otherwise double it. A genuine
+    zero stays zero — a fallback key must not be able to rescue it, or the
+    metric could never go down.
+    """
+    if not isinstance(usage, dict):
+        return 0
+
+    if usage:
+        fingerprint = ",".join(sorted(str(k) for k in usage))
+        if fingerprint not in _seen_usage_keys:
+            _seen_usage_keys.add(fingerprint)
+            logger.info("[BaseAgent] provider usage keys seen: %s", fingerprint)
+
+    def _as_int(value) -> int | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return int(value) if value >= 0 else None
+
+    for key in _CACHED_TOKEN_KEYS:
+        if key in usage:
+            found = _as_int(usage.get(key))
+            if found is not None:
+                return found
+
+    for container, inner in _CACHED_TOKEN_NESTED:
+        nested = usage.get(container)
+        if isinstance(nested, dict) and inner in nested:
+            found = _as_int(nested.get(inner))
+            if found is not None:
+                return found
+
+    return 0
+
 
 def _base_agent_accepts_min_p() -> bool:
     """Does the INSTALLED lazycat SDK take `min_p` on BaseAgent?
@@ -964,7 +1031,7 @@ async def run_agent(
         # the right probe for "is prefix caching working at all": the final
         # iteration carries the longest shared prefix, so cacheReadInputTokens
         # = 0 here means the KV cache is doing nothing for this agent.
-        "cached_tokens": int(last_usage.get("cacheReadInputTokens") or 0),
+        "cached_tokens": extract_cached_tokens(last_usage),
         "cache_creation_tokens": int(last_usage.get("cacheCreationInputTokens") or 0),
         "prompt_tokens": int(
             last_usage.get("totalInputTokens")

@@ -269,10 +269,31 @@ DELIBERATION_NO_RESEARCH_TOKENS = 150_000
 #: `cycle-v3-1788642086`: `v3_board_of_directors` SUCCESS, 1 loop, 26,249
 #: prompt tokens — over the 20k floor, so it would have been recorded as
 #: "burned tokens without research" for doing exactly its job.
+#: MEASURED 2026-09-06, 16 days, adding the fourth member:
+#:
+#:     v3_bull_defense   107 runs   tools in 77 (72%)   mean 89,780 tok
+#:
+#: The debate's THIRD TURN: it reads the bear's rebuttal (the orchestrator
+#: passes include_debate_context=True) and replies. A reply that argues from
+#: what it was handed and calls nothing is the job. The 28% of its runs that
+#: are tool-less clear the 20k floor every time, because its mean prompt is
+#: 90k — so the check fired on it 11 times in 16 days (Appendix E: "genuine
+#: single-turn runs on healthy cycles [that] need a judgement call, not a
+#: constant") and a 12th time on the acceptance cycle cycle-v3-1788646388,
+#: 28,723 tokens over 1.0 loops, on a cycle that made 104 tool calls, produced
+#: three complete desks and executed three trades.
+#:
+#: It goes HERE and not in `_NON_RESEARCHING_AGENTS`: it declares
+#: TOOL_WHITELIST = ["whiteboard_read"] and made 111 successful whiteboard_read
+#: calls in the same window, so it is not structurally tool-less. Raising its
+#: floor to 150k keeps the check able to see a defense that burns a
+#: deliberation budget without reading anything; exempting it outright would
+#: not.
 DELIBERATION_AGENTS = {
     "v3_decision_synthesizer",
     "v3_debate_judge",
     "v3_board_of_directors",
+    "v3_bull_defense",
 }
 
 #: A WHOLE CYCLE that called no tool at all.

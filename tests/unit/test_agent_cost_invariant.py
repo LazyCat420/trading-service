@@ -186,3 +186,107 @@ class TestTheDeliberationExemptionNamesRealAgents:
                             side_effect=lambda k, **d: k):
             assert invariants._check_agent_cost("c") == [
                 invariants.KIND_AGENT_COST_NO_RESEARCH]
+
+
+class TestBullDefenseIsADeliberationTurn:
+    """The third false-positive class this check has produced.
+
+    MEASURED 2026-09-06 on the acceptance cycle `cycle-v3-1788646388`: exactly
+    one invariant fired,
+
+        AGENT_BURNS_TOKENS_WITHOUT_RESEARCH
+        {'agent': 'v3_bull_defense', 'tokens': 28723, 'avg_loops': 1.0}
+
+    on a cycle that made 104 tool calls, produced three complete desks and
+    executed three trades. By the definition Appendix E used when this
+    threshold was calibrated — a fire on a cycle that researched normally is a
+    false positive — that is a false positive, and it is the twelfth for this
+    agent: the same appendix measured `v3_bull_defense` at **11 false fires**
+    over 16 days, in the 33,706-36,226 token range, and called them "genuine
+    single-turn runs on healthy cycles [that] need a judgement call, not a
+    constant".
+
+    The judgement: `v3_bull_defense` is the debate's third TURN. It reads the
+    bear's rebuttal and replies; `include_debate_context=True` puts the
+    rebuttal in its prompt, so a reply that cites what it was given and calls
+    nothing is the job, not a fault. Measured over 16 days: 107 runs, tools in
+    77 of them (72%), mean 89,780 prompt tokens — so the 28% that are tool-less
+    clear the 20k floor every single time.
+
+    It is NOT structurally tool-less: it declares `TOOL_WHITELIST =
+    ["whiteboard_read"]` and made 111 successful `whiteboard_read` calls in
+    that window. That is why it belongs in DELIBERATION_AGENTS (150k, where the
+    judge and the synthesizer sit) and not in `_NON_RESEARCHING_AGENTS` (exempt
+    entirely) — a bull defense burning 150k without a tool is still worth
+    hearing about.
+    """
+
+    def test_bull_defense_is_exempted_at_the_deliberation_threshold(self):
+        from app.v3 import invariants
+
+        assert "v3_bull_defense" in invariants.DELIBERATION_AGENTS
+        assert "v3_bull_defense" not in invariants._NON_RESEARCHING_AGENTS
+
+    def test_the_acceptance_cycle_row_no_longer_fires(self):
+        """The live specimen: 28,723 tokens over 1.0 loops."""
+        import unittest.mock as m
+
+        from app.v3 import invariants
+
+        recorded = []
+        with m.patch.object(invariants.mongo_store, "aggregate",
+                            return_value=[{"_id": "v3_bull_defense",
+                                           "tok": 28_723, "loops": 1.0}]), \
+             m.patch.object(invariants, "record_violation",
+                            side_effect=lambda k, **d: (recorded.append(k), k)[1]):
+            assert invariants._check_agent_cost("cycle-v3-1788646388") == []
+        assert recorded == []
+
+    def test_a_bull_defense_that_burns_a_deliberation_budget_still_fires(self):
+        """The exemption raises the floor to 150k; it does not remove it.
+        Without this the change would be indistinguishable from deleting the
+        check for that agent."""
+        import unittest.mock as m
+
+        from app.v3 import invariants
+
+        recorded = []
+        with m.patch.object(invariants.mongo_store, "aggregate",
+                            return_value=[{"_id": "v3_bull_defense",
+                                           "tok": 200_000, "loops": 1.0}]), \
+             m.patch.object(invariants, "record_violation",
+                            side_effect=lambda k, **d: (recorded.append(k), k)[1]):
+            assert invariants._check_agent_cost("c") != []
+        assert recorded == [invariants.KIND_AGENT_COST_NO_RESEARCH]
+
+    def test_every_deliberation_agent_is_a_real_agent_module(self):
+        """Stronger than the grep guard above.
+
+        `1f7b66f` added `v3_board_summary` and `v3_board_consensus` — names
+        that appear nowhere in the tree — and both survived review. A substring
+        grep over app/ catches a name that appears NOWHERE, but not one that
+        happens to appear in a comment. Every exempted name must be some
+        module's declared AGENT_NAME.
+        """
+        import importlib
+        import pkgutil
+
+        from app.v3 import agents as agents_pkg
+        from app.v3 import invariants
+
+        declared = set()
+        for mod in pkgutil.iter_modules(agents_pkg.__path__):
+            try:
+                m = importlib.import_module(f"app.v3.agents.{mod.name}")
+            except Exception:
+                continue
+            name = getattr(m, "AGENT_NAME", None)
+            if isinstance(name, str) and name:
+                declared.add(name)
+
+        assert declared, "no agent module declared an AGENT_NAME — the probe is broken"
+        ghosts = sorted(invariants.DELIBERATION_AGENTS - declared)
+        assert ghosts == [], (
+            f"exempted names that are not any agent module's AGENT_NAME: {ghosts} "
+            f"(declared: {sorted(declared)})"
+        )
