@@ -8,6 +8,7 @@ Ported from trading-service SmartClient + news_collector patterns.
 Strips all trading-specific logic — this is pure HTTP fetching.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -90,6 +91,20 @@ def _extract_text_from_html(html: str, max_chars: int = 15000) -> str:
         return ""
 
 
+def _extract_with_selectors(html: str, extract_map: dict[str, str]) -> dict[str, Any]:
+    """CSS-selector extraction. Sync and CPU-bound — call it in a thread."""
+    data: dict[str, Any] = {}
+    soup = BeautifulSoup(html, "lxml")
+    for field_name, selector in extract_map.items():
+        try:
+            elements = soup.select(selector)
+        except Exception:  # noqa: BLE001 — a caller's bad selector is not a crash
+            data[field_name] = []
+            continue
+        data[field_name] = [el.get_text(strip=True) for el in elements]
+    return data
+
+
 class HttpEngine(BaseEngine):
     """Plain HTTP scraping engine using shared session manager.
 
@@ -106,7 +121,16 @@ class HttpEngine(BaseEngine):
         try:
             async with rate_limiter.acquire(domain):
                 # options is not popped, but we can access headers or cookies here if needed
-                response = await session_manager.client.get(url)
+                # Honour the caller's budget. This used to fetch with the
+                # client default (30s) whatever `options["timeout"]` said, so
+                # the auto ladder's first leg alone could outlast the caller's
+                # entire deadline and every escalation past it was wasted work.
+                timeout_s = options.get("timeout")
+                if timeout_s:
+                    # Callers speak milliseconds (playwright's unit); httpx wants seconds.
+                    response = await session_manager.client.get(url, timeout=float(timeout_s) / 1000.0)
+                else:
+                    response = await session_manager.client.get(url)
 
             content_type = response.headers.get("content-type", "")
 
@@ -135,18 +159,21 @@ class HttpEngine(BaseEngine):
             html = response.text
             data: dict[str, Any] = {}
 
-            # Apply CSS selector extraction if requested
+            # Everything below parses HTML, and a news page is routinely
+            # multi-megabyte (thestreet.com measured at 2.3MB). trafilatura runs
+            # a full lxml parse plus a readability/justext fallback, then
+            # BeautifulSoup may parse it AGAIN, then _clean_html_fallback runs
+            # five DOTALL regex sweeps — all of it CPU-bound C and all of it
+            # used to sit directly on the event loop, in a process whose Docker
+            # healthcheck has a 5s timeout. One C call starves the loop whole:
+            # a worker thread is the only thing that frees it.
             extract_map = options.get("extract")
             if extract_map and isinstance(extract_map, dict):
-                soup = BeautifulSoup(html, "lxml")
-                for field_name, selector in extract_map.items():
-                    elements = soup.select(selector)
-                    data[field_name] = [el.get_text(strip=True) for el in elements]
+                data = await asyncio.to_thread(_extract_with_selectors, html, extract_map)
 
-            # Extract article text
-            extracted_text = _extract_text_from_html(html)
+            extracted_text = await asyncio.to_thread(_extract_text_from_html, html)
             if not extracted_text:
-                extracted_text = _clean_html_fallback(html)
+                extracted_text = await asyncio.to_thread(_clean_html_fallback, html)
 
             # `success` must reflect the status. This returned True for ANY
             # status, so a 410 came back as

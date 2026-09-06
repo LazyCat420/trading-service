@@ -80,21 +80,44 @@ DEFAULT_MAX_ENTRIES = 4096
 # volume to keep the memory across deploys.
 DEFAULT_STORE_PATH = os.getenv("SCRAPER_FAILURE_CACHE_PATH", "/app/logs/failure_cache.db")
 
+# Drop a domain_quality row untouched for this long. Long enough that a domain
+# scraped even occasionally keeps its learned history — the whole value of the
+# table — short enough that the row set tracks the feeds actually in use.
+DOMAIN_MAX_AGE_S = float(os.getenv("SCRAPER_DOMAIN_MAX_AGE_S", str(90 * 24 * 3600)))
+
 # Expiries are stored as wall-clock (time.time), NOT time.monotonic: monotonic
 # epochs are per-process, so two workers cannot compare each other's values.
 _now = time.time
 
 
-# SQLite's way of saying "someone else is writing, try again" — a TRANSIENT
-# condition, and the normal state of affairs when two workers boot together.
-_TRANSIENT_MARKERS = ("database is locked", "database table is locked",
-                      "database is busy")
+# Which sqlite faults are PERMANENT. Inverted deliberately: the old version
+# listed the three transient strings it had seen and disabled the store on
+# everything else, so a fault it had not met yet was permanent by default.
+#
+# On a Synology volume that is the wrong default. "disk I/O error" and "unable
+# to open database file" both appear during a remount, a momentarily full disk,
+# or while the -wal/-shm sidecars cannot be created — all transient, none in the
+# old list, and each one enough to switch the shared store off for the life of
+# the process behind a single WARNING.
+_PERMANENT_MARKERS = (
+    "attempt to write a readonly database",
+    "no such table",
+    "no such column",
+    "file is not a database",
+    "database disk image is malformed",
+)
 
 
 def _is_transient(exc: Exception) -> bool:
-    return isinstance(exc, sqlite3.OperationalError) and any(
-        m in str(exc).lower() for m in _TRANSIENT_MARKERS
-    )
+    """Should this fault be ridden out rather than disabling the store?
+
+    Only a fault that will still be there next time is permanent. Corruption
+    (sqlite3.DatabaseError that is not an OperationalError) always is.
+    """
+    if isinstance(exc, sqlite3.OperationalError):
+        text = str(exc).lower()
+        return not any(m in text for m in _PERMANENT_MARKERS)
+    return False
 
 
 class SqliteFailureStore:
@@ -152,8 +175,10 @@ class SqliteFailureStore:
                         "  domain TEXT PRIMARY KEY,"
                         "  thin_streak INTEGER NOT NULL DEFAULT 0,"
                         "  good_count INTEGER NOT NULL DEFAULT 0,"
-                        "  last_thin_at REAL NOT NULL DEFAULT 0)"
+                        "  last_thin_at REAL NOT NULL DEFAULT 0,"
+                        "  last_seen REAL NOT NULL DEFAULT 0)"
                     )
+                    self._migrate(conn)
                 self.enabled = True
                 return
             except Exception as e:  # noqa: BLE001
@@ -162,6 +187,41 @@ class SqliteFailureStore:
                     continue
                 self._disable(e)
                 return
+
+    # Bump when the schema changes, and add the ALTERs to _migrate.
+    _SCHEMA_VERSION = 1
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Bring an existing database up to _SCHEMA_VERSION.
+
+        `CREATE TABLE IF NOT EXISTS` was the only schema code here, which was
+        survivable while the file died with every rebuild. Since 3e5651c it
+        lives on a named volume and OUTLIVES the deploy, so an old database now
+        meets new code every time. Without a migration path the first added
+        column would raise "no such column" — a PERMANENT fault — and silently
+        disable the shared store on every worker, forever, behind one warning.
+        """
+        current = conn.execute("PRAGMA user_version").fetchone()[0]
+        if current == self._SCHEMA_VERSION:
+            return
+        if current > self._SCHEMA_VERSION:
+            logger.warning(
+                "[failure_cache] database is schema v%d, this code expects v%d — "
+                "a newer build wrote it; leaving it alone",
+                current, self._SCHEMA_VERSION,
+            )
+            return
+
+        if current < 1:
+            # v1: `last_seen`, so domain_quality rows can be aged out. Without a
+            # timestamp the table only ever grows, on a volume that now persists.
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(domain_quality)")}
+            if "last_seen" not in cols:
+                conn.execute("ALTER TABLE domain_quality ADD COLUMN last_seen REAL NOT NULL DEFAULT 0")
+                conn.execute("UPDATE domain_quality SET last_seen = last_thin_at WHERE last_seen = 0")
+                logger.info("[failure_cache] migrated domain_quality to v1 (last_seen)")
+
+        conn.execute(f"PRAGMA user_version = {self._SCHEMA_VERSION}")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=10.0)
@@ -240,14 +300,26 @@ class SqliteFailureStore:
         except Exception as e:  # noqa: BLE001
             self._handle(e, "forget")
 
-    def prune(self) -> int:
-        """Drop expired rows. Returns how many went."""
+    def prune(self, domain_max_age_s: float = DOMAIN_MAX_AGE_S) -> int:
+        """Drop expired rows from BOTH tables. Returns how many went.
+
+        `domain_quality` had no eviction at all — no code anywhere deleted from
+        it — so it grew monotonically with every distinct domain ever scraped,
+        on a volume that now survives rebuilds. 254 rows on 2026-09-03 and only
+        ever up. A table with a producer for its growth and none for its shrink
+        is a leak with a slow fuse.
+        """
         if not self.enabled:
             return 0
         try:
             with self._lock, self._connect() as conn:
                 cur = conn.execute("DELETE FROM dead_urls WHERE expires_at <= ?", (_now(),))
-                return cur.rowcount or 0
+                gone = cur.rowcount or 0
+                cur = conn.execute(
+                    "DELETE FROM domain_quality WHERE last_seen > 0 AND last_seen <= ?",
+                    (_now() - domain_max_age_s,),
+                )
+                return gone + (cur.rowcount or 0)
         except Exception as e:  # noqa: BLE001
             self._handle(e, "prune")
             return 0
@@ -288,17 +360,19 @@ class SqliteFailureStore:
             with self._lock, self._connect() as conn:
                 if good:
                     conn.execute(
-                        "INSERT INTO domain_quality(domain, thin_streak, good_count, last_thin_at) "
-                        "VALUES (?,0,1,0) ON CONFLICT(domain) DO UPDATE SET "
-                        "thin_streak=0, good_count=domain_quality.good_count+1",
-                        (domain,),
+                        "INSERT INTO domain_quality(domain, thin_streak, good_count, last_thin_at, last_seen) "
+                        "VALUES (?,0,1,0,?) ON CONFLICT(domain) DO UPDATE SET "
+                        "thin_streak=0, good_count=domain_quality.good_count+1, "
+                        "last_seen=excluded.last_seen",
+                        (domain, now),
                     )
                 else:
                     conn.execute(
-                        "INSERT INTO domain_quality(domain, thin_streak, good_count, last_thin_at) "
-                        "VALUES (?,1,0,?) ON CONFLICT(domain) DO UPDATE SET "
-                        "thin_streak=domain_quality.thin_streak+1, last_thin_at=excluded.last_thin_at",
-                        (domain, now),
+                        "INSERT INTO domain_quality(domain, thin_streak, good_count, last_thin_at, last_seen) "
+                        "VALUES (?,1,0,?,?) ON CONFLICT(domain) DO UPDATE SET "
+                        "thin_streak=domain_quality.thin_streak+1, "
+                        "last_thin_at=excluded.last_thin_at, last_seen=excluded.last_seen",
+                        (domain, now, now),
                     )
         except Exception as e:  # noqa: BLE001
             self._handle(e, "record_quality")
@@ -387,6 +461,11 @@ class FailureCache:
             del self._entries[url]
 
         if self.store is not None:
+            # Also from the read path. `record()` is the only other caller and
+            # it fires only on a 404/410 — measured, 8 rows in 14 days — so
+            # pruning was effectively never reached. _maybe_prune is already
+            # interval-guarded, so this is cheap.
+            self._maybe_prune()
             found = self.store.check(url)
             if found:
                 reason, expires_at = found

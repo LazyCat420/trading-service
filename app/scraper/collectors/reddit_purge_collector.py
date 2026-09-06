@@ -43,6 +43,7 @@ class TickerValidator:
         }
 
     def validate_ticker(self, ticker: str) -> bool:
+        """Blocking. Prefer :meth:`validate_ticker_async` from async code."""
         ticker = ticker.upper().strip()
         if ticker in self.banned_words or len(ticker) < 2 or len(ticker) > 5:
             return False
@@ -59,9 +60,28 @@ class TickerValidator:
             self.cache[ticker] = True
             return True
         except Exception as e:
-            logger.debug(f"[reddit-purge] Validation error for {ticker}: {e}")
-            self.cache[ticker] = False
+            # Do NOT cache. An exception here is Yahoo rate-limiting or a
+            # network blip, which says nothing about whether the symbol exists.
+            # Caching False made one 429 permanently misclassify a real ticker
+            # for the life of the process — and the cache is checked before
+            # everything, so it never got a second chance.
+            logger.debug(f"[reddit-purge] Validation error for {ticker} (not cached): {e}")
             return False
+
+    async def validate_ticker_async(self, ticker: str) -> bool:
+        """`validate_ticker` off the event loop.
+
+        yf.Ticker().history() is a synchronous HTTP round trip. Called straight
+        from the async `collect()`, sixty of them serialised on the uvicorn
+        worker's loop — during which that worker answered no /health, served no
+        concurrent scrape, and advanced no other coroutine.
+        """
+        ticker = ticker.upper().strip()
+        if ticker in self.banned_words or len(ticker) < 2 or len(ticker) > 5:
+            return False
+        if ticker in self.cache:
+            return self.cache[ticker]
+        return await asyncio.to_thread(self.validate_ticker, ticker)
 
 
 class RedditPurgeCollector:
@@ -407,7 +427,7 @@ Output ONLY a JSON list of indexes: [0, 5, 2]
         # 5. Validate tickers and format response
         results = []
         for ticker, score in ticker_scores.items():
-            if self.validator.validate_ticker(ticker):
+            if await self.validator.validate_ticker_async(ticker):
                 results.append({
                     "ticker": ticker,
                     "score": score,
