@@ -96,3 +96,16 @@ def test_an_unreadable_payload_releases_the_job_as_error():
     assert "error" in statuses, (
         "the job was claimed and never released — this is the stall that cost "
         "cycle-v3-1787193855 its autoresearch report")
+
+
+def test_a_stopped_cycle_payload_reaches_the_runner_with_its_partial_flag():
+    """2026-09-06: the producer now enqueues from the stopped tail too. The
+    poller must hand the partial summary through unchanged."""
+    runner = AsyncMock()
+    summary = {"status": "stopped", "partial": True, "tickers_final": ["AVGO"], "counts_source": "store"}
+    _run_one_poll(("job_s", "AUTORESEARCH", {"cycle_id": "cycle-v3-1788668370", "cycle_summary": summary}), runner)
+    runner.assert_awaited_once()
+    job_id, payload = runner.await_args.args[:2]
+    assert job_id == "job_s"
+    assert payload["cycle_id"] == "cycle-v3-1788668370"
+    assert payload["cycle_summary"]["partial"] is True and payload["cycle_summary"]["tickers_final"] == ["AVGO"]
