@@ -9,6 +9,7 @@ import yfinance as yf
 from fake_useragent import UserAgent
 
 from app.scraper.core.rate_limiter import rate_limiter
+from app.scraper.core.url_guard import UnsafeUrlError, check_url
 from app.scraper.core.session_manager import session_manager
 from app.scraper.collectors.reddit_collector import _get_reddit_headers, _parse_rss_entry
 
@@ -252,7 +253,22 @@ class RedditPurgeCollector:
         selected = []
         batch_size = 20
         
-        prism_url = os.getenv("PRISM_URL", "http://10.0.0.16:7777/agent")
+        # Honour the parameter that /collect accepts, advertises in its
+        # OpenAPI, and threads all the way down here — it was then ignored in
+        # favour of the env var, so its only real effect was as a truthiness
+        # gate on whether the LLM filter ran at all. An operator pointing a
+        # purge run at a different endpoint got a successful run against the
+        # default one.
+        #
+        # It is caller-supplied and becomes an outbound request, so it goes
+        # through the same guard as every other caller-supplied URL.
+        prism_url = ollama_host or os.getenv("PRISM_URL", "http://10.0.0.16:7777/agent")
+        if ollama_host:
+            try:
+                check_url(ollama_host, field="ollama_host")
+            except UnsafeUrlError as exc:
+                logger.warning("[reddit-purge] rejecting ollama_host: %s", exc)
+                return candidates
         base_url = prism_url
         if base_url.endswith("/agent"):
             base_url = base_url[:-6] + "/chat"

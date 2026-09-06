@@ -28,6 +28,12 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, UTC
 
 import httpx
+from urllib.parse import quote_plus
+
+# Every keyword provider interpolates the caller's query straight into a URL.
+# Unencoded, "Procter & Gamble guidance" sends q="Procter " plus a spurious
+# parameter named "Gamble guidance" — the provider answers 200 with articles for
+# a truncated query, so the result is silently wrong rather than an error.
 
 logger = logging.getLogger(__name__)
 
@@ -259,7 +265,16 @@ async def _fetch_alphavantage(
 
         ticker_sentiments = item.get("ticker_sentiment", [])
         article_tickers = [ts["ticker"] for ts in ticker_sentiments if ts.get("ticker")]
-        overall_sentiment = float(item.get("overall_sentiment_score", 0) or 0)
+        # `or 0` turned an absent score into 0.0, which on AlphaVantage's own
+        # scale MEANS neutral — a measured claim. marketaux gets this right
+        # (sentiment stays None when the provider sent none); this path made the
+        # two providers' populations incomparable, and any average over
+        # sentiment silently counted unscored articles as neutral votes.
+        _raw_sentiment = item.get("overall_sentiment_score")
+        try:
+            overall_sentiment = float(_raw_sentiment) if _raw_sentiment is not None else None
+        except (TypeError, ValueError):
+            overall_sentiment = None
 
         title = item.get("title", "")
         article_url = item.get("url", "")
@@ -336,7 +351,7 @@ async def _fetch_newsapi(
 
     url = (
         f"https://newsapi.org/v2/everything"
-        f"?q={query}&language=en&sortBy=publishedAt"
+        f"?q={quote_plus(query)}&language=en&sortBy=publishedAt"
         f"&pageSize={limit}&apiKey={api_key}"
     )
     resp = await client.get(url)
@@ -372,7 +387,7 @@ async def _fetch_gnews(
         return []
 
     url = (
-        f"https://gnews.io/api/v4/search?q={query}&lang=en&max={limit}&token={api_key}"
+        f"https://gnews.io/api/v4/search?q={quote_plus(query)}&lang=en&max={limit}&token={api_key}"
     )
     resp = await client.get(url)
     if resp.status_code != 200:
@@ -408,7 +423,7 @@ async def _fetch_currentsapi(
 
     url = (
         f"https://api.currentsapi.services/v1/search"
-        f"?keywords={query}&language=en&limit={limit}&apiKey={api_key}"
+        f"?keywords={quote_plus(query)}&language=en&limit={limit}&apiKey={api_key}"
     )
     resp = await client.get(url)
     if resp.status_code != 200:
@@ -445,7 +460,7 @@ async def _fetch_thenewsapi(
 
     url = (
         f"https://api.thenewsapi.com/v1/news/all"
-        f"?search={query}&language=en&limit={limit}&api_token={api_key}"
+        f"?search={quote_plus(query)}&language=en&limit={limit}&api_token={api_key}"
     )
     resp = await client.get(url)
     if resp.status_code != 200:
@@ -481,7 +496,7 @@ async def _fetch_worldnewsapi(
 
     url = (
         f"https://api.worldnewsapi.com/search-news"
-        f"?text={query}&language=en&number={limit}"
+        f"?text={quote_plus(query)}&language=en&number={limit}"
     )
     resp = await client.get(url, headers={"x-api-key": api_key})
     if resp.status_code != 200:

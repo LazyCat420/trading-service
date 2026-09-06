@@ -50,7 +50,7 @@ def test_a_competing_pass_does_not_starve_this_one(monkeypatch):
     shared = asyncio.Semaphore(5)          # stands in for scraper_client's pool
     fetched_urls: list[str] = []
 
-    async def fake_scrape(url: str, max_chars: int = 15000) -> str:
+    async def fake_scrape(url: str, max_chars: int = 15000, **_kw) -> str:
         async with shared:                  # the contended resource
             await asyncio.sleep(0.05)
             fetched_urls.append(url)
@@ -94,7 +94,7 @@ def test_a_pass_that_fetches_nothing_still_says_so(monkeypatch, caplog):
     prints nothing. A cap that does not log what it dropped reads as full
     coverage.
     """
-    async def never_returns(url: str, max_chars: int = 15000) -> str:
+    async def never_returns(url: str, max_chars: int = 15000, **_kw) -> str:
         await asyncio.sleep(30)             # outlives BOTH the budget and the queue allowance
         return "x" * 1500
 
@@ -129,7 +129,7 @@ def test_two_passes_take_turns_rather_than_interleaving(monkeypatch):
     in_flight = {"finnhub": 0, "polygon": 0}
     overlaps: list[tuple[int, int]] = []
 
-    async def fake_scrape(url: str, max_chars: int = 15000) -> str:
+    async def fake_scrape(url: str, max_chars: int = 15000, **_kw) -> str:
         who = "finnhub" if "finnhub" in url else "polygon"
         in_flight[who] += 1
         if in_flight["finnhub"] and in_flight["polygon"]:

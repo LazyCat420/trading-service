@@ -131,7 +131,7 @@ async def test_the_shortest_summaries_are_attempted_first(monkeypatch):
     ]
     seen = []
 
-    async def _scrape(url):
+    async def _scrape(url, **_kw):
         seen.append(url)
         return "w" * 3000
 
@@ -149,7 +149,7 @@ async def test_concurrency_is_limited(monkeypatch):
     live = 0
     peak = 0
 
-    async def _scrape(url):
+    async def _scrape(url, **_kw):
         nonlocal live, peak
         live += 1
         peak = max(peak, live)
@@ -170,7 +170,7 @@ async def test_a_slow_scraper_cannot_stall_the_collection(monkeypatch):
     monkeypatch.setattr(bu, "UPGRADE_BUDGET_S", 0.05)
     monkeypatch.setattr(bu, "UPGRADE_CONCURRENCY", 8)
 
-    async def _scrape(url):
+    async def _scrape(url, **_kw):
         await asyncio.sleep(5)
         return "w" * 3000
 
@@ -183,7 +183,7 @@ async def test_a_slow_scraper_cannot_stall_the_collection(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_one_failing_url_does_not_lose_the_others():
-    async def _scrape(url):
+    async def _scrape(url, **_kw):
         if url.endswith("bad"):
             raise RuntimeError("boom")
         return "w" * 3000

@@ -7,6 +7,7 @@ with an automated Playwright fallback if rate-limited or blocked.
 
 import httpx
 import logging
+import os
 import urllib.parse
 from bs4 import BeautifulSoup
 from typing import Dict, Any, List
@@ -18,17 +19,47 @@ logger = logging.getLogger(__name__)
 DUCKDUCKGO_HTML_BASE = "https://html.duckduckgo.com/html/"
 DUCKDUCKGO_BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
+def ddg_disabled() -> bool:
+    """Is DuckDuckGo search boxed out in this deployment?
+
+    Read at CALL time, not import time, so the flag can be armed from the
+    environment without a rebuild. deploy.sh appends DISABLE_DDG_SEARCH=true to
+    the remote .env on every deploy — DDG does not serve this IP.
+    """
+    return os.getenv("DISABLE_DDG_SEARCH", "false").lower() == "true"
+
+
 class DuckDuckGoCollector:
     """Collector to search DuckDuckGo directly."""
-    
+
     def __init__(self):
-        self.playwright = PlaywrightEngine()
+        # Lazily constructed: PlaywrightEngine() is cheap, but building it in
+        # __init__ made every disabled-path caller pay for an object it would
+        # never use, and obscured that the fallback exists at all.
+        self._playwright = None
+
+    @property
+    def playwright(self) -> PlaywrightEngine:
+        if self._playwright is None:
+            self._playwright = PlaywrightEngine()
+        return self._playwright
 
     async def search(self, query: str, limit: int = 10, date_restrict: str = None) -> List[Dict[str, Any]]:
         """
         Search DuckDuckGo using HTTP POST, fallback to Playwright GET.
         date_restrict can be: d1 (day), w1 (week), m1 (month), etc.
         """
+        # The gate belongs HERE, at the shared surface, not in one caller.
+        # DISABLE_DDG_SEARCH had exactly one reader — reddit_collector.search —
+        # so the /collect duckduckgo route and youtube's DDG-first search path
+        # both ignored it and still paid the full cost in production: an HTTP
+        # attempt against a 15s timeout, then a whole Chromium launch, to fetch
+        # a page DDG will not serve this IP either way. A flag that governs only
+        # the callers that remember it governs nothing.
+        if ddg_disabled():
+            logger.info("[duckduckgo] search disabled (DISABLE_DDG_SEARCH) — skipping '%s'", query)
+            return []
+
         results = await self._search_http(query, limit, date_restrict)
         if not results:
             logger.info(f"[duckduckgo] HTTP search returned 0 results or failed for '{query}'. Trying Playwright fallback...")

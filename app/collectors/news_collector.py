@@ -248,27 +248,56 @@ async def _translate_foreign_text(text: str, publisher: str) -> str:
     return text
 
 
-async def _scrape_article_body_via_service(url: str, max_chars: int = 15000) -> str:
-    """Scrape article body using the auto engine on scraper-service."""
+async def _scrape_article_body_via_service(
+    url: str, max_chars: int = 15000, engine: str = "auto", timeout_s: float | None = None
+) -> str:
+    """Scrape an article body via scraper-service.
+
+    `engine` is a parameter because the right choice depends on the CALLER'S
+    BUDGET, and the two callers have budgets an order of magnitude apart. See
+    `_scrape_with_timeout`.
+    """
     from app.services.scraper_client import scraper_client
 
-    res = await scraper_client.scrape(url, engine="auto", options={"max_chars": max_chars})
+    options: dict = {"max_chars": max_chars}
+    if timeout_s:
+        # Tell the server the deadline too. Cancelling on this side does not
+        # stop the server: FastAPI does not cancel a non-streaming handler on
+        # client disconnect, so it runs the whole ladder — and launches a
+        # Chromium — for a response nobody will read.
+        options["timeout"] = int(timeout_s * 1000)
+    res = await scraper_client.scrape(url, engine=engine, options=options)
     if res and res.get("success") and res.get("content"):
         return res["content"]
     return ""
 
 
 async def _scrape_with_timeout(url: str, fallback_summary: str, timeout: float = 4.0,
-                               stats: dict | None = None) -> str:
+                               stats: dict | None = None, engine: str = "http") -> str:
     """Scrape article body with a strict timeout, falling back to the API summary.
 
     Per-URL lines stay at debug (the 4s cap fires often by design), but the
     RATE must stay visible: f881a63 cut the timeout 15s->4s and demoted the
     warning in the same commit, hiding the fallback rate the new cap inflates.
     `stats` lets collect_feed log one scraped/fallback summary per feed.
+
+    `engine` defaults to "http" rather than "auto", because a 4s budget cannot
+    receive an auto result. Server-side, auto is a sequential ladder: the HTTP
+    leg alone carries a 30s httpx timeout, and only then does it escalate to
+    Playwright. So at 4s this side always cancelled first — and because FastAPI
+    does not cancel a non-streaming handler on client disconnect, the server
+    then ran the full ladder and launched a whole browser for a body that had
+    already been discarded. Every escalation this cap paid for was guaranteed
+    waste, on exactly the JS-rendered pages that needed it.
+
+    The escalating path still exists where a budget can actually receive it:
+    body_upgrade calls with a ~20s budget.
     """
     try:
-        body = await asyncio.wait_for(_scrape_article_body_via_service(url), timeout=timeout)
+        body = await asyncio.wait_for(
+            _scrape_article_body_via_service(url, engine=engine, timeout_s=timeout),
+            timeout=timeout,
+        )
         if body:
             if stats is not None:
                 stats["scraped"] = stats.get("scraped", 0) + 1

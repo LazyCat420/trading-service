@@ -269,7 +269,15 @@ class NewsCollector:
                     )
                 except Exception:
                     pass
-        return datetime.utcnow()
+        # None, not utcnow(). The return type already allows it, _serialize_article
+        # already emits null for it, and the CONSUMER already handles it:
+        # trading-service sets published_at_estimated=True and stamps its own
+        # arrival time when the field is absent. Returning now() laundered a
+        # dateless entry straight past that flag — the row landed with
+        # published_at = the collection instant and estimated=False, which is
+        # indistinguishable from an article genuinely published minutes ago, and
+        # every freshness window and "Recent News" ranking then trusted it.
+        return None
 
 
 def _serialize_article(article: NewsArticle) -> dict:

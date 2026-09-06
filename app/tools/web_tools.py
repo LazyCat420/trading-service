@@ -27,10 +27,16 @@ async def scrape_url(url: str) -> str:
                 "url": url,
                 "content": data.get("content", "")[:8000]
             })
+        # Reachable at last. scraper_client.scrape used to return None on ANY
+        # failure, so the `data.get("error")` half of this ternary was dead code
+        # and the model was always told "Null response" — for a 410, for a
+        # skipped domain, for a bot-wall alike. It now gets the scraper's own
+        # reason and can act on it instead of concluding the service is broken.
         return json.dumps({
             "status": "error",
             "url": url,
-            "message": data.get("error", "Unknown scrape failure") if data else "Null response"
+            "message": data.get("error") or "Unknown scrape failure" if data else "Null response",
+            "engine_used": data.get("engine_used") if data else None,
         })
     except Exception as e:
         logger.error(f"[WebTools] scrape_url error: {e}", exc_info=True)

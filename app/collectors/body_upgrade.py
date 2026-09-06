@@ -189,7 +189,12 @@ async def upgrade_bodies(candidates: list[tuple[str | None, str | None]]) -> dic
         nonlocal failures
         async with sem:
             try:
-                body = await _scrape_article_body_via_service(url)
+                # engine="auto" HERE, not in the news sweep: this pass has a
+                # ~20s budget, which is long enough to actually receive an
+                # escalation to Playwright.
+                body = await _scrape_article_body_via_service(
+                    url, engine="auto", timeout_s=UPGRADE_BUDGET_S
+                )
             except Exception as e:  # noqa: BLE001 — one URL must not stop the run
                 failures += 1
                 logger.debug("[body_upgrade] failed for %s: %s", url, e)

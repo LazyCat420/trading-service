@@ -71,17 +71,31 @@ def _is_channel_blocked(channel_handle: str) -> bool:
 
 
 def _log_discovered_channel(
-    channel_handle: str, display_name: str, view_count: int = 0
+    channel_handle: str, display_name: str, view_count: int | None = None
 ):
-    """Log a channel found via search to discovered_channels for review."""
+    """Log a channel found via search to discovered_channels for review.
+
+    `view_count` may be None — the RSS transport did not report it. An unknown
+    must NOT enter the average: folding it in as 0 drags avg_view_count toward
+    zero in proportion to how often that transport is used, and the result is a
+    number that looks measured and is not. discovery_count still increments,
+    because the channel WAS discovered; only the average abstains.
+    """
     existing = mongo_query.find_row('discovered_channels', {'channel_handle': channel_handle}, ['discovery_count', 'avg_view_count'])
 
+    now = datetime.datetime.now(datetime.timezone.utc)
     if existing:
         new_count = existing[0] + 1
-        new_avg = ((existing[1] or 0) * existing[0] + view_count) / new_count
-        mongo_store.update_docs('discovered_channels', {'channel_handle': channel_handle}, {'$set': {'discovery_count': new_count, 'avg_view_count': new_avg, 'last_seen': datetime.datetime.now(datetime.timezone.utc)}})
+        update = {'discovery_count': new_count, 'last_seen': now}
+        if view_count is not None:
+            prev_avg = existing[1]
+            if prev_avg is None:
+                update['avg_view_count'] = view_count
+            else:
+                update['avg_view_count'] = (prev_avg * existing[0] + view_count) / new_count
+        mongo_store.update_docs('discovered_channels', {'channel_handle': channel_handle}, {'$set': update})
     else:
-        mongo_store.insert_docs('discovered_channels', [{'channel_handle': channel_handle, 'display_name': display_name, 'discovery_count': 1, 'avg_view_count': view_count, 'status': 'pending', 'first_seen': datetime.datetime.now(datetime.timezone.utc), 'last_seen': datetime.datetime.now(datetime.timezone.utc)}])
+        mongo_store.insert_docs('discovered_channels', [{'channel_handle': channel_handle, 'display_name': display_name, 'discovery_count': 1, 'avg_view_count': view_count, 'status': 'pending', 'first_seen': now, 'last_seen': now}])
 
 
 async def collect_channel(
@@ -180,7 +194,7 @@ async def collect_for_ticker(ticker: str, max_results: int = 15, since: datetime
 
                 is_seed = mongo_query.find_row('youtube_channels', {'channel_handle': channel_handle}, ['channel_handle'])
                 if not is_seed:
-                    view_count = video.get("view_count", 0) or 0
+                    view_count = video.get("view_count")
                     _log_discovered_channel(
                         channel_handle, channel_name, view_count
                     )
@@ -222,7 +236,10 @@ async def _process_video(
     channel_name = video.get("channel", channel)
     raw_transcript = video.get("transcript", "")
     thumbnail_url = video.get("thumbnail_url", video.get("thumbnail", ""))
-    duration = video.get("duration_secs", video.get("duration", 0)) or 0
+    # Keep None as None: "this transport reports no duration" is not "0 seconds".
+    duration = video.get("duration_secs", video.get("duration"))
+    if duration is not None:
+        duration = int(duration) or None
 
     if not raw_transcript or len(raw_transcript) < 50:
         return "no_caption"

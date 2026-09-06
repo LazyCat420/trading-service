@@ -160,7 +160,12 @@ def _post_to_dataclass(post: dict, subreddit: str) -> RedditPost:
         upvote_ratio=post.get("upvote_ratio", 0.0),
         awards=post.get("total_awards_received", 0),
         permalink=post.get("permalink", ""),
-        image_urls=_extract_image_urls(post),
+        # Honour a pre-extracted list. _parse_rss_entry walks the entry's <img>
+        # tags and puts them here, and this then recomputed from scratch via
+        # _extract_image_urls, which reads only post["url"] — on the RSS path
+        # that is the /comments/ permalink, so it always returned []. The
+        # producer ran, and the consumer threw its output away.
+        image_urls=post.get("image_urls") or _extract_image_urls(post),
     )
 
 
@@ -314,7 +319,11 @@ class RedditCollector:
         seen_ids: set[str] = set()
         ddg_success = False
 
-        disable_ddg = os.getenv("DISABLE_DDG_SEARCH", "false").lower() == "true"
+        # One source of truth for the flag — the collector that owns it. This
+        # early-out still matters (it skips the whole per-subreddit loop), but
+        # the DECISION is no longer duplicated here.
+        from app.scraper.collectors.duckduckgo_collector import ddg_disabled
+        disable_ddg = ddg_disabled()
 
         if not disable_ddg:
             for sub in subreddits:

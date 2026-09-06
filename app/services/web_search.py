@@ -33,6 +33,10 @@ logger = logging.getLogger(__name__)
 _MIN_SEARCH_INTERVAL = 3.0
 _last_search_time = 0.0
 
+# Per-URL scrape budget for search enrichment. Applied to each scrape rather
+# than to the whole batch, so a slow URL costs only itself.
+_PER_URL_SCRAPE_S = 15.0
+
 
 @dataclass
 class SearchResult:
@@ -576,13 +580,23 @@ class WebSearchService:
             from app.services.scraper_client import scraper_client
 
             logger.info("Scraping %d URLs for full text...", len(urls))
-            results = await asyncio.wait_for(
-                asyncio.gather(
-                    *(scraper_client.scrape(u, engine="http") for u in urls),
-                    return_exceptions=True,
-                ),
-                timeout=15.0,
-            )
+            # The deadline belongs on each scrape, not on the gather. Wrapping
+            # the gather meant one hanging URL cancelled every sibling — four
+            # completed bodies thrown away because two were slow — and the
+            # TimeoutError surfaced through the outer handler as
+            # "Batch scrape failed: TimeoutError: " (asyncio/httpx timeouts
+            # stringify to empty, the same blank-cause trap scraper_client
+            # documents and works around with repr).
+            async def _one(u: str):
+                try:
+                    return await asyncio.wait_for(
+                        scraper_client.scrape(u, engine="http"), timeout=_PER_URL_SCRAPE_S
+                    )
+                except asyncio.TimeoutError:
+                    logger.debug("Scrape timed out after %.0fs: %s", _PER_URL_SCRAPE_S, u)
+                    return None
+
+            results = await asyncio.gather(*(_one(u) for u in urls), return_exceptions=True)
             got = 0
             for article, res in zip(to_scrape, results):
                 if isinstance(res, Exception) or not res or not res.get("success"):
@@ -593,7 +607,7 @@ class WebSearchService:
                     got += 1
             logger.info("Scraped %d/%d URLs", got, len(urls))
         except Exception as e:
-            logger.warning("Batch scrape failed: %s: %s", type(e).__name__, e)
+            logger.warning("Batch scrape failed: %s: %r", type(e).__name__, e)
 
     # ── Legacy: search_and_scrape (kept for backward compat) ──────────
 

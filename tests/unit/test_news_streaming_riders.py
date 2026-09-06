@@ -8,7 +8,7 @@ from app.collectors.news_collector import _scrape_with_timeout, collect_feed
 
 
 def test_scrape_fallback_is_counted():
-    async def boom(url):
+    async def boom(url, **_kw):
         raise RuntimeError("scraper down")
 
     stats = {}
@@ -19,7 +19,7 @@ def test_scrape_fallback_is_counted():
 
 
 def test_scrape_success_is_counted():
-    async def ok(url):
+    async def ok(url, **_kw):
         return "B" * 200
 
     stats = {}

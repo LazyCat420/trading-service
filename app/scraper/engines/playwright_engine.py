@@ -132,6 +132,7 @@ class PlaywrightEngine(BaseEngine):
             )
 
         screenshot_b64 = None
+        status_code = None
 
         try:
             async with rate_limiter.acquire(domain):
@@ -197,7 +198,15 @@ class PlaywrightEngine(BaseEngine):
                             # async slot, and ~100 pids) for as long as the caller
                             # asks — 24h is a legal int.
                             timeout_ms = min(int(options.get("timeout", 20000) or 20000), _MAX_NAV_TIMEOUT_MS)
-                            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                            # KEEP the response. page.goto returns one, and this
+                            # engine used to throw it away — so status_code was
+                            # None on every Playwright result, which made
+                            # auto_engine's `_served_ok` a tautology at this tier
+                            # (None counts as served) and its post-Playwright
+                            # 404/410 check unreachable dead code.
+                            nav = await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                            if nav is not None:
+                                status_code = nav.status
 
                             # Stealth: human-like behavior
                             await page.mouse.move(
@@ -328,6 +337,7 @@ class PlaywrightEngine(BaseEngine):
                 error=None,
                 engine_used="playwright",
                 scraped_at=datetime.utcnow(),
+                status_code=status_code,
                 screenshot_b64=screenshot_b64,
             )
 

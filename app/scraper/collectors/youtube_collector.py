@@ -47,9 +47,14 @@ class YouTubeVideo:
     channel: str
     transcript: str
     published_at: datetime | None
-    duration_secs: int
+    # None means "this transport does not report it", which is a different
+    # claim from 0. The RSS channel path carries neither a duration nor (until
+    # it was read) a view count, and writing 0 for both made an unknown
+    # indistinguishable from a measurement — while avg_view_count downstream
+    # averaged those fake zeros in.
+    duration_secs: int | None
     thumbnail_url: str
-    view_count: int = 0
+    view_count: int | None = None
     # UC… channel id from yt-dlp. Callers (wallgarden's discovery feed) need it
     # for id-based channel blocking and graph channel nodes — the display name
     # alone can't be matched reliably. Empty when the source doesn't carry it
@@ -226,7 +231,9 @@ class YouTubeCollector:
 
         title = video.get("title", "")
         upload_date = video.get("upload_date", "")
-        duration = video.get("duration", 0) or 0
+        duration = video.get("duration")
+        if duration is not None:
+            duration = int(duration) or None
 
         # Fallback to fetching single-video metadata if upload_date is missing (e.g. from flat-playlist search results)
         if not upload_date and require_transcript:
@@ -235,7 +242,7 @@ class YouTubeCollector:
                 if video_info:
                     upload_date = video_info.get("upload_date", "")
                     if not duration:
-                        duration = video_info.get("duration", 0) or 0
+                        duration = video_info.get("duration") or None
             except Exception as e:
                 logger.warning(f"[youtube] Failed fetching fallback metadata for {video_id}: {e}")
 
@@ -267,7 +274,8 @@ class YouTubeCollector:
             published_at=published_at,
             duration_secs=duration,
             thumbnail_url=thumbnail_url,
-            view_count=video.get("view_count", 0) or 0,
+            # Preserve unknown. `or 0` collapsed None into a measured zero.
+            view_count=video.get("view_count"),
         )
 
     def _get_video_info_fallback(self, video_id: str) -> dict | None:
@@ -338,10 +346,24 @@ class YouTubeCollector:
                         
                         media_group = entry.find('media:group', ns)
                         thumbnail_url = ""
+                        view_count = None
                         if media_group is not None:
                             thumb_el = media_group.find('media:thumbnail', ns)
                             if thumb_el is not None:
                                 thumbnail_url = thumb_el.attrib.get('url', '')
+                            # The feed carries this, and this path used to write
+                            # a hardcoded 0 next to the thumbnail it read from
+                            # the very same element. A consumer cannot tell "no
+                            # views" from "this transport does not report views",
+                            # and discovered_channels.avg_view_count is computed
+                            # from it — a confident zero closes a question a
+                            # blank would have opened.
+                            stats_el = media_group.find('media:community/media:statistics', ns)
+                            if stats_el is not None:
+                                try:
+                                    view_count = int(stats_el.attrib.get('views', ''))
+                                except (TypeError, ValueError):
+                                    view_count = None
                         
                         if video_id_el is not None and title_el is not None:
                             video_id = video_id_el.text
@@ -356,8 +378,10 @@ class YouTubeCollector:
                                 "channel": author_el.text if author_el is not None else channel,
                                 "upload_date": upload_date,
                                 "thumbnail": thumbnail_url,
-                                "duration": 0,
-                                "view_count": 0
+                                # Genuinely unknown on this transport: the RSS
+                                # feed carries no duration. None says so; 0 lies.
+                                "duration": None,
+                                "view_count": view_count,
                             })
                     if videos:
                         logger.info(f"[youtube] Successfully fetched {len(videos)} videos via RSS for {channel}")
@@ -463,6 +487,12 @@ class YouTubeCollector:
         return videos
 
     def _search_duckduckgo(self, query: str, max_results: int) -> list[dict]:
+        # Also gated: this path used to run a full ddgs query in production with
+        # the flag set, because the flag had a single reader elsewhere.
+        from app.scraper.collectors.duckduckgo_collector import ddg_disabled
+        if ddg_disabled():
+            logger.info("[youtube] DDG search disabled (DISABLE_DDG_SEARCH) — skipping")
+            return []
         """Fallback: Search DuckDuckGo Videos and return mapped metadata dicts."""
         try:
             from ddgs import DDGS

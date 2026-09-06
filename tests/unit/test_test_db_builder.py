@@ -169,7 +169,12 @@ def test_every_lazy_ddl_entry_point_is_registered():
         ("scripts.migration.pg_migrations", "_create_decision_scores"),
         ("scripts.migration.pg_migrations", "_create_persistent_research_tables"),
         # Not schema: a local sqlite cache and a runtime profiler table.
+        # failure_cache is a per-CONTAINER sqlite file on the scraper's own
+        # volume (/app/logs/failure_cache.db) — nothing to do with the trading
+        # test database this builder provisions. `_migrate` is its user_version
+        # ladder, added when the file started outliving deploys.
         ("app.scraper.core.failure_cache", "__init__"),
+        ("app.scraper.core.failure_cache", "_migrate"),
         ("app.monitoring.pipeline_profiler", "_persist_to_db"),
     }
 

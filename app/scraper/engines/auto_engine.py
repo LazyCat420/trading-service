@@ -40,6 +40,16 @@ def _served_ok(status_code: int | None) -> bool:
     """
     return status_code is None or 200 <= status_code < 300
 
+# Longest body that can still be an interstitial. The measured bot-walls in this
+# file are 279 (Bloomberg's boilerplate) and 464 (its "not a robot" page) chars;
+# content_quality puts the thin/article boundary at 900. 2000 is comfortably
+# above every observed wall and far below a real article, so a page longer than
+# this is judged on its length, not on words it happens to contain.
+_MAX_BLOCK_PAGE_CHARS = 2000
+
+# Within that, only the head is searched: a wall says so immediately.
+_BLOCK_SCAN_CHARS = 1500
+
 BLOCK_SIGNATURES = [
     "please enable javascript",
     "please enable cookies",
@@ -93,10 +103,31 @@ class AutoEngine(BaseEngine):
         self.playwright_engine = PlaywrightEngine()
 
     def is_blocked_content(self, text: str) -> bool:
-        """Check if retrieved text contains block signatures indicating captcha or bot shield."""
+        """Does this body look like a bot-wall rather than an article?
+
+        Only the FIRST _BLOCK_SCAN_CHARS are searched, and only when the body is
+        short enough to plausibly BE an interstitial.
+
+        The signatures are bare substrings — "cloudflare", "access denied",
+        "rate limit exceeded", "too many requests" — matched anywhere in up to
+        15,000 characters of extracted prose. Cloudflare, Inc. trades as NET and
+        is routinely covered by exactly the finance sites this scraper reads, so
+        any article ABOUT Cloudflare, or any security piece quoting an "access
+        denied" error, was classified as a bot-wall: escalated to Playwright,
+        then returned as `auto (failed)`. A silent, ticker-shaped hole in
+        coverage that no counter would show.
+
+        A bot-wall is small — this file's own measurements are 279 and 464 chars,
+        and the length gate below is 150 — so size is the discriminator that
+        separates the two populations, exactly as content_quality argues for the
+        thin-body gate. A long body containing the words is an article about
+        them.
+        """
         if not text:
             return True
-        text_lower = text.lower()
+        if len(text) > _MAX_BLOCK_PAGE_CHARS:
+            return False
+        text_lower = text[:_BLOCK_SCAN_CHARS].lower()
         for sig in BLOCK_SIGNATURES:
             if sig in text_lower:
                 return True
@@ -179,7 +210,14 @@ class AutoEngine(BaseEngine):
 
         # Phase 2: Playwright
         logger.info(f"[auto] Escalating to Playwright engine for {url}")
+        # Keep the HTTP tier's observed status before `res` is rebound — the
+        # escalation used to discard it, so a 404 seen by HTTP became None the
+        # moment Playwright ran, and the "still permanent" check below could
+        # never fire.
+        http_status = res.status_code
         res = await self.playwright_engine.fetch(url, options)
+        if res.status_code is None:
+            res.status_code = http_status
         
         if res.success and res.content and len(res.content) > 150:
             if not self.is_blocked_content(res.content):
