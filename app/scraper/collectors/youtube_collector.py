@@ -13,9 +13,11 @@ No API key needed.
 import asyncio
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -33,6 +35,62 @@ YTDLP_APPROXIMATE_DATE_ARG = "youtubetab:approximate_date"
 # Flat-entry description snippets are unbounded; the only consumer (the
 # wallgarden candidate classifier) wants a hint, not the whole blurb.
 DESCRIPTION_MAX_CHARS = 200
+
+# ── yt-dlp subprocess gate + search cache ───────────────────────────────
+# Every search is a fresh Python interpreter importing yt_dlp (~2 s alone on
+# the NAS). Measured 2026-09-06 on the 4-core box: one search 2.0 s, four in
+# parallel 5.5 s, and SIXTEEN in parallel (one wallgarden cold start) took
+# 14.7 s wall with 13 of 16 returning EMPTY — they hit the 10 s subprocess
+# timeout and the DDG fallback is disabled, so the caller got nothing and
+# asked again. Queueing beats dying: a bounded semaphore keeps the box at a
+# concurrency it can serve, and the per-subprocess timeout is raised so a
+# queued search waits instead of timing out.
+YTDLP_MAX_CONCURRENT = max(1, int(os.getenv("YTDLP_MAX_CONCURRENT", "3")))
+YTDLP_SEARCH_TIMEOUT_SECS = int(os.getenv("YTDLP_SEARCH_TIMEOUT_SECS", "25"))
+_YTDLP_GATE = threading.BoundedSemaphore(YTDLP_MAX_CONCURRENT)
+
+# The same (query, sort/sp) is searched repeatedly: wallgarden's grounding
+# gate and its "broad" form issue the identical relevance query minutes
+# apart, and every page reload re-fetches the same topics. A short TTL cache
+# keyed on the search target serves those from memory. A larger cached result
+# satisfies a smaller request (prefix). Empty results are never cached.
+SEARCH_CACHE_TTL_SECS = int(os.getenv("YTDLP_SEARCH_CACHE_TTL_SECS", "1800"))
+SEARCH_CACHE_MAX = 500
+_SEARCH_CACHE: dict[tuple, tuple[float, int, list[dict]]] = {}
+_SEARCH_CACHE_LOCK = threading.Lock()
+_SEARCH_CACHE_STATS = {"hits": 0, "misses": 0}
+
+
+def _search_cache_get(key: tuple, max_results: int) -> list[dict] | None:
+    with _SEARCH_CACHE_LOCK:
+        entry = _SEARCH_CACHE.get(key)
+        if not entry:
+            return None
+        ts, requested, videos = entry
+        if time.time() - ts > SEARCH_CACHE_TTL_SECS:
+            del _SEARCH_CACHE[key]
+            return None
+        # Serve a prefix only when the cached search asked for at least as
+        # many — otherwise the tail would be missing, not merely truncated.
+        if requested < max_results and len(videos) < max_results:
+            return None
+        return [dict(v) for v in videos[:max_results]]
+
+
+def _search_cache_put(key: tuple, requested: int, videos: list[dict]) -> None:
+    if not videos:
+        return
+    with _SEARCH_CACHE_LOCK:
+        if len(_SEARCH_CACHE) >= SEARCH_CACHE_MAX:
+            oldest = min(_SEARCH_CACHE.items(), key=lambda kv: kv[1][0])[0]
+            del _SEARCH_CACHE[oldest]
+        _SEARCH_CACHE[key] = (time.time(), requested, [dict(v) for v in videos])
+
+
+def search_cache_stats() -> dict:
+    with _SEARCH_CACHE_LOCK:
+        return {**_SEARCH_CACHE_STATS, "entries": len(_SEARCH_CACHE),
+                "max_concurrent": YTDLP_MAX_CONCURRENT}
 
 # yt-dlp version check at import
 try:
@@ -435,7 +493,8 @@ class YouTubeCollector:
             
             if days_back > 0:
                 cmd.extend(["--dateafter", f"now-{days_back}days"])
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            with _YTDLP_GATE:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
             if result.returncode != 0:
                 if result.stderr:
@@ -464,6 +523,15 @@ class YouTubeCollector:
 
         videos = []
         import urllib.parse
+
+        cache_key = ((query or "").strip().lower(), f"sp:{sp}" if sp else f"sort:{sort or 'date'}")
+        cached = _search_cache_get(cache_key, max_results)
+        if cached is not None:
+            with _SEARCH_CACHE_LOCK:
+                _SEARCH_CACHE_STATS["hits"] += 1
+            return cached
+        with _SEARCH_CACHE_LOCK:
+            _SEARCH_CACHE_STATS["misses"] += 1
 
         if sp:
             # Raw YouTube results-filter param wins over sort.
@@ -504,7 +572,12 @@ class YouTubeCollector:
             ]
             if playlist_end_arg:
                 cmd.append(playlist_end_arg)
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            waited = time.monotonic()
+            with _YTDLP_GATE:
+                waited = time.monotonic() - waited
+                if waited > 2:
+                    logger.info(f"[youtube] search queued {waited:.1f}s behind {YTDLP_MAX_CONCURRENT} running yt-dlp calls")
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=YTDLP_SEARCH_TIMEOUT_SECS)
 
             if result.returncode == 0 and result.stdout.strip():
                 for line in result.stdout.strip().split("\n"):
@@ -513,6 +586,7 @@ class YouTubeCollector:
                             videos.append(json.loads(line))
                         except json.JSONDecodeError:
                             continue
+            _search_cache_put(cache_key, max_results, videos)
         except Exception as e:
             logger.warning(f"[youtube] yt-dlp search failed or timed out: {e}")
 
