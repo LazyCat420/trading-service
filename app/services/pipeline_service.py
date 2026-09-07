@@ -2447,7 +2447,8 @@ class PipelineService:
 
             # Reserve one slot only for dynamic universes; explicit requests retain
             # their tickers. Questions for either path are claimed at execution.
-            if dynamic_universe:
+            from app.services.cycle_scope import is_synthetic_cycle
+            if dynamic_universe and not is_synthetic_cycle(cycle_id):
                 try:
                     from app.services.research_work import reserve_candidate
                     tickers, reserved = reserve_candidate(tickers, len(tickers))

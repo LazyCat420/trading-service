@@ -215,3 +215,49 @@ def test_ledger_outage_keeps_answer_ready_and_retries_once(isolated_db, monkeypa
     assert Queue.deliver_ready_answers() == 0
     assert isolated_db.dossier_question_log.count_documents({'ticker': 'TEST', 'question_hash': rec['question_hash']}) == 1
     assert isolated_db.v3_research_queues.find_one({'id': item_id})['status'] == 'completed'
+
+
+def test_completed_answer_survives_the_next_dossier_sync(isolated_db):
+    from app.services.research_queue_service import ResearchQueueService as Queue
+    from app.services import question_ledger
+    from app.v3.shared_desk import SharedDesk
+    from app.v3.dossier_sync import sync_desk_to_dossier
+    item_id, rec = _enqueue_question()
+    question = rec['question']
+    isolated_db.ticker_dossiers.insert_one({'ticker': 'TEST', 'lifecycle_state': 'UNDER_RESEARCH',
+        'open_questions': [question, 'Will next quarter revenue grow above ten percent?']})
+    item = Queue.claim_for_ticker('TEST', 'cycle-complete', limit=1)[0]
+    answer = {'answer': 'Operating margin is above ten percent.',
+        'artifact_ref': 'cycle-complete:TEST:fundamental_report',
+        'evidence': [{'source': 'data_report', 'quote': 'operating margin of 12.4 percent'}]}
+    assert Queue.finish_claim(item, answer=answer)
+    desk = SharedDesk(ticker='TEST', cycle_id='cycle-next')
+    desk.quant_report = {'summary': 'A repeat of the same old question.', 'sub_analyses_requested': [question]}
+    sync_desk_to_dossier(desk, desk.cycle_id, 'HOLD', 70)
+    ledger = isolated_db.dossier_question_log.find_one({'ticker': 'TEST', 'question_hash': rec['question_hash']})
+    dossier = isolated_db.ticker_dossiers.find_one({'ticker': 'TEST'})
+    assert {'status': ledger['status'], 'still_open': question in dossier['open_questions']} == {
+        'status': 'answered', 'still_open': False}
+    assert ledger['answer'] == answer['answer']
+    assert 'Will next quarter revenue grow above ten percent?' in dossier['open_questions']
+    assert isolated_db.v3_research_queues.count_documents({'ticker': 'TEST', 'status': 'pending'}) == 0
+    from app.services.research_work import prior_answer_context
+    context = prior_answer_context('TEST')
+    assert answer['answer'] in context and answer['artifact_ref'] in context
+    assert 'HISTORICAL' in context and 'question_asked_at' in context and len(context) <= 3500
+
+
+def test_synthetic_cycle_cannot_consume_or_publish_live_research(isolated_db):
+    from app.services.research_queue_service import ResearchQueueService as Queue
+    from app.v3.shared_desk import SharedDesk
+    from app.v3.dossier_sync import sync_desk_to_dossier
+    item_id, rec = _enqueue_question()
+    assert Queue.claim_for_ticker('TEST', 'cycle-observe-123') == []
+    desk = SharedDesk(ticker='TEST', cycle_id='cycle-observe-123')
+    desk.quant_report = {'summary': 'Synthetic evidence.',
+        'sub_analyses_requested': ['Will a synthetic observation change the live research queue?']}
+    assert sync_desk_to_dossier(desk, desk.cycle_id, 'HOLD', 70)['skipped'] == 'synthetic_cycle'
+    assert isolated_db.v3_research_queues.find_one({'id': item_id})['status'] == 'pending'
+    assert isolated_db.v3_research_queues.count_documents({}) == 1
+    assert isolated_db.dossier_question_log.count_documents({}) == 1
+    assert isolated_db.ticker_dossiers.count_documents({}) == 0

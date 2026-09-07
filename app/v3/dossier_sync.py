@@ -116,6 +116,9 @@ def sync_desk_to_dossier(
     }
     if not ticker:
         return summary
+    from app.services.cycle_scope import is_synthetic_cycle
+    if is_synthetic_cycle(cycle_id):
+        return {**summary, 'skipped': 'synthetic_cycle'}
 
     try:
         pairs = collect_open_questions(desk)
@@ -129,7 +132,9 @@ def sync_desk_to_dossier(
             source_agent=(pairs[0][1] if pairs else ""),
         )
         summary["questions_new"] = sum(1 for r in recorded if r["is_new"])
-        summary["questions_reasked"] = sum(1 for r in recorded if not r["is_new"])
+        summary["questions_reasked"] = sum(1 for r in recorded if not r["is_new"] and not r.get("already_answered"))
+        answered_hashes = {r["question_hash"] for r in recorded if r.get("already_answered")}
+        summary["questions_already_answered"] = len(answered_hashes)
 
         # A desk that never ran research cannot be evidence that a question
         # went away. Scoring its silence as `dropped` would credit the loop for
@@ -164,7 +169,7 @@ def sync_desk_to_dossier(
                 summary["queued"] += 1
 
         _update_dossier(desk, ticker, cycle_id, action, confidence,
-                        policy_action, [q for q, _ in pairs])
+                        policy_action, [q for q, _ in pairs], answered_hashes)
 
     except Exception as e:  # noqa: BLE001 — research bookkeeping never fails a desk
         logger.warning("[dossier-sync] %s: failed (non-fatal): %s", ticker, e)
@@ -189,6 +194,7 @@ def _update_dossier(
     confidence: int,
     policy_action: str,
     questions: list[str],
+    answered_hashes: set[str] | None = None,
 ) -> None:
     """Write the decision and the current question set onto the dossier."""
     dossier = DossierService.get_dossier(ticker)
@@ -200,6 +206,8 @@ def _update_dossier(
     seen: set[str] = set()
     for text in list(questions) + list(dossier.open_questions or []):
         if not isinstance(text, str):
+            continue
+        if question_ledger.question_hash(text) in (answered_hashes or set()):
             continue
         key = question_ledger.normalize(text)
         if not key or key in seen:

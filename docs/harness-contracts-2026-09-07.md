@@ -45,6 +45,11 @@ Answers use a durable `answer_ready` outbox; ledger delivery is idempotent and a
 failed write never marks research completed. Crashed workers cannot finish newer
 claims. No separate model loop or new order path is introduced.
 
+Questions retain their original ask date. Verified answers reach later agents in
+the same panel and future cycles in bounded, dated evidence blocks. Delivery removes
+the answered question from the dossier; a subsequent repetition cannot silently
+reopen it. A new time period or changed question has a distinct identity.
+
 Validation includes production prompt assembly/parser tests, six production executor
 AST cases with isolated I/O, and disposable Mongo lifecycle tests. Test records live
 under the workspace `.scratch/harness-fixes-20260907` evidence directory. Deployment

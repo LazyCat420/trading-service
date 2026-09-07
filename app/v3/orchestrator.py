@@ -555,7 +555,13 @@ async def run_v3_pipeline(
             logger.debug("[V3] %s: directive injection failed (non-fatal): %s",
                          ticker, dir_err)
 
-    # Execute all 11 context builders in parallel
+    async def _build_research_answers_task():
+        from app.services.research_work import prior_answer_context
+        context = await asyncio.to_thread(prior_answer_context, ticker)
+        if context:
+            desk.cycle_metadata['prior_research_answers_context'] = context
+
+    # Execute independent context builders in parallel.
     await asyncio.gather(
         _build_macro_task(),
         _build_quant_math_task(),
@@ -569,6 +575,7 @@ async def run_v3_pipeline(
         _build_book_brief_task(),
         _build_memory_task(),
         _build_previous_desk_task(),
+        _build_research_answers_task(),
         return_exceptions=True,
     )
 

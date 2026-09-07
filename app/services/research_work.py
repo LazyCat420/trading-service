@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 
 from app.services.research_queue_service import ResearchQueueService as Queue
 
@@ -96,22 +97,10 @@ def _evidenced(answer: dict, artifact: dict, desk) -> bool:
 def finish_questions(desk) -> dict:
     summary = {'answered': 0, 'deferred': 0, 'delivery_pending': 0}
     items = desk.cycle_metadata.get('research_questions') or []
+    answers = _verified_answers(desk)
     for item in items:
-        answer = None
-        for name in ('fundamental_report', 'quant_report', 'valuation_report', 'desk_note'):
-            artifact = getattr(desk, name, None) or {}
-            if artifact.get('_degraded'):
-                continue
-            answers = artifact.get('research_answers')
-            for row in answers if isinstance(answers, list) else []:
-                if (isinstance(row, dict) and row.get('item_id') == item['id']
-                        and row.get('status') == 'answered' and len(_normal(row.get('answer'))) >= 20
-                        and _evidenced(row, artifact, desk)):
-                    answer = {**row, 'artifact_ref': f'{desk.cycle_id}:{desk.ticker}:{name}'}
-                    break
-            if answer:
-                break
         try:
+            answer = answers.get(item['id'])
             done = Queue.finish_claim(item, answer=answer)
             if done:
                 summary['answered' if answer else 'deferred'] += 1
@@ -120,3 +109,66 @@ def finish_questions(desk) -> dict:
             summary['delivery_pending'] += 1
             logger.error('[ResearchWork] %s: question delivery failed for %s: %s', desk.ticker, item['id'], exc)
     return summary
+
+
+def completed_answer_block(desk, max_chars: int = 3500) -> str:
+    """Pass verified answers to later desks in the same research panel."""
+    return _answer_block(list(_verified_answers(desk).values()),
+                         'VERIFIED RESEARCH ANSWERS FROM THIS PANEL', max_chars)
+
+
+def _verified_answers(desk) -> dict[str, dict]:
+    questions = {item['id']: item for item in desk.cycle_metadata.get('research_questions') or []}
+    found = {}
+    for name in ('fundamental_report', 'quant_report', 'valuation_report', 'desk_note'):
+        artifact = getattr(desk, name, None) or {}
+        if artifact.get('_degraded'):
+            continue
+        answers = artifact.get('research_answers')
+        for answer in answers if isinstance(answers, list) else []:
+            if not isinstance(answer, dict):
+                continue
+            item_id = answer.get('item_id')
+            if (not isinstance(item_id, str) or item_id not in questions or item_id in found or answer.get('status') != 'answered'
+                    or len(_normal(answer.get('answer'))) < 20 or not _evidenced(answer, artifact, desk)):
+                continue
+            item = questions[item_id]
+            found[item_id] = {**answer, 'asked_at': item.get('created_at'),
+                'question': (item.get('payload') or {}).get('question') or item.get('reason'),
+                'artifact_ref': f'{desk.cycle_id}:{desk.ticker}:{name}'}
+    return found
+
+
+def prior_answer_context(ticker: str, max_chars: int = 3500) -> str:
+    """Read bounded historical answers with dates and source references."""
+    from app.db import mongo_store
+    from app.services.cycle_scope import exclude_synthetic
+    try:
+        rows = mongo_store.find_docs('dossier_question_log', {
+            'ticker': ticker.upper(), 'status': 'answered',
+            **exclude_synthetic('resolved_cycle'),
+            'resolved_at': {'$gte': datetime.now(timezone.utc) - timedelta(days=30)}},
+            projection={'_id': 0, 'question': 1, 'answer': 1, 'evidence': 1,
+                        'evidence_ref': 1, 'resolved_at': 1, 'question_asked_at': 1},
+            sort=[('resolved_at', -1)], limit=3)
+        return _answer_block(rows, 'HISTORICAL RESEARCH ANSWERS (reverify time-sensitive facts)', max_chars)
+    except Exception as exc:
+        logger.warning('[ResearchWork] prior answers unavailable for %s: %s', ticker, exc)
+        return ''
+
+
+def _answer_block(rows: list[dict], title: str, max_chars: int) -> str:
+    if not rows:
+        return ''
+    lines = [f'## {title}']
+    used, omitted = len(lines[0]), 0
+    for row in rows:
+        text = json.dumps(row, default=str, ensure_ascii=False)
+        if used + len(text) + 1 > max_chars - 100:
+            omitted += 1
+            continue
+        lines.append(text)
+        used += len(text) + 1
+    if omitted:
+        lines.append(f'OMITTED: {omitted} complete answer record(s); they are unknown in this view.')
+    return '\n'.join(lines)

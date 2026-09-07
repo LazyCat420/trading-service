@@ -787,6 +787,12 @@ async def run_v3_agent(
         _KEEP = 0
         dynamic_sections: list[tuple[int, str]] = []
 
+        from app.services.research_work import completed_answer_block
+        desk.cycle_metadata['research_answers_context'] = completed_answer_block(desk)
+        for key in ('research_answers_context', 'prior_research_answers_context'):
+            if desk.cycle_metadata.get(key):
+                dynamic_sections.append((_KEEP, desk.cycle_metadata[key]))
+
         from app.v3.decision_contract import prompt_block as decision_contract_prompt
         contract_block = decision_contract_prompt(desk, artifact_type)
         if contract_block:

@@ -25,7 +25,9 @@ because the model simply did not repeat itself. Only `answered` — which carrie
 an `evidence_ref` — is a resolution. Collapsing the two would make the metric
 pass whether research worked or not, which is not a metric.
 
-`answered` stays at zero until the deep-dive queue is actually served (Track A2).
+`answered` is written by the bounded cycle consumer after evidenced research is
+delivered. A repeated phrase does not erase that answer; a newly scoped question
+has its own hash.
 That zero is the honest reading of "research is queued but not yet running", not
 a failure of the loop.
 
@@ -127,8 +129,7 @@ def record_asked(
             doc = mongo_store.find_one_and_update(
                 'dossier_question_log', key,
                 {'$inc': {'ask_count': 1},
-                 '$set': {'last_cycle_id': cycle_id, 'last_asked_at': now,
-                          'status': 'reasked'}},
+                 '$set': {'last_cycle_id': cycle_id, 'last_asked_at': now}},
                 return_after=True,
             )
             if doc is None:
@@ -140,14 +141,25 @@ def record_asked(
                     'ask_count': 1, 'status': 'open',
                 }, insert_only=True)
                 ask_count = 1
+                already_answered = False
             else:
                 ask_count = doc.get('ask_count', 1)
+                already_answered = doc.get('status') == 'answered'
+                # A repeated phrase must not erase delivered evidence. A new
+                # period or changed question gets a distinct question hash.
+                # Recheck status at the write, including an answer that arrived
+                # concurrently after the increment above.
+                if not already_answered:
+                    mongo_store.update_docs('dossier_question_log',
+                        {**key, 'status': {'$ne': 'answered'}},
+                        {'$set': {'status': 'reasked'}})
             recorded.append({
                 "ticker": ticker,
                 "question": text,
                 "question_hash": qhash,
                 "ask_count": ask_count,
-                "is_new": ask_count == 1,
+                "is_new": ask_count == 1 and not already_answered,
+                "already_answered": already_answered,
             })
     except Exception as e:
         logger.warning("[questions] record_asked(%s) failed: %s", ticker, e)

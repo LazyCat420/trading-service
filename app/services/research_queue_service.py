@@ -266,6 +266,9 @@ class ResearchQueueService:
         from completing a question after it was reclaimed by a newer cycle.
         No new cycle or order is created by this consumer.
         """
+        from app.services.cycle_scope import is_synthetic_cycle
+        if is_synthetic_cycle(cycle_id):
+            return []
         cls.deliver_ready_answers()
         cls.reclaim_stale()
         claimed = []
@@ -343,8 +346,31 @@ class ResearchQueueService:
                 {'ticker': doc['ticker'], 'question_hash': qhash, 'question': question,
                  'status': 'answered', 'answer': answer['answer'],
                  'evidence_ref': answer['artifact_ref'], 'evidence': answer['evidence'],
+                 'question_asked_at': doc.get('created_at'),
                  'resolved_cycle': doc.get('owner_cycle_id'), 'resolved_at': now})
+            cls._remove_answered_question(doc['ticker'], qhash)
             delivered += mongo_store.update_docs('v3_research_queues',
                 {'id': doc['id'], 'status': 'answer_ready', 'lease_token': doc.get('lease_token')},
                 {'$set': {'status': 'completed', 'updated_at': now, 'completed_at': now}})
         return delivered
+
+    @staticmethod
+    def _remove_answered_question(ticker: str, qhash: str) -> None:
+        """Prune only this answer, preserving concurrent dossier changes."""
+        from app.services.question_ledger import question_hash
+        for _ in range(3):
+            rows = mongo_store.find_docs('ticker_dossiers', {'ticker': ticker},
+                                        projection={'open_questions': 1}, limit=1)
+            if not rows:
+                return
+            original = rows[0].get('open_questions') or []
+            questions = json.loads(original) if isinstance(original, str) else original
+            remaining = [q for q in questions if not isinstance(q, str) or question_hash(q) != qhash]
+            if remaining == questions:
+                return
+            if mongo_store.update_docs('ticker_dossiers',
+                    {'ticker': ticker, 'open_questions': original},
+                    {'$set': {'open_questions': remaining, 'updated_at': datetime.now(timezone.utc)}}):
+                return
+        # Keep the durable outbox pending so the next delivery can retry.
+        raise RuntimeError('Dossier changed during research-answer delivery')

@@ -16,6 +16,15 @@ async def test_synth_receives_defense_and_enforces_board_timing(invalid):
     desk.cycle_metadata = {"decision_contract_version": 1, "held": False,
                            "data_report": "Verified price and filing. " * 2000}
     desk.desk_note = {"summary": "Earlier research. " * 2000}
+    desk.cycle_metadata['research_questions'] = [{'id': 'question-1',
+        'payload': {'question': 'Have the price and filing been verified?'}}]
+    answer = {'item_id': 'question-1', 'status': 'answered',
+        'answer': 'The price and filing were verified for this research question.',
+        'evidence': [{'source': 'data_report', 'quote': 'Verified price and filing.'}]}
+    desk.fundamental_report = {'summary': 'Verified evidence.', 'research_answers': [answer]}
+    from app.services.research_work import record_tool_receipts
+    record_tool_receipts(desk.fundamental_report, [],
+        delivered_text=desk.cycle_metadata['data_report'], metadata=desk.cycle_metadata)
     desk.bull_defense = {"summary": "Narrowed thesis", "thesis_survives": True,
         "final_confidence": 72, "independent_risks_answered": [
             {"risk": "Dilution", "answer": "Dilution remains unresolved until the next reported share count."}]}
@@ -38,6 +47,7 @@ async def test_synth_receives_defense_and_enforces_board_timing(invalid):
                                     cycle_id=desk.cycle_id, bot_id="test", include_debate_context=True)
     prompt = captured[0]["system_prompt"] + captured[0]["user_prompt"]
     assert board_reference(board) in prompt
+    assert answer['answer'] in prompt
     assert desk.bull_defense["independent_risks_answered"][0]["answer"] in prompt
     assert desk.cycle_metadata["context_delivery"][-1]["defense_delivered"]
     if invalid:
