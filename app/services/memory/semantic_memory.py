@@ -40,12 +40,8 @@ class SemanticMemoryStore:
 
         results = []
         if rows:
-            # Update access tracking to show frequency/recency of use
-            ids = [r[0] for r in rows]
-            mongo_store.update_docs(
-                'semantic_memory', {'id': {'$in': ids}},
-                {'$inc': {'access_count': 1}, '$set': {'last_accessed_at': now}})
-
+            # Retrieval is pure. Delivery/application receipts track actual use;
+            # previews must not mutate recency or make their own future ranking.
             for r in rows:
                 results.append(
                     {

@@ -1,14 +1,7 @@
-"""Query-decomposition retrieval — MiroFish Port B (insight_forge pattern).
+"""Bounded retrieval over deterministic research facets, without an LLM rewrite.
 
-For a broad/compound question, a single vector query under-retrieves. This
-module has an LLM split the question into a few focused sub-queries, runs each
-through the hybrid retriever, then dedups and merges the results. It's the
-insight_forge idea from MiroFish, rebuilt over trading-service's own
-pgvector-backed hybrid_retriever (no Zep, no new storage).
-
-Async by design (it makes one small LLM call). Intended for the escalation /
-deep-dive path only — not every cycle — where the extra call is justified.
-Always non-fatal: on any failure it falls back to a single hybrid retrieve.
+The original question is preserved in every facet. Results are deduplicated
+by source identity and remain subject to the hybrid retriever's eligibility.
 """
 
 import asyncio
@@ -49,27 +42,11 @@ async def decompose_and_retrieve(
     """
     from app.services.retrieval_hybrid import hybrid_retriever
 
-    subqueries: list[str] = []
-    try:
-        from app.services.prism_agent_caller import call_prism_agent, Priority
-
-        response_text, _, _ = await call_prism_agent(
-            agent_id="CUSTOM_CONSOLIDATOR_AGENT",
-            user_message=f"TICKER: {ticker}\nQUESTION: {question}",
-            fallback_system_prompt=_DECOMPOSE_SYSTEM_PROMPT.format(n=max_subqueries),
-            fallback_agent_name="query_decomposer",
-            temperature=0.2,
-            max_tokens=256,
-            priority=Priority.LOW,
-            ticker=ticker,
-        )
-        subqueries = _parse_subqueries(response_text, max_subqueries)
-    except Exception as e:
-        logger.debug("[decompose] LLM decomposition failed for %s (non-fatal): %s", ticker, e)
-
-    # Fallback: no sub-queries → treat the whole question as one query.
-    if not subqueries:
-        subqueries = [question]
+    # The live caller asks the same broad question every time. Generating
+    # facet names with an LLM added minutes without adding source evidence.
+    # Use deterministic facets; preserve the original question in each query.
+    subqueries = [f"{ticker} {question} {facet}" for facet in
+                  ("fundamentals guidance cash flow", "technicals price volume", "news catalysts risks")][:max_subqueries]
 
     # Retrieve each sub-query (hybrid_retriever is blocking → offload).
     per_query = max(4, top_k // 2)

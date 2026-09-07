@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 
 from app.autoresearch import skill_loader as L
 from app.autoresearch import skill_optimizer as S
+from app.services.learning.policy import BASELINES, BASELINE_VERSION
 
 
 def _skills(row):
@@ -48,10 +49,10 @@ def _skills_raise(exc_factory):
 
 def test_version_is_reported_alongside_the_prefix():
     L.invalidate_skill_cache()
-    with _skills(("- **A**: Always cap size.", 7)):
+    with _skills((BASELINES["v3_board_of_directors"], 7)):
         prefix = L.load_skill_prefix("v3_board_of_directors")
         version = L.active_skill_version("v3_board_of_directors")
-    assert "Always cap size" in prefix
+    assert BASELINES["v3_board_of_directors"] in prefix
     assert version == 7
     L.invalidate_skill_cache()
 
@@ -62,19 +63,19 @@ def test_version_comes_from_the_same_cache_entry_as_the_prompt():
     accept a new version mid-cycle while this process serves a cached older one
     for up to the TTL."""
     L.invalidate_skill_cache()
-    with _skills(("- **A**: Always cap size.", 7)):
+    with _skills((BASELINES["v3_board_of_directors"], 7)):
         L.load_skill_prefix("v3_board_of_directors")
     # DB now advertises v8; the cache still holds v7 and must keep reporting it.
-    with _skills(("- **A**: Always cap size.", 8)):
+    with _skills((BASELINES["v3_board_of_directors"], 8)):
         assert L.active_skill_version("v3_board_of_directors") == 7
     L.invalidate_skill_cache()
 
 
-def test_no_skill_doc_is_none_not_zero():
+def test_absent_skill_serves_reviewed_baseline():
     """Absent and "version zero" are different claims; NULL must survive."""
     L.invalidate_skill_cache()
     with _skills(None):
-        assert L.active_skill_version("v3_board_of_directors") is None
+        assert L.active_skill_version("v3_board_of_directors") == BASELINE_VERSION
     L.invalidate_skill_cache()
 
 
@@ -86,30 +87,31 @@ def test_a_load_failure_never_raises():
         raise RuntimeError("db down")
 
     with _skills_raise(_boom):
-        assert L.load_skill_prefix("v3_board_of_directors") == ""
-        assert L.active_skill_version("v3_board_of_directors") is None
+        assert BASELINES["v3_board_of_directors"] in L.load_skill_prefix("v3_board_of_directors")
+        assert L.active_skill_version("v3_board_of_directors") == BASELINE_VERSION
     L.invalidate_skill_cache()
 
 
 def test_version_snapshot_omits_agents_with_no_doc():
     L.invalidate_skill_cache()
     with _skills(None):
-        assert L.active_skill_versions() == {}
+        assert L.active_skill_versions() == {k: BASELINE_VERSION for k in BASELINES}
     L.invalidate_skill_cache()
 
 
 def test_version_snapshot_covers_the_target_roster():
     L.invalidate_skill_cache()
-    with _skills(("- **A**: Always cap size.", 3)):
+    with _skills((BASELINES["v3_board_of_directors"], 3)):
         snap = L.active_skill_versions()
     assert set(snap) == set(S.TARGET_AGENTS), "snapshot must cover every target agent"
-    assert all(v == 3 for v in snap.values())
+    assert snap["v3_board_of_directors"] == 3
+    assert all(v == BASELINE_VERSION for k, v in snap.items() if k != "v3_board_of_directors")
     L.invalidate_skill_cache()
 
 
 # ── A version must mature before it is replaced ─────────────────────
 
-def test_unknown_governed_count_does_not_freeze_the_agent():
+def test_unknown_governed_count_remains_unknown():
     """None means "cannot tell" — most likely a deployment predating the
     skill_versions column. Treating unknown as 0 would freeze every agent
     forever, which is worse than one extra edit."""

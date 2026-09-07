@@ -151,6 +151,19 @@ _indexes_ready = False
 # Natural unique key per migrated collection. `id` keys are partial-unique
 # ($type-guarded) because older mirror docs may lack the field or carry null.
 _ID_UNIQUE_COLLECTIONS = (
+    "learning_validation_receipts",
+    "learning_gateway_receipts",
+    "learning_migrations",
+    "learning_legacy_dispositions",
+    "canonical_memory_evidence",
+    "learning_records",
+    "learning_events",
+    "learning_health",
+    "learning_artifact_receipts",
+    "learning_delivery_receipts",
+    "memory_consolidation_jobs",
+    "memory_retirement_events",
+    "agent_skill_candidates",
     "tool_usage_stats",
     "execution_errors",
     "cycle_audit_log",
@@ -312,6 +325,11 @@ def ensure_indexes(session: Optional[Any] = None) -> None:
     _try("context_blobs", "context_hash", unique=True,
          partialFilterExpression={"context_hash": {"$type": "string"}})
     _try("context_blobs", "context_hash", name="context_hash_plain_1")
+    _try("memory_consolidation_jobs", [("state", 1), ("retry_at", 1)])
+    _try("learning_artifact_receipts", [("delivery_state", 1), ("created_at", 1)])
+    _try("learning_delivery_receipts", [("cycle_id", 1), ("ticker", 1), ("role", 1)])
+    _try("learning_records", [("kind", 1), ("status", 1), ("last_observed_at", -1)])
+    _try("learning_records", [("index_state", 1), ("index_retry_at", 1)])
     # Read-path keys used by the report/replay UIs after cutover.
     _try("ticker_reports", [("cycle_id", pymongo.ASCENDING), ("ticker", pymongo.ASCENDING)])
     _try("analysis_results", [("cycle_id", pymongo.ASCENDING), ("ticker", pymongo.ASCENDING)])

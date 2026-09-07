@@ -497,42 +497,10 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
             calibration_md = _cal + "\n\n"
     except Exception:
         pass
+    # Operational recommendations belong to the auditor's incident queue.
+    # Reviewed role methods are injected by skill_loader; do not broadcast
+    # recent model-generated instructions to every analyst.
     lessons_md = ""
-    try:
-        l_docs = mongo_store.find_docs(
-            "evolution_lessons",
-            {"status": "audited"},
-            sort=[("timestamp", -1)],
-            limit=12,
-        )
-        lrows = [
-            (d.get("lesson_text"),)
-            for d in l_docs
-            if d.get("lesson_text") and len(str(d.get("lesson_text")).strip()) > 20
-        ]
-        # The audit writes near-identical rephrasings of the same lesson on
-        # consecutive cycles ("downstream engines must wait for
-        # pre-collection" x3) — greedy Jaccard filter keeps 3 DISTINCT ones.
-        picked: list[str] = []
-        for r in lrows:
-            text = str(r[0]).strip()
-            words = set(text.lower().split())
-            if any(
-                len(words & set(p.lower().split())) / max(1, len(words | set(p.lower().split()))) > 0.6
-                for p in picked
-            ):
-                continue
-            picked.append(text)
-            if len(picked) >= 3:
-                break
-        if picked:
-            lessons_md = (
-                "## 0.b LESSONS FROM RECENT CYCLES (autoresearch audit)\n"
-                + "\n".join(f"- {p[:300]}" for p in picked)
-                + "\n\n"
-            )
-    except Exception:
-        pass
 
     header = (
         f"# Pre-Collected Ticker Data Report: {ticker}\n"

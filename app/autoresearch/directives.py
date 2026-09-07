@@ -26,7 +26,7 @@ def get_active_directives(limit: int = 10) -> List[dict]:
         # after the rank, not before: slicing in Mongo would drop a critical
         # directive that happened to be older than `limit` info ones.
         docs = mongo_query.find_rows(
-            'cycle_directives', {'status': 'active'},
+            'cycle_directives', {'status': 'active', 'directive_type': {'$in': ['data_gap', 'triage_neglect', 'triage_over_glancing']}},
             ['id', 'directive_type', 'directive_text', 'target_ticker', 'severity'],
             sort=[('created_at', -1)],
         )
@@ -62,20 +62,6 @@ def _generate_directives(reflection: dict, cycle_id: str, triage_audit: dict) ->
         mongo_store.upsert_doc('cycle_directives', {"id": doc["id"]}, doc,
                                insert_only=True)
 
-    for rec in recs[:3]:
-        if not rec or len(rec) < 15: continue
-        severity = "info"
-        rec_lower = rec.lower()
-        if any(w in rec_lower for w in ["critical", "urgent", "immediate", "failing"]):
-            severity = "critical"
-        elif any(w in rec_lower for w in ["warn", "degrad", "poor", "missing"]):
-            severity = "warning"
-
-        _emit(id=f"dir-{uuid.uuid4().hex[:12]}", cycle_id=cycle_id,
-              directive_type='recommendation', directive_text=rec[:300],
-              severity=severity)
-        directives_created += 1
-
     for issue in triage_audit.get("issues", [])[:3]:
         target_ticker = None
         tickers_list = issue.get("tickers", [])
@@ -95,12 +81,6 @@ def _generate_directives(reflection: dict, cycle_id: str, triage_audit: dict) ->
               target_ticker=ticker, severity='warning')
         directives_created += 1
 
-    sched_rec = reflection.get("schedule_recommendation")
-    if sched_rec and isinstance(sched_rec, str) and len(sched_rec) >= 10:
-        _emit(id=f"dir-{uuid.uuid4().hex[:12]}", cycle_id=cycle_id,
-              directive_type='schedule_recommendation',
-              directive_text=sched_rec[:300], severity='info')
-        directives_created += 1
 
 def _expire_old_directives() -> None:
     try:

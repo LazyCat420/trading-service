@@ -165,6 +165,9 @@ async def propose_and_validate_skill_edits(
     prefers to degrade to a summary with a 'skipped' reason.
     """
     from app.config import settings as _settings
+    from app.services.learning.policy import enabled
+    if not enabled("skill_proposals", default=False):
+        return {"skipped": "promotion_requires_reviewed_replay", "serving": "reviewed_methods"}
 
     if not bool(getattr(_settings, "SKILLOPT_ENABLED", True)):
         return {"skipped": "disabled"}
@@ -183,7 +186,7 @@ async def propose_and_validate_skill_edits(
 
     summary: dict = {
         "baseline": round(baseline, 4), "updated": [], "rejected": 0,
-        "skipped": 0, "immature": 0, "rolled_back": [], "contaminated": 0,
+        "skipped": 0, "immature": 0, "rolled_back": [], "contaminated": 0, "candidates": [],
     }
     t0 = time.monotonic()
 
@@ -199,7 +202,9 @@ async def propose_and_validate_skill_edits(
             outcome = await _optimize_one_agent(
                 agent_name, role, reflection, cycle_id, baseline
             )
-            if outcome == "updated":
+            if outcome == "candidate":
+                summary["candidates"].append(agent_name)
+            elif outcome == "updated":
                 summary["updated"].append(agent_name)
             elif outcome == "rejected":
                 summary["rejected"] += 1
@@ -499,10 +504,8 @@ async def _optimize_one_agent(
     # deployment predating the stamp it returns None, and freezing the whole
     # fleet on missing telemetry is a worse failure than one extra edit.
     if _decisions_governed(agent_name, current_version) is None:
-        logger.info(
-            "[SkillOpt] %s: version stamping unavailable — proceeding unmeasured",
-            agent_name,
-        )
+        logger.warning("[SkillOpt] %s: version stamping unavailable — holding", agent_name)
+        return "immature"
     else:
         card = regression_verdict(agent_name, current_version)
         logger.info("[SkillOpt] %s", card.summary())
@@ -612,10 +615,10 @@ async def _optimize_one_agent(
         new_version=current_version + 1,
     )
     logger.info(
-        "[SkillOpt] %s updated to v%d (%s, prose %+.4f): %.80s…",
+        "[SkillOpt] %s proposed candidate v%d (%s, prose %+.4f): %.80s…",
         agent_name, current_version + 1, action, prose_delta, rationale,
     )
-    return "updated"
+    return "candidate"
 
 
 def _build_optimizer_prompt(
@@ -653,7 +656,8 @@ def _build_optimizer_prompt(
         f"TASK: Propose at most ONE edit to the skill doc that would plausibly improve this "
         f"agent's future decisions. Rules:\n"
         f"- Keep the doc under {TARGET_SKILL_CHARS} characters: 3-8 imperative bullet points, specific and "
-        f"checkable (thresholds, data sources, failure modes), no restating the agent's role.\n"
+        f"checkable (data sources, verification methods, failure modes), no restating the agent's role.\n"
+        f"- Never introduce risk thresholds, confidence penalties, forced trades or changes to role/policy.\n"
         f"- Only encode durable lessons; drop bullets that no longer earn their space.\n"
         f"- Renaming or rewording an existing bullet is NOT an improvement and will be "
         f"rejected. An edit must add genuinely new guidance or remove a bullet.\n"
@@ -701,14 +705,10 @@ async def _call_optimizer_llm(agent_name: str, prompt: str) -> dict | None:
 # ── Persistence ──────────────────────────────────────────────────────────────
 
 def _load_skill(agent_name: str) -> tuple[str, int]:
-    """Active skill text + version for an agent; ("", 0) when none exists."""
-    try:
-        row = mongo_query.find_row('agent_skills', {'agent_name': agent_name, 'status': 'active'}, ['skill_text', 'version'], sort=[('version', -1)])
-        if row:
-            return (row[0] or "", int(row[1] or 0))
-    except Exception as e:  # noqa: BLE001
-        logger.debug("[SkillOpt] _load_skill failed for %s: %s", agent_name, e)
-    return ("", 0)
+    """Read the same reviewed methods currently served by the loader."""
+    from app.autoresearch.skill_loader import load_skill_prefix, active_skill_version, _SKILL_HEADER
+    prefix = load_skill_prefix(agent_name)
+    return prefix.removeprefix(_SKILL_HEADER).strip(), active_skill_version(agent_name) or 0
 
 
 def _save_skill(
@@ -722,13 +722,21 @@ def _save_skill(
     rationale: str,
     new_version: int,
 ) -> None:
-    mongo_store.update_docs('agent_skills', {'agent_name': agent_name, 'status': 'active'}, {'$set': {'status': 'archived'}})
-    mongo_store.insert_docs('agent_skills', [{'agent_name': agent_name, 'version': new_version, 'skill_text': skill_text, 'skill_hash': skill_hash, 'cycle_id': cycle_id, 'score': round(float(score), 4), 'action': action, 'rationale': rationale, 'status': 'active', 'created_at': _now()}])
+    # A prose score does not authorize a live prompt change. Candidates require
+    # a reviewed content hash and held-out replay; never archive the serving doc.
+    import hashlib
+    candidate_id = hashlib.sha256(f"{agent_name}:{skill_hash}".encode()).hexdigest()
+    mongo_store.upsert_doc('agent_skill_candidates', {'id': candidate_id}, {
+        'id': candidate_id, 'agent_name': agent_name, 'version': new_version,
+        'skill_text': skill_text, 'skill_hash': skill_hash, 'cycle_id': cycle_id,
+        'score': round(float(score), 4), 'action': action, 'rationale': rationale,
+        'status': 'candidate', 'contract_version': 2, 'created_at': _now(),
+    }, insert_only=True)
 
 
 def _rollback_skill(agent_name: str, from_version: int, cycle_id: str,
                     reason: str) -> bool:
-    """Revert to the predecessor by APPENDING it as a new version.
+    """Propose the reviewed predecessor for replay as a new candidate.
 
     Append-only on purpose. Reactivating the old row would make
     `decision_outcomes.skill_versions` ambiguous — two disjoint periods stamped
@@ -740,7 +748,8 @@ def _rollback_skill(agent_name: str, from_version: int, cycle_id: str,
     handed the same idea again next cycle.
     """
     prev = mongo_query.find_row('agent_skills', {'agent_name': agent_name, 'version': int(from_version) - 1}, ['skill_text', 'skill_hash'])
-    if not prev or not prev[0]:
+    from app.services.learning.policy import skill_allowed
+    if not prev or not prev[0] or not skill_allowed(agent_name, prev[0]):
         logger.warning(
             "[SkillOpt] %s v%d regressed but v%d is unavailable — cannot roll back",
             agent_name, from_version, from_version - 1,
@@ -759,22 +768,10 @@ def _rollback_skill(agent_name: str, from_version: int, cycle_id: str,
         new_version=int(from_version) + 1,
     )
     if bad:
-        _log_rejection(
-            agent_name, bad[0] or "", cycle_id,
-            f"rolled_back_v{from_version}", None,
-            f"measured regression: {reason}"[:500],
-        )
-    try:
-        from app.autoresearch.skill_loader import invalidate_skill_cache
-        invalidate_skill_cache(agent_name)
-    except Exception as e:  # noqa: BLE001 — TTL backstops a missed invalidation
-        logger.debug("[SkillOpt] cache invalidation after rollback failed: %s", e)
-
-    logger.warning(
-        "[SkillOpt] %s ROLLED BACK v%d -> v%d (served as v%d): %s",
-        agent_name, from_version, from_version - 1, from_version + 1, reason,
-    )
-    return True
+        _log_rejection(agent_name, bad[0] or "", cycle_id,
+                       f"rollback_candidate_v{from_version}", None, reason[:500])
+    logger.warning("[SkillOpt] %s: reviewed predecessor queued for replay; serving version unchanged", agent_name)
+    return False  # A rollback proposal is not a completed live rollback.
 
 
 def _log_rejection(

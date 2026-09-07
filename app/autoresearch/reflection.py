@@ -166,23 +166,15 @@ def _recall_past_lessons(audit_bundle: dict) -> str:
     Non-fatal: '' on any failure or when nothing is stored yet.
     """
     try:
-        from app.cognition.lesson_store import retrieve_lessons
-        from app.constants import EVOLVE_COGNITION_K
-
+        from app.services.learning.records import recall_incidents
         gaps = audit_bundle.get("data_quality", {}).get("gaps", [])
         issues = audit_bundle.get("decision_quality", {}).get("issues", [])
-        query_parts = ["trading cycle recommendations"]
-        query_parts += [g.get("ticker", "") for g in gaps[:3]]
-        query_parts += [str(i.get("suggestion") or i.get("issue") or "") for i in issues[:3]]
-        query = " ".join(p for p in query_parts if p)[:500]
+        query = " ".join(str(x) for x in gaps[:3] + issues[:3])[:1500]
+        return "\n".join(
+            f"- [unresolved recommendation; id={row['id'][:12]}] {row['text']}"
+            for row in recall_incidents(query)
+        )
 
-        lessons = retrieve_lessons(query, k=EVOLVE_COGNITION_K)
-        lines = []
-        for l in lessons:
-            text = (l.get("lesson_text") or l.get("preview") or "").strip()
-            if text:
-                lines.append(f"- {text[:160]}")
-        return "\n".join(lines)
     except Exception as e:
         logger.debug("[AUTORESEARCH] past-lesson recall failed (non-fatal): %s", e)
         return ""
@@ -202,25 +194,18 @@ def _rule_based_reflection(audit_bundle: dict) -> dict:
         "fallback": True,
     }
 
-def _store_lessons(reflection: dict, cycle_id: str):
-    recs = reflection.get("recommendations", [])
-    if not recs: return
-    try:
-        from app.cognition.lesson_store import add_lesson
-        from app.utils.poison_guard import is_poisoned
-        for rec in recs[:3]:
-            if not rec or len(rec) < 10: continue
-            if is_poisoned(rec):
-                logger.warning("[AUTORESEARCH] Poison guard blocked lesson: %.60s…", rec)
-                continue
-            add_lesson(
-                text=rec[:120],
-                metadata={
-                    "session_id": f"autoresearch_{cycle_id[:8]}",
-                    "round": 0, "score": 0, "status": "recommendation",
-                    "source": "autoresearch", "timestamp": datetime.now(timezone.utc).isoformat()
-                }
-            )
-    except Exception as e:
-        logger.debug("Lesson store write failed: %s", e)
-
+def _store_lessons(reflection: dict, cycle_id: str) -> dict:
+    from app.services.learning.records import write
+    result = {"stored": 0, "failed": 0}
+    for rec in (reflection.get("recommendations") or [])[:3]:
+        if not isinstance(rec, str) or len(rec.strip()) < 10:
+            continue
+        try:
+            write(rec, cycle_id=cycle_id, producer="autoresearch_reflection",
+                  kind="incident", source_refs=[f"autoresearch_reports:{cycle_id}"],
+                  evidence=str(reflection.get("summary") or ""))
+            result["stored"] += 1
+        except Exception as exc:
+            result["failed"] += 1
+            logger.error("[AUTORESEARCH] Lesson write failed for %s: %s", cycle_id, exc)
+    return result

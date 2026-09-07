@@ -713,6 +713,7 @@ async def run_v3_agent(
     system_prompt = agent_module.SYSTEM_PROMPT
     tool_whitelist = agent_module.TOOL_WHITELIST
 
+    _skill_prefix = ""
     # SkillOpt: prepend this agent's learned skill doc ("" when none; served
     # from an in-process cache, so no per-run DB hit). The prefix only changes
     # when autoresearch accepts an edit, so the system prompt stays
@@ -1058,7 +1059,7 @@ async def run_v3_agent(
             dynamic_sections.append((_KEEP, f"## Portfolio Context\n{portfolio_ctx}"))
 
         directives_ctx = desk.cycle_metadata.get("directives_context", "")
-        if directives_ctx:
+        if directives_ctx and agent_name == "v3_junior_analyst":
             dynamic_sections.append((
                 1,
                 "## Active Directives (from AutoResearch — address if relevant)\n"
@@ -1132,104 +1133,13 @@ async def run_v3_agent(
         if custom_instructions and len(custom_instructions) > 3000:
             custom_instructions = custom_instructions[:3000] + " …[truncated]"
 
-        # Prism's server-side agent memory embeds the USER message with
-        # embeddinggemma, which has a hard 2048-token positional limit — a
-        # larger user message fails with a "memory:embed ... maximum context
-        # length is 2048 tokens" error that can starve the desk of this agent's
-        # artifact. Prism does NOT embed the system prompt (see base_agent.py),
-        # so when the KV-cache-friendly user-message layout would overflow the
-        # embedder, ride the dynamic block in the SYSTEM prompt instead. Common
-        # (small) prompts still get prefix-cache reuse; only oversized ones fall
-        # back. ~4 chars/token, with headroom below 2048 to absorb tokenizer
-        # density differences on numeric/ticker-heavy text.
-        _EMBED_TOKEN_LIMIT = 2048
-        _USER_SCAFFOLD_CHARS = 1900  # tool/output directives + reminder appended below
-        # custom_instructions (peer-request text) is appended to the user
-        # prompt AFTER this guard runs — it must be counted in _fixed_chars or a
-        # long peer query can push the real message past the embed limit.
-        #
-        # DIVISOR 3 IS KNOWN TO BE WRONG, AND IS KEPT DELIBERATELY.
-        #
-        # Measured 2026-08-09 by binary search against the live embedder, the
-        # desk's dense JSON runs **1.88 chars/token**, not the ~2.5-3 this
-        # comment used to assume — so the true budget is ~2,966 chars, not
-        # 4,944, and blocks that pass this gate can still overflow the
-        # embedder. `EmbeddingService.CHARS_PER_TOKEN` carries the measurement.
-        #
-        # Tightening it here was tried and REVERTED, because this gate does not
-        # do what its name suggests. Overflow does not reject anything; it
-        # routes the whole dynamic block into the SYSTEM prompt (see the
-        # relocation branch below), which prism does not embed — and that
-        # *skips KV-cache reuse*. Production prefix-cache hit rate is ~84% on a
-        # box whose measured failure mode is prefill thrash, so making
-        # relocation more frequent costs more than the overflow does.
-        #
-        # And the overflow now costs much less than when this guard was
-        # written: the vllm-shim clamps and token-feedback-rescales oversized
-        # embeddings (`lazy-agent-service@39f62f6`), so an overflowing embed is
-        # truncated rather than rejected. The failure this defended against —
-        # "prism stores nothing" — has been fixed at the seam that can actually
-        # measure the overflow.
-        #
-        # So: an honest number here would make things worse. Revisit only with
-        # a measurement of relocation frequency against cache hit rate.
-        _EMBED_CHAR_BUDGET = (_EMBED_TOKEN_LIMIT - 400) * 3
-        _fixed_chars = (
-            len(user_prompt) + len(custom_instructions or "") + _USER_SCAFFOLD_CHARS
-        )
-
-        def _fits(block: str) -> bool:
-            return (_fixed_chars + len(block)) < _EMBED_CHAR_BUDGET
-
-        # Shed lowest-priority sections until the block fits the embedder rather
-        # than relocating it to the system prompt. Relocation kept every token in
-        # the payload (the model saw all of it) and broke prefix-cache reuse; the
-        # only thing it avoided was Prism's embed error.
-        shed: list[str] = []
-        if prompt_split and dynamic_block and not _fits(dynamic_block):
-            kept = list(dynamic_sections)
-            while kept and not _fits("\n\n".join(t for _, t in kept)):
-                sheddable = [s for s in kept if s[0] != _KEEP]
-                if not sheddable:
-                    break
-                victim = max(sheddable, key=lambda s: s[0])
-                kept.remove(victim)
-                shed.append(victim[1].split("\n", 1)[0].lstrip("# ").strip() or "unnamed")
-            dynamic_block = "\n\n".join(t for _, t in kept)
-
-        _fits_embedder = _fits(dynamic_block)
-
-        if shed:
-            logger.info(
-                "[V3Runner] %s: shed %d dynamic section(s) to fit Prism's %d-token "
-                "memory embedder: %s",
-                agent_name, len(shed), _EMBED_TOKEN_LIMIT, ", ".join(shed),
-            )
-
-        if prompt_split and dynamic_block and _fits_embedder:
+        # Prism now derives a compact retrieval query independently of the
+        # analysis payload. Keep required evidence in the user message so the
+        # static system prefix can be cached; no embedding-size relocation.
+        if prompt_split:
             user_prompt += dynamic_block + "\n\n"
         elif dynamic_block:
-            # Either V3_PROMPT_SPLIT is off (legacy layout), or the non-sheddable
-            # core alone still overflows the embedder. The system prompt is the
-            # only place left that Prism does not embed — and since it is not
-            # embedded, the shed sections cost nothing here: restore them.
-            # Before this, every decision agent (KEEP core ~21k chars) shed the
-            # whiteboard summary — the carrier of final_decision — and then
-            # routed to the system prompt anyway, so the Board/synthesizer ran
-            # without the whiteboard on 100% of 08-04's decision builds while
-            # the shed bought no embed relief at all.
-            if prompt_split and not _fits_embedder and shed:
-                dynamic_block = "\n\n".join(t for _, t in dynamic_sections)
             system_prompt += "\n\n" + dynamic_block
-            if prompt_split and not _fits_embedder:
-                logger.warning(
-                    "[V3Runner] %s: non-sheddable context (~%d tok) exceeds "
-                    "Prism's %d-token memory embedder — routing FULL dynamic "
-                    "block to system prompt (%d shed section(s) restored, "
-                    "KV-cache reuse skipped).",
-                    agent_name, (_fixed_chars + len(dynamic_block)) // 3,
-                    _EMBED_TOKEN_LIMIT, len(shed),
-                )
 
         if tool_whitelist:
             # State the turn budget as a NUMBER the agent can count against.
@@ -1377,6 +1287,17 @@ async def run_v3_agent(
                 and desk.cycle_metadata['prior_research_answers_context'] in delivered_text),
             "system_chars": len(system_prompt), "user_chars": len(user_prompt),
         })
+
+        try:
+            from app.services.learning.receipts import record_delivery
+            from app.autoresearch.skill_loader import active_skill_version
+            record_delivery(cycle_id=cycle_id, ticker=desk.ticker, role=agent_name,
+                system=system_prompt, user=user_prompt, skill_text=_skill_prefix,
+                skill_version=active_skill_version(agent_name),
+                memory_ids=(desk.cycle_metadata.get("memory_source_ids") or [])
+                    if desk.cycle_metadata.get("memory_context", "") in delivered_text else [])
+        except Exception as exc:
+            logger.error("[V3Runner] learning delivery receipt failed: %s", exc)
 
         # Context budget report (plan 4.5): prompt sizes ride with telemetry
         sys_prompt_chars = len(system_prompt)
@@ -2146,6 +2067,16 @@ async def run_v3_agent(
 
         # Quality scoring — detect dead ends / weak artifacts
         quality_result = score_artifact(artifact_type, artifact)
+        try:
+            from app.services.learning.receipts import queue_artifact_receipt
+            queue_artifact_receipt(result, cycle_id=cycle_id, ticker=desk.ticker, role=agent_name,
+                artifact_type=artifact_type, artifact=artifact,
+                valid=not errors and repaired is None and not artifact.get("_degraded")
+                and quality_result.get("flag") not in {"dead_end", "weak"}
+                and len(artifact.get("data_gaps") or []) <= 2)
+        except Exception as exc:
+            logger.error("[V3Runner] artifact validation receipt failed: %s", exc)
+
         quality_score = quality_result.get("quality_score", -1)
         quality_flag = quality_result.get("flag", "unknown")
         failure_patterns = quality_result.get("failure_patterns", [])

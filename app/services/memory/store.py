@@ -76,7 +76,8 @@ class MemoryStore:
         # and ISO-8601 UTC strings compare lexicographically in timestamp order.
         return mongo_store.delete_docs(
             'episodic_observations',
-            {'promoted_to_memory': True, 'created_at': {'$lt': cutoff.isoformat()}},
+            {'promoted_to_memory': True, 'promotion_contract_version': 2,
+             'source_snapshot_id': {'$type': 'string'}, 'promoted_at': {'$lt': cutoff}},
         )
 
     def add_canonical_memory(self, memory: dict) -> str:

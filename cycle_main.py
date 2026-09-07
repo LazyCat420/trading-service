@@ -285,8 +285,17 @@ async def run_worker(tickers: list[str] | None = None, shutdown_event: asyncio.E
     except Exception as e:
         logger.error("[cycle_backend] Failed to start Autoresearch poller: %s", e)
 
+    from app.services.learning.worker import run as run_learning_worker
+    learning_task = asyncio.create_task(run_learning_worker(shutdown))
+
     await shutdown.wait()
-    
+
+    learning_task.cancel()
+    try:
+        await learning_task
+    except asyncio.CancelledError:
+        pass
+
     from app.services.pipeline_service import PipelineService
     if PipelineService._cycle_task and not PipelineService._cycle_task.done():
         logger.info("[cycle_backend] Shutting down: stopping active cycle...")
@@ -328,6 +337,11 @@ async def start_health_server(shutdown_event: asyncio.Event):
     @app.get("/health")
     def health():
         return {"status": "ok", "service": "trading-service", "version": "v3"}
+
+    @app.get("/learning/health")
+    def learning_health(token: str = Depends(verify_api_key)):
+        from app.db import mongo_store
+        return {"components": mongo_store.find_docs("learning_health", {}, projection={"_id": 0})}
 
     @app.get("/status")
     def status(summary_only: bool = False, token: str = Depends(verify_api_key)):

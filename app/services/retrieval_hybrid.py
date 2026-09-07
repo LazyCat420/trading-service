@@ -76,6 +76,10 @@ class HybridRetriever:
                 top_k=top_k * 3,
             )
 
+            from app.services.learning.freshness import eligible_search_hits
+            dense_results = eligible_search_hits(dense_results)
+            bm25_results = eligible_search_hits(bm25_results)
+
             # ── 3. Reciprocal Rank Fusion ──
             # Build rank maps: key → rank (1-indexed)
             def _key(r: dict) -> tuple[str, str]:

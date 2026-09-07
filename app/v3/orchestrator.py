@@ -488,16 +488,11 @@ async def run_v3_pipeline(
             if retrieval_results:
                 memory_brief = MemoryRetriever.build_memory_brief(retrieval_results)
                 brief_text = memory_brief.get("brief_text", "")
+                desk.cycle_metadata["memory_source_ids"] = memory_brief.get("source_memory_ids", [])
 
-            addenda = ""
-            try:
-                from app.services.retrieval_context import build_memory_addenda
-                addenda = await asyncio.to_thread(build_memory_addenda, ticker)
-            except Exception as addenda_err:
-                logger.debug("[V3] %s: memory addenda failed (non-fatal): %s",
-                             ticker, addenda_err)
-
-            combined = "\n\n".join(b for b in (brief_text, addenda) if b)
+            # Legacy addenda have no eligibility/provenance contract. Keep
+            # their source rows, but do not mix them into validated memory.
+            combined = brief_text
             if combined:
                 desk.cycle_metadata["memory_context"] = combined
                 desk.cycle_metadata["memory_context_state"] = f"on:{len(combined)}"

@@ -86,6 +86,9 @@ class DenseRetriever:
                 top_k=top_k * 3,
             )
 
+            from app.services.learning.freshness import eligible_search_hits
+            raw = eligible_search_hits(raw)
+
             # 3. Convert to RetrievedChunk, apply boosting & filtering
             chunks: list[RetrievedChunk] = []
             seen: set[tuple[str, str]] = set()  # (source_table, source_id)

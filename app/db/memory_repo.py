@@ -117,6 +117,8 @@ def log_consolidation_run(record: Dict[str, Any]) -> None:
     """Log a consolidation run into MongoDB."""
     mongo_store.insert_docs('consolidation_reports', [{
         'id': record.get("id"),
+        'status': record.get('status', 'ok'),
+        'error': record.get('error'),
         'run_at': record.get("run_at", datetime.now(timezone.utc).isoformat()),
         'ticker': record.get("ticker"),
         'observations_consumed': record.get("observations_consumed", 0),

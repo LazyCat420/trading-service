@@ -275,7 +275,7 @@ def test_a_contaminated_window_neither_promotes_nor_reverts():
     llm.assert_not_awaited()
 
 
-def test_rollback_appends_rather_than_reactivating():
+def test_rollback_proposal_does_not_claim_live_reactivation():
     """Append-only. Reactivating the old row would stamp two disjoint periods
     with the same version number, and every scorecard query would silently pool
     them into one sample."""
@@ -289,12 +289,13 @@ def test_rollback_appends_rather_than_reactivating():
     # module still imports but no longer reads through, so the fake
     # intercepted nothing and the lookup went to the live database.
     q = MagicMock()
-    q.find_row.return_value = ("predecessor doc", "hash4")
+    from app.services.learning.policy import BASELINES
+    q.find_row.return_value = (BASELINES["v3_bull_agent"], "hash4")
 
     with patch.object(S, "mongo_query", q), \
          patch.object(S, "_save_skill") as save, \
          patch.object(S, "_log_rejection"):
-        assert S._rollback_skill("v3_bull_agent", 5, "cyc-1", "worse") is True
+        assert S._rollback_skill("v3_bull_agent", 5, "cyc-1", "worse") is False
 
     # The predecessor is v(n-1): rolling back v5 must read v4, not v5.
     assert q.find_row.call_args_list[0][0][1] == {
@@ -303,5 +304,5 @@ def test_rollback_appends_rather_than_reactivating():
 
     kwargs = save.call_args.kwargs
     assert kwargs["new_version"] == 6, "rollback must mint a NEW version number"
-    assert kwargs["skill_text"] == "predecessor doc"
+    assert kwargs["skill_text"] == BASELINES["v3_bull_agent"]
     assert kwargs["action"] == "ROLLBACK"

@@ -601,6 +601,7 @@ async def run_agent(
     # so it was asked to write a report from material containing none. Declared
     # here, OUTSIDE the retry wrapper, so it is still readable at the return.
     tool_transcript: list[dict] = []
+    learning_identity: dict = {}
     # What the run had already SPENT when it died. The AGENT_ERROR telemetry row
     # used to hardcode tokens=0/loops=0, so a crash was free in every ledger
     # that sums prompt_tokens — while GOOG's dead bull agent (2026-09-05) had
@@ -624,6 +625,7 @@ async def run_agent(
 
     @aresilient_call(retries=5, backoff="exponential", base_delay=5.0, max_delay=60.0)
     async def _agent_llm_call():
+        learning_identity.clear()
         # Budget-aware retry: the wrapper cannot see the runner's deadline, so
         # the attempt checks it. Past attempt 1, refuse to start when the time
         # left cannot fit a run — see RetryBudgetExhausted.
@@ -1085,6 +1087,13 @@ async def run_agent(
 
             t0 = time.time()
             final_text = await harness.run(full_prompt)
+            from app.services.learning.policy import content_hash
+            learning_identity.clear()
+            learning_identity.update({
+                "conversation_id": prism_client.get_conversation_id(prism_agent_id, session.session_id),
+                "output_hash": content_hash(final_text or ""), "agent": prism_agent_id,
+                "project": settings.PROJECT_NAME, "profile_id": "default",
+            })
             # Reasoning-leak canary — same tripwire as call_prism_agent /
             # chat_with_tools; the harness path is a third response site and
             # a shared helper only helps callers that call it.
@@ -1226,6 +1235,7 @@ async def run_agent(
         # The agent's own findings, so a failed artifact can be repaired from
         # the research it already paid for rather than from its last sentence.
         "tool_transcript": tool_transcript,
+        "learning_identity": dict(learning_identity),
         "model_used": model_used,
         "provider": provider_used,
         # Snapshot of the harness's LAST request, not a loop-wide sum. That is

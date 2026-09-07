@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 MIN_CONFIDENCE = 0.20
 MAX_AGE_DAYS_FOR_DECAY = 180
 MAX_RETURNED_MEMORIES = 10
-MAX_BRIEF_CHARS = 3000
+MAX_BRIEF_CHARS = 1800
 
 
 def _coerce_dt(val: Any) -> datetime | None:
@@ -106,26 +106,11 @@ class MemoryRetriever:
         (ticker/sector/tag/recency/confidence) plus a pgvector cosine boost
         when the embedder is available (degrades gracefully without it).
         """
-        raw_memories = fetch_candidate_memories(ticker, sector)
+        from app.services.learning.freshness import eligible_memory
+        raw_memories = [m for m in fetch_candidate_memories(ticker, sector) if eligible_memory(m)]
         
-        # Semantic vector search boost
-        vector_scores = {}
-        try:
-            from app.services.embedding_service import embedder
-            from app.db.vector_store import vector_store
-            query_str = f"{ticker} {sector or ''} {' '.join(tags or [])} stock trading memories".strip()
-            query_vec = embedder.embed_text(query_str, prefix="Represent this financial query: ")
-            vector_results = vector_store.search_cosine(
-                query_vec,
-                ticker=ticker,
-                source_filter="canonical_memories",
-                top_k=50
-            )
-            for vr in vector_results:
-                vector_scores[vr["source_id"]] = vr["score"]
-        except Exception as e:
-            logger.warning(f"[MemoryRetriever] Semantic vector search failed/skipped: {e}")
-
+        # Canonical v2 retrieval uses explicit ticker/date/source eligibility.
+        # No query embedding is needed for this bounded evidence read.
         candidates = []
 
         for m in raw_memories:
@@ -144,10 +129,6 @@ class MemoryRetriever:
                 m, query_ticker=ticker, query_sector=sector, query_tags=tags
             )
             
-            # Boost score by up to 10 points based on cosine similarity if found in vector search
-            if m["id"] in vector_scores:
-                score += vector_scores[m["id"]] * 10.0
-
             # Determine "reason"
             m_ticker = m.get("ticker")
             m_sector = m.get("sector")
@@ -203,11 +184,10 @@ class MemoryRetriever:
             reason = res["reason"]
             conf = res["confidence_score"]
 
-            entry = f"[{m_type} | Conf: {conf:.2f} | {reason}] {summary}"
+            entry = f"[{m_type} | source={m_id} | {reason}; historical observation, reverify current facts] {summary}"
 
-            if current_char_count + len(entry) + 1 > MAX_BRIEF_CHARS:
-                brief_lines.append("... (memory truncated due to size limits) ...")
-                break
+            if current_char_count + len(entry) + 100 > MAX_BRIEF_CHARS:
+                continue
 
             brief_lines.append(entry)
             used_ids.append(m_id)

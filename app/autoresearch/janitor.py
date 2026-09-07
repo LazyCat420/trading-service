@@ -41,6 +41,16 @@ def run_janitor() -> dict:
     else:
         logger.debug("[JANITOR] No cleanup needed this cycle.")
 
+    try:
+        from app.services.learning.records import retire_expired, collect_retired_indexes
+        results["learning_retired"] = retire_expired()
+        results["retired_indexes"] = collect_retired_indexes()
+        import uuid
+        mongo_store.insert_docs("learning_events", [{"id": uuid.uuid4().hex,
+            "event": "janitor_run", "created_at": datetime.now(timezone.utc), "results": results}])
+    except Exception as exc:
+        logger.error("[JANITOR] learning retirement/report failed: %s", exc)
+        results["learning_retirement_failed"] = True
     return results
 
 

@@ -12,6 +12,14 @@ import pytest
 
 from app.autoresearch import skill_optimizer as so
 from app.autoresearch import skill_loader as sl
+from app.services.learning.policy import BASELINES, BASELINE_VERSION
+from app.autoresearch.scorecard import VersionScorecard, VERDICT_HEALTHY
+
+@pytest.fixture(autouse=True)
+def proposal_gate(monkeypatch):
+    monkeypatch.setenv("LEARNING_SKILL_PROPOSALS_ENABLED", "true")
+    with patch.object(so, "_decisions_governed", return_value=100), patch.object(so, "regression_verdict", return_value=VersionScorecard(agent_name="v3_bull_agent", version=2, verdict=VERDICT_HEALTHY)), patch("app.services.learning.health.record"):
+        yield
 
 
 REFLECTION = {
@@ -188,17 +196,17 @@ def test_llm_skip_action_means_no_write():
     rej.assert_not_called()
 
 
-def test_accepted_edit_archives_and_saves():
+def test_accepted_edit_saves_candidate():
     proposal = {"action": "REPLACE", "rationale": "better", "updated_skill": GOOD_SKILL}
     # _decisions_governed is pinned so this test exercises the ACCEPT path only.
     # Left unmocked it queries the real DB and the maturity gate (added
     # 2026-07-25) short-circuits before any of the logic under test runs.
     with patch.object(so, "_load_skill", return_value=("old doc", 2)), \
-         patch.object(so, "_decisions_governed", return_value=None), \
+         patch.object(so, "_decisions_governed", return_value=100), \
          patch.object(so, "_call_optimizer_llm", new=AsyncMock(return_value=proposal)), \
          patch.object(so, "_save_skill") as save:
         out = _run(so._optimize_one_agent("v3_bull_agent", "role", REFLECTION, "cyc-1", 0.55))
-    assert out == "updated"
+    assert out == "candidate"
     save.assert_called_once()
     assert save.call_args.kwargs["new_version"] == 3
     assert save.call_args.kwargs["skill_text"] == GOOD_SKILL
@@ -237,19 +245,19 @@ def _patch_loader(row=None, raises=None):
     return patch.object(sl, "mongo_query", q)
 
 
-def test_loader_returns_empty_on_db_error():
+def test_loader_returns_reviewed_baseline_on_db_error():
     sl.invalidate_skill_cache()
     with _patch_loader(raises=RuntimeError("no db")):
-        assert sl.load_skill_prefix("v3_bull_agent", bust_cache=True) == ""
+        assert BASELINES["v3_bull_agent"] in sl.load_skill_prefix("v3_bull_agent", bust_cache=True)
 
 
 def test_loader_formats_and_caches():
     sl.invalidate_skill_cache()
 
-    with _patch_loader(row=(GOOD_SKILL, 4)):
+    with _patch_loader(row=(BASELINES["v3_bull_agent"], 4)):
         prefix = sl.load_skill_prefix("v3_bull_agent", bust_cache=True)
     assert prefix.startswith("## Agent Skill Guidance (SkillOpt)\n")
-    assert GOOD_SKILL in prefix
+    assert BASELINES["v3_bull_agent"] in prefix
 
     # Cached: no DB access needed on the second call
     with _patch_loader(raises=RuntimeError("no db")):

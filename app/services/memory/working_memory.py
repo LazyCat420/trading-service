@@ -69,10 +69,7 @@ class WorkingMemoryManager:
                 lines.append(
                     f"- 🔴 [{r['priority'].upper()}] {r['intention']} (Trigger: {r['trigger_condition']})"
                 )
-                try:
-                    prospective_memory_store.mark_triggered(r["id"])
-                except Exception as e:
-                    logger.warning(f"Failed to mark prospective memory triggered: {e}")
+
 
         if semantics:
             lines.append(f"\n### Known Facts [{ticker}]")
@@ -82,7 +79,7 @@ class WorkingMemoryManager:
         if episodes:
             lines.append("\n### Relevant Past Cycles")
             for e in episodes:
-                date_str = e["timestamp"][:10] if e["timestamp"] else "Unknown"
+                date_str = str(e["timestamp"])[:10] if e["timestamp"] else "Unknown"
                 summary = e["summary"][:150]
                 if str(e.get("outcome", "")).lower() == "pending":
                     # Freshly-written episodes have no resolved outcome yet —
@@ -94,7 +91,7 @@ class WorkingMemoryManager:
                     )
 
         if procedures:
-            lines.append("\n### Proven Patterns")
+            lines.append("\n### Candidate Patterns")
             for p in procedures:
                 uses = int(p.get("total_uses") or 0)
                 if uses >= 2:

@@ -1,4 +1,8 @@
-"""Open-Ended Research Loop Worker — background consumer for `dossier_question_log`.
+"""Legacy manual research resolver; not registered as a background worker.
+
+The supported automated consumer is app.services.research_work and its durable
+leases, evidence validation and outbox. This compatibility entrypoint requires
+an explicit resolver and remains available to historical tests/manual scripts.
 
 WHAT THIS DOES NOT DO, AND WHY THAT MATTERS
 -------------------------------------------

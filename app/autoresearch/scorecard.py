@@ -330,7 +330,7 @@ def regression_verdict(agent_name: str, version: int) -> VersionScorecard:
     if current.verdict != VERDICT_HEALTHY or prev is None:
         return current
 
-    if prev.combined is None or prev.verdict in (VERDICT_CONTAMINATED,):
+    if prev.combined is None or prev.verdict != VERDICT_HEALTHY:
         current.detail += " — predecessor not comparable, no regression test"
         return current
 

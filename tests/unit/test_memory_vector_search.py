@@ -34,8 +34,13 @@ def mock_raw_memories():
 @patch("app.services.memory.retriever.fetch_candidate_memories")
 @patch("app.services.embedding_service.embedder.embed_text")
 @patch("app.db.vector_store.vector_store.search_cosine")
-def test_memory_retriever_vector_boost(mock_search_cosine, mock_embed_text, mock_fetch_candidate_memories, mock_raw_memories):
+def test_memory_retriever_uses_verified_sources_without_embedding(mock_search_cosine, mock_embed_text, mock_fetch_candidate_memories, mock_raw_memories):
     # Mock SQL candidate fetching
+    for row in mock_raw_memories:
+        row.update(contract_version=2, validation_state='source_verified',
+                   source_evidence=[{'quote':row['summary']}],
+                   valid_from=datetime.now(timezone.utc)-timedelta(days=1),
+                   valid_until=datetime.now(timezone.utc)+timedelta(days=7))
     mock_fetch_candidate_memories.return_value = mock_raw_memories
 
     # Mock embedder
@@ -64,4 +69,6 @@ def test_memory_retriever_vector_boost(mock_search_cosine, mock_embed_text, mock
     m2_res = next(r for r in results if r["memory_id"] == "mem_id_2")
 
     # mem_id_2 should have a higher score because of the vector search boost (similarity 0.85 * 10 = +8.5 boost)
-    assert m2_res["score"] > m1_res["score"] + 5.0
+    assert m2_res["score"] > m1_res["score"]
+    mock_embed_text.assert_not_called()
+    mock_search_cosine.assert_not_called()

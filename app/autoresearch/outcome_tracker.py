@@ -301,16 +301,17 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
     #
     # Serialized here rather than passed as a dict: psycopg adapts dict -> hstore
     # by default, not JSONB, which fails on a JSONB column.
-    skill_versions = None
+    # Attribute the exact delivered skill per ticker/role. A post-cycle cache
+    # snapshot falsely attributes agents that never ran and can race a reload.
+    skill_versions_by_ticker = {}
     try:
-        import json as _json
-
-        from app.autoresearch.skill_loader import active_skill_versions
-
-        snapshot = active_skill_versions()
-        skill_versions = _json.dumps(snapshot) if snapshot else None
-    except Exception as e:  # noqa: BLE001 — provenance, never blocks recording
-        logger.debug("[OUTCOME] skill version snapshot failed: %s", e)
+        receipts = mongo_store.find_docs('learning_delivery_receipts', {
+            'cycle_id': cycle_id, 'skill_version': {'$ne': None},
+        }, sort=[('created_at', 1)])
+        for receipt in receipts:
+            skill_versions_by_ticker.setdefault(receipt['ticker'], {})[receipt['role']] = receipt['skill_version']
+    except Exception as exc:
+        logger.warning('[OUTCOME] delivery attribution unavailable: %s', exc)
 
     try:
         models_by_ticker: dict = {}
@@ -383,7 +384,7 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
                 'confidence': confidence,
                 'entry_price': round(entry_price, 4),
                 'created_at': now_utc,
-                'skill_versions': skill_versions,
+                'skill_versions': skill_versions_by_ticker.get(ticker) or None,
                 'overridden_from': overridden_from,
                 'models_used': models_used,
             }])

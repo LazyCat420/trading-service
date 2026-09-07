@@ -304,7 +304,10 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         mongo_store.update_docs('autoresearch_reports', {'id': report_id}, {'$set': {'score_version': score_ver, 'data_quality_score': round(data_score, 1), 'decision_quality_score': round(decision_score, 1), 'llm_performance_score': round(llm_score, 1), 'overall_score': round(overall, 1), 'data_gaps': json.dumps(data_quality.get("gaps", [])), 'decision_issues': json.dumps(decision_quality.get("issues", [])), 'llm_issues': json.dumps(llm_analysis.get("issues", [])), 'performance_metrics': json.dumps(perf_metrics), 'reflection': json.dumps(reflection), 'recovery_stats': json.dumps(recovery), 'status': 'done'}})
 
         try:
-            _store_lessons(reflection, cycle_id)
+            lesson_result = _store_lessons(reflection, cycle_id)
+            from app.services.learning.health import record as learning_health
+            learning_health("reflection_lessons", "failed" if lesson_result.get("failed") else "ready",
+                            cycle_id=cycle_id, **lesson_result)
 
             if reflection.get("system_health") == "critical":
                 from app.services.session_profile import profile_memory
@@ -321,6 +324,9 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
             from app.autoresearch.skill_optimizer import propose_and_validate_skill_edits
             skill_summary = await propose_and_validate_skill_edits(reflection, cycle_id, tickers)
             logger.info("[AUTORESEARCH] SkillOpt: %s", skill_summary)
+            from app.services.learning.health import record as learning_health
+            learning_health("skill_proposals", "disabled" if skill_summary.get("skipped") else "ready",
+                            cycle_id=cycle_id, **skill_summary)
         except Exception as sk_err:
             logger.warning("[AUTORESEARCH] Skill mutation skipped (non-fatal): %s", sk_err)
 
