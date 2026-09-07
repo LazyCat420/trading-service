@@ -164,6 +164,58 @@ PARAMETER_REGISTRY: dict[str, ParamSpec] = {
         tier=TIER_BOARD,
         description="Daily budget of watch-triggered wake cycles.",
     ),
+    # ── Research allocator (watch_triage / watch_policy / watch_planner) ──
+    # Measured 2026-09-06: the wake budget of 6 was spent 6/6 on every one of
+    # the last 21 days, allocated by arrival time rather than by value, and 8
+    # of the last 30 trips produced no decision at all. These knobs govern the
+    # allocator that replaces arrival order with an explainable score.
+    "WATCH_TRIAGE_MODE": ParamSpec(
+        default=1, min_value=0, max_value=2, direction=RISK_DOWN, kind="int",
+        tier=TIER_BOARD,
+        description=(
+            "0 = off (pre-allocator behaviour), 1 = shadow (score and log every "
+            "candidate, change nothing), 2 = enforce (the score floor and the "
+            "per-ticker budget actually gate wakes). Defaults to SHADOW: the "
+            "triage inputs must be shown reliable on real candidates before "
+            "they are allowed to refuse a wake."
+        ),
+    ),
+    "WATCH_PLANNER_ENABLED": ParamSpec(
+        default=0, min_value=0, max_value=1, direction=RISK_UP, kind="int",
+        tier=TIER_BOARD,
+        description=(
+            "Stage-2 bounded agent planner. Ships OFF — it is enabled only "
+            "after shadow data shows the deterministic triage inputs are "
+            "reliable, because a model asked to judge unvalidated numbers "
+            "produces judgements that look reasonable either way."
+        ),
+    ),
+    "WATCH_EVIDENCE_MAX_AGE_H": ParamSpec(
+        default=36, min_value=2, max_value=168, direction=RISK_UP, kind="int",
+        tier=TIER_BOARD,
+        description=(
+            "Evidence older than this cannot trip a wake. Measured against the "
+            "WORLD's timestamp (a headline's collection time), never the time "
+            "we looked — look-time would make everything permanently fresh."
+        ),
+    ),
+    "WATCH_MIN_REANALYSIS_H": ParamSpec(
+        default=12, min_value=1, max_value=168, direction=RISK_UP, kind="int",
+        tier=TIER_BOARD,
+        description=(
+            "Cadence floor: a ticker analysed within this window cannot be "
+            "re-analysed. The measured worst case was NVDA at 4 of the last 30 "
+            "trips, twice inside 18 hours."
+        ),
+    ),
+    "WATCH_MAX_ANALYSES_PER_WEEK": ParamSpec(
+        default=3, min_value=1, max_value=14, direction=RISK_UP, kind="int",
+        tier=TIER_BOARD,
+        description=(
+            "Per-ticker weekly research budget, so one noisy name cannot hold a "
+            "share of every day's global budget."
+        ),
+    ),
     "MAX_ACTIVE_BOT_SCHEDULES": ParamSpec(
         default=5, min_value=1, max_value=10, direction=RISK_UP, kind="int",
         description="Active agent-created research schedules at any moment.",

@@ -362,6 +362,7 @@ async def start_health_server(shutdown_event: asyncio.Event):
         "eval_trust_router",
         "component_health_router",
         "research_firm_router",
+        "watch_allocator_router",
     )
 
     import importlib

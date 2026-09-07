@@ -81,4 +81,32 @@ def test_exhausted_budget_defers_instead_of_enqueueing(spend_env):
     )
     assert fired == 0
     assert enqueued == []
-    assert deferred == ["LLY(news)"]
+    # The deferral now carries WHY. It used to read "LLY(news)", which could not
+    # distinguish an exhausted budget from an allocator refusal or a lost
+    # enqueue race — three states needing three different responses. Assert the
+    # parts, plus the specific reason, rather than pinning the whole string:
+    # a test that pins a formatted constant goes red for having been improved.
+    assert len(deferred) == 1
+    entry = deferred[0]
+    assert entry.startswith("LLY(news:")
+    assert "global_daily_budget_exhausted" in entry
+
+
+def test_a_sweep_loser_is_not_reported_as_a_budget_deferral(spend_env):
+    """Losing the sweep is not being deferred.
+
+    `deferred`'s only consumer logs "daily wake budget (N) spent — deferred M
+    trip(s)". A candidate that merely ranked below this sweep's winner stays
+    armed and re-competes in 15 minutes; filing it as a deferral would fire the
+    desk's one genuine saturation warning any time two watches trip at once,
+    and a warning that fires constantly is a warning nobody reads.
+    """
+    enqueued, marked = spend_env(accept_first_n=6)
+    deferred = []
+    fired, budget_left = asyncio.run(
+        watch_desk._spend_wake_budget([_cand("LLY"), _cand("JPM"), _cand("PFE")],
+                                      budget_left=6, deferred=deferred)
+    )
+    assert fired == 1
+    assert len(marked) == 1
+    assert deferred == []          # two losers, zero deferrals reported

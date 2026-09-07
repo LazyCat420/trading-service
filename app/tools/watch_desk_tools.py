@@ -29,7 +29,10 @@ logger = logging.getLogger(__name__)
         "rsi{op,value} (op gt|lt); volume_spike{mult} (× 20d avg); "
         "news{categories} (earnings|guidance|downgrade|upgrade|mna|litigation|insider); "
         "staleness{max_days} (re-check backstop). Always include an invalidation level and a "
-        "staleness backstop."
+        "staleness backstop. "
+        "ALWAYS pass resolution_condition — without it the desk cannot tell a headline "
+        "that answers your open question from one that merely names the company, and ANY "
+        "category-matching headline will wake a full trading cycle."
     ),
     parameters={
         "type": "object",
@@ -43,6 +46,31 @@ logger = logging.getLogger(__name__)
             },
             "reason": {"type": "string", "description": "Why you're watching (the thesis hook)."},
             "thesis_summary": {"type": "string", "description": "Optional 1-2 line current thesis to seed the wake."},
+            "resolution_condition": {
+                "type": "object",
+                "description": (
+                    "REQUIRED IN PRACTICE. What you do not know, and what would settle it — "
+                    "this is what incoming news is screened against. "
+                    "{open_question: 'Does Q3 net interest margin hold above 3.4%?', "
+                    "resolving_fact: 'Q3 net interest margin on the October earnings call', "
+                    "resolves_by: '2026-10-14T20:30:00Z', "
+                    "invalidates_if: {type:'price_below', level:61.0}, "
+                    "becomes_if_true: 'BUY', becomes_if_false: 'SELL'}. "
+                    "State the question in SPECIFIC words — 'will they beat earnings' matches "
+                    "every headline ever written and screens nothing."
+                ),
+                "properties": {
+                    "open_question": {"type": "string"},
+                    "resolving_fact": {"type": "string"},
+                    "resolves_by": {"type": "string"},
+                    "invalidates_if": {"type": "object"},
+                    "becomes_if_true": {"type": "string"},
+                    "becomes_if_false": {"type": "string"},
+                },
+                "required": ["open_question", "resolving_fact"],
+            },
+            "decision_action": {"type": "string", "description": "Your decision this watch descends from: BUY|SELL|HOLD."},
+            "decision_confidence": {"type": "number", "description": "Your confidence in it (0-1)."},
             "cooldown_minutes": {"type": "integer", "description": "Min minutes between wakes (debounce). Default 240."},
             "expiry_days": {"type": "integer", "description": "Auto-expire the watch after N days. Default 30."},
         },
@@ -59,6 +87,9 @@ async def watch_ticker(
     thesis_summary: str | None = None,
     cooldown_minutes: int = 240,
     expiry_days: int = 30,
+    resolution_condition: dict | None = None,
+    decision_action: str | None = None,
+    decision_confidence: float | None = None,
     **_extra,
 ) -> str:
     from app.services.watch_desk import create_watch
@@ -69,6 +100,9 @@ async def watch_ticker(
             ticker=ticker, triggers=triggers, reason=reason,
             thesis_summary=thesis_summary, cooldown_minutes=cooldown_minutes,
             expiry_days=expiry_days, source_cycle_id=current_cycle_id(),
+            resolution_condition=resolution_condition,
+            decision_action=decision_action,
+            decision_confidence=decision_confidence,
         )
         return json.dumps(result)
     except Exception as e:
