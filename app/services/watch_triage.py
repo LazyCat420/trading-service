@@ -376,6 +376,9 @@ def triage(inp: TriageInputs) -> TriageVerdict:
     if key in inp.seen_event_keys:
         return _reject(REJECT_DUPLICATE, {"event_key": key})
 
+    if ev.kind == "news" and ev.observed_at is None:
+        return _reject("unknown_evidence_age", {"source": ev.source, "timestamp_known": False})
+
     if ev.observed_at is not None:
         age_h = (inp.now - ev.observed_at).total_seconds() / 3600.0
         if age_h > inp.evidence_max_age_h:

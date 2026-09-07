@@ -468,6 +468,9 @@ def _check_decision_drift(cycle_id: str) -> list[str]:
 _NON_RESEARCHING_AGENTS = frozenset({
     "contradiction_shadow",
     "v3_regime_engine",
+    # Delta may preserve an evidenced HOLD in one turn. Actions escalate to
+    # the full panel; absence of fresh tools alone is not a failed review.
+    "v3_delta_analyst",
 })
 
 

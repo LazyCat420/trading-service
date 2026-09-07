@@ -290,3 +290,9 @@ class TestBullDefenseIsADeliberationTurn:
             f"exempted names that are not any agent module's AGENT_NAME: {ghosts} "
             f"(declared: {sorted(declared)})"
         )
+
+
+def test_delta_hold_single_turn_is_a_valid_bounded_review():
+    with patch("app.db.mongo_store.aggregate", return_value=[
+            {"_id": "v3_delta_analyst", "tok": 24489, "loops": 1.0}]):
+        assert _check_agent_cost("cycle-delta-hold") == []

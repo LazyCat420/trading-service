@@ -130,7 +130,8 @@ class FakeMongo:
     precisely the ordering invariant one of the tests below pins.
     """
 
-    def __init__(self, find_row=None, find_rows=None, group_rows=None):
+    def __init__(self, find_row=None, find_rows=None, group_rows=None, find_docs=None):
+        self._find_docs = find_docs or []
         self._find_row = find_row
         self._find_rows = find_rows or (lambda coll, flt, cols, **k: [])
         self._group_rows = group_rows or (lambda *a, **k: [])
@@ -165,6 +166,14 @@ class FakeMongo:
     def insert_docs(self, collection, docs, **kw):
         self.inserts.append((collection, docs))
         return len(docs)
+
+    def find_docs(self, collection, filt, **kw):
+        self.reads.append((collection, filt))
+        return list(self._find_docs)
+
+    def find_one_and_update(self, collection, filt, update, **kw):
+        self.updates.append((collection, filt, update))
+        return {**filt, **update.get('$set', {}), 'attempts': 1}
 
     # ── assertion helpers ──
     def set_values(self):
@@ -361,7 +370,7 @@ def test_a_dead_worker_gets_its_claim_back():
     # Was `"status = 'pending'" in sql`. The equivalent structural claim: the
     # write that touched qitem-dead set it back to pending, not to some other
     # status.
-    writes = [u for u in fake.updates if u[1] == {"id": "qitem-dead"}]
+    writes = [u for u in fake.updates if u[1].get("id") == "qitem-dead" and u[1].get("status") == "processing" and "$lt" in u[1].get("updated_at", {})]
     assert len(writes) == 1
     assert writes[0][0] == "v3_research_queues"
     assert writes[0][2]["$set"]["status"] == "pending", \
@@ -400,7 +409,7 @@ def test_an_item_that_keeps_dying_is_failed_rather_than_requeued_forever():
     assert out["failed"] == ["qitem-poison"]
     assert out["requeued"] == []
 
-    writes = [u for u in fake.updates if u[1] == {"id": "qitem-poison"}]
+    writes = [u for u in fake.updates if u[1].get("id") == "qitem-poison" and u[1].get("status") == "processing" and "$lt" in u[1].get("updated_at", {})]
     assert len(writes) == 1
     assert writes[0][2]["$set"]["status"] == "failed"
 
@@ -463,7 +472,7 @@ def test_pop_arms_the_orphan_path_and_counts_the_attempt():
     # would be testing the wrong call.
     claims = [u for u in fake.updates if u[2].get("$set", {}).get("status") == "processing"]
     assert claims, "pop must claim what it returns"
-    assert claims[0][1] == {"id": "qitem-1"}
+    assert claims[0][1] == {"id": "qitem-1", "status": "pending"}
     assert claims[0][2].get("$inc", {}).get("attempts") == 1, \
         "an unincremented attempt makes MAX_ATTEMPTS unreachable"
 
@@ -488,7 +497,7 @@ def test_a_failing_reclaim_does_not_take_the_worklist_with_it():
 def test_enqueue_dedupes_against_a_claim_not_only_against_pending():
     """The bug's actual symptom. A stranded `processing` row did not block a new
     enqueue, so the queue grew duplicates instead of showing a stall."""
-    fake = FakeMongo(find_row=("qitem-held", "processing"))
+    fake = FakeMongo(find_docs=[{"id": "qitem-held", "status": "processing", "reason": ""}])
 
     with patch_queue_mongo(fake):
         item_id = ResearchQueueService.enqueue_item(
@@ -510,7 +519,7 @@ def test_enqueue_dedupes_against_a_claim_not_only_against_pending():
     assert coll == "v3_research_queues"
     assert flt["ticker"] == "NVDA"
     assert flt["queue_type"] == QueueType.LEAD_QUEUE.value
-    assert set(flt["status"]["$in"]) == {"pending", "processing"}, \
+    assert set(flt["status"]["$in"]) == {"pending", "processing", "answer_ready"}, \
         f"the dedupe must consider claimed rows, not only pending ones: {flt}"
 
 

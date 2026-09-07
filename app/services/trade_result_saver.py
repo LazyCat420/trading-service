@@ -97,6 +97,17 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
             'internal_consensus_score': consensus,
             'dynamic_trigger': dynamic_trigger,
             'decision_provenance': provenance,
+            'decision_producer': verdict.get('decision_producer'),
+            'decision_contract': verdict.get('decision_contract'),
+            'source_board_ref': verdict.get('source_board_ref'),
+            'source_board_action': verdict.get('source_board_action'),
+            'decision_relation': verdict.get('decision_relation'),
+            'override_reason': verdict.get('override_reason'),
+            'override_evidence': verdict.get('override_evidence'),
+            'timing_override_reason': verdict.get('timing_override_reason'),
+            'entry_mode': verdict.get('entry_mode'),
+            'trigger_purpose': verdict.get('trigger_purpose'),
+            'resolution_condition': verdict.get('resolution_condition'),
             'created_at': _saved_at,
         }])
 

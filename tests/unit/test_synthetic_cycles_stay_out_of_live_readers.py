@@ -182,7 +182,7 @@ class TestThePreviousDeskHandoff:
             seen["query"] = query
             return None
 
-        with patch.object(desk_persistence.mongo_query, "find_row", _capture):
+        with patch.object(desk_persistence.mongo_query, "find_rows", _capture):
             desk_persistence.load_latest_desk_for_ticker("nvda")
 
         assert seen["collection"] == "shared_desk"

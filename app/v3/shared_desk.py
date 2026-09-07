@@ -834,27 +834,60 @@ class SharedDesk:
         combined = sep.join(sections)
         verdict_text = sep.join(verdict_sections)
 
-        # Truncate to prevent context snowball — research prose only. Verdicts
-        # are appended after the cut so they can never be the casualty.
-        budget = _MAX_COMPRESSED_CONTEXT_CHARS
-        if verdict_text and len(verdict_text) > budget - 600:
-            verdict_text = (
-                verdict_text[: budget - 600]
-                + "\n\n[... verdict TRUNCATED — full artifacts available on SharedDesk ...]"
-            )
-        if verdict_text:
-            notice = "\n\n[... research context TRUNCATED — full artifacts available on SharedDesk ...]"
-            if combined and len(combined) + len(sep) + len(verdict_text) > budget:
-                keep = max(budget - len(verdict_text) - len(sep) - len(notice), 500)
-                combined = combined[:keep] + notice
-            combined = combined + sep + verdict_text if combined else verdict_text
-        elif len(combined) > budget:
-            combined = (
-                combined[: budget - 100]
-                + "\n\n[... TRUNCATED — full artifacts available on SharedDesk ...]"
-            )
+        # Protect complete defense answer records before allocating the rest.
+        # Never slice serialized answers: an omitted answer is UNKNOWN to the
+        # judge, not evidence that the Bull never answered it.
+        defense = self.defense_context() if include_debate else ""
+        prefix = defense + sep if defense else ""
+        budget = _MAX_COMPRESSED_CONTEXT_CHARS - len(prefix)
+        verdict_notice = "\n[Verdict excerpt omitted; read the full artifact if needed.]"
+        if len(verdict_text) > max(0, budget - 600):
+            keep = max(0, budget - 600 - len(verdict_notice))
+            verdict_text = verdict_text[:keep] + verdict_notice
+        available = budget - len(verdict_text) - (len(sep) if verdict_text and combined else 0)
+        if len(combined) > available:
+            notice = "\n[research context TRUNCATED; omitted evidence is unknown, not absent.]"
+            combined = combined[:max(0, available - len(notice))] + notice
+        combined = combined + sep + verdict_text if combined and verdict_text else combined or verdict_text
+        return prefix + combined if prefix or combined else "No artifacts on desk yet."
 
-        return combined or "No artifacts on desk yet."
+    def defense_context(self, max_chars: int = 4500) -> str:
+        """Bounded full records, with honest omission markers and stable IDs.
+
+        Independent-risk answers come first because they are the late evidence
+        the judge otherwise mistakes for an unanswered attack. Completed prose
+        stays on the desk/whiteboard; this view never fabricates a short answer.
+        """
+        if not self.bull_defense:
+            return ""
+        defense = self.bull_defense
+        lines = ["## Bull Defense — delivery manifest",
+                 "Producer completed. Below are COMPLETE answer records. Any omitted record "
+                 "is UNKNOWN in this view; use whiteboard_read before judging it unanswered.",
+                 f"thesis_survives={defense.get('thesis_survives')}; "
+                 f"final_confidence={defense.get('final_confidence')}"]
+        used = len("\n".join(lines))
+        omitted = []
+        for field in ("independent_risks_answered", "concessions", "defense_points"):
+            records = defense.get(field) or []
+            if not isinstance(records, list):
+                omitted.append(f"{field}:invalid_shape")
+                continue
+            for index, record in enumerate(records):
+                ref = f"bull_defense.{field}[{index}]"
+                text = f"{ref}: " + json.dumps(record, ensure_ascii=False, sort_keys=True)
+                # Leave room for the omission count, even for huge producer output.
+                if used + len(text) + 1 <= max_chars - 250:
+                    lines.append(text)
+                    used += len(text) + 1
+                else:
+                    omitted.append(ref)
+        if omitted:
+            lines.append(f"OMITTED: {len(omitted)} complete record(s); full artifact required. "
+                         + ", ".join(omitted[:2]))
+        else:
+            lines.append("Delivery: all answer/concession records included.")
+        return "\n".join(lines)
 
     def _debate_structure_block(self, include_verdicts: bool) -> str:
         """The debate's structured arrays, verbatim and bounded (~3k chars max).

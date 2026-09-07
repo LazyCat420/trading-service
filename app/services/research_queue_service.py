@@ -34,11 +34,24 @@ class ResearchQueueService:
         """Enqueues a ticker item into the specified queue."""
         ticker = ticker.upper().strip()
 
-        existing = mongo_query.find_row(
-            'v3_research_queues',
-            {'ticker': ticker, 'queue_type': queue_type.value, 'status': {'$in': ['pending', 'processing']}},
-            ['id', 'status']
-        )
+        pending = mongo_store.find_docs('v3_research_queues',
+            {'ticker': ticker, 'queue_type': queue_type.value,
+             'status': {'$in': ['pending', 'processing', 'answer_ready']}}, limit=100)
+        from app.services.question_ledger import question_hash
+        question = (payload or {}).get('question') or reason
+        identity = ((payload or {}).get('question_hash') or question_hash(question)) if (payload or {}).get('question') or (payload or {}).get('question_hash') else 'ticker_scope'
+        existing = None
+        for candidate in pending:
+            old_payload = candidate.get('payload') or {}
+            if isinstance(old_payload, str):
+                try:
+                    old_payload = json.loads(old_payload)
+                except (ValueError, TypeError):
+                    old_payload = {}
+            old_identity = (old_payload.get('question_hash') or question_hash(old_payload.get('question'))) if old_payload.get('question') or old_payload.get('question_hash') else 'ticker_scope'
+            if old_identity == identity:
+                existing = (candidate['id'], candidate['status'])
+                break
         if existing:
             logger.info("[queue] Ticker %s already %s in %s, skipping dedupe",
                         ticker, existing[1], queue_type.value)
@@ -84,7 +97,8 @@ class ResearchQueueService:
             needed = min(target_count, budget - len(worklist))
             rows = mongo_query.find_rows(
                 'v3_research_queues',
-                {'queue_type': queue_type.value, 'status': 'pending'},
+                {'queue_type': queue_type.value, 'status': 'pending',
+                 '$or': [{'next_attempt_at': None}, {'next_attempt_at': {'$lte': datetime.now(timezone.utc)}}]},
                 ['id', 'ticker', 'queue_type', 'priority', 'reason', 'source_agent', 'payload'],
                 sort=[('priority', -1), ('created_at', 1)],
                 limit=needed * 2
@@ -125,14 +139,17 @@ class ResearchQueueService:
         cls.reclaim_stale()
 
         worklist = cls._select(budget)
+        claimed = []
         now = datetime.now(timezone.utc)
         for item in worklist:
-            mongo_store.update_docs(
-                'v3_research_queues',
-                {'id': item["id"]},
-                {'$set': {'status': 'processing', 'updated_at': now}, '$inc': {'attempts': 1}}
-            )
-        return worklist
+            token = uuid.uuid4().hex
+            doc = mongo_store.find_one_and_update('v3_research_queues',
+                {'id': item["id"], 'status': 'pending'},
+                {'$set': {'status': 'processing', 'updated_at': now, 'lease_token': token},
+                 '$inc': {'attempts': 1}})
+            if doc:
+                claimed.append({**item, 'lease_token': token, 'attempts': doc.get('attempts', 1)})
+        return claimed
 
     @classmethod
     def heartbeat(cls, item_id: str) -> bool:
@@ -171,8 +188,9 @@ class ResearchQueueService:
                 ['id']
             )
             for r in failed_rows:
-                mongo_store.update_docs('v3_research_queues', {'id': r[0]}, {'$set': {'status': 'failed', 'updated_at': now}})
-                failed.append(r[0])
+                changed = mongo_store.update_docs('v3_research_queues', {'id': r[0], 'status': 'processing', 'updated_at': {'$lt': cutoff}}, {'$set': {'status': 'failed', 'updated_at': now, 'last_error': 'lease expired after maximum attempts'}})
+                if changed:
+                    failed.append(r[0])
 
             requeued_rows = mongo_query.find_rows(
                 'v3_research_queues',
@@ -180,8 +198,9 @@ class ResearchQueueService:
                 ['id']
             )
             for r in requeued_rows:
-                mongo_store.update_docs('v3_research_queues', {'id': r[0]}, {'$set': {'status': 'pending', 'updated_at': now}})
-                requeued.append(r[0])
+                changed = mongo_store.update_docs('v3_research_queues', {'id': r[0], 'status': 'processing', 'updated_at': {'$lt': cutoff}}, {'$set': {'status': 'pending', 'updated_at': now, 'last_error': 'expired lease reclaimed'}})
+                if changed:
+                    requeued.append(r[0])
         except Exception as e:
             logger.warning("[queue] reclaim_stale failed: %s", e)
             return {"requeued": [], "failed": []}
@@ -238,3 +257,94 @@ class ResearchQueueService:
         except Exception:
             pass
         return out
+
+    @classmethod
+    def claim_for_ticker(cls, ticker: str, cycle_id: str, limit: int = 3) -> List[Dict[str, Any]]:
+        """Claim questions only for a ticker this cycle is actually about to run.
+
+        Atomic pending->processing CAS; the lease token prevents an old worker
+        from completing a question after it was reclaimed by a newer cycle.
+        No new cycle or order is created by this consumer.
+        """
+        cls.deliver_ready_answers()
+        cls.reclaim_stale()
+        claimed = []
+        now = datetime.now(timezone.utc)
+        for _ in range(max(0, min(3, limit))):
+            token = uuid.uuid4().hex
+            doc = mongo_store.find_one_and_update('v3_research_queues', {
+                'ticker': ticker.upper(), 'status': 'pending',
+                '$or': [{'next_attempt_at': None}, {'next_attempt_at': {'$lte': now}}],
+            }, {'$set': {'status': 'processing', 'owner_cycle_id': cycle_id,
+                         'lease_token': token, 'updated_at': now}, '$inc': {'attempts': 1}},
+                sort=[('priority', -1), ('created_at', 1)])
+            if doc is None:
+                break
+            payload = doc.get('payload') or {}
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except (ValueError, TypeError):
+                    payload = {}
+            doc['payload'] = payload if isinstance(payload, dict) else {}
+            claimed.append(doc)
+        return claimed
+
+    @staticmethod
+    def _claim_filter(item: dict) -> dict:
+        return {'id': item['id'], 'status': 'processing',
+                'owner_cycle_id': item.get('owner_cycle_id'), 'lease_token': item.get('lease_token')}
+
+    @classmethod
+    def heartbeat_claims(cls, items: list[dict]) -> None:
+        for item in items:
+            mongo_store.update_docs('v3_research_queues', cls._claim_filter(item),
+                                    {'$set': {'updated_at': datetime.now(timezone.utc)}})
+
+    @classmethod
+    def finish_claim(cls, item: dict, *, answer: dict | None = None,
+                     reason: str = 'No evidenced answer was produced') -> bool:
+        now = datetime.now(timezone.utc)
+        if answer:
+            if not answer.get('artifact_ref') or not answer.get('evidence') or not answer.get('answer'):
+                return False
+            # Durable delivery outbox: a ledger outage cannot lose the answer
+            # or falsely mark it delivered. The next consumer retries delivery.
+            doc = mongo_store.find_one_and_update('v3_research_queues', cls._claim_filter(item),
+                {'$set': {'status': 'answer_ready', 'answer': answer, 'updated_at': now}})
+            if not doc:
+                return False
+            return cls.deliver_ready_answers(item_id=item['id']) == 1
+        failed = int(item.get('attempts') or 0) >= MAX_ATTEMPTS
+        doc = mongo_store.find_one_and_update('v3_research_queues', cls._claim_filter(item),
+            {'$set': {'status': 'failed' if failed else 'pending', 'updated_at': now,
+                      'next_attempt_at': now + timedelta(hours=12), 'last_error': reason[:500]}})
+        return doc is not None
+
+    @classmethod
+    def deliver_ready_answers(cls, item_id: str | None = None) -> int:
+        """Idempotently deliver stored answers before marking their items done."""
+        query = {'status': 'answer_ready'}
+        if item_id:
+            query['id'] = item_id
+        delivered = 0
+        for doc in mongo_store.find_docs('v3_research_queues', query, limit=20):
+            answer = doc.get('answer') or {}
+            payload = doc.get('payload') or {}
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            from app.services.question_ledger import question_hash
+            question = payload.get('question') or doc.get('reason') or ''
+            qhash = payload.get('question_hash') or question_hash(question)
+            now = datetime.now(timezone.utc)
+            # Idempotent across a crash between this write and the completion CAS.
+            mongo_store.upsert_doc('dossier_question_log',
+                {'ticker': doc['ticker'], 'question_hash': qhash},
+                {'ticker': doc['ticker'], 'question_hash': qhash, 'question': question,
+                 'status': 'answered', 'answer': answer['answer'],
+                 'evidence_ref': answer['artifact_ref'], 'evidence': answer['evidence'],
+                 'resolved_cycle': doc.get('owner_cycle_id'), 'resolved_at': now})
+            delivered += mongo_store.update_docs('v3_research_queues',
+                {'id': doc['id'], 'status': 'answer_ready', 'lease_token': doc.get('lease_token')},
+                {'$set': {'status': 'completed', 'updated_at': now, 'completed_at': now}})
+        return delivered

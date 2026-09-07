@@ -54,72 +54,14 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    from app.db.mongo import get_mongo_client
-    from app.db.mongo_store import TRADING_MONGO_DB
-
-    db = get_mongo_client()[TRADING_MONGO_DB]
-    since = datetime.now(timezone.utc) - timedelta(hours=args.hours)
-
-    pending = list(db.watch_triage_log.find(
-        {"created_at": {"$gte": since}, "fired": True, "outcome": None}))
-    print(f"{len(pending)} fired allocation(s) awaiting an outcome")
-
-    scored = skipped = 0
-    for row in pending:
-        cmd = db.v3_system_commands.find_one({"id": row.get("cycle_id")})
-        cycle = None
-        if cmd and cmd.get("result"):
-            try:
-                parsed = (ast.literal_eval(cmd["result"])
-                          if isinstance(cmd["result"], str) else cmd["result"])
-                cycle = (parsed or {}).get("cycle_id")
-            except (ValueError, SyntaxError, TypeError, AttributeError):
-                cycle = None
-        if not cycle:
-            skipped += 1
-            continue
-
-        summary = db.cycle_run_summaries.find_one({"cycle_id": cycle}) or {}
-        status = (summary.get("status") or "").lower()
-        if status not in TERMINAL:
-            # Still running. Leaving `outcome` absent is the point — see the
-            # module docstring.
-            skipped += 1
-            continue
-
-        woke = db.analysis_results.find_one({"cycle_id": cycle, "ticker": row["ticker"]})
-        prior = db.analysis_results.find_one(
-            {"ticker": row["ticker"], "created_at": {"$lt": row["created_at"]}},
-            sort=[("created_at", -1)])
-        prior_action, woke_action = _action(prior), _action(woke)
-
-        if prior_action not in REAL_ACTIONS:
-            # Not comparable. `None` here, and a reason, so a consumer cannot
-            # mistake it for "unchanged".
-            changed = None
-            note = "prior_was_not_a_decision"
-        elif woke_action is None:
-            changed = None
-            note = "no_decision_produced"
-        else:
-            changed = woke_action != prior_action
-            note = "comparable"
-
-        outcome = {
-            "cycle_id": cycle, "cycle_status": status,
-            "prior_action": prior_action, "woke_action": woke_action,
-            "decision_changed": changed, "comparability": note,
-            "scored_at": datetime.now(timezone.utc),
-        }
-        print(f"  {row['ticker']:6} {row['id']}  {prior_action} -> {woke_action}  "
-              f"changed={changed}  ({note})")
-        if not args.dry_run:
-            db.watch_triage_log.update_one({"id": row["id"]},
-                                           {"$set": {"outcome": outcome}})
-        scored += 1
-
-    print(f"\nscored {scored}, left pending {skipped}"
+    from app.services.watch_outcomes import score_completed_allocations
+    result = score_completed_allocations(hours=args.hours, dry_run=args.dry_run)
+    for outcome in result["outcomes"]:
+        print(f"  {outcome['ticker']}: {outcome['prior_action']} -> {outcome['woke_action']} "
+              f"changed={outcome['decision_changed']} risk_changed={outcome['risk_parameters_changed']}")
+    print(f"scored {result['scored']}, left pending {result['pending']}"
           f"{' (dry run — nothing written)' if args.dry_run else ''}")
+
     return 0
 
 

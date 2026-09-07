@@ -170,7 +170,12 @@ def evidence_from_trip(watch: dict, trig: dict, detail: str, value, ctx: dict | 
     """
     typ = (trig or {}).get("type", "")
     if typ == "news":
-        observed, source = now, "detected"
+        event = (ctx or {}).get("news_event")
+        if isinstance(event, dict):
+            return Evidence(kind="news", text=event.get("title") or detail or "",
+                            observed_at=ensure_aware(event.get("observed_at")),
+                            source=event.get("source") or "news_store", trigger_type=typ)
+        observed, source = None, "detected"
         # The desk's detail string embeds the headline in curly quotes. Prefer
         # the ctx row, which carries the real collection time.
         title = ""
@@ -179,7 +184,7 @@ def evidence_from_trip(watch: dict, trig: dict, detail: str, value, ctx: dict | 
             title = m[m.index("“") + 1:m.rindex("”")]
         for t, ca in (ctx or {}).get("news", []) or []:
             if t and title and t.startswith(title[:60]):
-                observed = ensure_aware(ca) or now
+                observed = ensure_aware(ca)
                 break
         return Evidence(kind="news", text=title or (detail or ""),
                         observed_at=observed, source=source, trigger_type=typ)

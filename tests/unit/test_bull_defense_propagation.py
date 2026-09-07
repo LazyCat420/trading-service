@@ -60,13 +60,13 @@ def test_a_missing_verdict_is_not_reported_as_a_failure():
     assert "DOES NOT survive" not in ctx
 
 
-def test_the_bulk_arrays_stay_out_of_the_prompt():
-    """The point of the split. Adding ~2k tokens to the two agents already
-    overflowing the shed budget would buy a restatement of `summary`."""
+def test_complete_records_fit_and_oversized_records_are_explicitly_omitted():
     ctx = _desk_with_defense().get_compressed_context(include_debate=True)
-    assert "D" * 100 not in ctx, "defense_points must not be inlined"
-    assert "C" * 100 not in ctx, "concessions must not be inlined"
-    assert "R" * 100 not in ctx, "independent_risks_answered must not be inlined"
+    assert 'D' * 100 not in ctx  # the oversized record is never clipped
+    assert 'R' * 1400 in ctx  # complete records now survive
+    assert 'C' * 1500 in ctx
+    assert 'OMITTED:' in ctx
+    assert 'UNKNOWN' in ctx
 
 
 def test_the_defense_section_stays_small():

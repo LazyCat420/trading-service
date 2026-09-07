@@ -44,12 +44,16 @@ def test_common_guidelines_syntax_rules():
 
 def test_debate_judge_grounding_and_whitelists():
     assert JUDGE_TOOLS == ["whiteboard_read"]
-    assert "DATA ALREADY EMBEDDED — DO NOT RE-FETCH" in JUDGE_PROMPT
+    assert "bounded view" in JUDGE_PROMPT
+    assert "UNKNOWN" in JUDGE_PROMPT
+    assert "Use whiteboard_read for an omitted" in JUDGE_PROMPT
 
 
 def test_bull_defense_grounding():
     assert DEFENSE_TOOLS == ["whiteboard_read"]
-    assert "DATA ALREADY EMBEDDED — DO NOT RE-FETCH" in DEFENSE_PROMPT
+    assert "bounded view" in DEFENSE_PROMPT
+    assert "UNKNOWN" in DEFENSE_PROMPT
+    assert "Use whiteboard_read for an omitted" in DEFENSE_PROMPT
 
 
 def test_agent_turn_budgets():

@@ -787,6 +787,11 @@ async def run_v3_agent(
         _KEEP = 0
         dynamic_sections: list[tuple[int, str]] = []
 
+        from app.v3.decision_contract import prompt_block as decision_contract_prompt
+        contract_block = decision_contract_prompt(desk, artifact_type)
+        if contract_block:
+            dynamic_sections.append((_KEEP, contract_block))
+
         # Live macro snapshot — ONLY for the Regime Engine, which classifies
         # the global market state. Scoped to that agent so it doesn't bloat
         # every prompt (and the KV-cache user portion) with macro it ignores.
@@ -1285,6 +1290,9 @@ async def run_v3_agent(
                 "You have NO external tools. Reason from the SharedDesk data.\n\n"
             )
 
+        from app.services.research_work import question_block
+        user_prompt += question_block(desk.cycle_metadata.get("research_questions") or [])
+
         user_prompt += (
             "## OUTPUT DIRECTIVE REMINDER\n"
             f"When you generate your final response containing your analysis report (i.e. when you do NOT call any tools), "
@@ -1347,6 +1355,18 @@ async def run_v3_agent(
             )
 
         user_prompt += "Begin your analysis now.\n"
+
+        import hashlib as _hashlib
+        delivered_text = system_prompt + "\n" + user_prompt
+        desk.cycle_metadata.setdefault("context_delivery", []).append({
+            "agent": agent_name, "artifact_type": artifact_type,
+            "system_sha256": _hashlib.sha256(system_prompt.encode()).hexdigest(),
+            "user_sha256": _hashlib.sha256(user_prompt.encode()).hexdigest(),
+            "contract_delivered": bool(contract_block and contract_block in delivered_text),
+            "defense_delivered": bool(desk.bull_defense and desk.defense_context() in delivered_text),
+            "defense_records_omitted": bool(desk.bull_defense and "OMITTED:" in desk.defense_context()),
+            "system_chars": len(system_prompt), "user_chars": len(user_prompt),
+        })
 
         # Context budget report (plan 4.5): prompt sizes ride with telemetry
         sys_prompt_chars = len(system_prompt)
@@ -1867,6 +1887,35 @@ async def run_v3_agent(
         # fire (order_triggers gates on `value is not None`).
         from app.v3.artifact_validators import validate_artifact as _coerce_artifact
         artifact = _coerce_artifact(artifact_type, artifact, desk=desk)
+
+        if (desk.cycle_metadata.get("decision_contract_version") == 1
+                and artifact_type in ("final_decision", "trade_decision")):
+            from app.v3.decision_contract import contract_errors, evidence_sources, effective_decision
+            board_source = desk.final_decision if artifact_type == "trade_decision" else None
+            contract_failures = contract_errors(artifact, board=board_source,
+                                                evidence_sources=evidence_sources(desk))
+            if contract_failures:
+                desk.cycle_metadata.setdefault("decision_contract_repair_errors", {})[artifact_type] = contract_failures
+                logger.error("[V3Runner] %s: decision contract rejected: %s", agent_name, contract_failures)
+                emit("analyzing", f"v3_contract_rejected_{desk.ticker}",
+                     f"{agent_name}: decision contract rejected", status="error",
+                     data={"kind": "decision_contract_rejected", "agent": agent_name,
+                           "errors": contract_failures})
+                _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "AGENT_ERROR",
+                                  sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
+                                  cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
+                                  model_used=model_used, provider=provider_used, attempt_no=attempt_no,
+                                  failure_reason=SCHEMA_INVALID, error_message="; ".join(contract_failures))
+                return PhaseOutcome.AGENT_ERROR
+            desk.cycle_metadata.setdefault("decision_contract_repair_errors", {}).pop(artifact_type, None)
+            artifact = effective_decision(artifact, board_source)
+            artifact["decision_contract_version"] = 1
+        if artifact_type in ("final_decision", "trade_decision", "delta_report"):
+            artifact["decision_producer"] = agent_name
+
+        from app.services.research_work import record_tool_receipts
+        record_tool_receipts(artifact, result.get("tool_transcript") or [],
+                             delivered_text=delivered_text, metadata=desk.cycle_metadata)
 
         # A SELL the bot cannot place is not a verdict. Applied to the decision
         # artifacts only, and only when the desk knows the position is not held

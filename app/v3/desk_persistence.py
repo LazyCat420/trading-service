@@ -126,18 +126,27 @@ def load_latest_desk_for_ticker(ticker: str) -> SharedDesk | None:
     MP's real production desk was ~490 hours old and would have forced v3_deep.
     """
     try:
-        row = mongo_query.find_row(
+        rows = mongo_query.find_rows(
             'shared_desk',
             {'ticker': ticker.upper(), **exclude_synthetic()},
-            ['desk_data'],
-            sort=[('created_at', -1)],
+            ['desk_data'], sort=[('created_at', -1)], limit=200,
         )
-        if not row or not row[0]:
-            return None
-
-        raw = row[0]
-        data = json.loads(raw) if isinstance(raw, str) else raw
-        return SharedDesk.from_dict(data)
+        for row in rows:
+            if not row or not row[0]:
+                continue
+            raw = row[0]
+            data = json.loads(raw) if isinstance(raw, str) else raw
+            prior = SharedDesk.from_dict(data)
+            decision = prior.trade_decision or prior.final_decision or {}
+            if (prior.cycle_metadata.get("triage_tier") in ("v3_glance", "v3_aborted")
+                    or decision.get("decision_provenance") == "triage_skip"
+                    or decision.get("_degraded")
+                    or decision.get("action") not in ("BUY", "SELL", "HOLD")
+                    or not decision.get("confidence")):
+                continue
+            return prior
+        # If history is exhausted, force fresh research rather than call a visit a thesis.
+        return None
     except Exception as e:
         logger.error(
             "[DeskPersistence] Failed to load latest desk for ticker %s: %s",

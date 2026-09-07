@@ -255,6 +255,7 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
             # memory actually changed this cycle) — produced and persisted every
             # cycle, but reflection never saw it until now.
             "learning_signals": _collect_learning_signals(cycle_id),
+            "context_delivery": _collect_context_delivery(cycle_id),
         }
 
         # Triage audit (evaluate triage distribution + attention health)
@@ -481,3 +482,26 @@ async def _resolve_data_gaps(gaps: list[dict], cycle_id: str) -> dict:
                 logger.warning("Gap resolution failed: %s/%s — %s", ticker, source, coll_err)
 
     return {"resolved": resolved, "failed": failed, "banned": banned}
+
+
+def _collect_context_delivery(cycle_id: str) -> dict:
+    """Report actual sent-prompt receipts, never infer coverage from length."""
+    from app.db import mongo_store
+    try:
+        rows = mongo_store.find_docs('shared_desk', {'cycle_id': cycle_id},
+                                    projection={'ticker': 1, 'desk_data': 1})
+    except Exception as exc:
+        logger.warning('[AR] context delivery unavailable: %s', exc)
+        return {'availability': 'unverified', 'receipts': []}
+    receipts = []
+    for row in rows:
+        data = row.get('desk_data') or {}
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except (ValueError, TypeError):
+                data = {}
+        metadata = data.get('cycle_metadata') or {} if isinstance(data, dict) else {}
+        for delivery in metadata.get('context_delivery', []) if isinstance(metadata, dict) else []:
+            receipts.append({'ticker': row.get('ticker'), **delivery})
+    return {'availability': 'measured' if receipts else 'unverified', 'receipts': receipts}

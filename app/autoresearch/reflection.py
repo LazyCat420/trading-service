@@ -36,7 +36,11 @@ async def _reflect(audit_bundle: dict) -> dict:
     prompt = (
         f"Review this trading cycle audit. Provide JSON with: summary, recommendations (list of 3), "
         f"urgent_data_gaps (ticker list), system_health (healthy/degraded/critical), "
-        f"schedule_recommendation (optional string or null).\n\n"
+        f"schedule_recommendation (optional string or null).\n"
+        "Keep current cycle health separate from historical prediction quality. "
+        "An old outcome cohort does not establish a current harness failure. "
+        "Do not infer missing evidence from prompt size or loop count; use the "
+        "recorded delivery manifest. An absent manifest means unverified.\n\n"
         f"Data quality: {data_q.get('avg_score', 0):.0%}, gaps: {len(data_q.get('gaps', []))}\n"
         f"Decisions: {dec_q.get('buy', 0)} BUY, {dec_q.get('sell', 0)} SELL, {dec_q.get('hold', 0)} HOLD\n"
     )
@@ -56,7 +60,9 @@ async def _reflect(audit_bundle: dict) -> dict:
         hold_acc = outcome_stats.get('hold_accuracy')
         cap_note = " (window capped at 100 — true 30d count may be higher)" if total >= 100 else ""
         prompt += (
-            f"\n=== PREDICTION ACCURACY (last 30 days) ===\n"
+            f"\n=== HISTORICAL PREDICTION ACCURACY (resolved in last 30 days) ===\n"
+            f"Median decision age: {outcome_stats.get('median_decision_age_days', 'unmeasured')} days. "
+            "This cohort may predate the current harness; it is not this cycle’s outcome.\n"
             f"Resolved decisions: {total}{cap_note} = "
             f"{traded} executed trades + {holds} hold calls\n"
             f"Executed trades: {outcome_stats.get('wins', 0)}W / "
@@ -107,6 +113,8 @@ async def _reflect(audit_bundle: dict) -> dict:
         f"Schedule issues: {safe_dumps(sched.get('issues', [])[:3])}\n"
         f"System Execution Errors: {safe_dumps(clean_exec_errs)}"
     )
+
+    prompt += "\nContext delivery evidence: " + safe_dumps(audit_bundle.get("context_delivery", {"availability": "unverified"}))
 
     learning_signals = audit_bundle.get("learning_signals") or {}
     if learning_signals:

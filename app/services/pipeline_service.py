@@ -875,6 +875,9 @@ class PipelineService:
             )
             agent_locale = "default"
         prism_overrides = kwargs.get("prism_overrides") or {}
+        analysis_mode = kwargs.get("analysis_mode", "auto")
+        if analysis_mode not in ("auto", "full"):
+            return {"status": "error", "error": "analysis_mode must be auto or full"}
 
         # Payload knobs must not silently no-op (2026-07-15 audit: typo'd or
         # unsupported keys vanished without a trace).
@@ -890,7 +893,7 @@ class PipelineService:
             "schedule_id", "reason_codes", "review_intent", "urgency",
             # Watch Desk wake provenance (informational; wake context flows via
             # watch_events, not the payload) + stop-loss trigger tag.
-            "watch_wake", "watch_trigger", "trigger_type",
+            "watch_wake", "watch_trigger", "trigger_type", "analysis_mode",
         }
         _unknown = set(kwargs) - _known_keys
         if _unknown:
@@ -1020,6 +1023,7 @@ class PipelineService:
         t0 = time.monotonic()
         requested_tickers = list(tickers or [])
         collect_flag = bool(kwargs.get("collect", True))
+        dynamic_universe = not bool(tickers)
         trade_flag = bool(kwargs.get("trade", True))
 
         # The cycle's cross-ticker candidate pool (app/v3/cycle_candidates.py).
@@ -2441,6 +2445,16 @@ class PipelineService:
                     "[PipelineService] worklist shadow failed (non-fatal): %s", _ws_err
                 )
 
+            # Reserve one slot only for dynamic universes; explicit requests retain
+            # their tickers. Questions for either path are claimed at execution.
+            if dynamic_universe:
+                try:
+                    from app.services.research_work import reserve_candidate
+                    tickers, reserved = reserve_candidate(tickers, len(tickers))
+                    cls._state["research_reserved_ticker"] = reserved
+                except Exception as exc:
+                    logger.warning("[PipelineService] research reservation unavailable: %s", exc)
+
             # Set status to running now that gatekeeper is done
             cls._state.update({
                 "status": "running",
@@ -2545,7 +2559,41 @@ class PipelineService:
                 # the desk believed it held nothing, and the HRP sizing branch
                 # (which needs >=2 tickers in the book) never once ran.
                 from app.services.bot_manager import get_active_bot_id
-                result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, bot_id=get_active_bot_id(), emit=emit, agent_locale=agent_locale, prism_overrides=prism_overrides, active_directives=cycle_directives, cycle_candidates=cycle_candidates)
+                from app.services.research_queue_service import ResearchQueueService as ResearchQueue
+                questions = []
+                try:
+                    questions = ResearchQueue.claim_for_ticker(ticker_name, cycle_id)
+                except Exception as exc:
+                    logger.warning("[PipelineService] research claim unavailable: %s", exc)
+
+                async def renew_research_leases():
+                    while True:
+                        await asyncio.sleep(60)
+                        try:
+                            await asyncio.to_thread(ResearchQueue.heartbeat_claims, questions)
+                        except Exception as exc:
+                            logger.warning("[PipelineService] research heartbeat failed: %s", exc)
+
+                lease_task = asyncio.create_task(renew_research_leases()) if questions else None
+                try:
+                    result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, bot_id=get_active_bot_id(), emit=emit, agent_locale=agent_locale, prism_overrides=prism_overrides, active_directives=cycle_directives, cycle_candidates=cycle_candidates,
+                        analysis_mode="full" if questions else kwargs.get("analysis_mode", "auto"),
+                        research_questions=questions,
+                        trigger_type=(kwargs.get("watch_trigger") or {}).get("type") or kwargs.get("trigger_type") or "manual")
+                finally:
+                    if lease_task:
+                        lease_task.cancel()
+                        try:
+                            await lease_task
+                        except asyncio.CancelledError:
+                            pass
+                    # CAS leaves already delivered answers alone. Abort/error
+                    # paths hand unanswered work back with a bounded cooldown.
+                    for question in questions:
+                        try:
+                            ResearchQueue.finish_claim(question)
+                        except Exception as exc:
+                            logger.warning("[PipelineService] research release failed: %s", exc)
 
                 # Execute Trade — gated by the cycle's trade flag and confidence threshold
                 action = result.get("action", "HOLD")
@@ -2627,6 +2675,19 @@ class PipelineService:
                         confidence = 0
 
                     policy_action = str(result.get("policy_action") or "")
+                    # Recheck execution intent at the order boundary as well as
+                    # the orchestrator gate. A versioned malformed result must
+                    # not fall back to the legacy immediate-BUY behavior.
+                    contract = result.get("decision_contract") or {}
+                    if contract.get("version") == 1:
+                        from app.v3.decision_contract import entry_errors
+                        execution_errors = entry_errors({**(result.get("estimate") or {}), "action": action})
+                        if execution_errors or contract.get("status") != "valid":
+                            policy_action = "HOLD_POLICY_BLOCKED_DECISION_CONTRACT"
+                            result["policy_action"] = policy_action
+                            result["no_trade_reason"] = policy_action
+                            result["decision_contract"] = {**contract, "status": "invalid",
+                                "errors": list(contract.get("errors") or []) + execution_errors}
                     if action == "SELL" and policy_action == "HOLD_NO_POSITION":
                         # The gate resolved this SELL as unexecutable — the bot
                         # holds nothing to sell. Handle it uniformly with the
@@ -2653,6 +2714,12 @@ class PipelineService:
                             ticker_name, action, confidence, get_param("ANALYSIS_CONFIDENCE_THRESHOLD"),
                         )
                         result["no_trade_reason"] = REASON_CONFIDENCE_BLOCKED
+                    elif (action == "BUY" and contract.get("version") == 1
+                          and (result.get("estimate") or {}).get("entry_mode") != "enter_now"):
+                        mode = (result.get("estimate") or {}).get("entry_mode")
+                        result["no_trade_reason"] = "CONDITIONAL_ENTRY" if mode == "enter_on_condition" else REASON_WATCH_ONLY
+                        result["entry_deferred"] = mode == "enter_on_condition"
+                        logger.info("[PipelineService] %s: %s — no immediate order", ticker_name, result["no_trade_reason"])
                     elif action == "BUY":
                         # Situational sizing: honor the board/synthesizer's reasoned
                         # position_size_pct (percent units, capped); the confidence
@@ -2815,7 +2882,15 @@ class PipelineService:
                             dt_type = dynamic_trigger.get("type")
                             dt_val = dynamic_trigger.get("value")
                             if dt_type:
-                                await create_trigger(bot_id=active_bot_id, ticker=ticker_name, trigger_type="dynamic", trigger_price=0.0, action="BUY", qty_pct=1.0, dynamic_trigger_type=dt_type, dynamic_trigger_value=dt_val, created_by="pipeline", reason=f"Dynamic Buy Trigger: {dt_type}")
+                                purpose = decision.get("trigger_purpose") or "legacy_reanalysis"
+                                trigger_result = await create_trigger(bot_id=active_bot_id, ticker=ticker_name, trigger_type="dynamic", trigger_price=0.0, action="BUY", qty_pct=1.0, dynamic_trigger_type=dt_type, dynamic_trigger_value=dt_val, created_by="pipeline", reason=f"{purpose} re-analysis trigger: {dt_type}")
+                                result["trigger_registration"] = {"purpose": purpose, "type": dt_type,
+                                                                  "result": trigger_result}
+                                if isinstance(trigger_result, dict) and (trigger_result.get("error") or trigger_result.get("status") == "rejected"):
+                                    logger.error("[PipelineService] %s: trigger registration rejected: %s", ticker_name, trigger_result)
+                                    result["trigger_registration"]["status"] = "rejected"
+                                else:
+                                    result["trigger_registration"]["status"] = "registered"
                 except Exception as e:
                     logger.error("[PipelineService] Trade execution failed for %s: %s", ticker_name, e)
                     trade_failed = True
@@ -2830,6 +2905,7 @@ class PipelineService:
                 # an executed one. Plain HOLDs mutate nothing; skip the rewrite.
                 if (
                     result.get("no_trade_reason")
+                    or result.get("trigger_registration")
                     or result.get("trade_attempted")
                     or result.get("trade_executed")
                     or trade_failed
@@ -2978,6 +3054,11 @@ class PipelineService:
                 await asyncio.to_thread(maybe_alert_degraded_streak)
             except Exception as _da_err:  # noqa: BLE001
                 logger.warning("[PipelineService] degraded-streak check failed: %s", _da_err)
+            try:
+                from app.services.watch_outcomes import score_completed_allocations
+                await asyncio.to_thread(score_completed_allocations)
+            except Exception as exc:
+                logger.warning("[PipelineService] allocation outcome scoring failed: %s", exc)
             enqueue_autoresearch(cycle_id, cycle_summary)
 
             # Whiteboard retention — boards were never deleted before (the

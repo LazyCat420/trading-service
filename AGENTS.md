@@ -69,10 +69,10 @@ fundamental 12/20, quant 12/20, bull 3/0, bear 3/0, regime 5/8, board 5/3.
 | Limit | Value | Purpose | Source |
 |---|---|---|---|
 | `_MAX_SUMMARY_CHARS` | 2,000 chars | Per-artifact compression for downstream agents | `guardrails.py:173` |
-| `_MAX_COMPRESSED_CONTEXT_CHARS` | 8,000 chars | Total SharedDesk narrative passed to any agent | `shared_desk.py:64` |
+| `_MAX_COMPRESSED_CONTEXT_CHARS` | 10,000 chars | Total SharedDesk narrative passed to any agent | `shared_desk.py:64` |
 | `max_tokens` (LLM output) | 8,192 tokens | Hard cap on LLM response length | `agent_runner.py:161` |
 
-**Design**: These are layered intentionally. Each artifact is compressed to ≤2,000 chars. With up to 9 artifacts, the worst case is ~18,000 chars, so the 8,000 outer limit truncates the combined narrative to prevent context snowball.
+**Design**: These are layered intentionally. Each artifact is compressed to ≤2,000 chars. Research prose absorbs truncation within the 10,000-character outer limit. Board/judge verdicts and up to 4,500 characters of complete defense answer records are protected; omitted records are explicitly unknown.
 
 ---
 
@@ -239,3 +239,7 @@ said it was gathering could never arrive. Do not reintroduce a numeric cap here.
 
 **Source**: `app/v3/contradiction_shadow.py`, `app/v3/orchestrator.py`
 (`_apply_policy_gates`), `app/v3/agent_runner.py`
+
+## 11. Decision and research contracts
+
+See [the September 7 contract notes](docs/harness-contracts-2026-09-07.md) for versioned entry intent, Board attribution, Delta escalation, prompt delivery receipts, and queued research leases/outbox delivery. These contracts are enforced by the runner and executor, not prompt advice alone.

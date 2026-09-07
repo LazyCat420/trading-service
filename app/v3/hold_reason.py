@@ -254,6 +254,16 @@ def classify_hold(desk: Any, action: str | None,
         }
 
     if held is True:
+        # A reasoned HOLD on an owned position IS the agent's choice to keep it.
+        # Baseline/research disagreement remains visible in signals; it cannot
+        # relabel the decider's intent as an exit (SNOW, 2026-09-07).
+        decision = _artifact(desk, "trade_decision") or _artifact(desk, "final_decision") or {}
+        if (decision.get("action") == "HOLD"
+                and decision.get("decision_provenance") == "board_reasoned"
+                and not decision.get("_degraded")):
+            return {"hold_reason": KEEP, "signals": signals,
+                    "basis": "agent_decision", "held": True,
+                    "substitute_status": status, "substitute_ticker": sub.get("ticker")}
         # A NAMED substitute or any negative signal means the desk is carrying
         # a position its own evidence argues against — and it emitted HOLD.
         #

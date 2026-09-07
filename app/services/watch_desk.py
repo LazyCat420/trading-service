@@ -653,6 +653,7 @@ def _eval_trigger(trig: dict, ctx: dict, watch: dict, market_open: bool = True) 
                             ctx["ticker"], title[:90], kw,
                         )
                         break
+                    ctx["news_event"] = {"title": title, "observed_at": ca, "source": "news_store"}
                     return True, f"{ctx['ticker']} material news: “{title[:120]}”", None
     elif typ == "staleness":
         # Fires when the watch has gone max_days without any fire (backstop).
@@ -806,6 +807,13 @@ def _human_stop_cooldown_active(now: datetime | None = None) -> bool:
 async def evaluate_watches() -> dict:
     """Evaluate all active watches with cheap code; enqueue targeted wakes on trips.
     Returns a small summary dict. Safe to call on a timer."""
+    # Outcome grading is independent of whether a new wake may be spent.
+    try:
+        from app.services.watch_outcomes import score_completed_allocations
+        score_completed_allocations()
+    except Exception as exc:
+        logger.warning("[WatchDesk] allocation outcome grading failed: %s", exc)
+
     from app.services.cycle_control import cycle_control
 
     if cycle_control.is_paused or cycle_control.is_stopped:
@@ -827,12 +835,17 @@ async def evaluate_watches() -> dict:
     now = datetime.now(timezone.utc)
     # Deactivate expired watches first.
     mongo_store.update_docs('ticker_watches', {'is_active': True, 'expiry_at': {'$ne': None, '$lte': now}}, {'$set': {'is_active': False, 'updated_at': now}})
-    rows = mongo_query.find_rows('ticker_watches', {'is_active': True}, ['id', 'ticker', 'bot_id', 'triggers', 'reason', 'thesis_summary', 'cooldown_minutes', 'fire_count', 'last_fired_at', 'created_at'])
+    rows = mongo_query.find_rows('ticker_watches', {'is_active': True}, ['id', 'ticker', 'bot_id', 'triggers', 'reason', 'thesis_summary', 'cooldown_minutes', 'fire_count', 'last_fired_at', 'created_at', 'schema_version', 'decision_context', 'revisit_plan', 'budget', 'state'])
 
     watches = [{
         "id": r[0], "ticker": r[1], "bot_id": r[2], "triggers": json.loads(r[3] or "[]"),
         "reason": r[4], "thesis_summary": r[5], "cooldown_minutes": r[6] or DEFAULT_COOLDOWN_MINUTES,
         "fire_count": r[7] or 0, "last_fired_at": r[8], "created_at": r[9],
+        "schema_version": (r[10] or 0) if len(r) > 10 else 0,
+        "decision_context": r[11] if len(r) > 11 else None,
+        "revisit_plan": r[12] if len(r) > 12 else None,
+        "budget": r[13] if len(r) > 13 else None,
+        "state": r[14] if len(r) > 14 else None,
     } for r in rows]
 
     if not watches:

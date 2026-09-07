@@ -101,6 +101,11 @@ Your probability, 0-100, that the action you emit is the right call over the nex
     "tags": ["#reaffirm"]
 }
 When escalate=true, action/confidence/levels may be null — the full panel decides.
+Any executable BUY or SELL is sent to the full panel for fresh regime and risk authorization;
+only a valid HOLD can finish on this fast route. An intact held-position HOLD means KEEP.
+If an unresolved question warrants monitoring, include resolution_condition with
+open_question and resolving_fact; otherwise use null. Preserve an existing relevant
+structured dynamic_trigger explicitly when it is still part of the thesis.
 
 CRITICAL OUTPUT DIRECTIVE:
 You MUST respond ONLY with a raw JSON object matching the schema above.

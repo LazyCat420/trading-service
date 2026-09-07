@@ -51,6 +51,8 @@ async def run_v3_pipeline(
     is_highly_redundant: bool = False,
     research_focus: str = "",
     trigger_type: str = "manual",
+    analysis_mode: str = "auto",
+    research_questions: list[dict] | None = None,
     active_directives: list[dict] | None = None,
     #: The cycle's other candidate names (app/v3/cycle_candidates.py). Defaults
     #: to None so every existing caller — tests, the scheduler, the watch desk
@@ -155,6 +157,11 @@ async def run_v3_pipeline(
         trigger_type=trigger_type,
     )
 
+    desk.cycle_metadata["decision_contract_version"] = 1
+    desk.cycle_metadata["research_questions"] = research_questions or []
+    if research_questions:
+        analysis_mode = "full"
+    desk.cycle_metadata["analysis_mode"] = analysis_mode
     desk.cycle_metadata["agent_locale"] = agent_locale
     desk.cycle_metadata["prism_overrides"] = prism_overrides or {}
     
@@ -612,8 +619,8 @@ async def run_v3_pipeline(
             since = datetime.now(timezone.utc) - timedelta(hours=24)
             news_count = mongo_store.count_docs("news_articles", {"ticker": ticker, "published_at": {"$gte": since}})
         except Exception as e:
-            logger.warning("[V3] %s: Triage news_count query failed (defaulting to 0): %s", ticker, e)
-            news_count = 0
+            logger.warning("[V3] %s: Triage news count UNKNOWN; using deep research: %s", ticker, e)
+            news_count = None
 
         hours_old = 9999
         if desk.cycle_metadata.get("previous_desk_context") and previous_desk:
@@ -639,23 +646,16 @@ async def run_v3_pipeline(
         except Exception:
             prior_contradictions = 0
 
-        if hours_old >= _get_param("TRIAGE_DEEP_HOURS") or news_count >= _get_param("TRIAGE_DEEP_NEWS_VOLUME"):
-            triage_tier = "v3_deep"
-        elif prior_contradictions > 0 and hours_old > _get_param("TRIAGE_GLANCE_HOURS") / 8:
-            triage_tier = "v3_deep"
-            logger.info(
-                "[V3] %s: Triage escalated to deep — prior desk carried %d unresolved "
-                "cross-agent contradiction(s)", ticker, prior_contradictions,
-            )
-        elif hours_old <= _get_param("TRIAGE_GLANCE_HOURS") and news_count == 0:
-            # Recently analysed AND nothing new at all → hard skip (cheapest).
-            triage_tier = "v3_glance"
-        else:
-            # Recently-ish analysed with some (sub-deep) news, or a modest-age
-            # re-look → the Delta Analyst does ONE cheap pass instead of the full
-            # panel, escalating only if it finds a material change. (Previously
-            # this band ran the full panel or was glance-skipped even with news.)
-            triage_tier = "v3_delta"
+        from app.v3.triage import select_tier
+        triage_tier = select_tier(
+            hours_old, news_count,
+            deep_hours=_get_param("TRIAGE_DEEP_HOURS"),
+            deep_news_volume=_get_param("TRIAGE_DEEP_NEWS_VOLUME"),
+            glance_hours=_get_param("TRIAGE_GLANCE_HOURS"),
+            prior_contradictions=prior_contradictions,
+            trigger_type=trigger_type,
+            force_full=analysis_mode == "full",
+        )
 
         desk.cycle_metadata["triage_tier"] = triage_tier
         emit("analyzing", f"v3_triage_{ticker}", f"🚦 {ticker}: Triage Gate evaluated → {triage_tier} (News: {news_count}, Age: {int(hours_old)}h)", status="ok")
@@ -719,12 +719,9 @@ async def run_v3_pipeline(
             verdict = str(delta.get("verdict") or "").upper()
             # Conservative: escalate on ESCALATE, an explicit escalate flag, an empty
             # / failed delta, or any non-success outcome. Never rubber-stamp.
-            escalate = (
-                not delta
-                or bool(delta.get("escalate"))
-                or verdict == "ESCALATE"
-                or delta_outcome != PhaseOutcome.SUCCESS
-            )
+            from app.v3.triage import delta_needs_panel
+            escalate = delta_needs_panel(delta, delta_outcome)
+
 
             if not escalate:
                 d_action = str(delta.get("action") or "HOLD").upper()
@@ -735,6 +732,10 @@ async def run_v3_pipeline(
                     "confidence": d_conf,
                     "reasoning": delta.get("reasoning", "Prior thesis reaffirmed by the delta re-look."),
                     "persona_used": "Delta Analyst",
+                    "decision_producer": "v3_delta_analyst",
+                    "entry_mode": "watch_only",
+                    "trigger_purpose": "research" if delta.get("dynamic_trigger") else "none",
+                    "resolution_condition": delta.get("resolution_condition"),
                     "regime": (desk.regime_classification or {}).get("regime", "delta_relook"),
                     "stop_loss": delta.get("stop_loss"),
                     "take_profit": delta.get("take_profit"),
@@ -850,7 +851,7 @@ async def run_v3_pipeline(
             # Material change (or no usable delta) → fall through to the full panel.
             emit(
                 "analyzing", f"v3_delta_escalate_{ticker}",
-                f"⚡ {ticker}: Delta found a material change → escalating to the full panel",
+                f"⚡ {ticker}: Delta requires full-panel authorization (change, executable action, or invalid output)",
                 status="ok",
             )
             logger.info(
@@ -1059,6 +1060,8 @@ async def run_v3_pipeline(
             # JA is the first real intelligence gate (plan 2.2): honor its
             # triage_recommendation. Anything unrecognized behaves as FULL.
             triage = str((event.get("content") or {}).get("triage_recommendation") or "FULL").upper()
+            if analysis_mode == "full":
+                triage = "FULL"
 
             # A triage that shortens the pipeline is only valid if the analyst
             # could actually see. When its tools failed, "no catalysts found"
@@ -1799,6 +1802,7 @@ async def run_v3_pipeline(
                     emit("analyzing", f"v3_board_degraded_{ticker}",
                          f"⚠️ {ticker}: Board produced no decision ({outcome.value})",
                          status="warn")
+                _drop_implausible_levels(desk)
                 # Write final_decision to whiteboard so subscriber chains decision_synthesizer
                 if outcome in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP) and desk.final_decision:
                     await whiteboard.write_section(
@@ -2023,6 +2027,11 @@ async def run_v3_pipeline(
             )
     except Exception as e:
         logger.warning("[V3] %s: dossier sync failed (non-fatal): %s", ticker, e)
+
+    from app.services.research_work import finish_questions
+    desk.cycle_metadata["research_completion"] = finish_questions(desk)
+    if research_questions:
+        save_desk(desk)
 
     # ═══════════════════════════════════════════════════════════════════
     # BUILD RESULT — V1-compatible shape for downstream phases
@@ -2413,6 +2422,7 @@ async def _persist_trade_verdict(
         # research and verdict are not lost.
         board_dec = desk.final_decision
         decision = {
+            **board_dec,
             "action": board_dec.get("action", "HOLD"),
             "confidence": board_dec.get("confidence", 50),
             "reasoning": str(board_dec.get("reasoning", "")) + " [Synthesizer unavailable; persisted from Board of Directors verdict]",
@@ -2429,6 +2439,11 @@ async def _persist_trade_verdict(
             "position_size_pct": board_dec.get("position_size_pct", 0.0),
             "decision_provenance": "board_fallback",
         }
+        if desk.cycle_metadata.get("decision_contract_version") == 1:
+            from app.v3.decision_contract import board_reference
+            decision.update(source_board_ref=board_reference(board_dec),
+                            source_board_action=board_dec.get("action"), decision_relation="preserve",
+                            decision_producer="board_fallback")
         desk.trade_decision = decision
         logger.warning(
             "[V3] %s: decision_synthesizer produced no decision, falling back to Board verdict (%s @ %s%%)",
@@ -2437,6 +2452,9 @@ async def _persist_trade_verdict(
     if decision:
         try:
             from app.services.trade_result_saver import save_trade_result
+            if desk.cycle_metadata.get("decision_contract_version") == 1:
+                from app.v3.decision_contract import effective_decision
+                decision.update(effective_decision(decision, desk.final_decision))
             trade_decision = decision
 
             # BEFORE the write, so trade_results can never store a level the
@@ -2484,7 +2502,8 @@ async def _persist_trade_verdict(
 
             # Ensure dynamic trigger extracted from prose or inherited from the board
             # is attached to trade_decision before persisting to trade_results.
-            if not isinstance(trade_decision.get("dynamic_trigger"), dict):
+            if (desk.cycle_metadata.get("decision_contract_version") != 1
+                    and not isinstance(trade_decision.get("dynamic_trigger"), dict)):
                 board_decision = desk.final_decision or {}
                 dt = (
                     board_decision.get("dynamic_trigger")
@@ -2500,6 +2519,8 @@ async def _persist_trade_verdict(
                 if isinstance(dt, dict):
                     trade_decision["dynamic_trigger"] = dt
 
+            from app.v3.decision_contract import status as decision_contract_status
+            trade_decision["decision_contract"] = decision_contract_status(desk)
             save_trade_result(ticker, cycle_id, trade_decision)
 
             # Feed the judge: llm_audit_logs + context_blobs are the
@@ -2791,6 +2812,7 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
     action = str(decision.get("action") or "").strip().upper() or "HOLD"
     confidence = _safe_confidence(decision.get("confidence"))
 
+
     # The tail of this function returns f"EXECUTE_{action}", so an unrecognized
     # action would interpolate straight into the label the executor reads
     # ("EXECUTE_3.14", "EXECUTE_TRUE"). Only three actions exist; anything else
@@ -2814,6 +2836,11 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
             desk, "HOLD_DEGRADED_NO_DECISION",
             provenance=decision.get("decision_provenance"),
         )
+
+    from app.v3.decision_contract import status as decision_contract_status
+    contract = decision_contract_status(desk)
+    if contract["status"] == "invalid":
+        return _record_gate(desk, "HOLD_POLICY_BLOCKED_DECISION_CONTRACT", errors=contract["errors"])
 
     # NOT recorded as a guardrail firing, deliberately: a genuine no-signal HOLD
     # is a normal decision the desk is entitled to reach, not a safety gate
@@ -3594,6 +3621,14 @@ def _build_v1_compatible_result(
     # synthesizer may override it. Execution honors this over any formula.
     position_size_pct = _merged.get("position_size_pct")
 
+    from app.v3.decision_contract import status as decision_contract_status
+    decision_contract = decision_contract_status(desk)
+    if decision_contract["version"] == 1:
+        stop_loss = _merged.get("stop_loss")
+        take_profit = _merged.get("take_profit")
+        dynamic_trigger = _merged.get("dynamic_trigger")
+        exit_style = _merged.get("exit_style")
+
     # Consensus + data-quality feed the code-side sizing haircut in
     # pipeline_service.resolve_buy_size_pct (2026-07-21: formulas moved out of
     # the synthesizer prompt into code, where arithmetic is reliable).
@@ -3681,7 +3716,12 @@ def _build_v1_compatible_result(
         # Not "always": a desk that never dispatched an analyst did not escalate.
         "escalated": bool(_stages_completed(desk)) and "research" in _stages_completed(desk),
         "agent_results": _extract_agent_results(desk),
+        "decision_contract": decision_contract,
+        "resolution_condition": _merged.get("resolution_condition"),
+        "decision_producer": _merged.get("decision_producer"),
         "estimate": {
+            "entry_mode": _merged.get("entry_mode"),
+            "trigger_purpose": _merged.get("trigger_purpose"),
             "stop_loss": stop_loss,
             "take_profit": take_profit,
             "dynamic_trigger": dynamic_trigger,

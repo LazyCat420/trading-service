@@ -170,14 +170,14 @@ PARAMETER_REGISTRY: dict[str, ParamSpec] = {
     # of the last 30 trips produced no decision at all. These knobs govern the
     # allocator that replaces arrival order with an explainable score.
     "WATCH_TRIAGE_MODE": ParamSpec(
-        default=1, min_value=0, max_value=2, direction=RISK_DOWN, kind="int",
+        default=2, min_value=0, max_value=2, direction=RISK_DOWN, kind="int",
         tier=TIER_BOARD,
         description=(
             "0 = off (pre-allocator behaviour), 1 = shadow (score and log every "
             "candidate, change nothing), 2 = enforce (the score floor and the "
-            "per-ticker budget actually gate wakes). Defaults to SHADOW: the "
-            "triage inputs must be shown reliable on real candidates before "
-            "they are allowed to refuse a wake."
+            "per-ticker budget actually gate wakes). Defaults to enforce after "
+            "frozen live-trip replay and disposable Mongo watch-sweep validation; "
+            "an explicitly stored operator setting still wins."
         ),
     ),
     "WATCH_PLANNER_ENABLED": ParamSpec(

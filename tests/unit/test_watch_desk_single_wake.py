@@ -26,6 +26,9 @@ def _cand(ticker: str) -> dict:
 
 @pytest.fixture
 def spend_env(monkeypatch):
+    # These tests isolate spend/enqueue accounting. Enforced scoring is
+    # covered by test_watch_allocator_replay and the real Mongo sweep test.
+    monkeypatch.setattr("app.services.watch_allocator.get_mode", lambda: 0)
     enqueued, marked = [], []
     monkeypatch.setattr(watch_desk, "_held_tickers", lambda: set())
     monkeypatch.setattr(
