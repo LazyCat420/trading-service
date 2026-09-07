@@ -26,6 +26,14 @@ logger = logging.getLogger(__name__)
 # Throttle repeated identical DDG-fallback failures (rate-limit bursts).
 _DDG_FAIL_LOG_AT: dict[str, float] = {}
 
+# yt-dlp extractor arg that turns the results page's relative "N years ago"
+# text into upload_date/timestamp on --flat-playlist entries. See _search_youtube.
+YTDLP_APPROXIMATE_DATE_ARG = "youtubetab:approximate_date"
+
+# Flat-entry description snippets are unbounded; the only consumer (the
+# wallgarden candidate classifier) wants a hint, not the whole blurb.
+DESCRIPTION_MAX_CHARS = 200
+
 # yt-dlp version check at import
 try:
     _v = subprocess.run(
@@ -60,6 +68,13 @@ class YouTubeVideo:
     # alone can't be matched reliably. Empty when the source doesn't carry it
     # (DuckDuckGo fallback, some flat-playlist entries).
     channel_id: str = ""
+    # First DESCRIPTION_MAX_CHARS of the results-page snippet. "" when the
+    # transport carries none (RSS, DDG).
+    description: str = ""
+    # True when published_at came from yt-dlp's approximate_date (derived from
+    # "N years ago" text): the month and year are real, the day-of-month is
+    # today's. A consumer that needs the exact day must not trust this row.
+    published_at_estimated: bool = False
 
 
 class YouTubeCollector:
@@ -236,11 +251,13 @@ class YouTubeCollector:
             duration = int(duration) or None
 
         # Fallback to fetching single-video metadata if upload_date is missing (e.g. from flat-playlist search results)
+        fetched_exact = False
         if not upload_date and require_transcript:
             try:
                 video_info = await asyncio.to_thread(self._get_video_info_fallback, video_id)
                 if video_info:
                     upload_date = video_info.get("upload_date", "")
+                    fetched_exact = bool(upload_date)
                     if not duration:
                         duration = video_info.get("duration") or None
             except Exception as e:
@@ -253,8 +270,15 @@ class YouTubeCollector:
             except ValueError:
                 pass
 
+        # A flat entry's date is yt-dlp's approximate_date unless the per-video
+        # repair above fetched the real one. None stays None — an unknown date
+        # is not "now" and not "ancient".
+        published_at_estimated = bool(published_at) and not fetched_exact
+
         if cutoff and published_at and published_at < cutoff:
             return None
+
+        description = " ".join((video.get("description") or "").split())[:DESCRIPTION_MAX_CHARS]
 
         # Get transcript
         transcript = ""
@@ -276,6 +300,8 @@ class YouTubeCollector:
             thumbnail_url=thumbnail_url,
             # Preserve unknown. `or 0` collapsed None into a measured zero.
             view_count=video.get("view_count"),
+            description=description,
+            published_at_estimated=published_at_estimated,
         )
 
     def _get_video_info_fallback(self, video_id: str) -> dict | None:
@@ -404,6 +430,7 @@ class YouTubeCollector:
                 "--flat-playlist", "--dump-json",
                 f"--playlist-end={max_videos}",
                 "--no-download", "--quiet",
+                "--extractor-args", YTDLP_APPROXIMATE_DATE_ARG,
             ]
             
             if days_back > 0:
@@ -465,6 +492,15 @@ class YouTubeCollector:
                 "--dump-json", "--no-download", "--no-playlist",
                 "--quiet", "--no-warnings",
                 "--socket-timeout", "5",
+                # Flat search entries carry no upload_date, and the per-video
+                # repair below is gated on require_transcript — so every
+                # transcript-less caller (wallgarden's whole discovery feed)
+                # received published_at=null on every result. This extractor
+                # arg makes yt-dlp derive a date from the results page's own
+                # "N years ago" text: month/year accurate, day-of-month is
+                # today's. Same request, no extra cost. Verified 2026-09-06
+                # on both the ytsearchN: and the results?sp= targets.
+                "--extractor-args", YTDLP_APPROXIMATE_DATE_ARG,
             ]
             if playlist_end_arg:
                 cmd.append(playlist_end_arg)
@@ -675,4 +711,6 @@ def _serialize_video(video: YouTubeVideo) -> dict:
         "thumbnail_url": video.thumbnail_url,
         "view_count": video.view_count,
         "channel_id": video.channel_id,
+        "description": video.description,
+        "published_at_estimated": video.published_at_estimated,
     }
