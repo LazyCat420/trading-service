@@ -128,6 +128,22 @@ def test_the_tool_advertises_the_field_it_needs():
     signature: a keyword-only argument that never reaches the tool description
     is unreachable in production while every unit test that calls the function
     directly still passes.
+
+    THIS TEST CAN PASS FOR TWO DIFFERENT REASONS, AND ONE OF THEM IS WEAK.
+    `app/tools/registry.py` prefers the generated flat catalog at
+    `tool_schemas.json` (gitignored, COPYd into the image) and only falls back
+    to the live `@registry.register` decorators when that file is absent. So in
+    a fresh git worktree — where the generated file does not exist — this reads
+    the decorator and passes trivially. On the primary checkout, and in the
+    container, it reads the CATALOG.
+
+    That is not a flaw to paper over; it is the point. The catalog is a
+    generated cache with no invalidation, and it caught the real defect on
+    2026-09-06: `resolution_condition` was added to the decorator and to
+    `create_watch`, both green, while the shipped catalog still described the
+    old six parameters — the model would never have seen the field. The fix is
+    upstream, in `lazy-agent-service/tool_schemas/trading/watch_desk.json`,
+    followed by `scripts/build_tool_schemas.py`.
     """
     import app.tools.watch_desk_tools  # noqa: F401 — registers the tool
     from app.tools.registry import registry
