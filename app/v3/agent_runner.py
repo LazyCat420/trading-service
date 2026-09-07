@@ -1371,6 +1371,10 @@ async def run_v3_agent(
             "contract_delivered": bool(contract_block and contract_block in delivered_text),
             "defense_delivered": bool(desk.bull_defense and desk.defense_context() in delivered_text),
             "defense_records_omitted": bool(desk.bull_defense and "OMITTED:" in desk.defense_context()),
+            "research_answers_delivered": bool(desk.cycle_metadata.get('research_answers_context')
+                and desk.cycle_metadata['research_answers_context'] in delivered_text),
+            "prior_research_answers_delivered": bool(desk.cycle_metadata.get('prior_research_answers_context')
+                and desk.cycle_metadata['prior_research_answers_context'] in delivered_text),
             "system_chars": len(system_prompt), "user_chars": len(user_prompt),
         })
 

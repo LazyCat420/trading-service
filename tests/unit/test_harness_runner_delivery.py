@@ -50,6 +50,7 @@ async def test_synth_receives_defense_and_enforces_board_timing(invalid):
     assert answer['answer'] in prompt
     assert desk.bull_defense["independent_risks_answered"][0]["answer"] in prompt
     assert desk.cycle_metadata["context_delivery"][-1]["defense_delivered"]
+    assert desk.cycle_metadata["context_delivery"][-1]["research_answers_delivered"]
     if invalid:
         assert outcome == PhaseOutcome.AGENT_ERROR
         assert not desk.trade_decision
