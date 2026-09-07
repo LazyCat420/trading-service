@@ -923,9 +923,26 @@ class TestMockTradingCycleMongoE2E:
         assert "baseline" in variance_res
 
         # 22. Cycle Replay Router in MongoDB
+        from app.log_manager import log_manager
         from app.routers.cycle_replay_router import list_cycles, get_cycle_flow, get_cycle_timeline, get_ticker_detail
 
+        # The replay list pages `cycle_run_summaries` (one row per finished
+        # cycle, upserted at cycle END) rather than grouping every
+        # pipeline_events row, so the cycle has to have finished — in the
+        # sense the store knows — before it can be listed. This is the same
+        # write step 26 used to make; it moved here, it was not duplicated.
+        log_manager.log_cycle_summary(cycle_id, {
+            "trigger_type": "manual",
+            "started_at": now.isoformat(),
+            "ended_at": (now + datetime.timedelta(seconds=120)).isoformat(),
+            "status": "success",
+            "elapsed_ms": 120000,
+            "collector_ok": 1,
+            "tickers": ["AAPL"],
+        })
+
         cycles_res = list_cycles(limit=10, offset=0)
+        assert cycles_res["cycles"][0]["cycle_id"] == cycle_id
         assert "cycles" in cycles_res
         assert cycles_res["total"] >= 1
 
@@ -1016,19 +1033,10 @@ class TestMockTradingCycleMongoE2E:
         assert isinstance(timeline, list)
 
         # 26. Diagnostics Router and LogManager in MongoDB
-        from app.log_manager import log_manager
         from app.routers.diagnostics_router import list_cycles, list_system_jobs
 
-        log_manager.log_cycle_summary(cycle_id, {
-            "trigger_type": "manual",
-            "started_at": now.isoformat(),
-            "ended_at": (now + datetime.timedelta(seconds=120)).isoformat(),
-            "status": "success",
-            "elapsed_ms": 120000,
-            "collector_ok": 1,
-            "tickers": ["AAPL"],
-        })
-
+        # The cycle_run_summaries row itself was written ahead of step 22 —
+        # the replay list reads that collection now.
         summary_docs = mongo_store.find_docs("cycle_run_summaries", {"cycle_id": cycle_id})
         assert len(summary_docs) >= 1
         assert summary_docs[0]["status"] == "success"

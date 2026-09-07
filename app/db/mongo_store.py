@@ -260,6 +260,19 @@ def ensure_indexes(session: Optional[Any] = None) -> None:
     _try("price_history", [("date", pymongo.ASCENDING)], name="date_1")
     _try("pipeline_events", "id", unique=True)
     _try("pipeline_events", [("cycle_id", pymongo.ASCENDING), ("timestamp", pymongo.ASCENDING)])
+    # cycle_run_summaries: the Pipeline Replays list is `sort started_at -1,
+    # skip, limit` (cycle_replay_router._cycles_page) — one row per finished
+    # cycle instead of a `$group` over all of pipeline_events. The cycle_id
+    # index already exists on the live store under the backfill's name
+    # (`natural_key`, scripts/pg_to_mongo_backfill.py); the same name is used
+    # here so this is a no-op there and a real build on a fresh store, rather
+    # than an IndexOptionsConflict warning on every boot.
+    _try("cycle_run_summaries", [("started_at", pymongo.DESCENDING)])
+    _try("cycle_run_summaries", [("cycle_id", pymongo.ASCENDING)], name="natural_key")
+    # v3_agent_telemetry: every per-cycle reader in cycle_replay_router
+    # filters on cycle_id, and the list page batches `{cycle_id: {$in: page}}`
+    # then sorts (created_at, attempt_no); it only had (agent_name, created_at).
+    _try("v3_agent_telemetry", [("cycle_id", pymongo.ASCENDING), ("created_at", pymongo.ASCENDING)])
 
     for coll in _ID_UNIQUE_COLLECTIONS:
         _try(coll, "id", unique=True,
@@ -409,11 +422,16 @@ def bulk_upsert(collection: str, docs: list[dict[str, Any]],
 
 def find_docs(collection: str, query: dict[str, Any], sort: Optional[list] = None,
               projection: Optional[dict] = None, limit: int = 0,
-              session: Optional[Any] = None) -> list[dict[str, Any]]:
+              session: Optional[Any] = None, skip: int = 0) -> list[dict[str, Any]]:
+    """`skip` is the pagination offset (applied after `sort`, before `limit`);
+    0 means no skip and never touches the cursor, so a fake cursor without
+    `.skip` keeps working for callers that do not page."""
     query = date_fields.coerce_filter(collection, query)
     cur = _coll(collection).find(query, projection, session=session)
     if sort:
         cur = cur.sort(sort)
+    if skip:
+        cur = cur.skip(skip)
     if limit:
         cur = cur.limit(limit)
     return list(cur)

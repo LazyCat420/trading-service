@@ -14,38 +14,50 @@ from fastapi import APIRouter, HTTPException, Query
 from app.db import mongo_query, mongo_store
 
 
-def _cycles_page(limit: int, offset: int) -> list[tuple]:
-    """Newest-first page of (cycle_id, started_at, finished_at, step_count, total_ms)."""
+_SUMMARY_PROJECTION = {
+    "_id": 0, "cycle_id": 1, "started_at": 1, "finished_at": 1, "status": 1,
+    "elapsed_ms": 1, "tickers_final": 1, "tickers_requested": 1,
+}
+
+
+def _cycles_page(limit: int, offset: int) -> list[dict]:
+    """Newest-first page of `cycle_run_summaries` rows, projected.
+
+    ONE indexed read — `sort started_at -1, skip offset, limit` — where this
+    used to be a `$group` over ALL of pipeline_events (210k rows, 531ms on its
+    own and growing with history) rebuilding facts the summary row already
+    holds. The summary row is upserted at cycle END
+    (log_manager.log_cycle_summary, called from
+    PipelineService._persist_summary on the done / stopped / cancelled / error
+    paths), so:
+
+    * the cycle that is running right now has no row yet — `list_cycles`
+      prepends it from the pipeline_state singleton on the first page;
+    * cycles that predate the summaries collection (1,544 distinct cycle_ids
+      in pipeline_events against 567 summary rows on 2026-09-06) are no
+      longer paginated here. Their events are still served by the per-cycle
+      endpoints below; nothing backfills them.
+
+    `started_at` is a BSON Date on every row (0 strings, 16 nulls on
+    2026-09-06); nulls sort LAST under `-1`, so they trail the page, they do
+    not lead it.
+    """
     try:
-        docs = mongo_store.aggregate("pipeline_events", [
-            {"$match": {"cycle_id": {"$nin": [None, ""]}}},
-            {"$group": {
-                "_id": "$cycle_id",
-                "started_at": {"$min": "$timestamp"},
-                "finished_at": {"$max": "$timestamp"},
-                "steps": {"$addToSet": "$step"},
-                "total_ms": {"$sum": {"$ifNull": ["$elapsed_ms", 0]}},
-            }},
-            {"$sort": {"started_at": -1}},
-            {"$skip": offset},
-            {"$limit": limit},
-        ])
-        return [
-            (d["_id"], d.get("started_at"), d.get("finished_at"),
-             len(d.get("steps") or []), d.get("total_ms") or 0)
-            for d in docs
-        ]
+        return mongo_store.find_docs(
+            "cycle_run_summaries", {},
+            sort=[("started_at", -1)], skip=offset, limit=limit,
+            projection=_SUMMARY_PROJECTION,
+        )
     except Exception as e:
         logger.warning("[cycles] mongo page read failed: %s", e)
         return []
 
 
 def _cycles_total() -> int:
+    """Row count of `cycle_run_summaries` — the collection the page reads, so
+    total and page agree. (Was a DISTINCT over all of pipeline_events.)"""
     try:
-        vals = mongo_store.distinct_values(
-            "pipeline_events", "cycle_id", {"cycle_id": {"$nin": [None, ""]}}
-        )
-        return len(vals)
+        return int(mongo_store.count_docs("cycle_run_summaries", {}))
     except Exception as e:
         logger.warning("[cycles] mongo total read failed: %s", e)
         return 0
@@ -86,13 +98,69 @@ def _cycle_triggers(cycle_ids: list[str]) -> dict[str, dict]:
         return {}
 
 
-def _trade_actions(cycle_id: str) -> list[tuple]:
-    """(ticker, action, confidence) rows for a cycle."""
-    return mongo_query.find_rows('trade_results', {'cycle_id': cycle_id}, ['ticker', 'action', 'confidence'])
+def _page_agent_outcomes(cycle_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """{cycle_id: {agent_name: outcome}} for a whole page in ONE aggregate.
+
+    Mirrors what the per-cycle `_cycle_agent_rows` fed the list: rows sorted
+    (created_at, attempt_no) ascending, the LAST row per agent wins — hence
+    the `$sort` ahead of `$group`/`$last`. `agent_count` is the number of
+    keys, i.e. distinct agent_name, as before.
+
+    One deliberate correction: the per-cycle loop published the row's PHASE
+    under `outcomes` — `(agent_name, phase, outcome, ...)[1]` by tuple-index
+    drift — which is why its `== "SUCCESS"` completion check never fired (no
+    phase is SUCCESS; INIT / RESEARCH_DONE / DEBATE_DONE / post_decision are
+    the values). The key is named outcomes; it now carries the outcome. No
+    client reads it (cycleKinds.js / PipelineReplaysPanel.jsx / useCycleRuns.js
+    read status, ticker_count, total_ms, agent_count, trigger).
+    """
+    if not cycle_ids:
+        return {}
+    try:
+        docs = mongo_store.aggregate("v3_agent_telemetry", [
+            {"$match": {"cycle_id": {"$in": cycle_ids}}},
+            {"$sort": {"created_at": 1, "attempt_no": 1}},
+            {"$group": {
+                "_id": {"cycle_id": "$cycle_id", "agent": "$agent_name"},
+                "outcome": {"$last": "$outcome"},
+            }},
+        ])
+    except Exception as e:
+        logger.warning("[cycles] mongo agent outcomes failed: %s", e)
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for d in docs or []:
+        key = d.get("_id")
+        if not isinstance(key, dict) or not key.get("cycle_id"):
+            continue
+        out.setdefault(key["cycle_id"], {})[key.get("agent")] = d.get("outcome")
+    return out
 
 
-def _distinct_trade_tickers(cycle_id: str) -> list[tuple]:
-    return [(t,) for t in mongo_store.distinct_values("trade_results", "ticker", {"cycle_id": cycle_id}) if t]
+def _page_actions(cycle_ids: list[str]) -> dict[str, dict[Any, dict]]:
+    """{cycle_id: {ticker: {action, confidence}}} for a whole page in ONE
+    read of trade_results (indexed on (cycle_id, ticker)). Natural order, as
+    the per-cycle `_trade_actions` had: a ticker with several rows keeps the
+    last one."""
+    if not cycle_ids:
+        return {}
+    try:
+        docs = mongo_store.find_docs(
+            "trade_results", {"cycle_id": {"$in": cycle_ids}},
+            projection={"_id": 0, "cycle_id": 1, "ticker": 1, "action": 1, "confidence": 1},
+        )
+    except Exception as e:
+        logger.warning("[cycles] mongo trade actions failed: %s", e)
+        return {}
+    out: dict[str, dict[Any, dict]] = {}
+    for d in docs or []:
+        cid = d.get("cycle_id")
+        if not cid:
+            continue
+        out.setdefault(cid, {})[d.get("ticker")] = {
+            "action": d.get("action"), "confidence": d.get("confidence"),
+        }
+    return out
 
 
 def _latest_trade_row(cycle_id: str, ticker: str):
@@ -112,15 +180,6 @@ def _latest_trade_row(cycle_id: str, ticker: str):
     except Exception as e:
         logger.warning("[cycles] mongo trade-detail read failed: %s", e)
         return None
-
-
-def _cycle_tickers(cycle_id: str) -> list[str]:
-    try:
-        vals = mongo_store.distinct_values("v3_agent_telemetry", "ticker", {"cycle_id": cycle_id})
-        return sorted([v for v in vals if v])
-    except Exception as e:
-        logger.warning("[cycles] mongo distinct tickers failed: %s", e)
-        return []
 
 
 def _cycle_agent_rows(cycle_id: str, ticker: str = ""):
@@ -231,6 +290,96 @@ _PIPELINE_EDGES = [
 ]
 
 
+_LIVE_STATUSES = ("running", "starting", "collecting", "analyzing", "trading")
+
+
+def _iso(v: Any) -> str | None:
+    return v.isoformat() if hasattr(v, "isoformat") else (str(v) if v else None)
+
+
+def _summary_status(raw: Any) -> str:
+    """Store status -> the client's vocabulary (cycleKinds.js knows
+    'completed', 'running', 'watch_trip'; anything else renders as failed).
+    'done' is the only success the writer emits
+    (PipelineService._persist_summary: done / stopped / cancelled / error);
+    the raw value rides beside it as `summary_status`."""
+    return "completed" if raw == "done" else "failed"
+
+
+def _summary_row(doc: dict, outcomes: dict, actions: dict, triggers: dict) -> dict:
+    cycle_id = doc.get("cycle_id")
+    started, finished = doc.get("started_at"), doc.get("finished_at")
+
+    total_ms = int(doc.get("elapsed_ms") or 0)
+    if isinstance(started, datetime) and isinstance(finished, datetime):
+        try:
+            total_ms = max(total_ms, int((finished - started).total_seconds() * 1000))
+        except Exception:
+            pass
+
+    cycle_actions = actions.get(cycle_id) or {}
+    tickers = list(
+        doc.get("tickers_final") or doc.get("tickers_requested")
+        or [t for t in cycle_actions if t]
+    )
+    cycle_outcomes = outcomes.get(cycle_id) or {}
+
+    return {
+        "cycle_id": cycle_id,
+        "started_at": _iso(started),
+        "finished_at": _iso(finished),
+        "total_ms": total_ms,
+        "status": _summary_status(doc.get("status")),
+        "summary_status": doc.get("status"),
+        "tickers": tickers,
+        "ticker_count": len(tickers),
+        "agent_count": len(cycle_outcomes),
+        "outcomes": cycle_outcomes,
+        "actions": cycle_actions,
+        # None (not {}) for cycles that predate trigger provenance — the
+        # client must be able to tell "we don't know" from "nobody
+        # triggered it".
+        "trigger": triggers.get(cycle_id) or None,
+    }
+
+
+def _live_row(cycle_id: str, live_state: dict, outcomes: dict, actions: dict,
+              triggers: dict) -> dict:
+    """The cycle pipeline_state says is running, which has no summary row
+    yet. Its status is 'running' by construction: the SUCCESS-outcome /
+    has-actions completion heuristic the old list applied to every row is
+    NOT applied here — the state singleton is the authority on "running", and
+    the moment the cycle finishes its summary row exists and wins the dedupe
+    in `list_cycles`. Its shape matches the row useCycleRuns.js synthesises
+    when the live cycle is missing from the page."""
+    tickers = list(live_state.get("tickers") or [])
+    started = live_state.get("started_at")  # already ISO text from get_state
+    total_ms = 0
+    try:
+        if started:
+            t0 = datetime.fromisoformat(str(started).replace("Z", "+00:00"))
+            if t0.tzinfo is None:
+                t0 = t0.replace(tzinfo=timezone.utc)
+            total_ms = max(0, int((datetime.now(timezone.utc) - t0).total_seconds() * 1000))
+    except Exception:
+        total_ms = 0
+    cycle_outcomes = outcomes.get(cycle_id) or {}
+    return {
+        "cycle_id": cycle_id,
+        "started_at": _iso(started),
+        "finished_at": None,
+        "total_ms": total_ms,
+        "status": "running",
+        "summary_status": None,
+        "tickers": tickers,
+        "ticker_count": len(tickers),
+        "agent_count": len(cycle_outcomes),
+        "outcomes": cycle_outcomes,
+        "actions": actions.get(cycle_id) or {},
+        "trigger": triggers.get(cycle_id) or None,
+    }
+
+
 @router.get("")
 def list_cycles(
     limit: int = Query(default=20, le=100),
@@ -239,85 +388,56 @@ def list_cycles(
 ):
     """List recent pipeline cycles with summary stats.
 
-    `include_total=false` skips `_cycles_total`, which is an unindexed
-    DISTINCT/`$group` over the whole `pipeline_events` collection (372k rows
-    and growing — nothing prunes it). It exists only to drive pagination; a
-    caller that just wants the newest N cycles on a poll should not pay for a
-    full scan every tick. Default stays True so existing callers are unchanged.
+    Reads `cycle_run_summaries` (one row per finished cycle, indexed on
+    started_at) rather than grouping every pipeline_events row, and fetches
+    the side data — trigger provenance, per-agent outcomes, trade actions —
+    in ONE batched query each over the page's cycle_ids. So the endpoint
+    costs a fixed FOUR reads (five with `include_total`) whatever `limit`
+    is, where it used to be 1 + 3-4 per cycle on top of a whole-collection
+    `$group`. Measured 1.5-6.8s live for limit=8 before this.
+
+    The summary row's own `status` is the source of truth for finished
+    cycles ('done' -> completed, anything else -> failed; the raw value is
+    passed through as `summary_status`). The one cycle without a row — the
+    one running now — is prepended on the first page as 'running' (see
+    `_live_row`), and `total` counts it so pagination stays consistent.
+
+    `include_total=false` skips the count; it exists only to drive
+    pagination and a poll for the newest N cycles need not pay for it.
     """
-    # Identify the currently-running cycle so it isn't mislabeled — the
-    # step "done" heuristic below matches per-agent "..._done_TICKER"
-    # steps minutes into a run and used to report running cycles as completed.
     live_cycle_id = None
+    live_state: dict = {}
     try:
         from app.services.pipeline_service import PipelineService
-        live_state = PipelineService.get_current_state(summary_only=True)
-        if live_state.get("status") in ("running", "starting", "collecting", "analyzing", "trading"):
+        live_state = PipelineService.get_current_state(summary_only=True) or {}
+        if live_state.get("status") in _LIVE_STATUSES:
             live_cycle_id = live_state.get("cycle_id")
     except Exception:
-        pass
+        live_state = {}
 
     try:
-        rows = _cycles_page(limit, offset)
-        triggers = _cycle_triggers([r[0] for r in rows if r and r[0]])
+        docs = _cycles_page(limit, offset)
+        page_ids = [d.get("cycle_id") for d in docs if d.get("cycle_id")]
+        prepend_live = bool(live_cycle_id) and offset == 0 and live_cycle_id not in page_ids
+        side_ids = ([live_cycle_id] if prepend_live else []) + page_ids
+
+        triggers = _cycle_triggers(side_ids)
+        outcomes = _page_agent_outcomes(side_ids)
+        actions = _page_actions(side_ids)
+
         cycles = []
-        for row in rows:
-            cycle_id = row[0]
-            tickers = _cycle_tickers(cycle_id)
-            agent_rows = _cycle_agent_rows(cycle_id)
+        if prepend_live:
+            cycles.append(_live_row(live_cycle_id, live_state, outcomes, actions, triggers))
+        for d in docs:
+            if not d.get("cycle_id"):
+                continue
+            cycles.append(_summary_row(d, outcomes, actions, triggers))
 
-            agent_count = len(set(a[0] for a in agent_rows)) if agent_rows else 0
-            outcomes = {}
-            for a in (agent_rows or []):
-                outcomes[a[0]] = a[1]
-
-            action_rows = _trade_actions(cycle_id)
-            actions = {
-                a[0]: {"action": a[1], "confidence": a[2]}
-                for a in (action_rows or [])
-            }
-
-            started = row[1].isoformat() if hasattr(row[1], "isoformat") else str(row[1]) if row[1] else None
-            finished = row[2].isoformat() if hasattr(row[2], "isoformat") else str(row[2]) if row[2] else None
-
-            total_ms = row[4] or 0
-            if row[1] and row[2] and hasattr(row[2], "__sub__"):
-                try:
-                    span_ms = int((row[2] - row[1]).total_seconds() * 1000)
-                    total_ms = max(total_ms, span_ms)
-                except Exception:
-                    pass
-
-            if not tickers:
-                tr_tickers = _distinct_trade_tickers(cycle_id)
-                if tr_tickers:
-                    tickers = [t[0] for t in tr_tickers]
-
-            is_completed = any(o == "SUCCESS" for o in outcomes.values())
-            if not is_completed and actions:
-                is_completed = True
-
-            status = "completed" if is_completed else "running" if cycle_id == live_cycle_id else "failed"
-
-            cycles.append({
-                "cycle_id": cycle_id,
-                "started_at": started,
-                "finished_at": finished,
-                "total_ms": total_ms,
-                "status": status,
-                "tickers": tickers,
-                "ticker_count": len(tickers),
-                "agent_count": agent_count,
-                "outcomes": outcomes,
-                "actions": actions,
-                # None (not {}) for cycles that predate trigger provenance —
-                # the client must be able to tell "we don't know" from
-                # "nobody triggered it".
-                "trigger": triggers.get(cycle_id) or None,
-            })
-
-        # Get total count for pagination (opt-out: see include_total)
-        total = _cycles_total() if include_total else None
+        # Total for pagination (opt-out: see include_total). The prepended
+        # live row is a real row on page 0, so it is counted.
+        total = None
+        if include_total:
+            total = _cycles_total() + (1 if prepend_live else 0)
 
         return {
             "cycles": cycles,
