@@ -5,6 +5,7 @@ import httpx
 import sys
 sys.path.append("/usr/lib/python3/dist-packages")
 import jsonschema
+from memory_stream import complete_stream
 ROOT=Path(__file__).resolve().parents[3];BASE=Path(os.environ.get('MEMORY_BENCHMARK_DIR',str(ROOT/'.scratch/memory-isolation-20260907')))
 ENDPOINT='http://10.0.0.16:5591/vllm-shim/gold-spark'
 capture=json.loads((BASE/'role-capture.json').read_text());requests=[]
@@ -52,17 +53,27 @@ def grade(row,case):
   size=obj.get('position_size_pct');checks['size_within_frozen_ceiling']=isinstance(size,(int,float)) and 0<=size<=0.6
   checks['entry_mode_enum']=obj.get('entry_mode') in ['enter_now','enter_on_condition','watch_only']
  row['fact_checks']=checks
-async def run(client,model,case,arm):
+async def run(client,model,case,arm,repeat):
  messages=copy.deepcopy(case[arm]);whiteboard={};start=time.monotonic()
- row={'case':case['id'],'arm':arm,'model':model,'started_at':time.time(),'response':'','turns':[],'whiteboard_writes':0,'prompt_tokens':0,'completion_tokens':0,'tool_calls':0,'tool_errors':0,'stop':'unknown'}
+ row={'case':case['id'],'arm':arm,'repeat':repeat,'transport':'stream','model':model,'started_at':time.time(),'response':'','turns':[],'whiteboard_writes':0,'prompt_tokens':0,'completion_tokens':0,'tool_calls':0,'tool_errors':0,'usage_complete':True,'stop':'unknown'}
  try:
   for turn in range(case['max_turns']):
+   load=None
+   try:
+    metrics=await client.get(ENDPOINT+'/metrics',timeout=8)
+    load=[line for line in metrics.text.splitlines() if not line.startswith('#') and any(key in line for key in ('num_requests_running','num_requests_waiting','kv_cache_usage_perc'))][:12]
+   except Exception:pass
    t=time.monotonic();payload={'model':model,'messages':messages,'tools':case['tools'],'temperature':0,'min_p':0,'max_tokens':case['max_tokens'],'chat_template_kwargs':{'enable_thinking':False}}
-   response=await client.post(ENDPOINT+'/v1/chat/completions',json=payload);response.raise_for_status();body=response.json()
-   choice=body['choices'][0];message=choice['message'];usage=body.get('usage') or {}
+   def first_output(first,headers):
+    print(json.dumps({'first_output':case['id'],'arm':arm,'repeat':repeat,'turn':turn+1,'first_delta_s':first,'headers_s':headers}),flush=True)
+   remaining=900-(time.monotonic()-start)
+   if remaining<=0:raise TimeoutError('900-second role deadline exceeded')
+   choice=await asyncio.wait_for(complete_stream(client,ENDPOINT+'/v1/chat/completions',payload,first_output),timeout=remaining)
+   message=choice['message'];usage=choice.get('usage') or {}
+   if not usage:row['usage_complete']=False
    row['prompt_tokens']+=usage.get('prompt_tokens',0);row['completion_tokens']+=usage.get('completion_tokens',0)
    calls=message.get('tool_calls') or [];row['response']=message.get('content') or ''
-   event={'elapsed_s':time.monotonic()-t,'usage':usage,'finish_reason':choice.get('finish_reason'),'message':message,'tool_results':[]}
+   event={'load_before':load,'first_delta_s':choice['first_delta_s'],'headers_s':choice['headers_s'],'elapsed_s':time.monotonic()-t,'usage':usage,'finish_reason':choice.get('finish_reason'),'message':message,'tool_results':[]}
    row['turns'].append(event)
    print(json.dumps({'progress':case['id'],'arm':arm,'turn':turn+1,'elapsed_s':event['elapsed_s'],'usage':usage,'tool_names':[x['function']['name'] for x in calls]}),flush=True)
    if not calls:row['stop']=choice.get('finish_reason');break
@@ -72,15 +83,16 @@ async def run(client,model,case,arm):
     if call['function']['name']=='whiteboard_write' and result.get('success'):row['whiteboard_writes']+=1
     event['tool_results'].append(result);messages.append({'role':'tool','tool_call_id':call['id'],'content':json.dumps(result)})
    if turn==case['max_turns']-1:row['stop']='max_turns'
- except Exception as e:row.update(error=f'{type(e).__name__}: {e}',stop='error')
+ except Exception as e:row.update(error=f'{type(e).__name__}: {e}',stop='error',usage_complete=False)
  row['elapsed_s']=time.monotonic()-start;grade(row,case)
  return row
 async def main():
  rows=[]
  async with httpx.AsyncClient(timeout=900) as client:
   model=(await client.get(ENDPOINT+'/v1/models')).json()['data'][0]['id']
-  for i,case in enumerate(cases):
-   for arm in (('before','after') if i%2==0 else ('after','before')):
-    row=await run(client,model,case,arm);rows.append(row);(BASE/'role-results.json').write_text(json.dumps(rows,indent=2))
-    print(json.dumps({k:v for k,v in row.items() if k not in ['turns','response','artifact']}),flush=True)
+  for repeat in range(2):
+   for i,case in enumerate(cases):
+    for arm in (('before','after') if (i+repeat)%2==0 else ('after','before')):
+     row=await run(client,model,case,arm,repeat);rows.append(row);(BASE/'role-results.json').write_text(json.dumps(rows,indent=2))
+     print(json.dumps({k:v for k,v in row.items() if k not in ['turns','response','artifact']}),flush=True)
 asyncio.run(main())
