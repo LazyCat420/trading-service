@@ -59,3 +59,11 @@ def test_unreceived_evidence_and_forged_receipts_do_not_complete_questions():
     assert not _evidenced(answer, artifact, desk)
     record_tool_receipts(artifact, [], delivered_text=desk.cycle_metadata["data_report"], metadata=desk.cycle_metadata)
     assert _evidenced(answer, artifact, desk)
+
+
+def test_queued_question_carries_its_original_time_scope():
+    from app.services.research_work import question_block
+    block = question_block([{'id': 'old-question', 'created_at': '2026-08-17T14:31:30Z',
+        'source_agent': 'quant', 'payload': {'question': 'Was volume decreasing in that five-day window?'}}])
+    assert '2026-08-17T14:31:30Z' in block
+    assert 'current snapshot does not answer a historical' in block

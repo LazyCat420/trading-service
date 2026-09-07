@@ -35,6 +35,8 @@ def question_block(items: list[dict]) -> str:
     if not items:
         return ''
     requests = [{'item_id': item['id'],
+                 'asked_at': item.get('created_at'),
+                 'requested_by': item.get('source_agent'),
                  'question': (item.get('payload') or {}).get('question') or item.get('reason')}
                 for item in items]
     return ('## CLAIMED RESEARCH QUESTIONS (answer these in this cycle)\n'
@@ -43,7 +45,8 @@ def question_block(items: list[dict]) -> str:
               '"answer":"specific answer or why unresolved", "evidence":[{"source":"data_report or supplied *_context '
               'name or tool:<exact tool name>", "quote":"verbatim excerpt supporting your answer"}]}]. '
               'A source label without a quote is insufficient. Answer only from evidence you actually received; '
-              'unresolved is valid and will be deferred. Do not repeat a completed answer from another research desk.\n')
+              'unresolved is valid and will be deferred. Respect asked_at: a current snapshot does not answer a historical '
+              'date-specific question without evidence for that date. Do not repeat a completed answer from another research desk.\n')
 
 
 def _normal(text) -> str:
