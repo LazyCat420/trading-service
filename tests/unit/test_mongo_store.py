@@ -113,15 +113,28 @@ def test_handle_mongo_read_failure_raises_at_full_mongo(monkeypatch, caplog):
 
 def test_forced_outage_on_mongo_mode_table_raises_through_a_real_reader(monkeypatch):
     """End-to-end through a real converted call site: cycle_replay_router's
-    trade-actions reader with Mongo forced down must raise immediately."""
-    ms = _reload_with_backend(monkeypatch, "trade_results:mongo")
+    ticker-detail endpoint reads `shared_desk` through mongo_query.find_row
+    with no fallback, so with Mongo forced down it must fail LOUDLY — a 500
+    carrying the outage — never serve a stale or empty row as if it were the
+    answer.
+
+    (This used to drive `_trade_actions`, the list page's per-cycle
+    trade_results reader. That reader went with the list's move to
+    cycle_run_summaries + batched side reads, and the batched replacement
+    degrades softly like every other list helper, so the loud path is
+    pinned on the drill-down instead.)"""
+    from fastapi import HTTPException
+
+    ms = _reload_with_backend(monkeypatch, "shared_desk:mongo")
     import app.routers.cycle_replay_router as crr
     crr = importlib.reload(crr)
     boom = RuntimeError("forced outage")
     monkeypatch.setattr(ms, "find_docs", lambda *a, **k: (_ for _ in ()).throw(boom))
 
-    with pytest.raises(RuntimeError):
-        crr._trade_actions("cycle-x")
+    with pytest.raises(HTTPException) as exc:
+        crr.get_ticker_detail("cycle-x", "aapl")
+    assert exc.value.status_code == 500
+    assert "forced outage" in str(exc.value.detail)
 
 
 # ── Phase 1: new helpers (pure logic, mocked collection) ────────────────────
