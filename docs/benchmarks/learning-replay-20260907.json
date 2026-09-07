@@ -1,0 +1,195 @@
+{
+  "completed": 16,
+  "expected": 16,
+  "missing": [],
+  "complete_pairs": 8,
+  "arms": {
+    "before": {
+      "n": 8,
+      "valid_artifacts": 1,
+      "valid_citations": 1,
+      "policy_violations": 0,
+      "model_calls": 23,
+      "cached_tokens_available": 0,
+      "prompt_tokens": 557521,
+      "completion_tokens": 12805,
+      "tool_calls": 25,
+      "redundant_tool_calls": 25,
+      "elapsed_s": 1825.3568173099775,
+      "total_tokens": 570326
+    },
+    "after": {
+      "n": 8,
+      "valid_artifacts": 3,
+      "valid_citations": 0,
+      "policy_violations": 0,
+      "model_calls": 27,
+      "cached_tokens_available": 0,
+      "prompt_tokens": 802573,
+      "completion_tokens": 7829,
+      "tool_calls": 33,
+      "redundant_tool_calls": 33,
+      "elapsed_s": 1979.3233873120043,
+      "total_tokens": 810402
+    }
+  },
+  "paired": {
+    "prompt_tokens": {
+      "paired_mean_after_minus_before": 30631.5,
+      "bootstrap_95_pct": [
+        -28818.5,
+        113631
+      ]
+    },
+    "completion_tokens": {
+      "paired_mean_after_minus_before": -622,
+      "bootstrap_95_pct": [
+        -1986.25,
+        791.5
+      ]
+    },
+    "tool_calls": {
+      "paired_mean_after_minus_before": 1,
+      "bootstrap_95_pct": [
+        -0.625,
+        2.75
+      ]
+    },
+    "elapsed_s": {
+      "paired_mean_after_minus_before": 19.245821250253357,
+      "bootstrap_95_pct": [
+        -76.82297260336782,
+        121.97023682612416
+      ]
+    },
+    "total_tokens": {
+      "paired_mean_after_minus_before": 30009.5,
+      "bootstrap_95_pct": [
+        -28009.375,
+        111795
+      ]
+    }
+  },
+  "per_task": [
+    {
+      "task": "01-junior_analyst-LULU",
+      "before": {
+        "tokens": 71463,
+        "tools": 5,
+        "valid": false,
+        "citations": false
+      },
+      "after": {
+        "tokens": 72157,
+        "tools": 7,
+        "valid": false,
+        "citations": false
+      }
+    },
+    {
+      "task": "02-junior_analyst-STX",
+      "before": {
+        "tokens": 7652,
+        "tools": 0,
+        "valid": false,
+        "citations": false
+      },
+      "after": {
+        "tokens": 69579,
+        "tools": 5,
+        "valid": false,
+        "citations": false
+      }
+    },
+    {
+      "task": "03-fundamental_analyst-LULU",
+      "before": {
+        "tokens": 64703,
+        "tools": 4,
+        "valid": false,
+        "citations": false
+      },
+      "after": {
+        "tokens": 64764,
+        "tools": 4,
+        "valid": true,
+        "citations": false
+      }
+    },
+    {
+      "task": "04-quant_analyst-STX",
+      "before": {
+        "tokens": 77084,
+        "tools": 6,
+        "valid": false,
+        "citations": false
+      },
+      "after": {
+        "tokens": 70360,
+        "tools": 6,
+        "valid": false,
+        "citations": false
+      }
+    },
+    {
+      "task": "05-bull_agent-LULU",
+      "before": {
+        "tokens": 142835,
+        "tools": 5,
+        "valid": false,
+        "citations": false
+      },
+      "after": {
+        "tokens": 47935,
+        "tools": 2,
+        "valid": true,
+        "citations": false
+      }
+    },
+    {
+      "task": "06-bear_agent-LULU",
+      "before": {
+        "tokens": 168760,
+        "tools": 5,
+        "valid": false,
+        "citations": false
+      },
+      "after": {
+        "tokens": 168015,
+        "tools": 5,
+        "valid": false,
+        "citations": false
+      }
+    },
+    {
+      "task": "07-regime_engine-LULU",
+      "before": {
+        "tokens": 7733,
+        "tools": 0,
+        "valid": true,
+        "citations": true
+      },
+      "after": {
+        "tokens": 7054,
+        "tools": 0,
+        "valid": true,
+        "citations": false
+      }
+    },
+    {
+      "task": "08-board_of_directors-LULU",
+      "before": {
+        "tokens": 30096,
+        "tools": 0,
+        "valid": false,
+        "citations": false
+      },
+      "after": {
+        "tokens": 310538,
+        "tools": 4,
+        "valid": false,
+        "citations": false
+      }
+    }
+  ]
+}
