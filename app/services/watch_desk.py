@@ -35,6 +35,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.utils.tz import ensure_aware
 from app.db import mongo_query, mongo_store
+from app.services import watch_schema
 from app.services.cycle_queue import enqueue_start_cycle
 
 logger = logging.getLogger(__name__)
@@ -165,6 +166,9 @@ def create_watch(
     bot_id: str | None = None,
     source_cycle_id: str | None = None,
     news_seen_until: datetime | None = None,
+    resolution_condition: dict | None = None,
+    decision_action: str | None = None,
+    decision_confidence: float | None = None,
 ) -> dict:
     """Create/replace the active watch for a ticker. One active watch per ticker
     per bot — a new one supersedes the old (re-arm).
@@ -182,6 +186,23 @@ def create_watch(
     clean, err = _normalize_triggers(triggers)
     if err:
         return {"status": "rejected", "reason": err}
+
+    # ── The resolution condition (schema 1) ────────────────────────────────
+    # A BAD condition is refused; an ABSENT one arms a legacy (schema 0) watch.
+    # The asymmetry is deliberate. Refusing on absence would have stopped the
+    # auto-derived baseline arming ANY watch the day this shipped — the
+    # baseline has no open question to state, because the decision it descends
+    # from never recorded one — and a desk that silently stops monitoring is a
+    # far worse failure than one monitoring with a weak record. The cost of
+    # absence is charged instead: `watch_triage` scores a legacy watch with an
+    # explicit `legacy_schema_penalty` and never screens it off-thesis, so the
+    # gap stays visible and measurable rather than being hidden by a backfill.
+    schema_version, clean_rc = 0, None
+    if resolution_condition is not None:
+        clean_rc, rc_err = watch_schema.normalize_resolution_condition(resolution_condition)
+        if rc_err:
+            return {"status": "rejected", "reason": rc_err}
+        schema_version = watch_schema.WATCH_SCHEMA_VERSION
 
     watch_id = f"watch-{uuid.uuid4().hex[:10]}"
     now = datetime.now(timezone.utc)
@@ -210,20 +231,49 @@ def create_watch(
         anchors = [ensure_aware(a) for a in inherited + [news_seen_until] if a is not None]
         anchors = [a for a in anchors if a is not None]
         last_fired_seed = max(anchors) if anchors else None
-        mongo_store.insert_docs('ticker_watches', [{'id': watch_id, 'ticker': ticker, 'bot_id': bot_id, 'triggers': json.dumps(clean), 'reason': (reason or "")[:500], 'thesis_summary': (thesis_summary or "")[:2000], 'is_active': True, 'cooldown_minutes': int(cooldown_minutes), 'source_cycle_id': source_cycle_id, 'expiry_at': expiry, 'last_fired_at': last_fired_seed, 'created_at': now, 'updated_at': now}])
+        doc = {'id': watch_id, 'ticker': ticker, 'bot_id': bot_id, 'triggers': json.dumps(clean), 'reason': (reason or "")[:500], 'thesis_summary': (thesis_summary or "")[:2000], 'is_active': True, 'cooldown_minutes': int(cooldown_minutes), 'source_cycle_id': source_cycle_id, 'expiry_at': expiry, 'last_fired_at': last_fired_seed, 'created_at': now, 'updated_at': now,
+               'schema_version': schema_version}
+        if clean_rc is not None:
+            # Nested under decision_context so `watch_schema.get_resolution_
+            # condition` finds it at the schema-1 location, and so the prior
+            # decision travels WITH the question it left open — the two are
+            # only meaningful together.
+            doc['decision_context'] = {
+                'action': (decision_action or '').upper() or None,
+                'confidence': decision_confidence,
+                'thesis_summary': (thesis_summary or "")[:2000],
+                'resolution_condition': clean_rc,
+                'source_cycle_id': source_cycle_id,
+                'decided_at': now,
+            }
+        mongo_store.insert_docs('ticker_watches', [doc])
     except Exception as e:
         logger.error("[WatchDesk] create_watch failed for %s: %s", ticker, e)
         return {"status": "error", "message": str(e)}
 
-    logger.info("[WatchDesk] Watch armed %s for %s: %d trigger(s)", watch_id, ticker, len(clean))
-    return {
+    logger.info("[WatchDesk] Watch armed %s for %s: %d trigger(s), schema v%d%s",
+                watch_id, ticker, len(clean), schema_version,
+                "" if clean_rc else " (LEGACY — no resolution_condition recorded)")
+    out = {
         "status": "armed",
         "watch_id": watch_id,
         "ticker": ticker,
         "triggers": clean,
+        "schema_version": schema_version,
         "expires_at": expiry.isoformat(),
         "note": "Watch Desk will wake the agent only when a trigger trips.",
     }
+    if not clean_rc:
+        # Said out loud in the tool's own return value. An agent that gets a
+        # bare "armed" cannot tell that it left the desk unable to screen a
+        # single headline against its thesis.
+        out["warning"] = (
+            "No resolution_condition recorded. This watch cannot be screened "
+            "against your open question, so ANY category-matching headline "
+            "naming the company can wake a full cycle. Re-arm with "
+            "resolution_condition={open_question, resolving_fact} to fix it."
+        )
+    return out
 
 
 def list_watches(ticker: str | None = None, active_only: bool = True) -> list[dict]:
@@ -321,6 +371,14 @@ def derive_baseline_watch(ticker: str, result: dict, snapshot: dict | None, cycl
             thesis_summary=result.get("rationale", "")[:2000],
             bot_id=result.get("bot_id"),
             source_cycle_id=cycle_id,
+            # Forwarded ONLY if the decision actually stated one. The baseline
+            # must never invent an open question: a fabricated condition would
+            # screen real headlines against words no agent chose, and the
+            # `legacy_schema_penalty` telemetry — the only measure of how big
+            # this gap is — would read as closed while nothing had changed.
+            resolution_condition=result.get("resolution_condition"),
+            decision_action=action if action in ("BUY", "SELL", "HOLD") else None,
+            decision_confidence=result.get("confidence"),
             # The cycle that just finished consumed all current news — only
             # headlines collected AFTER this point should be able to wake us.
             news_seen_until=datetime.now(timezone.utc),
@@ -637,9 +695,80 @@ def _wakes_today() -> int:
         "v3_system_commands", "id",
         {"id": {"$in": cycle_ids}, "status": "skipped"},
     ))
+    refunded = skipped | _wakes_that_produced_nothing(cycle_ids)
     # COUNT(*) over the surviving ROWS, not distinct ids — two events sharing a
     # cycle_id counted twice in SQL and must count twice here.
-    return sum(1 for cid in cycle_ids if cid not in skipped)
+    return sum(1 for cid in cycle_ids if cid not in refunded)
+
+
+def _wakes_that_produced_nothing(command_ids: list[str]) -> set[str]:
+    """Wake commands whose cycle FAILED and left no analysis. Refund those.
+
+    Measured 2026-09-06: 8 of the last 30 trips produced zero `analysis_results`
+    rows — 7 cycles ended `status=error`, 1 `stopped` — and the budget was
+    charged for every one. On 2026-09-02 that was six wakes spent and six
+    decisions not made, with no retry possible until the next day.
+
+    The refund is deliberately narrow. It requires BOTH:
+      * the cycle reached a TERMINAL failure state (`error`/`stopped`), and
+      * it wrote no analysis_results row.
+
+    A running cycle satisfies the second and not the first, and refunding it
+    would uncap the budget for exactly as long as a cycle takes — turning one
+    slow cycle into an unbounded wake loop. A cycle that errored AFTER writing
+    a decision satisfies the first and not the second: the wake bought a
+    decision, so it is not refunded.
+
+    Never raises — a refund lookup that fails simply refunds nothing, which is
+    the pre-existing behaviour.
+    """
+    if not command_ids:
+        return set()
+    refund: set[str] = set()
+    try:
+        import ast as _ast
+
+        rows = mongo_query.find_rows(
+            "v3_system_commands", {"id": {"$in": list(command_ids)}},
+            ["id", "result"],
+        )
+        # The command's `result` holds the pipeline cycle id it actually
+        # started; watch_events only knows the wd- COMMAND id. Without this hop
+        # there is nothing to join a decision to.
+        cmd_to_cycle: dict[str, str] = {}
+        for cmd_id, result in rows:
+            if not result:
+                continue
+            try:
+                parsed = _ast.literal_eval(result) if isinstance(result, str) else result
+                cyc = (parsed or {}).get("cycle_id")
+            except (ValueError, SyntaxError, TypeError, AttributeError):
+                continue
+            if cyc:
+                cmd_to_cycle[cmd_id] = cyc
+        if not cmd_to_cycle:
+            return set()
+
+        cycles = list(set(cmd_to_cycle.values()))
+        failed = set(mongo_store.distinct_values(
+            "cycle_run_summaries", "cycle_id",
+            {"cycle_id": {"$in": cycles}, "status": {"$in": ["error", "stopped"]}},
+        ))
+        if not failed:
+            return set()
+        produced = set(mongo_store.distinct_values(
+            "analysis_results", "cycle_id", {"cycle_id": {"$in": list(failed)}},
+        ))
+        for cmd_id, cyc in cmd_to_cycle.items():
+            if cyc in failed and cyc not in produced:
+                refund.add(cmd_id)
+        if refund:
+            logger.info("[WatchDesk] refunding %d wake(s) whose cycle failed with "
+                        "no decision: %s", len(refund), ", ".join(sorted(refund)))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[WatchDesk] wake refund lookup failed (refunding none): %s", e)
+        return set()
+    return refund
 
 
 
@@ -772,13 +901,19 @@ async def evaluate_watches() -> dict:
                 candidates.append({
                     "watch": w, "trig": trig, "ticker": ticker,
                     "detail": detail, "value": value,
+                    # The allocator needs the article's real collected_at to
+                    # judge freshness; only this loop still holds it. Passing
+                    # the ctx costs nothing and re-reading it later would give
+                    # a DIFFERENT (later) timestamp for the same headline.
+                    "ctx": ctx,
                 })
                 break  # one candidate per watch per pass
 
     # ── Rank, then spend the budget on the most consequential trips ────────
     if candidates:
         fired_total, budget_left = await _spend_wake_budget(
-            candidates, budget_left, deferred
+            candidates, budget_left, deferred,
+            budget_total=wake_budget, market_open=market_open,
         )
 
     if deferred:
@@ -794,7 +929,8 @@ async def evaluate_watches() -> dict:
 
 
 async def _spend_wake_budget(
-    candidates: list, budget_left: int, deferred: list
+    candidates: list, budget_left: int, deferred: list,
+    budget_total: int | None = None, market_open: bool = True,
 ) -> tuple[int, int]:
     """Rank the trips, then spend AT MOST ONE wake this sweep.
 
@@ -805,22 +941,106 @@ async def _spend_wake_budget(
     and advancing last_fired_at past headlines that could then never trip
     again. Losing candidates now stay unmarked and compete again next sweep.
 
+    THE ALLOCATOR RUNS HERE
+    -----------------------
+    Every candidate is scored by `watch_allocator.assess` and every candidate
+    is logged — including the ones this function discards without firing, which
+    the old code dropped without trace. In SHADOW mode (the default) the scores
+    change nothing: the legacy ranking still picks the wake, so the log records
+    what the allocator WOULD have done alongside what the desk DID.
+
+    In ENFORCE mode the allocator's score drives the ordering and its policy
+    decision gates the spend. That is the fix for the measured saturation —
+    the budget of 6 was spent 6/6 on all 21 days examined, allocated by which
+    sweep happened to run first rather than by what was worth looking at.
+
     Returns (fired_count, budget_left).
     """
+    from app.services import watch_allocator
+
+    budget_total = budget_total or max(1, budget_left)
+    mode = watch_allocator.get_mode()
+    now = datetime.now(timezone.utc)
+
+    # Score first, decide second. Scoring inside the spend loop would give a
+    # candidate a different compute-cost penalty depending on how many
+    # candidates happened to be examined before it — the ranking would then
+    # depend on iteration order, which is the exact defect being fixed.
+    if mode != watch_allocator.MODE_OFF:
+        for cand in candidates:
+            verdict, decision, inputs = watch_allocator.assess(
+                watch=cand["watch"], trig=cand["trig"], detail=cand["detail"],
+                value=cand["value"], ctx=cand.get("ctx"), now=now,
+                market_open=market_open, budget_left=budget_left,
+                budget_total=budget_total,
+            )
+            cand["verdict"], cand["decision"], cand["inputs"] = verdict, decision, inputs
+
     held = _held_tickers()
-    candidates.sort(key=lambda c: _trip_priority(c, held), reverse=True)
+    if mode == watch_allocator.MODE_ENFORCE:
+        # Highest allocator score first; a candidate the allocator could not
+        # score falls back to the legacy key rather than to the front.
+        candidates.sort(
+            key=lambda c: ((c.get("verdict").score if c.get("verdict") else -1e9),
+                           _trip_priority(c, held)),
+            reverse=True,
+        )
+    else:
+        candidates.sort(key=lambda c: _trip_priority(c, held), reverse=True)
+
     fired = 0
+    sweep_losers: list[str] = []
     for cand in candidates:
+        cycle_id = None
+        blocked = None
+
         if budget_left <= 0:
-            deferred.append(f"{cand['ticker']}({cand['trig']['type']})")
-            continue
-        cycle_id = await _enqueue_wake(cand["watch"], cand["trig"], cand["detail"])
-        if cycle_id:
-            _mark_fired(cand["watch"], cand["trig"], cand["detail"],
-                        cand["value"], cycle_id)
-            budget_left -= 1
-            fired += 1
-            break  # budget spent only on the accepted wake; rest re-trip
+            blocked = "global_daily_budget_exhausted"
+        elif mode == watch_allocator.MODE_ENFORCE:
+            d = cand.get("decision")
+            # A candidate the allocator could not score is NOT blocked. An
+            # assess() failure is an instrument fault, and letting a broken
+            # instrument silence the desk is a worse failure than a wake the
+            # allocator would have refused.
+            if d is not None and d.action != "ANALYZE_NOW":
+                blocked = d.reason or "allocator_deferred"
+
+        if blocked is None and fired == 0:
+            cycle_id = await _enqueue_wake(cand["watch"], cand["trig"], cand["detail"])
+            if cycle_id:
+                _mark_fired(cand["watch"], cand["trig"], cand["detail"],
+                            cand["value"], cycle_id)
+                budget_left -= 1
+                fired += 1
+            else:
+                blocked = "enqueue_rejected"
+        elif blocked is None:
+            # Ranked above the floor but the sweep's single wake is already
+            # spent. This is NOT a deferral: the candidate stays armed and
+            # competes again next sweep. Recording it as one would put five
+            # entries on every busy sweep into a list whose only consumer logs
+            # "daily wake budget spent" — turning the desk's single genuine
+            # saturation warning into noise that fires whenever two things
+            # happen at once.
+            sweep_losers.append(cand["ticker"])
+
+        if mode != watch_allocator.MODE_OFF:
+            watch_allocator.log_candidate(
+                watch=cand["watch"], trig=cand["trig"],
+                verdict=cand.get("verdict"), decision=cand.get("decision"),
+                inputs=cand.get("inputs"), now=now,
+                fired=bool(cycle_id), cycle_id=cycle_id, live_mode=mode,
+            )
+        if cycle_id is None and blocked:
+            # The reason travels with the ticker. "LLY(news)" could not say
+            # whether the desk ran out of budget, the allocator refused the
+            # evidence, or the enqueue lost a race — three states that need
+            # three different responses from whoever reads the log.
+            deferred.append(f"{cand['ticker']}({cand['trig']['type']}:{blocked})")
+
+    if sweep_losers:
+        logger.info("[WatchDesk] %d candidate(s) ranked below this sweep's wake and "
+                    "stay armed: %s", len(sweep_losers), ", ".join(sweep_losers))
     return fired, budget_left
 
 
