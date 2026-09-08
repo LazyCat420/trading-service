@@ -1,0 +1,34 @@
+{
+  "name": "evaluate_expression",
+  "description": "Perform highly precise mathematical calculations using bignumber.js. Supports arbitrary-precision arithmetic. Passed numbers should be strings to prevent precision loss. For sqrt, 'b' is ignored.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "operation": {
+        "type": "string",
+        "enum": [
+          "add",
+          "subtract",
+          "multiply",
+          "divide",
+          "modulo",
+          "power",
+          "sqrt"
+        ],
+        "description": "The mathematical operation to perform"
+      },
+      "a": {
+        "type": "string",
+        "description": "The first operand (must be a valid numeric string)"
+      },
+      "b": {
+        "type": "string",
+        "description": "The second operand (must be a valid numeric string). Optional for sqrt."
+      }
+    },
+    "required": [
+      "operation",
+      "a"
+    ]
+  }
+}

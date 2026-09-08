@@ -36,7 +36,7 @@ only; default test discovery must not start model calls. Role budgets differ fro
 production, and the provider harness/automatic repair loop is replaced by the replay
 loop, so production transport and full-cycle claims require separate live validation.
 
-All tool schemas come from the current canonical catalog and role grants. Whiteboard
+Trading tool schemas come from the current canonical catalog and role grants. Whiteboard
 operations use the isolated store; evidence tools return labeled frozen evidence for
 EVLT and the two supplied peers only. Missing measurements are explicitly unavailable;
 no external market fetches, execution, equations persisted outside the fixture, learning
@@ -95,3 +95,17 @@ Use a unique output directory and a disposable database whose name begins with
 The workflow watchdog is 1,900 seconds, covering three separately bounded 600-second
 roles; no model calls run in parallel. Freeze source hashes into the output directory
 before inference. Dry validation passed 46 workflows before the scored cohort.
+
+## Pre-inference amendment: production calculator
+
+Before any scored inference, the live MSFT Quant used `evaluate_expression`, which
+Prism grants as a core tool independently of Trading role grants. Add its actual
+schema (fetched from the supported Tools API on 2026-09-08) to every replay role.
+The supported compute-only `/utility/calculate` GET receives operation and numeric
+operands only; no market evidence or account data. Retain every response/error in
+the replay transcript. This is the sole external non-model service call in the
+tool loop. Operand strings are bounded to 128 characters. Service availability is
+a remaining dependency and any failure counts; there is no silent local fallback.
+Setup probes confirmed divide 1/3, multiply 0.53 by 100, and sqrt 4. This amendment
+replaces the setup-only manifest with a new scored output directory; the original
+manifest remains preserved and contains no scored calls.
