@@ -42,11 +42,15 @@ tool-call cap on this path):
 | Junior Analyst | 7 | Tools-enabled |
 | Fundamental Analyst | 12 | Tools-enabled |
 | Quant Analyst | 14 | Tools-enabled |
-| Bull Agent | 3 | Small verify toolset |
-| Bear Agent | 3 | Small verify toolset |
+| Valuation Analyst | 6 | Tools-enabled, optional |
+| Bull Agent | 5 | Small verify toolset |
+| Bear Agent | 5 | Small verify toolset |
+| Bull Defense | 4 | Whiteboard read |
+| Debate Judge | 4 | Whiteboard read |
+| Delta Analyst | 5 | Tools-enabled, delta path |
 | Regime Engine | 5 | Tools-enabled |
 | Board of Directors | 5 | Tools-enabled |
-| Decision Synthesizer | 5 | Pure reasoning |
+| Decision Synthesizer | 5 | Whiteboard read |
 
 Any agent with `enable_tools=False` gets `max_turns=1` regardless of the table.
 Agents absent from the dict inherit `_DEFAULT_BUDGET = 9999`.
@@ -152,7 +156,7 @@ All agent prompts MUST incorporate these blocks from `app/config/guardrails.py`:
 These constraints apply to ALL agents in the V3 pipeline:
 
 1. **No agent may call a tool it is not whitelisted for.** Tool access is controlled by `TOOL_WHITELIST` per agent module.
-2. **Pure reasoning agents (Bull, Bear, Decision Synthesizer) have ZERO tools.** If the LLM attempts a tool call, it will be rejected. **Board of Directors** has limited tool access (`get_portfolio_state`, max 3 calls) as of Phase 2.
+2. **Every role uses its current module `TOOL_WHITELIST`.** Bull and Bear have small verification toolsets; Defense, Judge and Synthesizer can read the whiteboard. Board has its limited current whitelist. A tool outside the role whitelist is rejected. Do not infer tool access from old "pure reasoning" descriptions.
 3. **No agent may directly communicate with another agent.** All inter-agent data flows through the SharedDesk via typed artifacts.
 4. **No agent may modify another agent's artifact.** Artifacts are append-only on the SharedDesk.
 5. **No agent may spawn another agent.** Only the orchestrator may invoke agents. The recursion guard enforces this.
@@ -162,7 +166,7 @@ These constraints apply to ALL agents in the V3 pipeline:
 ## 10. Deployment Constraints
 
 - **Single-process only**: The `_active_v3_sessions` recursion guard is a process-local Python set. Multi-worker deployments (Gunicorn workers, Docker scale) will break this guard silently.
-- **No live trading**: The V3 pipeline produces `trade_decision` artifacts and persists them to the `trade_results` DB table. There is no broker integration or order execution path.
+- **Paper execution only**: Trade-enabled V3 cycles can execute simulated orders through the paper-trading ledger. There is no live broker integration. `enter_on_condition` arms a re-analysis wake and does not place an immediate order; `enter_now` remains subject to the normal policy, sizing and portfolio gates.
 - **DECISION_AGENT_ENABLED**: Defaults to `True` in `app/config/config.py`. Controls whether Layer 5 (Decision Synthesizer) runs.
 
 ---
