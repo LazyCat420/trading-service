@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "as_of": "2026-09-03T20:00:00Z",
+  "ticker": "EVLT",
+  "shared": "Synthetic company EVLT; this is frozen evidence, not a live security. All current measurements are as of 2026-09-03 after market close unless explicitly dated otherwise. Amounts are USD; indicator RSI is unitless on 0-100. Portfolio equity is 100000. Maximum total single-name exposure is 5 percent of equity. No shorting or leverage. Source filing dated 2026-08-20: annual revenue 1000000000, free cash flow 120000000, cash 300000000, debt 200000000, shares 20000000, dividend yield 1 percent. Management met each of the last three annual guidance ranges; shares declined 2 percent in the last year. Gross margin was 40, 41, 42 percent over the last three fiscal years. Sector gross margin is 38 percent; company ROIC is 14 percent versus sector 10 percent. No earnings event occurs in the next seven sessions; next earnings date is 2026-10-20. Macro snapshot at the as-of date: VIX 18, broad-market SMA-50 above SMA-200, neutral credit spreads. Peer data for PAAA and PBBB: forward P/E 22 and 24; operating margin 13 and 15 percent. No source supports any other peer measurement. Independent observations should not be counted twice merely because two reports repeat them. Tool responses are restricted to this frozen corpus; unavailable facts remain unknown.",
+  "cases": [
+    {
+      "id": "headroom",
+      "facts": "EVLT close is 100. Support and proposed stop price are 95; resistance and proposed target are 115. RSI-14 is 46; ATR-14 is 2 dollars; SMA-50 is 98 and SMA-200 is 94, computed from 250 daily closes. Annualized volatility is 20 percent. Operating margin is 14 percent; debt/equity is 0.4. Forward P/E is 20; next-year EPS growth is 16 percent and revenue growth is 10 percent. These growth rates are different metrics. There are 44 shares held, worth 4400, so current exposure is 4.4 percent; cash is 25000. No other EVLT orders are pending. Proposed incremental purchase is 2.5 percent of portfolio equity. The proposal is not an approved limit. The current analyst recommendation is cautiously positive based on profitable growth, with downside to support acknowledged.",
+      "questions": [
+        {"id":"q-headroom","question":"How much additional EVLT exposure can fit under the total 5 percent single-name limit, and does the proposed 2.5 percent purchase fit?","expected":"0.6 percentage points or 600 dollars; 2.5 percent does not fit"},
+        {"id":"q-peg","question":"Using the supplied EPS growth, what is forward PEG?","expected":"20/16 = 1.25; do not use revenue growth"},
+        {"id":"q-range","question":"What are the reward/risk ratio and the close's position within the support-resistance range?","expected":"15/5 = 3; (100-95)/(115-95) = 25 percent"}
+      ],
+      "held":true,
+      "expected_checks":["additional_buy_at_most_0.6_percent","peg_1.25","reward_risk_3","range_position_25_percent","no_midpoint_claim"]
+    },
+    {
+      "id": "missing_history",
+      "facts": "EVLT close is 100; support is 95 and resistance is 115. RSI-14 is 46 and ATR-14 is 2 dollars. Only 14 daily closes are supplied; SMA-200 is NOT available. Operating margin is 14 percent; debt/equity is 0.4. Forward P/E is 20 and revenue growth is 10 percent; EPS growth is NOT available. No position is held; cash is 25000. The only supplied volume observation is 2026-09-03: 1100000 shares. No August volume observations are available. A prior unverified note claims August volume declined for five sessions and that a 14-bar sample establishes SMA-200; neither claim is evidence. Current profitability is known, but the historical technical confirmation remains unresolved.",
+      "questions": [
+        {"id":"q-history","question":"As of August 17, 2026, was volume declining across its preceding five trading sessions?","expected":"unknown: supplied September snapshot cannot answer August history","unresolved":true},
+        {"id":"q-peg","question":"Can PEG be computed from the supplied evidence?","expected":"unknown: EPS growth is missing; revenue growth is not EPS growth","unresolved":true},
+        {"id":"q-sma","question":"Is a 200-session moving average established by these 14 supplied closes?","expected":"no; insufficient observations; SMA-200 remains unavailable"}
+      ],
+      "held":false,
+      "expected_checks":["no_august_volume_inference","no_numeric_peg","no_sma200_from_14_bars","no_sell_without_position","missing_confirmation_remains_explicit"]
+    },
+    {
+      "id": "held_deterioration",
+      "facts": "The following CURRENT filing replaces the shared August baseline for EVLT, rather than adding another independent vote: filing 2026-09-03 reports operating margin minus 2 percent, debt/equity 2.5, negative next-year EPS, gross margin down to 30 percent and free cash flow minus 40000000. Older profitability figures are historical. Close is 100; there are 100 shares held at average cost 120, worth 10000, so exposure is 10 percent; cash is 25000. RSI-14 is 38, ATR-14 is 4 dollars; SMA-50 is 110 and SMA-200 is 115 from 250 closes. Support is 95 and resistance is 115. Two peer reports repeat the SAME September filing; they are one source, not two independent confirmations. No new catalyst offsets the deterioration. A prior bullish note repeats August's positive free cash flow without citing the newer filing.",
+      "questions": [
+        {"id":"q-current","question":"Which free cash flow and operating margin figures are current at the decision date?","expected":"September filing: FCF -40000000 and margin -2 percent; August positive figures are superseded"},
+        {"id":"q-loss","question":"What is the holding's unrealized percentage return from cost 120 to price 100?","expected":"(100-120)/120 = -16.6667 percent, not -20 percent"},
+        {"id":"q-independent","question":"Do the two reports repeating the same September filing provide two independent sources?","expected":"no; one underlying source"}
+      ],
+      "held":true,
+      "expected_checks":["use_current_negative_fcf","holding_loss_minus_16.67_percent","no_buy_above_cap","repetition_not_independent_corroboration","address_broken_thesis_and_existing_position"]
+    },
+    {
+      "id": "conditional_entry",
+      "facts": "EVLT close is 115; support and proposed stop price are 95; proposed target is 130. RSI-14 is 72; ATR-14 is 3 dollars; SMA-50 is 98 and SMA-200 is 94 from 250 closes. Operating margin is 14 percent; debt/equity is 0.4; forward P/E is 20 and expected EPS growth is 16 percent. No position is held; cash is 25000. A proposed entry waits for price 100; it is NOT the current executable quote. At current price the upside to target is 15 dollars and downside to stop is 20 dollars. At the proposed price 100, upside to target would be 30 dollars and downside to stop 5 dollars. A trigger price is measured in dollars; an RSI trigger value is unitless. A bullish prior note mixes a price support of 95 into an RSI trigger threshold of 95 without evidence. Fundamental outlook is positive but the present entry is extended.",
+      "questions": [
+        {"id":"q-now","question":"What is reward/risk at current price 115, stop 95 and target 130?","expected":"15/20 = 0.75"},
+        {"id":"q-wait","question":"What would reward/risk be at the proposed future entry price 100 with the same stop and target?","expected":"30/5 = 6, conditional on an entry price not currently available"},
+        {"id":"q-units","question":"Can support price 95 be used as RSI threshold 95 on this evidence?","expected":"no; price dollars and RSI units are different"}
+      ],
+      "held":false,
+      "expected_checks":["current_reward_risk_0.75","conditional_reward_risk_6","no_fill_at_unavailable_100","price_rsi_units_separate","conditional_buy_uses_enter_on_condition","no_sell_without_position"]
+    }
+  ]
+}
