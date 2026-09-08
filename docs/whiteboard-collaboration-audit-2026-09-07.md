@@ -36,6 +36,8 @@ Reproduce: `npm test -- src/services/__tests__/WriteTimeoutAudit.test.ts` in laz
 
 `dossier_sync.collect_open_questions` extracts `sub_analyses_requested` from final artifacts and queues new questions. The pipeline claims up to three questions per ticker, renews leases, and requires an answer backed by delivered evidence. A board note does not automatically enter that path.
 
+Bear, Board, and Decision Synthesizer already receive the current cycle's alternative candidates through `cycle_candidates_context`; this comparison should remain available when reviewing a ticker.
+
 The old tournament engine and peer-request producer/consumer were already retired. `tournament_result` is still used by live debate-skip markers and historical readers; deleting it by name would break compatibility. `debate_service` is a read/reporting adapter over saved results, not a second agent scheduler.
 
 ## Live evidence and its limits
@@ -58,9 +60,11 @@ Publication counts do not establish that a recipient read a particular note, ans
 2. **Revision provenance.** Reads now retain each annotation's `entry_id` and whether it applies to the active version. Prompt summaries label current, earlier, or unknown versions. Older concerns remain visible rather than silently disappearing or appearing to describe revised evidence.
 3. **Honest empty reads.** An absent section no longer asserts its author has not run or that another read can never change the result. It reports unavailable content and unknown producer status.
 4. **Reachable collaboration instructions.** The Fundamental prompt now points to the earlier Junior's notes instead of the later Quant's signals. Missing entries do not justify inventing an ID or a disagreement.
-5. **Retired peer path removed from the adapter catalog.** `request_peer_analysis` remained in both schema files after its backend producer/consumer were deleted. Both advertisements are removed. `whiteboard_write` now describes versioned notes, reserved artifacts, and the absence of task dispatch accurately.
+5. **Retired peer path removed from the adapter catalog.** `request_peer_analysis` remained in both schema files after its backend producer/consumer were deleted. Both canonical advertisements are removed. The build also regenerates backend and dashboard catalog copies; the dashboard requires its own catalog refresh. `whiteboard_write` now describes versioned notes, reserved artifacts, and the absence of task dispatch accurately.
 
-The initial Python reproduction was 1 passing cancellation characterization and 3 failing bug checks. After fixes and additional valid/cross-ticker/legacy cases, all 6 pass. Relevant Python collaboration/debate suite: **105 passed**. Adapter suite: **662 passed in 31 files**; production TypeScript build passed. No model or full trading-cycle quality benchmark was run for this batch.
+6. **Catalog generation before consumer builds.** Post-deploy inspection caught the backend packaging an old flat catalog while the adapter regenerated it in parallel. Both backend and dashboard pre-build hooks now generate from canonical split sources before Docker takes their build contexts. Publication uses an atomic file replacement so concurrent consumers cannot read a partially written catalog.
+
+The initial Python reproduction was 1 passing cancellation characterization and 3 failing bug checks. After fixes and additional valid/cross-ticker/legacy cases, all 6 pass. Relevant Python collaboration/debate suite: **105 passed**, plus **33 role/tool-policy checks** (138 total), plus **13 catalog-publication/deployment checks** (151 total). Adapter suite: **662 passed in 31 files**; production TypeScript build passed. No model or full trading-cycle quality benchmark was run for this batch.
 
 ## Concrete consolidation design — next implementation, not shipped here
 
@@ -76,8 +80,20 @@ Kinds are evidence, note, question, objection, answer, and resolution. Evidence 
 4. **Debate as review of workspace items.** Give Bull claims stable IDs; Bear objections reference those claims; defense answers reference objections and their evidence; Judge records a resolution or unresolved disposition. Preserve fair reply order, the same evidence snapshot, incomplete-answer handling, dissent resolution, and risk gates. Render debate as a filtered workspace timeline rather than another transcript store. Preserve historical tournament/skip readers until their data has a supported migration.
 5. **Decision and ranking receipts.** The Board cites which evidence and resolved/unresolved objections changed the entry thesis, risk assessment, and candidate ranking. Carry material unanswered questions into the decision and existing policy checks. A claim's acceptance must depend on evidence rather than how many agents repeat it.
 
+For example, Quant can attach “the debt ratio conflicts with the filing” to the exact Fundamental report revision and request a check. If Fundamental is busy, the item waits for its next permitted dispatch; if its turn is over, the orchestrator explicitly defers it. Defense may answer from existing supplied evidence, but an unresolved request remains visible to the Board with its effect on the decision. The Board records whether the answer resolves the concern. Nobody has to poll an empty section or assume silence means agreement.
+
 Acceptance should require: no lost or duplicated writes after timeout/restart; no cross-cycle delivery; every actionable item owned, resolved, or explicitly deferred; no repeated analyst invocation from duplicate publication; and preservation of debate/risk-gate regressions. Compare the current pipeline and consolidated path on identical frozen inputs with fixed model/settings: completed decisions, grounded objection resolution, unanswered material questions, tool calls, tokens, and latency. Only then evaluate candidate ranking and subsequent outcomes on held-out periods. Profit improvement remains unproven until that evaluation exists.
 
 ## Deployment
 
-Pending final NAS verification for this batch. Only trading-service and lazy-tool-service are affected.
+Completed and independently verified on the NAS at approximately 21:24 PDT, September 7.
+
+| Container | Running revision | Verification |
+|---|---|---|
+| trading-service | `28c17ae6` | Healthy; `/health` OK; HTTP `/api/v1/agent-tools` returns 90 tools, retired peer absent, corrected whiteboard description. |
+| lazy-agent-service | `dae4d65` | Healthy; `/health` OK; actual MCP `tools/list` returns 90 tools, retired peer absent. Signed forbidden no-op call returns `PERMISSION_DENIED` with `isError=true`. |
+| trading-client | `0b5e815a` | Healthy; web port 3030 and API port 8888 health OK; HTTP `/api/v1/tools` returns its 55 trading-owned tools, retired peer absent, corrected description. |
+
+Both deploy-kit runs exited successfully. The first targeted trading-service/lazy-tool-service rollout revealed the stale backend catalog after transfer/restart despite healthy containers. The build-order repair was validated and then deployed with trading-service/trading-client. All catalogs above were checked through the running application interfaces after startup, not inferred from build success. Whiteboard implementation source hashes on the NAS matched the validated local files. The pipeline was idle at the deployment gates; no active cycle was interrupted.
+
+The larger inbox/ticket/debate record consolidation remains the design above. This batch does not claim to have shipped that redesign, guaranteed write cancellation, or measured better trading returns.
