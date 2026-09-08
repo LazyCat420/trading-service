@@ -170,11 +170,12 @@ EXTRA_SSH_SYNC() {
   tar -czC "${SCRIPT_DIR}/../" .agents | ssh "$DEPLOY_SSH_HOST" "sudo mkdir -p '${DEPLOY_COMPOSE_DIR}/.agents' && sudo tar -xzC '${DEPLOY_COMPOSE_DIR}'"
   ssh "$DEPLOY_SSH_HOST" "sudo chown -R 1001:1001 '${DEPLOY_COMPOSE_DIR}/.agents'"
 
-  # Open item 45: the command-time cycle check proves the desk was idle when
-  # the deploy STARTED; the ~150s build lets the scheduler start a cycle in
-  # that window (killed cycle-v3-1786424970 on 2026-08-11). This hook is the
-  # last user-owned seam before lib.sh transfers the image and swaps the
-  # container, so re-check HERE. Non-zero exit aborts the deploy (set -e).
+  # Retain the early transfer gate; PRE_RESTART rechecks after transfer.
+  PRE_RESTART
+}
+
+PRE_RESTART() {
+  # deploy-kit invokes this for full and separate restart-only deployments.
   info "Live-cycle gate (deploy_preflight) — last check before the swap..."
   local _preflight_py="${SCRIPT_DIR}/.venv/bin/python"
   [ -x "$_preflight_py" ] || _preflight_py="python3"

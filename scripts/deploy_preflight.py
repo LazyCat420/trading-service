@@ -4,10 +4,8 @@
 The pre-deploy check at command time proves the desk was idle when the deploy
 STARTED; the build takes ~150s and the scheduler is free to start a cycle in
 that window — that race killed cycle-v3-1786424970 on 2026-08-11. This script
-runs from EXTRA_SSH_SYNC in deploy.sh, which deploy-kit/lib.sh invokes AFTER
-the image build and immediately BEFORE the image transfer + container swap
-(lib.sh:744 vs :792), under `set -e` — a non-zero exit here aborts the deploy
-before the swap.
+runs before transfer and again from PRE_RESTART, including restart-only
+invocations. deploy-kit checks hook failures explicitly even without errexit.
 
 **Reads MONGO.** `pipeline_state` is written to MongoDB and only to MongoDB
 since the cutover; the Postgres row is a frozen archive of the last cycle that
@@ -20,8 +18,7 @@ would have read as evidence that the desk was quiet. Same failure shape as the
 command-time hook's psycopg probe (sun/.claude/hooks/guard_deploy.py), which
 was moved to Mongo when the flag was staged and this one was not.
 
-Residual window, stated honestly: the image transfer + `compose down/up`
-(~tens of seconds) still runs unchecked after this gate. Closing that fully
+Residual window, stated honestly: `compose down/up` still runs after this gate. Closing that fully
 needs a scheduler quiesce, which lives in the service, not the deploy chain.
 
 Exit codes:

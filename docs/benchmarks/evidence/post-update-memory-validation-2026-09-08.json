@@ -1,0 +1,441 @@
+{
+  "learning_inventory": {
+    "canonical_memories": {
+      "total": 350,
+      "status": [
+        {
+          "_id": "active",
+          "n": 343
+        },
+        {
+          "_id": "deprecated",
+          "n": 7
+        }
+      ],
+      "validation_state": [
+        {
+          "_id": null,
+          "n": 235
+        },
+        {
+          "_id": "source_verified",
+          "n": 115
+        }
+      ],
+      "index_state": [
+        {
+          "_id": null,
+          "n": 343
+        },
+        {
+          "_id": "retired",
+          "n": 7
+        }
+      ],
+      "eligible": 107
+    },
+    "episodic_observations": {
+      "total": 1008
+    },
+    "episodic_memory": {
+      "total": 3977
+    },
+    "learning_records": {
+      "total": 23,
+      "status": [
+        {
+          "_id": "candidate",
+          "n": 23
+        }
+      ],
+      "validation_state": [
+        {
+          "_id": "unverified",
+          "n": 23
+        }
+      ],
+      "index_state": [
+        {
+          "_id": "ready",
+          "n": 23
+        }
+      ]
+    },
+    "memory_consolidation_jobs": {
+      "total": 34,
+      "state": [
+        {
+          "_id": "review_required",
+          "n": 1
+        },
+        {
+          "_id": "done",
+          "n": 33
+        }
+      ],
+      "sample_keys": [
+        "_id",
+        "id",
+        "attempts",
+        "created_at",
+        "retry_at",
+        "state",
+        "ticker",
+        "finished_at",
+        "last_error",
+        "last_observation_id",
+        "last_outcome"
+      ]
+    },
+    "agent_skill_candidates": {
+      "total": 0
+    },
+    "learning_gateway_receipts": {
+      "total": 643,
+      "sample_keys": [
+        "_id",
+        "agent",
+        "application_state",
+        "contract_version",
+        "conversationId",
+        "created_at",
+        "event",
+        "excluded_chars",
+        "excluded_tags",
+        "id",
+        "payload_chars",
+        "payload_hash",
+        "project",
+        "upstream_facts_delivered",
+        "upstream_workflows_delivered"
+      ]
+    },
+    "learning_artifact_receipts": {
+      "total": 108,
+      "delivery_state": [
+        {
+          "_id": "delivered",
+          "n": 108
+        }
+      ]
+    },
+    "learning_validation_receipts": {
+      "total": 108
+    },
+    "learning_health": {
+      "total": 18,
+      "state": [
+        {
+          "_id": "active",
+          "n": 7
+        },
+        {
+          "_id": "disabled",
+          "n": 1
+        },
+        {
+          "_id": "reviewed_baseline",
+          "n": 4
+        },
+        {
+          "_id": "ready",
+          "n": 4
+        },
+        {
+          "_id": "done",
+          "n": 1
+        },
+        {
+          "_id": "pending",
+          "n": 1
+        }
+      ],
+      "sample_keys": [
+        "_id",
+        "id",
+        "component",
+        "cycle_id",
+        "details",
+        "state",
+        "updated_at"
+      ]
+    },
+    "canonical_serving": 0,
+    "skills": [
+      {
+        "role": "v3_junior_analyst",
+        "version": 2026090701,
+        "reviewed": true
+      },
+      {
+        "role": "v3_fundamental_analyst",
+        "version": 2026090701,
+        "reviewed": true
+      },
+      {
+        "role": "v3_quant_analyst",
+        "version": 2026090701,
+        "reviewed": true
+      },
+      {
+        "role": "v3_bull_agent",
+        "version": 2026090701,
+        "reviewed": true
+      },
+      {
+        "role": "v3_bear_agent",
+        "version": 2026090701,
+        "reviewed": true
+      },
+      {
+        "role": "v3_regime_engine",
+        "version": 2026090701,
+        "reviewed": true
+      },
+      {
+        "role": "v3_board_of_directors",
+        "version": 2026090701,
+        "reviewed": true
+      }
+    ],
+    "verified_outcomes": 0
+  },
+  "lineage": {
+    "eligible_memories": 107,
+    "archive_batches": 27,
+    "archived_observations": 172,
+    "source_links": 210,
+    "issues": [],
+    "repeated_quote_groups": 15,
+    "duplicate_quote_links": 21,
+    "consolidation_outcomes": [
+      {
+        "_id": {
+          "state": "done",
+          "outcome": "ok"
+        },
+        "n": 26
+      },
+      {
+        "_id": {
+          "state": "review_required",
+          "outcome": "failed"
+        },
+        "n": 1
+      },
+      {
+        "_id": {
+          "state": "done",
+          "outcome": "empty"
+        },
+        "n": 7
+      }
+    ],
+    "review_jobs": [
+      {
+        "attempts": 3,
+        "ticker": "PLTR",
+        "last_error": "TimeoutError: ",
+        "last_outcome": "failed"
+      }
+    ]
+  },
+  "isolation": {
+    "checked_at": "2026-09-08T15:16:57.360488+00:00",
+    "collections": {
+      "episodic_observations": {
+        "scanned": 1008,
+        "scan_capped": false,
+        "benchmark_markers": []
+      },
+      "canonical_memories": {
+        "scanned": 350,
+        "scan_capped": false,
+        "benchmark_markers": []
+      },
+      "canonical_memory_evidence": {
+        "scanned": 27,
+        "scan_capped": false,
+        "benchmark_markers": []
+      },
+      "learning_records": {
+        "scanned": 23,
+        "scan_capped": false,
+        "benchmark_markers": []
+      },
+      "learning_artifact_receipts": {
+        "scanned": 108,
+        "scan_capped": false,
+        "benchmark_markers": []
+      },
+      "learning_validation_receipts": {
+        "scanned": 108,
+        "scan_capped": false,
+        "benchmark_markers": []
+      },
+      "decision_outcomes": {
+        "scanned": 2785,
+        "scan_capped": false,
+        "benchmark_markers": []
+      },
+      "v3_research_queues": {
+        "scanned": 188,
+        "scan_capped": false,
+        "benchmark_markers": []
+      }
+    },
+    "latest_candidates": [
+      {
+        "id": "40eb7a52148ca2441e134c826266604c6da1cc48ea4ec3134b98ff67695e86f5",
+        "first_cycle_id": "cycle-v3-1788871479",
+        "last_cycle_id": "cycle-v3-1788871479",
+        "ticker": null,
+        "created_at": "2026-09-08 14:35:46.975000",
+        "status": "candidate",
+        "validation_state": "unverified",
+        "source_refs": [
+          "autoresearch_reports:cycle-v3-1788871479"
+        ]
+      },
+      {
+        "id": "a6159eb8192858e8dc938a7f91ad61edce2ab2758439b38523a6a373814afcfc",
+        "first_cycle_id": "cycle-v3-1788871479",
+        "last_cycle_id": "cycle-v3-1788871479",
+        "ticker": null,
+        "created_at": "2026-09-08 14:35:46.934000",
+        "status": "candidate",
+        "validation_state": "unverified",
+        "source_refs": [
+          "autoresearch_reports:cycle-v3-1788871479"
+        ]
+      },
+      {
+        "id": "6a861da0322918bff5052866e8d52bc994f5c1533c28573d480c29022bcb10b6",
+        "first_cycle_id": "cycle-v3-1788871479",
+        "last_cycle_id": "cycle-v3-1788871479",
+        "ticker": null,
+        "created_at": "2026-09-08 14:35:46.893000",
+        "status": "candidate",
+        "validation_state": "unverified",
+        "source_refs": [
+          "autoresearch_reports:cycle-v3-1788871479"
+        ]
+      },
+      {
+        "id": "9f92d3286f32ef6dc744b37d5dfc045774f7419857b089da73975e1305c22d82",
+        "first_cycle_id": "cycle-v3-1788863242",
+        "last_cycle_id": "cycle-v3-1788863242",
+        "ticker": null,
+        "created_at": "2026-09-08 11:41:40.466000",
+        "status": "candidate",
+        "validation_state": "unverified",
+        "source_refs": [
+          "autoresearch_reports:cycle-v3-1788863242"
+        ]
+      }
+    ],
+    "scored_source_files": 30,
+    "source_hash_mismatches": []
+  },
+  "post_patch_isolation": {
+    "checked_at": "2026-09-08T15:41:24.105323+00:00",
+    "collections": {
+      "episodic_observations": {
+        "scanned": 1008,
+        "scan_capped": false,
+        "benchmark_markers": []
+      },
+      "canonical_memories": {
+        "scanned": 350,
+        "scan_capped": false,
+        "benchmark_markers": []
+      },
+      "canonical_memory_evidence": {
+        "scanned": 27,
+        "scan_capped": false,
+        "benchmark_markers": []
+      },
+      "learning_records": {
+        "scanned": 23,
+        "scan_capped": false,
+        "benchmark_markers": []
+      },
+      "learning_artifact_receipts": {
+        "scanned": 112,
+        "scan_capped": false,
+        "benchmark_markers": []
+      },
+      "learning_validation_receipts": {
+        "scanned": 112,
+        "scan_capped": false,
+        "benchmark_markers": []
+      },
+      "decision_outcomes": {
+        "scanned": 2785,
+        "scan_capped": false,
+        "benchmark_markers": []
+      },
+      "v3_research_queues": {
+        "scanned": 188,
+        "scan_capped": false,
+        "benchmark_markers": []
+      }
+    },
+    "latest_candidates": [
+      {
+        "id": "40eb7a52148ca2441e134c826266604c6da1cc48ea4ec3134b98ff67695e86f5",
+        "first_cycle_id": "cycle-v3-1788871479",
+        "last_cycle_id": "cycle-v3-1788871479",
+        "ticker": null,
+        "created_at": "2026-09-08 14:35:46.975000",
+        "status": "candidate",
+        "validation_state": "unverified",
+        "source_refs": [
+          "autoresearch_reports:cycle-v3-1788871479"
+        ]
+      },
+      {
+        "id": "a6159eb8192858e8dc938a7f91ad61edce2ab2758439b38523a6a373814afcfc",
+        "first_cycle_id": "cycle-v3-1788871479",
+        "last_cycle_id": "cycle-v3-1788871479",
+        "ticker": null,
+        "created_at": "2026-09-08 14:35:46.934000",
+        "status": "candidate",
+        "validation_state": "unverified",
+        "source_refs": [
+          "autoresearch_reports:cycle-v3-1788871479"
+        ]
+      },
+      {
+        "id": "6a861da0322918bff5052866e8d52bc994f5c1533c28573d480c29022bcb10b6",
+        "first_cycle_id": "cycle-v3-1788871479",
+        "last_cycle_id": "cycle-v3-1788871479",
+        "ticker": null,
+        "created_at": "2026-09-08 14:35:46.893000",
+        "status": "candidate",
+        "validation_state": "unverified",
+        "source_refs": [
+          "autoresearch_reports:cycle-v3-1788871479"
+        ]
+      },
+      {
+        "id": "9f92d3286f32ef6dc744b37d5dfc045774f7419857b089da73975e1305c22d82",
+        "first_cycle_id": "cycle-v3-1788863242",
+        "last_cycle_id": "cycle-v3-1788863242",
+        "ticker": null,
+        "created_at": "2026-09-08 11:41:40.466000",
+        "status": "candidate",
+        "validation_state": "unverified",
+        "source_refs": [
+          "autoresearch_reports:cycle-v3-1788863242"
+        ]
+      }
+    ],
+    "scored_source_files": 30,
+    "source_hash_mismatches": [
+      "app/v3/artifacts.py",
+      "app/v3/agents/bear_agent.py",
+      "app/v3/agents/quant_analyst.py"
+    ]
+  }
+}

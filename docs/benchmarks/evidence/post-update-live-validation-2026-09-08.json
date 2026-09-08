@@ -1,0 +1,673 @@
+{
+  "cycle_id": "cycle-v3-1788863242",
+  "analysis_runtime": "164e17d7",
+  "latest_runtime": "86ba41d0",
+  "trade_requested": true,
+  "trade_attempted": 1,
+  "trade_executed": 0,
+  "execution_error": "Date-only quote measured 108h old, exceeding 96h limit; no fill created.",
+  "price_fix_deployed_probe": {
+    "deployed_commit": "d697d29e",
+    "rows_refreshed": 5,
+    "before": [
+      499.7,
+      108.18734145083334
+    ],
+    "after": [
+      499.70001220703125,
+      88.18747819694444
+    ],
+    "maximum_age_hours": 96,
+    "latest": {
+      "date": "2026-09-04 00:00:00",
+      "close": 499.70001220703125,
+      "source": "yfinance",
+      "price_as_of": "2026-09-04 20:00:01",
+      "price_as_of_source": "yfinance.regularMarketTime",
+      "observed_quote_price": 499.7
+    }
+  },
+  "role_telemetry": [
+    {
+      "agent_name": "v3_regime_engine",
+      "outcome": "SUCCESS",
+      "elapsed_ms": 45690,
+      "loops_used": 1,
+      "token_usage": 24625,
+      "cached_tokens": 0,
+      "prompt_tokens": 23798,
+      "failure_reason": null,
+      "cost_partial": false
+    },
+    {
+      "agent_name": "v3_junior_analyst",
+      "outcome": "SUCCESS",
+      "elapsed_ms": 136614,
+      "loops_used": 5,
+      "token_usage": 114713,
+      "cached_tokens": 0,
+      "prompt_tokens": 112088,
+      "failure_reason": null,
+      "cost_partial": false
+    },
+    {
+      "agent_name": "v3_fundamental_analyst",
+      "outcome": "SUCCESS",
+      "elapsed_ms": 402269,
+      "loops_used": 6,
+      "token_usage": 139656,
+      "cached_tokens": 0,
+      "prompt_tokens": 129484,
+      "failure_reason": null,
+      "cost_partial": false
+    },
+    {
+      "agent_name": "v3_quant_analyst",
+      "outcome": "SUCCESS",
+      "elapsed_ms": 482415,
+      "loops_used": 12,
+      "token_usage": 256391,
+      "cached_tokens": 0,
+      "prompt_tokens": 244343,
+      "failure_reason": null,
+      "cost_partial": false
+    },
+    {
+      "agent_name": "v3_valuation_analyst",
+      "outcome": "SUCCESS",
+      "elapsed_ms": 416734,
+      "loops_used": 6,
+      "token_usage": 207440,
+      "cached_tokens": 0,
+      "prompt_tokens": 196973,
+      "failure_reason": null,
+      "cost_partial": false
+    },
+    {
+      "agent_name": "v3_bull_agent",
+      "outcome": "SUCCESS",
+      "elapsed_ms": 741130,
+      "loops_used": 7,
+      "token_usage": 192561,
+      "cached_tokens": 0,
+      "prompt_tokens": 176381,
+      "failure_reason": null,
+      "cost_partial": false
+    },
+    {
+      "agent_name": "v3_bear_agent",
+      "outcome": "SUCCESS",
+      "elapsed_ms": 147545,
+      "loops_used": 1,
+      "token_usage": 32245,
+      "cached_tokens": 0,
+      "prompt_tokens": 29112,
+      "failure_reason": null,
+      "cost_partial": false
+    },
+    {
+      "agent_name": "v3_bull_defense",
+      "outcome": "SUCCESS",
+      "elapsed_ms": 243843,
+      "loops_used": 6,
+      "token_usage": 149658,
+      "cached_tokens": 0,
+      "prompt_tokens": 134459,
+      "failure_reason": null,
+      "cost_partial": false
+    },
+    {
+      "agent_name": "v3_debate_judge",
+      "outcome": "SUCCESS",
+      "elapsed_ms": 629330,
+      "loops_used": 7,
+      "token_usage": 164150,
+      "cached_tokens": 0,
+      "prompt_tokens": 137890,
+      "failure_reason": null,
+      "cost_partial": false
+    },
+    {
+      "agent_name": "v3_board_of_directors",
+      "outcome": "SUCCESS",
+      "elapsed_ms": 267409,
+      "loops_used": 2,
+      "token_usage": 74928,
+      "cached_tokens": 0,
+      "prompt_tokens": 69271,
+      "failure_reason": null,
+      "cost_partial": false
+    },
+    {
+      "agent_name": "v3_decision_synthesizer",
+      "outcome": "SUCCESS",
+      "elapsed_ms": 391939,
+      "loops_used": 9,
+      "token_usage": 205849,
+      "cached_tokens": 0,
+      "prompt_tokens": 199858,
+      "failure_reason": null,
+      "cost_partial": false
+    },
+    {
+      "agent_name": "contradiction_shadow",
+      "outcome": "SUCCESS",
+      "elapsed_ms": 0,
+      "loops_used": 0,
+      "token_usage": 0,
+      "cached_tokens": 0,
+      "prompt_tokens": 0,
+      "failure_reason": null,
+      "cost_partial": false
+    }
+  ],
+  "role_review": {
+    "scope": "Consistency against cited operands and execution records; not independently validated market facts or optimality of any trade.",
+    "roles": [
+      {
+        "role": "v3_regime_engine",
+        "strength": "Differentiates calm volatility from weak breadth; recognizes prior technical thesis as historical.",
+        "concern": "Interprets all-zero breadth and dispersion as economic evidence; data-completeness explanation not tested.",
+        "classification": "source-quality concern, not independently established falsehood",
+        "artifact_sha256": "418d37d01c1aa0d3ad4b8acbf77af3a3c102cddc691f3cd015408f856ae488bb"
+      },
+      {
+        "role": "v3_junior_analyst",
+        "strength": "Separates company catalyst date from macro-event window and discloses missing guidance.",
+        "concern": "Calls 0.0 to 0.4 a fourfold increase; news tool was embedded inside think and never executed.",
+        "classification": "arithmetic error and malformed tool request",
+        "artifact_sha256": "4a8f2e15cef4a00bebbe2358c26b641df6dd09bac4f322ab9c7ee6841910f1cf"
+      },
+      {
+        "role": "v3_fundamental_analyst",
+        "strength": "Separates quarterly business thesis from neutral near-term company catalyst; calculates dated annual growth.",
+        "concern": "Two intended peer screener requests embedded in think, so peer research absent; calls acknowledgment a data-provider response.",
+        "classification": "malformed tool request, incorrect account of execution",
+        "artifact_sha256": "1e211e7b919e711ac8174b1593182e24389d5082861f1d6a07b9986e8157f292"
+      },
+      {
+        "role": "v3_quant_analyst",
+        "strength": "Stop 499.70 - 2.5*11.83 = 470.125 and target/stop reward-risk approximately 2.48 are consistent. Missing history/backtest disclosed.",
+        "concern": "Two calculator errors from expression operands; one equation search embedded in think; hand-drawn trendline dates lack cited swing reconstruction.",
+        "classification": "tool errors; unsupported visualization geometry concern",
+        "artifact_sha256": "8416a784dd1559c424c544635efd1169a711ad90590f16c42c628c61b4983f6c"
+      },
+      {
+        "role": "v3_valuation_analyst",
+        "strength": "Fair-value arithmetic and 10.8 percent discount to fair value are consistent; distinguishes EV/EBIT from unverified EV/EBITDA and NOPAT from cash flow.",
+        "concern": "One screener request embedded in think; subsequent genuine screener calls succeeded. Enterprise value corrected from rounded 3.7T to 3.746T, causing stale-conclusion marker.",
+        "classification": "recovered tool request; deterministic correction is not proof verdict wrong",
+        "artifact_sha256": "3c265dcc66b331e3872ee259711d6a49f2b118f19398092a59754a5a3d20861a"
+      },
+      {
+        "role": "v3_bull_agent",
+        "strength": "Performs two web searches and read_url; concedes near-term reward-risk to first resistance is only 0.61 and separates earnings horizon.",
+        "concern": "States unconditional daily volatility bounds a hot-event shock without supplied conditional-tail evidence. One market-data request embedded in think.",
+        "classification": "unsupported risk-bound inference and malformed request",
+        "artifact_sha256": "6bf3860470b2ab4e1e1de6a249834bd0bfbf3a0930f4eabe9ec69ab5c1ae2878"
+      },
+      {
+        "role": "v3_bear_agent",
+        "strength": "Challenges secondary-source capex confirmation, entry timing and horizon mismatch rather than denying established profitability.",
+        "concern": "Cash 94.6B to 75.5B is approximately -20.19%, not -25%. Repeats 14% move where cited 444.10 to 499.70 gives 12.52%.",
+        "classification": "narrative arithmetic errors",
+        "artifact_sha256": "b6a9bfeec2e7a0c7cc7b2ca32b7d44dcf675ed7292db43e36bffc20312a31fa0"
+      },
+      {
+        "role": "v3_bull_defense",
+        "strength": "Addresses five independent risks and gives explicit concessions; downgrades secondary-source FCF from strong to unverified.",
+        "concern": "Repeats Bear cash -25% error and Junior fourfold increase from zero. Original tool loop exhausted four turns with repeated reads and invalid offload IDs; bounded tool-less repair produced artifact.",
+        "classification": "propagated arithmetic errors, recovered artifact failure",
+        "artifact_sha256": "79405856a92aa650b3a9cf9ee82b57afb48689ce63153d485c2dd84865a94bac"
+      },
+      {
+        "role": "v3_debate_judge",
+        "strength": "Separates verified snapshot inputs from secondary-source capex/Azure claims, names three unresolved risks and winner weaknesses.",
+        "concern": "Explicitly labels cash -25% as verified despite operands implying -20.19%; carries older 3.09 reward-risk alongside widened stop implying 2.48; says higher cash-basis implied growth cuts against expensive reading, contradicting its own valuation caveat.",
+        "classification": "false arithmetic verification and inconsistent interpretation; quality=79/good did not catch this",
+        "artifact_sha256": "da9a571a5a3a5e74a0ca3081b5a8bf6ee2cc835ac8ed327c3a0cc50d3e301f2b"
+      },
+      {
+        "role": "v3_board_of_directors",
+        "strength": "Produces explicit enter_now BUY 1.5%, monitor-purpose RSI 30, stop 470.13 and target 572.92; sized below stated 3% ceiling. Recomputes approximately 2.5 reward-risk and excludes unverified capex/FCF amounts.",
+        "concern": "Repeats 14% gain off SMA-50 where supplied numbers give 12.52%; claims only hotter-than-consensus data moves rates without event-response evidence. Does not repeat erroneous cash -25%.",
+        "classification": "valid decision structure pending policy/execution; narrative arithmetic and unsupported certainty remain, no proof trade is optimal or wrong",
+        "artifact_sha256": "77ec72823d360599d2d12f47266b8a5594a17f3ac1d3dbb08838637a9c0827ff"
+      },
+      {
+        "role": "v3_decision_synthesizer",
+        "strength": "Preserves Board action, confidence, size, stop/target and monitor intent with an explicit source-board reference; decision contract reports no changed fields.",
+        "concern": "Reintroduces erroneous cash -25% and outdated 3.09 reward-risk into the final rationale while retaining the widened 470.13 stop. Six whiteboard reads plus think calls consume nine counted turns.",
+        "classification": "structure preserved but narrative errors propagated into final output; policy attempt blocked by stale timestamp",
+        "artifact_sha256": "b6844cd40ac697663f03e1d18aca5deb04a2008529b81f69e59fe7166aa264c5"
+      }
+    ]
+  },
+  "conversation_audit": [
+    {
+      "role": "v3_regime_engine",
+      "receipt_valid": true,
+      "conversation_id": "f4df14b6-1189-4d47-b918-0674264b0f9d",
+      "model_messages": 3,
+      "tool_names": {},
+      "malformed_tool_arguments": [],
+      "gateway_receipts": 1,
+      "excluded_tags": [
+        "agent-memory",
+        "past-workflows"
+      ],
+      "all_upstream_excluded": true
+    },
+    {
+      "role": "v3_junior_analyst",
+      "receipt_valid": false,
+      "conversation_id": "a4236363-b07b-4470-b989-9b79269053ef",
+      "model_messages": 10,
+      "tool_names": {
+        "think": 1,
+        "mcp__lazy-agent-service__get_upcoming_events": 1,
+        "mcp__lazy-agent-service__lazy_web_search": 1,
+        "mcp__lazy-agent-service__whiteboard_write": 1
+      },
+      "malformed_tool_arguments": [
+        {
+          "tool": "think",
+          "embedded_tools": [
+            "mcp__lazy-agent-service__get_finnhub_news"
+          ],
+          "argument_keys": [
+            "thought"
+          ]
+        }
+      ],
+      "gateway_receipts": 4,
+      "excluded_tags": [
+        "agent-memory"
+      ],
+      "all_upstream_excluded": true
+    },
+    {
+      "role": "v3_fundamental_analyst",
+      "receipt_valid": false,
+      "conversation_id": "20cce9ee-f321-4cfb-b1b1-6b7e1314b219",
+      "model_messages": 11,
+      "tool_names": {
+        "think": 3,
+        "mcp__lazy-agent-service__whiteboard_annotate": 1,
+        "mcp__lazy-agent-service__whiteboard_write": 1
+      },
+      "malformed_tool_arguments": [
+        {
+          "tool": "think",
+          "embedded_tools": [
+            "mcp__lazy-agent-service__screener_query"
+          ],
+          "argument_keys": [
+            "thought",
+            "filters",
+            "limit",
+            "sort"
+          ]
+        },
+        {
+          "tool": "think",
+          "embedded_tools": [
+            "mcp__lazy-agent-service__screener_query"
+          ],
+          "argument_keys": [
+            "thought",
+            "filters",
+            "limit",
+            "sort"
+          ]
+        }
+      ],
+      "gateway_receipts": 4,
+      "excluded_tags": [
+        "agent-memory"
+      ],
+      "all_upstream_excluded": true
+    },
+    {
+      "role": "v3_quant_analyst",
+      "receipt_valid": false,
+      "conversation_id": "a8dab960-a430-419b-aa64-218e2aaeb62e",
+      "model_messages": 21,
+      "tool_names": {
+        "think": 3,
+        "mcp__lazy-agent-service__get_polygon_price_history": 1,
+        "mcp__lazy-agent-service__whiteboard_annotate": 1,
+        "mcp__lazy-agent-service__run_backtest": 1,
+        "mcp__lazy-agent-service__search_equations": 1,
+        "evaluate_expression": 4
+      },
+      "malformed_tool_arguments": [
+        {
+          "tool": "think",
+          "embedded_tools": [
+            "mcp__lazy-agent-service__search_equations"
+          ],
+          "argument_keys": [
+            "thought",
+            "top_k"
+          ]
+        }
+      ],
+      "gateway_receipts": 7,
+      "excluded_tags": [
+        "agent-memory",
+        "past-workflows"
+      ],
+      "all_upstream_excluded": true
+    },
+    {
+      "role": "v3_valuation_analyst",
+      "receipt_valid": false,
+      "conversation_id": "36fd2db7-9445-49b8-9375-5535f133f36b",
+      "model_messages": 12,
+      "tool_names": {
+        "think": 1,
+        "mcp__lazy-agent-service__whiteboard_annotate": 1,
+        "mcp__lazy-agent-service__screener_query": 2,
+        "emit_structured_output": 1
+      },
+      "malformed_tool_arguments": [
+        {
+          "tool": "think",
+          "embedded_tools": [
+            "mcp__lazy-agent-service__screener_query"
+          ],
+          "argument_keys": [
+            "thought",
+            "dir",
+            "filters",
+            "limit",
+            "sort"
+          ]
+        }
+      ],
+      "gateway_receipts": 5,
+      "excluded_tags": [
+        "agent-memory",
+        "past-workflows"
+      ],
+      "all_upstream_excluded": true
+    },
+    {
+      "role": "v3_bull_agent",
+      "receipt_valid": true,
+      "conversation_id": "2bc1463a-ba9c-4273-b58b-a302bf1173fa",
+      "model_messages": 15,
+      "tool_names": {
+        "think": 3,
+        "mcp__lazy-agent-service__lazy_web_search": 2,
+        "read_url": 1
+      },
+      "malformed_tool_arguments": [
+        {
+          "tool": "think",
+          "embedded_tools": [
+            "mcp__lazy-agent-service__get_market_data"
+          ],
+          "argument_keys": [
+            "thought"
+          ]
+        }
+      ],
+      "gateway_receipts": 6,
+      "excluded_tags": [
+        "agent-memory",
+        "past-workflows"
+      ],
+      "all_upstream_excluded": true
+    },
+    {
+      "role": "v3_bear_agent",
+      "receipt_valid": true,
+      "conversation_id": "4e55d2e1-4c15-48b3-9171-9537c2233b33",
+      "model_messages": 3,
+      "tool_names": {},
+      "malformed_tool_arguments": [],
+      "gateway_receipts": 1,
+      "excluded_tags": [
+        "agent-memory",
+        "past-workflows"
+      ],
+      "all_upstream_excluded": true
+    },
+    {
+      "role": "v3_bull_defense",
+      "receipt_valid": false,
+      "conversation_id": "8aaa4ec9-4db8-475a-8dcc-7b3de8d54c73",
+      "model_messages": 15,
+      "tool_names": {
+        "mcp__lazy-agent-service__whiteboard_read": 3,
+        "retrieve_offloaded_content": 2
+      },
+      "malformed_tool_arguments": [],
+      "gateway_receipts": 5,
+      "excluded_tags": [
+        "agent-memory",
+        "past-workflows"
+      ],
+      "all_upstream_excluded": true
+    },
+    {
+      "role": "v3_debate_judge",
+      "receipt_valid": false,
+      "conversation_id": "e8a5f86c-d611-4d3b-b84a-a46be75bb2e3",
+      "model_messages": 14,
+      "tool_names": {
+        "mcp__lazy-agent-service__whiteboard_read": 4,
+        "think": 2
+      },
+      "malformed_tool_arguments": [],
+      "gateway_receipts": 5,
+      "excluded_tags": [
+        "agent-memory",
+        "past-workflows"
+      ],
+      "all_upstream_excluded": true
+    },
+    {
+      "role": "v3_board_of_directors",
+      "receipt_valid": true,
+      "conversation_id": "4c90e3b9-a3d5-470a-af8d-0b154a0e0f19",
+      "model_messages": 5,
+      "tool_names": {
+        "think": 1
+      },
+      "malformed_tool_arguments": [
+        {
+          "tool": "think",
+          "embedded_tools": [
+            "think"
+          ],
+          "argument_keys": [
+            "thought"
+          ]
+        }
+      ],
+      "gateway_receipts": 2,
+      "excluded_tags": [
+        "agent-memory",
+        "past-workflows"
+      ],
+      "all_upstream_excluded": true
+    },
+    {
+      "role": "v3_decision_synthesizer",
+      "receipt_valid": true,
+      "conversation_id": "845a2be1-b774-4b34-b2de-3c0f9064deb9",
+      "model_messages": 17,
+      "tool_names": {
+        "mcp__lazy-agent-service__whiteboard_read": 6,
+        "think": 2
+      },
+      "malformed_tool_arguments": [],
+      "gateway_receipts": 6,
+      "excluded_tags": [
+        "agent-memory",
+        "past-workflows"
+      ],
+      "all_upstream_excluded": true
+    }
+  ],
+  "paper_book": {
+    "counts": {
+      "bots": 7,
+      "positions": 27,
+      "lots": 62,
+      "fills": 76,
+      "orders": 76
+    },
+    "field_keys": {
+      "position": [
+        "_id",
+        "id",
+        "bot_id",
+        "ticker",
+        "qty",
+        "avg_entry_price",
+        "stop_loss_pct",
+        "opened_at",
+        "take_profit_pct",
+        "stop_source",
+        "exit_style"
+      ],
+      "order": [
+        "_id",
+        "id",
+        "bot_id",
+        "ticker",
+        "side",
+        "qty",
+        "price",
+        "signal",
+        "created_at",
+        "filled_at",
+        "realized_pnl"
+      ]
+    },
+    "issues": [],
+    "cash_reconciliation": [
+      {
+        "bot": "test_bot",
+        "cash": "24432.38616821764284",
+        "starting_cash": "100000.0",
+        "ledger_expected": "24432.38616821758104",
+        "delta": "6.180E-11",
+        "fills": 59
+      },
+      {
+        "bot": "cycle-backend",
+        "cash": "104883.036934993123",
+        "starting_cash": "100000.0",
+        "ledger_expected": "104883.036934993136",
+        "delta": "-1.3E-11",
+        "fills": 14
+      },
+      {
+        "bot": "test",
+        "cash": "101060.13233844892",
+        "starting_cash": "100000.0",
+        "ledger_expected": "101060.132338448926",
+        "delta": "-6E-12",
+        "fills": 3
+      }
+    ]
+  },
+  "post_scoring_prompt_corrections": {
+    "commit": "86ba41d0",
+    "after_all_78_reviews": true,
+    "focused_tests_passed": 181,
+    "changes": [
+      "Quant measured drawdown and unavailable numeric fields separated from estimates; zero drawdown template anchor removed",
+      "Bear unsupported HOLD statistic and one-position assumption removed; alternatives optional"
+    ],
+    "model_performance_after_patch": "not_measured",
+    "deployment": "verified running healthy; HTTP /health ok; all three deployed source hashes match 86ba41d0; rollout interrupted RBC cycle (see deployment_incident)"
+  },
+  "final_paper_book": {
+    "counts": {
+      "bots": 7,
+      "positions": 27,
+      "lots": 62,
+      "fills": 76,
+      "orders": 76
+    },
+    "field_keys": {
+      "position": [
+        "_id",
+        "id",
+        "bot_id",
+        "ticker",
+        "qty",
+        "avg_entry_price",
+        "stop_loss_pct",
+        "opened_at",
+        "take_profit_pct",
+        "stop_source",
+        "exit_style"
+      ],
+      "order": [
+        "_id",
+        "id",
+        "bot_id",
+        "ticker",
+        "side",
+        "qty",
+        "price",
+        "signal",
+        "created_at",
+        "filled_at",
+        "realized_pnl"
+      ]
+    },
+    "issues": [],
+    "cash_reconciliation": [
+      {
+        "bot": "test_bot",
+        "cash": "24432.38616821764284",
+        "starting_cash": "100000.0",
+        "ledger_expected": "24432.38616821758104",
+        "delta": "6.180E-11",
+        "fills": 59
+      },
+      {
+        "bot": "cycle-backend",
+        "cash": "104883.036934993123",
+        "starting_cash": "100000.0",
+        "ledger_expected": "104883.036934993136",
+        "delta": "-1.3E-11",
+        "fills": 14
+      },
+      {
+        "bot": "test",
+        "cash": "101060.13233844892",
+        "starting_cash": "100000.0",
+        "ledger_expected": "101060.132338448926",
+        "delta": "-6E-12",
+        "fills": 3
+      }
+    ]
+  },
+  "deployment_incident": {
+    "cycle_id": "cycle-v3-1788880665",
+    "ticker": "RBC",
+    "started_at": "2026-09-08 15:17:45.618000",
+    "stopped_at": "2026-09-08 15:27:40.908000",
+    "status": "stopped",
+    "trade_attempted": 0,
+    "trade_executed": 0,
+    "cause": "Transfer hook rejected active cycle but caller ignored failure; separate restart bypassed transfer gate. Container shutdown interrupted Fundamental after Regime and Junior succeeded.",
+    "recovery": "Service healthy and watch scheduler running a subsequent CRDO cycle. Stopped RBC history preserved; no manual rerun queued.",
+    "guard_validation": "18 isolated transport/mode/error-context scenarios, 12 release-guard regressions, 24 existing trading preflight/state tests passed.",
+    "residual_risk": "Pre-restart snapshot is not an atomic scheduler quiesce; a cycle can still start between the check and compose shutdown."
+  },
+  "runtime_prompt_hashes": {
+    "/app/app/v3/agents/quant_analyst.py": "de8e4ba37736855859ef17fca7fffc056fc5aaeaf9ed411def7798053ba2ca4d",
+    "/app/app/v3/agents/bear_agent.py": "f2abab952693004b5aa869ac050a900c5b02d448a990f8716dab0a92d1f5a6d4",
+    "/app/app/v3/artifacts.py": "910062f207ef21013549337594db29e1ea9018d0e00c6af152cb9cfbd085231c"
+  }
+}
