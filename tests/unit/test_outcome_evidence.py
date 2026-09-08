@@ -130,7 +130,7 @@ def test_challenger_requires_verified_identical_reference_basis():
 @pytest.mark.real_mongo
 def test_real_mongo_learning_cohort_excludes_legacy_and_mixed_sources(real_mongo):
     valid = row(outcome_evidence_state='verified', exit_price=110, exit_date=END,
-                exit_price_source='vendor-a', horizon_days=7, horizon_date=END)
+                exit_price_source='vendor-a', horizon_days=7, horizon_date=END, outcome='WIN', resolved_at=NOW)
     invalid = [{'outcome_contract_version': 1}, {'exit_price_source': 'vendor-b'},
                {'cycle_id': 'bench-contamination'}, {'exit_date': None},
                {'claim_type': None}, {'horizon_days': 1}, {'outcome_evidence_state':'pending'}]
@@ -138,6 +138,12 @@ def test_real_mongo_learning_cohort_excludes_legacy_and_mixed_sources(real_mongo
         {**valid, **changes, 'id': f'bad-{i}'} for i, changes in enumerate(invalid)])
     actual = ev.mongo_store.find_docs('decision_outcomes', ev.learning_query())
     assert [r['id'] for r in actual] == ['valid']
+    import asyncio
+    from app.routers.eval_trust_router import hold_outcomes
+    dashboard = asyncio.run(hold_outcomes())
+    assert dashboard['resolved_counts'] == {'WIN': 1}
+    assert dashboard['contract']['version'] == 2
+
 
 
 def test_recording_uses_persisted_decision_time_not_end_of_cycle():

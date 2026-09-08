@@ -15,6 +15,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.autoresearch.outcome_tracker import RESOLVE_AFTER_DAYS, WIN_THRESHOLD_PCT
+from app.autoresearch.outcome_evidence import learning_query, CONTRACT_VERSION
+from app.services.cycle_scope import exclude_synthetic
 from app.autoresearch import variance as variance_mod
 from app.db import mongo_query, mongo_store
 
@@ -122,9 +124,9 @@ async def active_experiment():
 async def hold_outcomes():
     """HOLD calibration cohort + directional splits."""
     try:
-        resolved = mongo_query.group_rows('decision_outcomes', {'resolved_at': {'$ne': None}, 'outcome': {'$ne': None}}, ['outcome'], [('count', None)], [('key', 'outcome'), ('agg', 0)])
-        pending = mongo_query.group_rows('decision_outcomes', {'resolved_at': None}, ['action'], [('count', None), ('min', 'created_at')], [('key', 'action'), ('agg', 0), ('agg', 1)])
-        recent = mongo_query.find_rows('decision_outcomes', {'resolved_at': {'$ne': None}}, ['ticker', 'action', 'confidence', 'pnl_pct', 'outcome', 'cycle_id', 'created_at', 'resolved_at'], sort=[('resolved_at', -1)], limit=25)
+        resolved = mongo_query.group_rows('decision_outcomes', {**learning_query(), 'resolved_at': {'$ne': None}, 'outcome': {'$ne': None}}, ['outcome'], [('count', None)], [('key', 'outcome'), ('agg', 0)])
+        pending = mongo_query.group_rows('decision_outcomes', {**exclude_synthetic(), 'outcome_contract_version': CONTRACT_VERSION, 'outcome_evidence_state': 'pending', 'resolved_at': None}, ['action'], [('count', None), ('min', 'created_at')], [('key', 'action'), ('agg', 0), ('agg', 1)])
+        recent = mongo_query.find_rows('decision_outcomes', {**learning_query(), 'resolved_at': {'$ne': None}}, ['ticker', 'action', 'confidence', 'pnl_pct', 'outcome', 'cycle_id', 'created_at', 'resolved_at'], sort=[('resolved_at', -1)], limit=25)
 
         counts = {row[0]: row[1] for row in resolved}
         wins = counts.get("WIN", 0)
@@ -175,7 +177,7 @@ async def hold_outcomes():
                 "first_resolution_eta": eta,
             },
             "pending_directional": pending_directional,
-            "contract": {"horizon_days": RESOLVE_AFTER_DAYS, "band_pct": WIN_THRESHOLD_PCT},
+            "contract": {"version": CONTRACT_VERSION, "evidence_basis": "verified_same_source_daily_reference", "horizon_days": RESOLVE_AFTER_DAYS, "band_pct": WIN_THRESHOLD_PCT},
             "recent": [
                 {
                     "ticker": r[0], "action": r[1], "confidence": r[2],
