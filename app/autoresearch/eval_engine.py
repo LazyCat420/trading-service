@@ -1,3 +1,4 @@
+from app.autoresearch.outcome_evidence import learning_query
 import json
 import logging
 import uuid
@@ -261,9 +262,9 @@ def process_and_store_trace(trace: TraceRecord):
 def evaluate_confidence_calibration(ticker: str | None = None, limit: int = 20) -> Dict[str, Any]:
     try:
         if ticker:
-            rows = mongo_query.find_rows('decision_outcomes', {'ticker': ticker, 'resolved_at': {'$ne': None}, 'outcome': {'$in': ['WIN', 'LOSS']}}, ['confidence', 'outcome', 'pnl_pct'], sort=[('resolved_at', -1)], limit=limit)
+            rows = mongo_query.find_rows('decision_outcomes', {**learning_query(), 'ticker': ticker, 'resolved_at': {'$ne': None}, 'outcome': {'$in': ['WIN', 'LOSS']}}, ['confidence', 'outcome', 'pnl_pct'], sort=[('resolved_at', -1)], limit=limit)
         else:
-            rows = mongo_query.find_rows('decision_outcomes', {'resolved_at': {'$ne': None}, 'outcome': {'$in': ['WIN', 'LOSS']}}, ['confidence', 'outcome', 'pnl_pct'], sort=[('resolved_at', -1)], limit=limit)
+            rows = mongo_query.find_rows('decision_outcomes', {**learning_query(), 'resolved_at': {'$ne': None}, 'outcome': {'$in': ['WIN', 'LOSS']}}, ['confidence', 'outcome', 'pnl_pct'], sort=[('resolved_at', -1)], limit=limit)
 
         if len(rows) < 3:
             return {
@@ -348,14 +349,10 @@ def process_pending_traces(limit: int = 50) -> int:
             # Map trace 'id' to 'run_id' for EvalEngine backwards compatibility
             trace["run_id"] = trace["id"]
             
-            # Fetch decision info to allow hold_bias check to work
-            decision = mongo_query.find_row('decision_outcomes', {'cycle_id': trace.get("cycle_id")}, ['action', 'confidence', 'pnl_pct'])
-            
-            if decision:
-                trace["decision_action"] = decision[0] or "HOLD"
-                trace["decision_confidence"] = decision[1] or 0
-                trace["pnl_pct"] = decision[2] or 0.0
-            
+            # Tool traces have no verified ticker/decision identity. A cycle may
+            # contain many tickers; attaching its first outcome invents credit
+            # assignment. Keep execution diagnostics independent of market labels.
+
             try:
                 record = TraceRecord(**trace)
                 process_and_store_trace(record)

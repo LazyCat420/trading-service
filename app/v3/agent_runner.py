@@ -361,42 +361,13 @@ def guard_unshortable_sell(artifact: dict, *, desk: Any, bot_id: str = "") -> di
 
 
 def _get_tool_playbook_tips(agent_name: str, limit: int = 3) -> str:
-    """Compact per-agent tool guidance from the eval layer's tool_playbook."""
-    cached = _PLAYBOOK_CACHE.get(agent_name)
-    if cached and (time.monotonic() - cached[1]) < _PLAYBOOK_TTL_SEC:
-        return cached[0]
-    tips = ""
-    try:
-        from app.db import mongo_store
-        docs = mongo_store.find_docs(
-            "tool_playbook",
-            {"agent_role": agent_name},
-            sort=[("last_validated_at", -1), ("created_at", -1)],
-            limit=limit,
-        )
-        seen_seq = set()
-        unique_tips = []
-        for d in docs:
-            seq = d.get("recommended_tool_sequence")
-            if seq and seq not in seen_seq:
-                seen_seq.add(seq)
-                unique_tips.append(f"- {seq}")
-        tips = "\n".join(unique_tips)
-    except Exception as e:  # noqa: BLE001 — advisory context, never blocks the agent
-        logger.debug("[V3Runner] tool_playbook fetch failed: %s", e)
-    # Belt-and-braces cap. This is advisory context appended to every agent
-    # prompt; on 2026-08-05 an unbounded version of this injection reached
-    # 131k chars and prism rejected the request outright ("0 output tokens of
-    # a 0 token window"), taking down every discovery cycle. Advisory text
-    # must never be able to cost a cycle, however the table misbehaves.
-    if len(tips) > _PLAYBOOK_MAX_CHARS:
-        logger.warning(
-            "[V3Runner] tool_playbook tips for %s were %d chars — truncated to %d",
-            agent_name, len(tips), _PLAYBOOK_MAX_CHARS,
-        )
-        tips = tips[:_PLAYBOOK_MAX_CHARS].rsplit("\n", 1)[0]
-    _PLAYBOOK_CACHE[agent_name] = (tips, time.monotonic())
-    return tips
+    """Legacy execution-score diagnostics are not validated decision guidance.
+
+    A successful tool invocation does not show that repeating that tool helps
+    this task. Keep the raw playbook for audit, but serve only the independently
+    reviewed role methods until a contextual replay establishes additional value.
+    """
+    return ""
 
 
 def _fallback_overlays_from_metrics(artifact: dict) -> list:
@@ -1106,18 +1077,7 @@ async def run_v3_agent(
         except Exception as wb_err:
             logger.warning("[V3Runner] Failed to fetch whiteboard summary: %s", wb_err)
 
-        # Tool playbook: the eval layer grades every trace into tool-success
-        # stats, but tool_playbook had ZERO readers — all that compute landed
-        # in a write-only table. Surface this agent's proven tools (compact).
-        try:
-            playbook_tips = _get_tool_playbook_tips(agent_name)
-            if playbook_tips:
-                dynamic_sections.append((
-                    7,
-                    "## Tool Playbook (your historically highest-scoring tools)\n" + playbook_tips,
-                ))
-        except Exception as pb_err:
-            logger.debug("[V3Runner] Tool playbook lookup skipped: %s", pb_err)
+        # Tool execution scores remain diagnostics, not model instructions.
 
         dynamic_block = "\n\n".join(text for _, text in dynamic_sections)
 

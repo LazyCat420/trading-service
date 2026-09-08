@@ -285,11 +285,11 @@ class TestTheOutcomeCohort:
 
         seen = {}
 
-        def _capture(collection, query, columns, **kw):
+        def _capture(collection, query, **kw):
             seen["query"] = query
             return []
 
-        with patch.object(outcome_tracker.mongo_query, "find_rows", _capture):
+        with patch.object(outcome_tracker.mongo_store, "find_docs", _capture):
             outcome_tracker.resolve_pending_outcomes()
 
         assert "$not" in seen["query"]["cycle_id"]

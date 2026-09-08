@@ -15,6 +15,13 @@ from app.v3.agent_runner import run_v3_agent
 from app.v3.shared_desk import SharedDesk, PhaseOutcome
 
 
+@pytest.fixture(autouse=True)
+def isolate_prompt_split_from_optional_learning(monkeypatch):
+    # Learning-prefix eligibility is covered by test_learning_lifecycle. These
+    # tests isolate where cycle-specific context goes under both split modes.
+    monkeypatch.setenv("LEARNING_SKILLS_ENABLED", "false")
+
+
 class _FakeAgentModule:
     AGENT_NAME = "v3_junior_analyst"
     ARTIFACT_TYPE = "desk_note"
@@ -124,13 +131,8 @@ def _desk_with_oversized_context(cycle_id: str) -> SharedDesk:
 
 
 @pytest.mark.asyncio
-async def test_oversized_context_sheds_instead_of_relocating():
-    """Overflow must DROP low-priority sections, not move them to the system prompt.
-
-    The old behaviour appended the whole oversized block to the system prompt,
-    which kept every token in the payload (the model still received all of it)
-    and silently defeated prefix caching. Only the embed error was avoided.
-    """
+async def test_analysis_evidence_survives_old_embedding_limit_without_relocation():
+    """Retrieval-query sizing must not truncate the model's analysis evidence."""
     captured = []
 
     async def _capture_run_agent(**kwargs):
@@ -151,12 +153,12 @@ async def test_oversized_context_sheds_instead_of_relocating():
 
     # The non-sheddable core survived...
     assert "MARKET DATA BRIEFING FOR THIS CYCLE" in user_prompt
-    # ...and the lowest-priority sections were actually dropped, not moved.
-    assert "Past Cycle Memory" not in user_prompt
+    # Analysis now has its own model-context budget. Upstream retrieval uses
+    # a separate compact query, so the former embedding cap must not shed it.
+    assert "Past Cycle Memory" in user_prompt
+    assert "M" * 2000 in user_prompt
     assert "Past Cycle Memory" not in sys_prompt
-
-    # The payload genuinely shrank below the embedder budget (2048 - 400) * 3.
-    assert len(user_prompt) < (2048 - 400) * 3
+    assert len(user_prompt) > (2048 - 400) * 3
 
 
 @pytest.mark.asyncio

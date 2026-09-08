@@ -45,20 +45,16 @@ APP = pathlib.Path(__file__).resolve().parents[2] / "app"
 EXPECTED_RESOLUTION = {
     "": "CUSTOM_MARKET_ALPHA",
     "CUSTOM_CONSOLIDATOR_AGENT": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
-    "CUSTOM_MEMORY_BRIEFER_AGENT": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "CUSTOM_MORNING_BRIEFING_AGENT": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "CUSTOM_V3_JUNIOR_ANALYST": "CUSTOM_V3_JUNIOR_ANALYST",
     "audit_worker": "CUSTOM_SYSTEM_JANITOR_AGENT",
     "autoresearch_reflection": "CUSTOM_SYNTHESIZER_AGENT",
-    "chief_auditor": "CUSTOM_META_AUDIT_AGENT",
     "equation_lab": "CUSTOM_SYSTEM_JANITOR_AGENT",
     "flash_briefing": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "grounding_judge": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
     "judge_evaluator": "CUSTOM_SYSTEM_JANITOR_AGENT",
-    "memory_briefer": "CUSTOM_SYSTEM_JANITOR_AGENT",
     "memory_consolidator": "CUSTOM_SYSTEM_JANITOR_AGENT",
     "morning_briefing_analyst": "CUSTOM_TRADING_CYCLE_ANALYSIS_AGENT",
-    "query_decomposer": "CUSTOM_SYSTEM_JANITOR_AGENT",
     "skillopt_optimizer": "CUSTOM_SYSTEM_JANITOR_AGENT",
     "strategy_evaluator": "CUSTOM_SYSTEM_JANITOR_AGENT",
 }
@@ -74,8 +70,8 @@ EXPECTED_RESOLUTION = {
 # "janitor agent" appeared to run during every news scrape.
 UNMAPPED_CALLERS = {
     "audit_worker", "equation_lab",
-    "judge_evaluator", "memory_briefer", "memory_consolidator",
-    "query_decomposer", "skillopt_optimizer", "strategy_evaluator",
+    "judge_evaluator", "memory_consolidator",
+    "skillopt_optimizer", "strategy_evaluator",
 }
 
 

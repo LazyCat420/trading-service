@@ -44,6 +44,8 @@ volatility masquerade as directional skill.
 """
 from __future__ import annotations
 
+from app.autoresearch.outcome_evidence import learning_query
+
 import logging
 from dataclasses import dataclass, field, asdict
 
@@ -179,7 +181,7 @@ def _governed_outcomes(agent_name: str, version: int) -> list[tuple]:
     # matches SQL's IS NOT NULL either way.
     return mongo_query.find_rows(
         'decision_outcomes',
-        {'resolved_at': {'$ne': None, '$exists': True},
+        {**learning_query(), 'resolved_at': {'$ne': None, '$exists': True},
          'skill_versions': {'$ne': None, '$exists': True},
          f'skill_versions.{agent_name}': {'$in': [int(version), str(int(version))]}},
         ['outcome', 'confidence'])

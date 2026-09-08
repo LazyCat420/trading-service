@@ -516,7 +516,6 @@ KNOWN_UNPINNED_MONGO: dict[str, int] = {
     "app/trading/quant_edge_verifier.py": 1,
     "app/trading/scoring_engine.py": 2,
     "app/trading/watchlist.py": 1,
-    "app/v3/challenger.py": 1,
     "app/v3/invariants.py": 1,
     "app/v3/orchestrator.py": 1,
 }

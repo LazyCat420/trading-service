@@ -4,10 +4,12 @@ Pure MongoDB implementation.
 """
 
 import logging
+import math
 import statistics
 
 from fastapi import APIRouter, Query
 
+from app.autoresearch.outcome_evidence import learning_query, verified_pair
 from app.autoresearch import variance as variance_mod
 from app.autoresearch.sequential import paired_disagreement_test
 from app.db import mongo_store
@@ -95,6 +97,22 @@ def _champion_correct(action: str | None, outcome: str | None) -> bool | None:
     return None
 
 
+def comparable_outcomes(champion: dict | None, challenger: dict) -> bool:
+    """Only compare verified labels on identical price references."""
+    if not champion:
+        return False
+    for row in (champion, challenger):
+        if row.get("outcome_evidence_state") != "verified" or not verified_pair(row, {
+            "price": row.get("exit_price"), "date": row.get("exit_date"),
+            "source": row.get("exit_price_source"),
+        }):
+            return False
+    return all(champion.get(key) == challenger.get(key) for key in (
+        "entry_price", "entry_date", "entry_price_source", "exit_price", "exit_date",
+        "exit_price_source", "horizon_date", "horizon_days",
+    ))
+
+
 @router.get("/stats")
 async def challenger_stats(label: str = Query(default=None)):
     """Experiment scoreboard, per spec label (or all labels)."""
@@ -111,10 +129,11 @@ async def challenger_stats(label: str = Query(default=None)):
         tickers = list({d.get("ticker") for d in decisions if d.get("ticker")})
 
         outcomes = mongo_store.find_docs("decision_outcomes", {
+            **learning_query(),
             "cycle_id": {"$in": list({ct[0] for ct in cycle_tickers})},
             "ticker": {"$in": tickers},
         })
-        outcome_map = {(o.get("cycle_id"), o.get("ticker")): o.get("outcome") for o in outcomes}
+        outcome_map = {(o.get("cycle_id"), o.get("ticker")): o for o in outcomes}
 
         meta_docs = mongo_store.find_docs("ticker_metadata", {"ticker": {"$in": tickers}})
         sector_map = {m.get("ticker"): m.get("sector") for m in meta_docs}
@@ -128,7 +147,8 @@ async def challenger_stats(label: str = Query(default=None)):
             champ_act = cd.get("champion_action")
             chall_act = cd.get("challenger_action")
             chall_out = cd.get("challenger_outcome")
-            champ_out = outcome_map.get((cycle_id, ticker))
+            champ_row = outcome_map.get((cycle_id, ticker))
+            champ_out = (champ_row or {}).get("outcome")
             raw_sector = sector_map.get(ticker) or "Unknown"
             sector = _SECTOR_CANON.get(raw_sector, raw_sector)
 
@@ -140,13 +160,15 @@ async def challenger_stats(label: str = Query(default=None)):
                     "agreements": 0,
                     "disagreements": 0,
                     "resolved_disagreements": [],
+                    "ungraded_disagreements": 0,
                     "confidence_pairs": [],
                     "sectors": {},
                 },
             )
             exp["pairs"] += 1
             _cc, _hc = cd.get("champion_confidence"), cd.get("challenger_confidence")
-            if isinstance(_cc, (int, float)) and isinstance(_hc, (int, float)):
+            if (isinstance(_cc, (int, float)) and isinstance(_hc, (int, float))
+                and math.isfinite(_cc) and math.isfinite(_hc)):
                 exp["confidence_pairs"].append((float(_cc), float(_hc)))
             slot = exp["sectors"].setdefault(
                 sector,
@@ -166,9 +188,13 @@ async def challenger_stats(label: str = Query(default=None)):
 
             exp["disagreements"] += 1
             slot["disagreements"] += 1
+            if not comparable_outcomes(champ_row, cd):
+                exp["ungraded_disagreements"] += 1
+                continue
             champ_ok = _champion_correct(champ_act, champ_out)
             chall_ok = _champion_correct(chall_act, chall_out)
             if champ_ok is None or chall_ok is None:
+                exp["ungraded_disagreements"] += 1
                 continue
             exp["resolved_disagreements"].append((champ_ok, chall_ok))
             if chall_ok != champ_ok:

@@ -24,6 +24,7 @@ import logging
 import uuid
 from datetime import datetime, timezone, timedelta
 
+from app.utils.tz import ensure_aware
 from app.db import mongo_query
 from app.db import mongo_store
 
@@ -331,16 +332,16 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
         raw_rows = mongo_query.find_rows(
             'analysis_results',
             {'cycle_id': cycle_id, 'confidence': {'$ne': None}},
-            ['ticker', 'confidence', 'result_json'],
+            ['ticker', 'confidence', 'result_json', 'created_at'],
         )
-        from app.quant.returns import latest_close
-
-        rows = [
-            (ticker, confidence, latest_close(ticker), result_json)
-            for ticker, confidence, result_json in raw_rows
-        ]
-
-        for ticker, confidence, entry_price, result_json in rows:
+        from app.autoresearch.outcome_evidence import entry_observation, CONTRACT_VERSION, claim_type
+        for ticker, confidence, result_json, decision_at in raw_rows:
+            if not isinstance(decision_at, datetime):
+                logger.warning('[OUTCOME] Skipping %s — decision timestamp unavailable', ticker)
+                continue
+            decision_as_of = ensure_aware(decision_at)
+            entry_ref = entry_observation(ticker, decision_as_of)
+            entry_price = entry_ref["price"] if entry_ref else None
             # Extract action from result_json
             import json
             try:
@@ -383,6 +384,12 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
                 'action': action,
                 'confidence': confidence,
                 'entry_price': round(entry_price, 4),
+                'entry_date': entry_ref['date'],
+                'entry_price_source': entry_ref['source'],
+                'decision_as_of': decision_as_of,
+                'outcome_contract_version': CONTRACT_VERSION,
+                'claim_type': claim_type(action, result),
+                'outcome_evidence_state': 'pending' if claim_type(action, result) else 'unsupported_claim',
                 'created_at': now_utc,
                 'skill_versions': skill_versions_by_ticker.get(ticker) or None,
                 'overridden_from': overridden_from,
@@ -425,53 +432,23 @@ def resolve_pending_outcomes() -> dict:
         # what happened survives while the calibration cohort stays clean.
         from app.services.cycle_scope import exclude_synthetic
 
-        pending = mongo_query.find_rows(
-            'decision_outcomes',
-            {'resolved_at': None, 'created_at': {'$lt': cutoff},
-             **exclude_synthetic()},
-            ['id', 'ticker', 'action', 'entry_price', 'created_at', 'cycle_id', 'confidence'],
-            sort=[('created_at', 1)],
-            limit=50,
+        from app.autoresearch.outcome_evidence import (
+            CONTRACT_VERSION, exit_observation, verified_pair, horizon_date,
         )
+        pending = mongo_store.find_docs('decision_outcomes', {
+            'resolved_at': None, 'decision_as_of': {'$lt': cutoff},
+            'outcome_contract_version': CONTRACT_VERSION, 'outcome_evidence_state': 'pending', **exclude_synthetic(),
+        }, sort=[('decision_as_of', 1)], limit=50)
 
-        for (outcome_id, ticker, action, entry_price, created_at,
-             cycle_id, confidence) in pending:
+        for row in pending:
+            outcome_id, ticker, action = row['id'], row['ticker'], row['action']
+            entry_price = row.get('entry_price')
+            cycle_id, confidence = row.get('cycle_id'), row.get('confidence')
             try:
-                # THE HORIZON IS entry + RESOLVE_AFTER_DAYS, NOT "today".
-                #
-                # This read used `latest_close(ticker)` — whatever the price
-                # happened to be on the day the sweep reached the row. The
-                # cutoff above only decides WHEN a row becomes eligible; it
-                # never bounded how late the price could be.
-                #
-                # MEASURED 2026-09-05 over 2,694 resolved rows
-                # (`resolved_at - created_at`): median 43.0 days against a
-                # stated 7, with 1,932 (71.7%) resolving beyond 30 days and
-                # only 699 (25.9%) inside the 7-day contract the panel prints
-                # on every card. Every win rate and decision score built on
-                # this cohort measured a six-week horizon labelled one week.
-                #
-                # `close_on_or_after` walks forward past weekends/holidays but
-                # is grace-bounded, so a genuinely missing stretch of price
-                # data leaves the row UNRESOLVED rather than resolving it
-                # against a price weeks past the horizon.
-                from app.quant.returns import close_on_or_after
-
-                horizon = created_at + timedelta(days=RESOLVE_AFTER_DAYS)
-                exit_price, exit_date = close_on_or_after(ticker, horizon)
-
-                if exit_price is None:
-                    logger.debug(
-                        "[OUTCOME] Cannot resolve %s — no %s close within the "
-                        "grace window after the %s horizon",
-                        outcome_id, ticker, horizon.date(),
-                    )
+                exit_ref = exit_observation(ticker, row['decision_as_of'], row.get('entry_price_source'))
+                if not exit_ref or not verified_pair(row, exit_ref):
                     continue
-
-                if entry_price is None or entry_price == 0:
-                    logger.debug("[OUTCOME] Cannot resolve %s — invalid entry_price", outcome_id)
-                    continue
-
+                exit_price, exit_date = exit_ref['price'], exit_ref['date']
                 if action == "SELL":
                     pnl_pct = ((entry_price - exit_price) / entry_price) * 100
                 else:  # BUY and HOLD both measure the long-side move
@@ -498,7 +475,7 @@ def resolve_pending_outcomes() -> dict:
                 # which is exactly the ambiguity that let a 43-day median hide
                 # behind a "7-day" label — an auditor could not tell a
                 # contract-honouring row from a late one.
-                mongo_store.update_docs('decision_outcomes', {'id': outcome_id}, {'$set': {'exit_price': round(exit_price, 4), 'pnl_pct': round(pnl_pct, 2), 'outcome': outcome, 'resolved_at': now_res, 'exit_date': exit_date, 'horizon_days': RESOLVE_AFTER_DAYS}})
+                mongo_store.update_docs('decision_outcomes', {'id': outcome_id}, {'$set': {'exit_price': round(exit_price, 4), 'pnl_pct': round(pnl_pct, 2), 'outcome': outcome, 'resolved_at': now_res, 'exit_date': exit_date, 'exit_price_source': exit_ref['source'], 'horizon_date': horizon_date(row['decision_as_of']), 'horizon_days': RESOLVE_AFTER_DAYS, 'outcome_evidence_state': 'verified'}})
                 resolved += 1
 
                 write_outcome_to_memory(
@@ -526,40 +503,15 @@ def resolve_pending_outcomes() -> dict:
 
 
 def resolve_outcome_for_exit(ticker: str, exit_price: float, realized_pnl: float | None = None) -> int:
-    """Immediately resolve pending decision_outcomes for a ticker when a
-    position exits (stop-loss / take-profit), instead of waiting for the
-    time-based batch resolver.
+    """Compatibility no-op: a position exit cannot grade a seven-day forecast.
 
-    Returns the number of rows resolved.
+    Actual execution returns already live in trade_fills/lot_closures. Closing a
+    position early used to overwrite every pending directional claim for the
+    ticker, mixing bots and forecast horizons and feeding the result into memory.
+    Leave all forecast claims for their dated, source-pinned batch resolver.
     """
-    resolved = 0
-    try:
-        pending = mongo_query.find_rows('decision_outcomes', {'ticker': ticker, 'resolved_at': None}, ['id', 'action', 'entry_price', 'cycle_id', 'confidence'])
-        for outcome_id, action, entry_price, cycle_id, confidence in pending:
-            if not entry_price or not exit_price:
-                continue
-            if action == "BUY":
-                pnl_pct = ((exit_price - entry_price) / entry_price) * 100
-            elif action == "SELL":
-                pnl_pct = ((entry_price - exit_price) / entry_price) * 100
-            else:
-                # HOLD claims resolve on their 7-day timer, never on a
-                # position exit — the claim is about the horizon, and an
-                # exit at day 2 says nothing about it.
-                continue
-            outcome = _classify(action, pnl_pct)
-            mongo_store.update_docs('decision_outcomes', {'id': outcome_id}, {'$set': {'exit_price': round(exit_price, 4), 'pnl_pct': round(pnl_pct, 2), 'outcome': outcome, 'resolved_at': datetime.now(timezone.utc)}})
-            resolved += 1
-            write_outcome_to_memory(
-                cycle_id=cycle_id, ticker=ticker, action=action,
-                outcome=outcome, pnl_pct=round(pnl_pct, 2),
-                confidence=confidence,
-            )
-        if resolved:
-            logger.info("[OUTCOME] Resolved %d outcome(s) for %s on position exit", resolved, ticker)
-    except Exception as e:
-        logger.error("[OUTCOME] Exit resolution failed for %s: %s", ticker, e)
-    return resolved
+    logger.debug('[OUTCOME] %s execution exit retained in fill ledger; forecast horizon unchanged', ticker)
+    return 0
 
 
 def override_scorecard(days: int = 30) -> dict:
@@ -592,7 +544,8 @@ def override_scorecard(days: int = 30) -> dict:
     out: dict = {"days": days, "note": None}
     try:
         since = datetime.now(timezone.utc) - timedelta(days=days)
-        docs = mongo_store.find_docs('decision_outcomes', {'created_at': {'$gt': since}})
+        from app.autoresearch.outcome_evidence import learning_query
+        docs = mongo_store.find_docs('decision_outcomes', {**learning_query(), 'created_at': {'$gt': since}})
         buckets: dict[str, list[float]] = {'blocked_by_gate': [], 'kept_buys': [], 'overridden_buys': []}
         counts: dict[str, int] = {'blocked_by_gate': 0, 'kept_buys': 0, 'overridden_buys': 0}
         for d in docs:

@@ -28,6 +28,8 @@ as a pre-filter on obvious junk, which is what they are good at.
 
 from __future__ import annotations
 
+from app.autoresearch.outcome_evidence import learning_query
+
 import asyncio
 import hashlib
 import logging
@@ -242,7 +244,7 @@ def _compute_baseline_score() -> float | None:
     decisions (WIN=1, FLAT=0.5, LOSS=0). None when there are too few rows to
     say anything (cold start)."""
     try:
-        rows = mongo_query.find_rows('decision_outcomes', {'resolved_at': {'$ne': None}, 'action': {'$in': ['BUY', 'SELL']}, 'outcome': {'$in': ['WIN', 'LOSS', 'FLAT']}}, ['outcome', 'confidence'], sort=[('resolved_at', -1)], limit=BASELINE_WINDOW_ROWS)
+        rows = mongo_query.find_rows('decision_outcomes', {**learning_query(), 'resolved_at': {'$ne': None}, 'action': {'$in': ['BUY', 'SELL']}, 'outcome': {'$in': ['WIN', 'LOSS', 'FLAT']}}, ['outcome', 'confidence'], sort=[('resolved_at', -1)], limit=BASELINE_WINDOW_ROWS)
     except Exception as e:  # noqa: BLE001
         logger.warning("[SkillOpt] baseline query failed: %s", e)
         return None
@@ -283,7 +285,7 @@ def _decisions_governed(agent_name: str, version: int) -> int | None:
         # cast is load bearing: JSONB ->> yields TEXT, so a version stored as
         # the string "3" compared equal to 3 in SQL but would NOT match an int
         # in Mongo. Match either representation.
-        governed = mongo_query.count('decision_outcomes', {
+        governed = mongo_query.count('decision_outcomes', {**learning_query(),
             # $exists is belt-and-braces, not a correction: measured against
             # the live server, {$ne: None} ALREADY excludes documents missing
             # the field, so this matches SQL's IS NOT NULL either way. Kept
@@ -303,7 +305,7 @@ def _decisions_governed(agent_name: str, version: int) -> int | None:
             # column). Distinguish by asking whether the stamp is flowing AT ALL.
         stamped = mongo_query.exists(
             'decision_outcomes',
-            {'skill_versions': {'$ne': None, '$exists': True}})
+            {**learning_query(), 'skill_versions': {'$ne': None, '$exists': True}})
         if not stamped:
             return None  # attribution has not started — unknown, not zero
         return 0

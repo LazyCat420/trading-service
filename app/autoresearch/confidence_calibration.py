@@ -37,6 +37,8 @@ decision prompt.
 
 from __future__ import annotations
 
+from app.autoresearch.outcome_evidence import learning_query
+
 import logging
 
 from app.db import mongo_store
@@ -90,7 +92,7 @@ def calibration_map(min_bucket: int = MIN_BUCKET) -> dict:
     # in the 60 bucket at W=10).
     try:
         rows_docs = mongo_store.aggregate('decision_outcomes', [
-            {"$match": {"outcome": {"$in": list(_DIRECTIONAL)},
+            {"$match": {**learning_query(), "outcome": {"$in": list(_DIRECTIONAL)},
                         "confidence": {"$ne": None, "$exists": True, "$gt": 0}}},
             {"$project": {
                 "bucket": {"$multiply": [

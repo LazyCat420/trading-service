@@ -6,6 +6,8 @@ Phase 3: Optional dynamic meta-prompt generates context-aware system prompts.
 LLM only analyzes — never calculates.
 """
 
+from app.autoresearch.outcome_evidence import learning_query
+
 import datetime
 import logging
 
@@ -374,7 +376,7 @@ def get_ticker_outcome_context(ticker: str) -> str:
 
         rows = mongo_query.find_rows(
             'decision_outcomes',
-            {'ticker': ticker, 'outcome': {'$in': ['WIN', 'LOSS', 'FLAT', 'HOLD_CORRECT', 'HOLD_AVOIDED_DECLINE', 'HOLD_MISS']}},
+            {**learning_query(), 'ticker': ticker, 'outcome': {'$in': ['WIN', 'LOSS', 'FLAT', 'HOLD_CORRECT', 'HOLD_AVOIDED_DECLINE', 'HOLD_MISS']}},
             ['outcome', 'entry_price', 'exit_price', 'pnl_pct', 'confidence', 'resolved_at'],
             sort=[('resolved_at', -1)],
             limit=5
@@ -440,7 +442,7 @@ def get_confidence_calibration_context() -> str:
         cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=90)
         docs = mongo_store.find_docs(
             'decision_outcomes',
-            {
+            {**learning_query(),
                 'resolved_at': {'$ne': None, '$gte': cutoff},
                 'outcome': {'$in': ['WIN', 'LOSS']},
                 'confidence': {'$gte': 40},
@@ -466,8 +468,8 @@ def get_confidence_calibration_context() -> str:
             valid_buckets = [(b, stats["n"], stats["wins"]) for b, stats in sorted(buckets.items()) if stats["n"] >= 10]
             if valid_buckets:
                 lines = [
-                    "## CONFIDENCE CALIBRATION (fleet track record, last 90 days)",
-                    "Realized win rate of resolved trades at each stated confidence level:",
+                    "## CONFIDENCE CALIBRATION (verified seven-calendar-day references, last 90 days)",
+                    "Directional reference-price outcomes at each stated confidence level (not executed portfolio returns):",
                 ]
                 for bucket, n, wins in valid_buckets:
                     lines.append(
@@ -475,8 +477,8 @@ def get_confidence_calibration_context() -> str:
                     )
                 lines.append(
                     "State the confidence the evidence actually supports. If your number "
-                    "lands in a bucket that wins less than it claims, you are overconfident — "
-                    "mixed or conflicting evidence belongs at 40-60, not 70-85.\n"
+                    "differs from a historical bucket, explain the current evidence and uncertainty; "
+                    "do not copy that bucket or use it as a confidence cap.\n"
                 )
                 text = "\n".join(lines)
     except Exception:

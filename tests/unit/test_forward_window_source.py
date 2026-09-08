@@ -146,7 +146,8 @@ def test_evaluation_paths_do_not_read_price_history_directly():
         "outcome_tracker must use app.quant.returns.latest_close — an "
         "unfiltered latest close picks between vendors non-deterministically"
     )
-    assert "latest_close" in code
+    assert "entry_observation" in code
+    assert "exit_observation" in code
 
 
 def test_scorecard_uses_the_canonical_window():

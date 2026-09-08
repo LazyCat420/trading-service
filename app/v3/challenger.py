@@ -12,7 +12,9 @@ import os
 import uuid
 from datetime import datetime, timezone, timedelta
 
-from app.quant.returns import latest_close
+from app.autoresearch.outcome_evidence import (
+    CONTRACT_VERSION, entry_observation, exit_observation, verified_pair, horizon_date, claim_type,
+)
 from app.db import mongo_query, mongo_store
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,8 @@ async def run_challenger(desk, cycle_id: str, ticker: str, champion: dict) -> No
         return
 
     try:
+        decision_as_of = datetime.now(timezone.utc)
+        entry_ref = entry_observation(ticker, decision_as_of)
         from app.v3.shared_desk import SharedDesk
         from app.v3.agent_runner import run_v3_agent
         from app.v3.agents import decision_agent
@@ -89,7 +93,7 @@ async def run_challenger(desk, cycle_id: str, ticker: str, champion: dict) -> No
             )
             return
 
-        entry_price = latest_close(ticker)
+        entry_price = entry_ref['price'] if entry_ref else None
         agree = bool(champion.get("action")) and champion.get("action") == ch_action
 
         mongo_store.insert_docs('challenger_decisions', [{
@@ -103,7 +107,13 @@ async def run_challenger(desk, cycle_id: str, ticker: str, champion: dict) -> No
             'challenger_confidence': ch_conf,
             'agree': agree,
             'entry_price': round(entry_price, 4) if entry_price else None,
-            'created_at': datetime.now(timezone.utc),
+            'entry_date': entry_ref['date'] if entry_ref else None,
+            'entry_price_source': entry_ref['source'] if entry_ref else None,
+            'decision_as_of': decision_as_of,
+            'outcome_contract_version': CONTRACT_VERSION,
+            'claim_type': claim_type(ch_action, {**artifact, 'hold_reason_held': desk.cycle_metadata.get('held')}),
+            'outcome_evidence_state': 'pending' if entry_ref and claim_type(ch_action, {**artifact, 'hold_reason_held': desk.cycle_metadata.get('held')}) else 'unsupported_claim',
+            'created_at': decision_as_of,
         }])
 
         logger.info(
@@ -125,26 +135,17 @@ def resolve_challenger_outcomes() -> int:
     resolved = 0
     try:
         cutoff = datetime.now(timezone.utc) - timedelta(days=RESOLVE_AFTER_DAYS)
-        pending = mongo_query.find_rows(
-            'challenger_decisions',
-            {'resolved_at': None, 'created_at': {'$lt': cutoff}},
-            ['id', 'ticker', 'challenger_action', 'entry_price'],
-            sort=[('created_at', 1)],
-            limit=50
-        )
-        for row_id, ticker, action, entry_price in pending:
-            if not entry_price:
+        pending = mongo_store.find_docs('challenger_decisions', {
+            'resolved_at': None, 'decision_as_of': {'$lt': cutoff},
+            'outcome_contract_version': CONTRACT_VERSION, 'outcome_evidence_state': 'pending',
+        }, sort=[('decision_as_of', 1)], limit=50)
+        for row in pending:
+            row_id, ticker, action = row['id'], row['ticker'], row['challenger_action']
+            entry_price = row.get('entry_price')
+            exit_ref = exit_observation(ticker, row['decision_as_of'], row.get('entry_price_source'))
+            if not exit_ref or not verified_pair(row, exit_ref):
                 continue
-
-            price_row = mongo_query.find_row(
-                'price_history',
-                {'ticker': ticker},
-                ['close'],
-                sort=[('date', -1)]
-            )
-            if not price_row or price_row[0] is None:
-                continue
-            exit_price = float(price_row[0])
+            exit_price = exit_ref['price']
             if action == "SELL":
                 pnl_pct = ((entry_price - exit_price) / entry_price) * 100
             else:
@@ -155,6 +156,11 @@ def resolve_challenger_outcomes() -> int:
                 {'id': row_id},
                 {'$set': {
                     'exit_price': round(exit_price, 4),
+                    'exit_date': exit_ref['date'],
+                    'exit_price_source': exit_ref['source'],
+                    'horizon_date': horizon_date(row['decision_as_of']),
+                    'horizon_days': RESOLVE_AFTER_DAYS,
+                    'outcome_evidence_state': 'verified',
                     'challenger_pnl_pct': round(pnl_pct, 2),
                     'challenger_outcome': _classify(action or "HOLD", pnl_pct),
                     'resolved_at': datetime.now(timezone.utc),

@@ -198,7 +198,14 @@ def _patch_db(pending_rows):
 
     query.find_rows.side_effect = _find_rows
     query.find_row.return_value = None
-    store.find_docs.return_value = []
+    from app.autoresearch.outcome_evidence import closed_bar_cutoff
+    store.find_docs.return_value = [dict(
+        id=r[0], ticker=r[1], action=r[2], entry_price=r[3], decision_as_of=r[4],
+        created_at=r[4], cycle_id=r[5], confidence=r[6],
+        entry_date=closed_bar_cutoff(r[4]), entry_price_source='fixture-vendor',
+        outcome_contract_version=2, outcome_evidence_state='pending',
+        claim_type='immediate_directional',
+    ) for r in pending_rows if len(r) == 7]
 
     class _Both:
         def __enter__(self):
@@ -234,8 +241,8 @@ def test_batch_resolver_feeds_memory(captured):
     # the day the sweep runs. Patching the old name here left the mock
     # orphaned and the test hitting the real accessor.
     with _patch_db([row]), patch(
-        "app.quant.returns.close_on_or_after",
-        return_value=(110.0, datetime(2026, 8, 8, tzinfo=timezone.utc)),
+        "app.autoresearch.outcome_evidence.exit_observation",
+        return_value={'price': 110.0, 'date': datetime(2026, 8, 8, tzinfo=timezone.utc), 'source': 'fixture-vendor'},
     ):
         stats = outcome_tracker.resolve_pending_outcomes()
 
@@ -253,23 +260,20 @@ def test_batch_resolver_writes_nothing_when_the_row_cannot_resolve(captured):
     the call site: an unresolvable row must leave both tiers untouched."""
     created = datetime(2026, 8, 1, tzinfo=timezone.utc)
     row = ("do-2", "AAPL", "BUY", 100.0, created, "cycle-v3-9", 82)
-    with _patch_db([row]), patch("app.quant.returns.latest_close", return_value=None):
+    with _patch_db([row]), patch("app.autoresearch.outcome_evidence.exit_observation", return_value=None):
         stats = outcome_tracker.resolve_pending_outcomes()
 
     assert stats["resolved"] == 0
     assert captured == []
 
 
-def test_exit_resolver_feeds_memory(captured):
+def test_exit_does_not_resolve_a_fixed_horizon_forecast(captured):
     row = ("do-3", "BUY", 50.0, "cycle-v3-11", 74)
     with _patch_db([row]):
         resolved = outcome_tracker.resolve_outcome_for_exit("NVDA", exit_price=45.0)
 
-    assert resolved == 1
-    assert len(captured) == 1
-    assert captured[0]["cycle_id"] == "cycle-v3-11"
-    assert captured[0]["outcome"] == "LOSS"
-    assert captured[0]["pnl_pct"] == pytest.approx(-10.0)
+    assert resolved == 0
+    assert captured == []
 
 
 def test_exit_resolver_skips_holds(captured):
@@ -317,16 +321,16 @@ class TestTheSevenDayContractIsHonoured:
 
         def _spy(ticker, when, *a, **k):
             seen["when"] = when
-            return 110.0, when
+            seen["source"] = a[0]
+            return {'price': 110.0, 'date': when + timedelta(days=7), 'source': a[0]}
 
         with _patch_db([row]), patch(
-            "app.quant.returns.close_on_or_after", side_effect=_spy
+            "app.autoresearch.outcome_evidence.exit_observation", side_effect=_spy
         ):
             outcome_tracker.resolve_pending_outcomes()
 
-        assert seen["when"] == created + timedelta(
-            days=outcome_tracker.RESOLVE_AFTER_DAYS
-        ), "resolver did not price at entry + the stated horizon"
+        assert seen["when"] == created, "the pricing helper needs the original decision time"
+        assert seen["source"] == 'fixture-vendor', "the entry vendor must stay pinned"
 
     def test_a_row_with_no_bar_at_the_horizon_stays_unresolved(self, captured):
         """Missing market data must not resolve against a much later price.
@@ -337,7 +341,7 @@ class TestTheSevenDayContractIsHonoured:
         created = datetime(2026, 8, 1, tzinfo=timezone.utc)
         row = ("do-n", "AAPL", "BUY", 100.0, created, "cycle-v3-n", 70)
         with _patch_db([row]), patch(
-            "app.quant.returns.close_on_or_after", return_value=(None, None)
+            "app.autoresearch.outcome_evidence.exit_observation", return_value=None
         ):
             stats = outcome_tracker.resolve_pending_outcomes()
 
@@ -351,8 +355,8 @@ class TestTheSevenDayContractIsHonoured:
         priced_at = datetime(2026, 8, 8, tzinfo=timezone.utc)
         row = ("do-r", "AAPL", "BUY", 100.0, created, "cycle-v3-r", 70)
 
-        with _patch_db([row]), patch("app.quant.returns.close_on_or_after",
-                                     return_value=(110.0, priced_at)):
+        with _patch_db([row]), patch("app.autoresearch.outcome_evidence.exit_observation",
+                                     return_value={'price': 110.0, 'date': priced_at, 'source': 'fixture-vendor'}):
             stats = outcome_tracker.resolve_pending_outcomes()
         assert stats["resolved"] == 1
 

@@ -1,3 +1,5 @@
+
+from app.autoresearch.outcome_evidence import learning_query
 import json
 import logging
 import uuid
@@ -36,7 +38,7 @@ logger = logging.getLogger(__name__)
 #       from the WIN/LOSS rows only, and the live 30d window held 29 of those
 #       against 372 HOLD rows: four directional outcomes were setting most of
 #       the number. Scores either side of this change are NOT comparable.
-SCORE_VERSION = "v6"
+SCORE_VERSION = "v7"
 
 # How much of the decision score the this-cycle judge carries. Deliberately a
 # minority share: it is a single LLM's grade over one cycle's decisions, so it
@@ -135,7 +137,7 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
     if total == 0:
         # No decisions this cycle, but check if we have historical outcomes to score from
         try:
-            hist_count = mongo_query.agg_row('decision_outcomes', {'resolved_at': {'$ne': None}, 'outcome': {'$nin': ['CANCELED', 'DEGRADED_ARTIFACT']}}, [('count', None)])
+            hist_count = mongo_query.agg_row('decision_outcomes', {**learning_query(), 'resolved_at': {'$ne': None}, 'outcome': {'$nin': ['CANCELED', 'DEGRADED_ARTIFACT']}}, [('count', None)])
             if hist_count and hist_count[0] >= 3:
                 # Fall through to the outcome-based scoring below
                 issues.append({"issue": "No decisions produced this cycle (using historical outcomes)", "severity": "info"})
@@ -171,7 +173,7 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
             # One resolved_at clause carrying both predicates: a second
             # 'resolved_at' key would silently REPLACE the IS NOT NULL.
             # ($gt against a datetime already excludes missing/None.)
-            {'resolved_at': {'$ne': None, '$gt': _now - timedelta(days=30)},
+            {**learning_query(), 'resolved_at': {'$ne': None, '$gt': _now - timedelta(days=30)},
              'outcome': {'$nin': ['CANCELED', 'DEGRADED_ARTIFACT']}},
             ['action', 'confidence', 'pnl_pct', 'outcome', 'created_at'],
             sort=[('resolved_at', -1)], limit=100,
@@ -390,6 +392,7 @@ def _audit_decisions(cycle_id: str, cycle_summary: dict) -> dict:
             outcome_stats = {
                 "total_resolved": len(resolved),
                 "scoring_method": "cold_start",
+                "eligibility_basis": "verified_v2_same_source_7_calendar_day_reference",
                 "note": f"Need >= 3 resolved, have {len(resolved)}",
             }
             if buy + sell == 0 and total >= 3:

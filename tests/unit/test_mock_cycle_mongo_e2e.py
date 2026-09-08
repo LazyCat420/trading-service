@@ -898,12 +898,13 @@ class TestMockTradingCycleMongoE2E:
         }])
 
         resolved_count = resolve_challenger_outcomes()
-        assert resolved_count >= 1
+        assert resolved_count == 0  # Legacy rows lack verified price provenance.
 
         stats_res = await challenger_stats(label="exp-test-v3")
         assert len(stats_res["experiments"]) == 1
         assert stats_res["experiments"][0]["spec_label"] == "exp-test-v3"
         assert stats_res["experiments"][0]["disagreements"] == 1
+        assert stats_res["experiments"][0]["ungraded_disagreements"] == 1
 
         # 21. Eval-Trust Router in MongoDB
         from app.routers.eval_trust_router import active_experiment, hold_outcomes, goodhart_status, variance_runs
@@ -1284,12 +1285,10 @@ class TestMockTradingCycleMongoE2E:
         ])
 
         prior_hist = get_ticker_outcome_context("AAPL")
-        assert "PRIOR TRADE HISTORY FOR AAPL" in prior_hist
-        assert "WIN: entry=$150.00" in prior_hist
+        assert prior_hist == ""  # Legacy labels have no dated source evidence.
 
         calib_ctx = get_confidence_calibration_context()
-        assert "CONFIDENCE CALIBRATION" in calib_ctx
-        assert "stated 80-89%" in calib_ctx
+        assert calib_ctx == ""  # Missing provenance cannot teach a confidence bucket.
 
         # 39. Trading Skills & Ticker Metadata in MongoDB
         from app.services.trading_skills import load_skill_for_ticker

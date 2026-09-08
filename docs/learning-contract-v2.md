@@ -27,3 +27,21 @@ GET /learning/health uses Trading's existing API-key authentication and returns 
 The legacy LLM briefing rejects calls and names MemoryRetriever.build_memory_brief as its replacement. The old research resolver is retained as a manual compatibility interface; research_work owns the automated verified research queue. CORAL's grader and worktree utilities remain manual code-repair tools, separate from learning promotion and deployment.
 
 Run scripts/learning_migrate.py --output PATH for a dry-run snapshot; add --apply after the gateway is verified. Snapshots are never overwritten. A transaction checks active-skill fingerprints, quarantines unreviewed versions and installs reviewed baselines. Per-record legacy dispositions retain raw evidence. Prism data is never migrated. Disable the affected reader to roll back eligibility; preserve receipts and evidence for review.
+
+September 8 outcome evidence amendment: only verified outcome-contract-v2 rows
+enter calibration, reviewed-method scorecards, decision history or challenger tests.
+These are daily reference-price forecasts, not execution P&L. The recorded decision
+timestamp selects a completed US-equity daily bar; the source is pinned before the
+future outcome. Exit is the first same-source completed daily bar on/after seven
+calendar days, with five days maximum grace. Missing provenance stays ungraded.
+Immediate directional calls and explicitly flat HOLDs are eligible; conditional
+entries and held-position KEEP claims need separate trigger/holding evidence.
+Legacy rows are retained and never relabeled as verified. Paper exits update their
+execution ledger without overwriting unrelated fixed-horizon forecasts. Challenger
+comparisons additionally require identical entry/exit references and horizons.
+
+Execution trace scores remain diagnostic. They no longer supply dynamic tool-call
+advice to analyst prompts; an execution score cannot establish decision usefulness.
+Cycle-only traces cannot inherit an arbitrary ticker's market outcome. Empty eligible
+cohorts mean insufficient evidence, including where a compatibility API displays a
+neutral numeric placeholder alongside its insufficient-data status.

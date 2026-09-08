@@ -1,6 +1,5 @@
 import json, logging
 from datetime import datetime, timedelta, timezone
-logging.disable(logging.CRITICAL)
 from app.db import mongo_store as s
 since=datetime.now(timezone.utc)-timedelta(days=7)
 base={'created_at':{'$gte':since},'cycle_id':{'$regex':'^cycle-v3-'}}
