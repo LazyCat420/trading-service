@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 
 from app.db import mongo_store
+from app.services.cycle_scope import is_synthetic_cycle
 from app.db.memory_repo import get_unpromoted_observations, get_active_canonical_memories, log_consolidation_run
 from app.services.prism_agent_caller import Priority, call_prism_agent
 from app.utils.text_utils import parse_json_response
@@ -47,6 +48,7 @@ async def run_ticker_consolidation(ticker: str, observations: list | None = None
     outcome = 'failed'
     try:
         observations = observations if observations is not None else get_unpromoted_observations(ticker)
+        observations = [o for o in observations if not is_synthetic_cycle(o.get("cycle_id"))]
         if not observations:
             outcome = 'empty'
             return outcome

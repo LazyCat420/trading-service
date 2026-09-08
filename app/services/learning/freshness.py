@@ -1,6 +1,7 @@
 """Pure eligibility checks. Rewriting a record does not refresh its evidence."""
 from datetime import datetime, timezone
 from app.utils.tz import ensure_aware
+from app.services.cycle_scope import is_synthetic_cycle
 
 
 def eligible_memory(memory: dict, *, as_of: datetime | None = None) -> bool:
@@ -8,6 +9,12 @@ def eligible_memory(memory: dict, *, as_of: datetime | None = None) -> bool:
     if memory.get('status') != 'active' or memory.get('contract_version') != 2:
         return False
     if memory.get('validation_state') != 'source_verified' or not memory.get('source_evidence'):
+        return False
+    evidence = memory.get('source_evidence')
+    if not isinstance(evidence, list) or any(
+        not isinstance(source, dict) or is_synthetic_cycle(source.get('cycle_id'))
+        for source in evidence
+    ):
         return False
     valid_from = ensure_aware(memory.get('valid_from'))
     valid_until = ensure_aware(memory.get('valid_until'))

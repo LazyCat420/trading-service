@@ -173,3 +173,11 @@ def test_delivery_receipt_records_exact_final_payload_and_omits_absent_skill(rea
     assert row['skill_version'] is None and row['skill_hash'] is None
     assert row['system_hash'] == policy.content_hash('role policy')
     assert row['user_hash'] == policy.content_hash('final evidence')
+
+
+def test_old_canonical_with_synthetic_lineage_is_not_served():
+    memories, _, _ = consolidation.validate_result(proposal(), 'TEST', [observation()], [])
+    memory = memories[0]
+    assert freshness.eligible_memory(memory)
+    memory['source_evidence'][0]['cycle_id'] = 'cycle-observe-123'
+    assert not freshness.eligible_memory(memory)

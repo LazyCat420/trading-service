@@ -2,6 +2,7 @@ import uuid
 import logging
 from datetime import datetime, timezone
 from app.db import mongo_query, mongo_store
+from app.services.cycle_scope import exclude_synthetic, is_synthetic_cycle
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,8 @@ class EpisodicMemoryStore:
         agents_involved: str = "[]",
     ) -> str:
         """Store a new episode summarize a completed cycle."""
+        if is_synthetic_cycle(cycle_id):
+            return ""
         mem_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
 
@@ -60,7 +63,7 @@ class EpisodicMemoryStore:
 
     def retrieve(self, ticker: str, limit: int = 4) -> list[dict]:
         """Query past episodes by ticker, ranked by most successful outcomes."""
-        rows = mongo_query.find_rows('episodic_memory', {'ticker': ticker}, ['id', 'cycle_id', 'timestamp', 'summary', 'outcome_score', 'key_decisions', 'outcome'], sort=[('timestamp', -1)], limit=limit)
+        rows = mongo_query.find_rows('episodic_memory', {'ticker': ticker, **exclude_synthetic()}, ['id', 'cycle_id', 'timestamp', 'summary', 'outcome_score', 'key_decisions', 'outcome'], sort=[('timestamp', -1)], limit=limit)
 
         results = []
         for r in rows:

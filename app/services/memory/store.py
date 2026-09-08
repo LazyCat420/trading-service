@@ -13,6 +13,7 @@ import logging
 from datetime import datetime, timezone
 from app.services.memory.repository import MemoryRepository
 from app.db import mongo_query, mongo_store
+from app.services.cycle_scope import exclude_synthetic, is_synthetic_cycle
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,8 @@ class MemoryStore:
           cycle_id, ticker(opt), sector(opt), source_type, observation_text, rationale_excerpt(opt),
           confidence_at_creation(opt), outcome_label(opt), outcome_score(opt)
         """
+        if is_synthetic_cycle(observation.get("cycle_id")):
+            return ""
         obs_id = observation.get("id") or str(uuid.uuid4())
 
         # Use existing timestamp or generate now
@@ -59,7 +62,7 @@ class MemoryStore:
         cols = ['id', 'created_at', 'cycle_id', 'ticker', 'sector', 'source_type',
                 'observation_text', 'rationale_excerpt', 'confidence_at_creation',
                 'outcome_label', 'outcome_score', 'promoted_to_memory']
-        rows = mongo_query.find_rows('episodic_observations', {'promoted_to_memory': False}, cols, sort=[('created_at', 1)], limit=limit)
+        rows = mongo_query.find_rows('episodic_observations', {'promoted_to_memory': False, **exclude_synthetic()}, cols, sort=[('created_at', 1)], limit=limit)
         return [dict(zip(cols, row)) for row in rows]
 
     def mark_observation_promoted(self, obs_id: str):

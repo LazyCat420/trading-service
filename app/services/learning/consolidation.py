@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.db import mongo_store
 from app.services.learning import health
+from app.services.cycle_scope import exclude_synthetic, is_synthetic_cycle
 
 THRESHOLD = 5
 LEASE_SECONDS = 900
@@ -18,7 +19,7 @@ def now():
 
 
 def source_query(ticker: str | None = None) -> dict:
-    query = {'promoted_to_memory': False, 'created_at': {'$gte': now() - timedelta(days=30)}}
+    query = {**exclude_synthetic(), 'promoted_to_memory': False, 'created_at': {'$gte': now() - timedelta(days=30)}}
     if ticker is not None:
         query['ticker'] = ticker
     return query
@@ -102,7 +103,7 @@ def validate_result(parsed: dict, ticker: str, observations: list[dict], canonic
     """
     if not isinstance(parsed, dict):
         raise ValueError('Consolidation response must be an object')
-    by_id = {o['id']: o for o in observations}
+    by_id = {o['id']: o for o in observations if not is_synthetic_cycle(o.get('cycle_id'))}
     existing = {m['id'] for m in canonicals if m.get('ticker') == ticker}
     requested_deprecations = parsed.get('deprecated_memory_ids') or []
     if not isinstance(requested_deprecations, list) or any(i not in existing for i in requested_deprecations):

@@ -11,6 +11,7 @@ from typing import Any, Dict, List
 from datetime import datetime, timezone
 
 from app.db import mongo_store
+from app.services.cycle_scope import exclude_synthetic
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ def get_unpromoted_observations(ticker: str) -> List[Dict[str, Any]]:
     """Fetch unpromoted episodic observations for a ticker from MongoDB."""
     return mongo_store.find_docs(
         'episodic_observations',
-        {'ticker': ticker, 'promoted_to_memory': False},
+        {'ticker': ticker, 'promoted_to_memory': False, **exclude_synthetic()},
         sort=[('created_at', 1)]
     )
 
