@@ -1,0 +1,139 @@
+{
+  "captured_at": "2026-09-08T03:52:42.194092+00:00",
+  "window_days": 7,
+  "sections": [
+    {
+      "_id": "regime_classification",
+      "writes": 101,
+      "unknown_authors": 0,
+      "boards": 101
+    },
+    {
+      "_id": "market_context",
+      "writes": 98,
+      "unknown_authors": 0,
+      "boards": 93
+    },
+    {
+      "_id": "desk_note",
+      "writes": 95,
+      "unknown_authors": 0,
+      "boards": 95
+    },
+    {
+      "_id": "quant_report",
+      "writes": 84,
+      "unknown_authors": 0,
+      "boards": 84
+    },
+    {
+      "_id": "signals",
+      "writes": 84,
+      "unknown_authors": 0,
+      "boards": 84
+    },
+    {
+      "_id": "final_decision",
+      "writes": 79,
+      "unknown_authors": 0,
+      "boards": 79
+    },
+    {
+      "_id": "bull_argument",
+      "writes": 78,
+      "unknown_authors": 0,
+      "boards": 78
+    },
+    {
+      "_id": "bear_rebuttal",
+      "writes": 75,
+      "unknown_authors": 0,
+      "boards": 75
+    },
+    {
+      "_id": "debate_judge",
+      "writes": 75,
+      "unknown_authors": 0,
+      "boards": 75
+    },
+    {
+      "_id": "bull_defense",
+      "writes": 75,
+      "unknown_authors": 0,
+      "boards": 75
+    },
+    {
+      "_id": "fundamental_report",
+      "writes": 66,
+      "unknown_authors": 0,
+      "boards": 66
+    },
+    {
+      "_id": "valuation_report",
+      "writes": 61,
+      "unknown_authors": 0,
+      "boards": 61
+    },
+    {
+      "_id": "risk_flags",
+      "writes": 34,
+      "unknown_authors": 0,
+      "boards": 32
+    },
+    {
+      "_id": "consensus",
+      "writes": 1,
+      "unknown_authors": 0,
+      "boards": 1
+    }
+  ],
+  "annotations": [
+    {
+      "_id": "risk_flags",
+      "count": 36
+    },
+    {
+      "_id": "desk_note",
+      "count": 30
+    },
+    {
+      "_id": "market_context",
+      "count": 21
+    },
+    {
+      "_id": "debate_judge",
+      "count": 3
+    },
+    {
+      "_id": "fundamental_report",
+      "count": 3
+    },
+    {
+      "_id": "signals",
+      "count": 2
+    }
+  ],
+  "duplicate_active_sections": [],
+  "queue_status": [
+    {
+      "_id": {
+        "status": "pending",
+        "type": "deep_dive_queue"
+      },
+      "count": 173
+    },
+    {
+      "_id": {
+        "status": "pending",
+        "type": "lead_queue"
+      },
+      "count": 1
+    }
+  ],
+  "annotation_revision_links": [
+    {
+      "_id": "current_or_missing",
+      "count": 95
+    }
+  ]
+}

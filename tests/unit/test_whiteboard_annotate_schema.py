@@ -39,7 +39,7 @@ def test_annotate_passes_string_id_through(monkeypatch):
     import app.tools.whiteboard_tools as wt
     captured = {}
 
-    async def fake_annotate(entry_id, agent, note):
+    async def fake_annotate(entry_id, agent, note, **scope):
         captured["entry_id"] = entry_id
         return True
 
@@ -53,7 +53,7 @@ def test_annotate_coerces_a_numeric_id_to_string(monkeypatch):
     import app.tools.whiteboard_tools as wt
     captured = {}
 
-    async def fake_annotate(entry_id, agent, note):
+    async def fake_annotate(entry_id, agent, note, **scope):
         captured["entry_id"] = entry_id
         return False
 

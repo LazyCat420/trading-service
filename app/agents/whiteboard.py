@@ -20,7 +20,7 @@ _MAX_SECTION_CHARS = 1800
 class Whiteboard:
     """Central hub for inter-agent communication via a shared mutable document.
 
-    Thread-safe via MongoDB queries and an internal asyncio.Lock.
+    Writes are serialized within this process by an asyncio.Lock.
     Each board is scoped to a single ticker+cycle_id combination in the database.
     """
     def __init__(self):
@@ -189,6 +189,8 @@ class Whiteboard:
             {
                 "author": doc.get("author_agent"),
                 "note": doc.get("note"),
+                "entry_id": doc.get("entry_id"),
+                "applies_to_current_version": (doc["entry_id"] == entry_id) if doc.get("entry_id") else None,
                 "timestamp": doc["created_at"].isoformat() if hasattr(doc.get("created_at"), "isoformat") else str(doc.get("created_at")),
             }
             for doc in ann_docs
@@ -204,8 +206,18 @@ class Whiteboard:
             "annotations": annotations,
         }
 
-    async def annotate(self, entry_id: str, agent: str, note: str) -> bool:
-        row = mongo_query.find_row('whiteboard_entries', {'id': entry_id}, ['ticker', 'section', 'cycle_id'])
+    async def annotate(
+        self, entry_id: str, agent: str, note: str, *,
+        cycle_id: str | None = None, ticker: str | None = None,
+    ) -> bool:
+        # Tools pass the caller's trusted context; internal callers can still
+        # address an exact entry. Reject mismatches before any write/event.
+        query = {'id': entry_id}
+        if cycle_id is not None:
+            query['cycle_id'] = cycle_id.strip() or "default_cycle"
+        if ticker:
+            query['ticker'] = ticker.upper().strip()
+        row = mongo_query.find_row('whiteboard_entries', query, ['ticker', 'section', 'cycle_id'])
         if not row:
             return False
         ticker, section, cycle_id = row
@@ -260,10 +272,10 @@ class Whiteboard:
             sort=[('created_at', 1)],
         )
 
-        ann_by_section: dict[str, list[tuple]] = {}
+        ann_by_section: dict[str, list[dict]] = {}
         for ann in ann_docs:
             sec = ann.get("section", "")
-            ann_by_section.setdefault(sec, []).append((ann.get("author_agent"), ann.get("note")))
+            ann_by_section.setdefault(sec, []).append(ann)
 
         if not docs:
             return ""
@@ -313,7 +325,13 @@ class Whiteboard:
             if ann_rows:
                 lines.append("\n### Annotations:")
                 for ann in ann_rows:
-                    lines.append(f"- [{ann[0]}]: {ann[1]}")
+                    origin = ann.get("entry_id")
+                    provenance = (
+                        "current version" if origin == entry_id else
+                        f"earlier version, entry_id={origin}" if origin else
+                        "version unknown"
+                    )
+                    lines.append(f"- [{ann.get('author_agent')}; {provenance}]: {ann.get('note')}")
 
         if len(lines) == 1:
             return ""

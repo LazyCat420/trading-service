@@ -1,7 +1,7 @@
 import json
 import logging
 from app.tools.registry import registry, PermissionLevel
-from app.tools.tool_context import current_agent_name, current_cycle_id
+from app.tools.tool_context import current_agent_name, current_cycle_id, current_ticker
 from app.agents.whiteboard import whiteboard
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ def _is_reserved(section: str) -> bool:
 
 @registry.register(
     name="whiteboard_write",
-    description="Write or overwrite a section of the team's shared whiteboard. Use this to post your final analysis or consensus for other agents to read. Writing will bump the version number of the section. Content should be valid JSON string.",
+    description="Post shared evidence or notes for the current ticker and cycle. This replaces a collaboration section with a new version; use whiteboard_annotate to comment without replacing it. Pipeline analysis and debate artifacts are published automatically and cannot be overwritten here. This posts a note, not an assigned task or a request to rerun an agent.",
     parameters={
         "type": "object",
         "properties": {
@@ -38,7 +38,7 @@ def _is_reserved(section: str) -> bool:
             },
             "section": {
                 "type": "string",
-                "description": "The section name to write to (e.g. 'consensus')."
+                "description": "The collaboration section name (e.g. 'market_context' or 'risk_flags')."
             },
             "content": {
                 "type": "string",
@@ -127,19 +127,12 @@ async def whiteboard_read(ticker: str, section: str = "", **_extra) -> str:
                                "message": "No section given; returning the full whiteboard summary."})
         res = await whiteboard.get_section(ticker=ticker, cycle_id=cycle_id, section=section)
         if res is None:
-            # "not written yet" rather than "empty": 41% of all whiteboard
-            # reads come back with nothing, and most are an ORDERING fact, not
-            # an absence of opinion — the fundamental analyst is told to read
-            # `signals`, which the quant writes later. A model that cannot tell
-            # "nobody said anything" from "too early to ask" retries, and
-            # `signals`/`risk_flags` alone account for 453 empty reads.
-            from app.agents.whiteboard_sections import COLLABORATION, classify
-
+            # Absence does not establish whether its producer ran, failed,
+            # skipped the write, or will publish later. Do not invent a state.
             hint = (
-                " Its author has not run yet this cycle — this is expected, not"
-                " an error, and re-reading will not change it."
-                if classify(section) == COLLABORATION else
-                " If the desk has produced it, it is already in your context."
+                " No content is currently available in this cycle. Producer status is unknown."
+                " Continue with supplied evidence; read again only after a new publication"
+                " or when missing information is necessary for your decision."
             )
             # `status` stays "empty" deliberately. The 41%-empty measurement
             # reads this field out of `agent_traces.tool_result_summary`, and
@@ -191,10 +184,13 @@ async def whiteboard_annotate(entry_id: str, note: str, author: str = "") -> str
         author_agent = author.strip()[:64]
     logger.info("[WhiteboardTool] Annotating entry %s (agent=%s)", entry_id, author_agent)
     try:
-        success = await whiteboard.annotate(entry_id=entry_id, agent=author_agent, note=note)
+        success = await whiteboard.annotate(
+            entry_id=entry_id, agent=author_agent, note=note,
+            cycle_id=current_cycle_id(), ticker=current_ticker(),
+        )
         if success:
             return json.dumps({"status": "success"})
-        return json.dumps({"status": "error", "message": f"Entry ID {entry_id} not found."})
+        return json.dumps({"status": "error", "message": f"Entry ID {entry_id} not found in the current ticker/cycle scope."})
     except Exception as e:
         logger.error("[WhiteboardTool] Annotate failed: %s", e)
         return json.dumps({"status": "error", "message": str(e)})
