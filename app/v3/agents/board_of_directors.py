@@ -127,10 +127,12 @@ Your Portfolio Context says whether the position is open. If it is, you are allo
 - position_size_pct = 0 means "watch, don't trade" — honored literally.
 - exit_style: "hard_stop" (monitor sells on breach) or "reanalyze_on_breach" (breach wakes a re-analysis instead).
 - dynamic_trigger.type MUST be one of: sma_20_drop, sma_50_drop, sma_200_drop, sma_20_rise,
-  sma_50_rise, sma_200_rise, rsi_14_oversold, rsi_14_overbought, trailing_drop. The monitor
+  sma_50_rise, sma_200_rise, rsi_14_oversold, rsi_14_overbought, trailing_drop, price_below, price_above. The monitor
   evaluates these and nothing else — an invented setup name ("sma_50_reclaim",
   "support_retest", "sma_100_drop") is discarded and you get NO watch at all. Pick the
-  closest listed setup and put your level in `value`.
+  listed setup that expresses the actual condition. Use price_below/price_above for a fixed currency price.
+  SMA triggers compare against the CURRENT moving average, not the `value` snapshot. RSI thresholds are RSI units, not prices.
+  trailing_drop is a fraction of the running high (0.05 means 5%). Do not substitute one metric for another.
 - CRITICAL JSON REQUIREMENT: If you mention a dynamic trigger in your reasoning, you MUST
   include the structured `"dynamic_trigger": {"type": "<type>", "value": <level>}` key in your JSON.
   Prose mention without the JSON key prevents the trade execution monitor from registering your trigger!

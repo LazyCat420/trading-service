@@ -107,10 +107,23 @@ def score_artifact(artifact_type: str, artifact: dict) -> dict[str, Any]:
     else:
         flag = "dead_end"
 
+    from app.v3.arithmetic_audit import audit_artifact
+    arithmetic = audit_artifact(artifact)
+    structural_flag = flag
+    if arithmetic['errors'] and flag == "good":
+        flag = "needs_review"
+
     # Detect specific failure patterns
     failure_patterns = _detect_failure_patterns(artifact_type, artifact, scores)
 
+    if arithmetic['errors']:
+        failure_patterns.append("explicit_arithmetic_inconsistency")
+
     return {
+        "structural_flag": structural_flag,
+        "evidence_status": "arithmetic_inconsistent" if arithmetic['errors'] else "not_established",
+        "arithmetic_checked": arithmetic['checked'],
+        "arithmetic_errors": arithmetic['errors'],
         "quality_score": composite,
         "flag": flag,
         **scores,

@@ -129,6 +129,9 @@ def validate_result(parsed: dict, ticker: str, observations: list[dict], canonic
             norm = lambda value: ' '.join(str(value or '').split()).casefold()
             if norm(quote) not in norm(source.get('observation_text')):
                 raise ValueError('Quote is not present in the supplied observation')
+            from app.v3.arithmetic_audit import has_arithmetic_errors
+            if has_arithmetic_errors(quote):
+                raise ValueError('Supporting quote contains inconsistent arithmetic')
             verified.append({'observation_id': oid, 'quote': quote.strip(),
                              'source_type': source.get('source_type'), 'as_of': source.get('created_at'),
                              'cycle_id': source.get('cycle_id')})

@@ -99,12 +99,15 @@ def test_the_recovered_share_is_what_was_claimed():
         n for s, n in _INERT_CENSUS_2026_08_20.items()
         if dynamic_trigger_is_evaluable(normalize_dynamic_trigger_type(s)))
     assert total == 59, "the census total moved; re-derive the claim"
-    assert recovered == 34, recovered
-    assert round(100 * recovered / total) == 58
+    # The original synonym-only fix recovered 34/59 (58%). Fixed-price
+    # support on 2026-09-08 adds the one price_above occurrence; the measured
+    # historical census is unchanged and this does not reactivate old rows.
+    assert recovered == 35, recovered
+    assert recovered - _INERT_CENSUS_2026_08_20['price_above'] == 34
+    assert round(100 * recovered / total) == 59
 
-    # The long tail is real and mostly UNMAPPABLE: `price_above` and
-    # `close_above_sma_50` name no sma_/rsi_ metric column in the position the
-    # parser reads, and `support_*` names no column at all. They stay refused.
+    # The remaining long tail is unmappable: close_above_sma_50 is not a
+    # supported spelling; support_* names no measured or fixed threshold.
     assert not dynamic_trigger_is_evaluable(
         normalize_dynamic_trigger_type("close_above_sma_50"))
 

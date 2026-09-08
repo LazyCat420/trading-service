@@ -5,6 +5,7 @@ Pure MongoDB implementation for price_triggers collection.
 """
 
 import uuid
+import math
 import logging
 from datetime import datetime, timezone, timedelta
 
@@ -76,7 +77,7 @@ def dynamic_trigger_is_evaluable(setup: str) -> bool:
     setup = (setup or "").strip()
     if not setup:
         return False
-    if setup == "trailing_drop":
+    if setup in ("trailing_drop", "price_below", "price_above"):
         return True
     if not setup.startswith(("sma_", "rsi_")):
         return False
@@ -139,6 +140,15 @@ def dynamic_condition_is_met(
     setup = (setup or "").strip()
     if not setup or current_price is None:
         return False, ""
+
+    if setup in ("price_below", "price_above"):
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) or value <= 0):
+            return False, "requires a positive finite fixed price"
+        if (isinstance(current_price, bool) or not isinstance(current_price, (int, float))
+                or not math.isfinite(current_price) or current_price <= 0):
+            return False, ""
+        return (current_price <= value if setup == "price_below" else current_price >= value), ""
 
     if setup == "trailing_drop":
         if not highest_price or highest_price <= 0 or value is None:
@@ -303,8 +313,14 @@ async def create_trigger(
             return {
                 "error": f"Unevaluable dynamic_trigger_type: {original!r}. Use "
                          f"sma_20/50/200 or rsi_14 with drop|below|rise|above, "
-                         f"or trailing_drop."
+                         f"or price_below|price_above|trailing_drop."
             }
+
+    if trigger_type == "dynamic" and dynamic_trigger_type in ("price_below", "price_above"):
+        if (isinstance(dynamic_trigger_value, bool)
+                or not isinstance(dynamic_trigger_value, (int, float))
+                or not math.isfinite(dynamic_trigger_value) or dynamic_trigger_value <= 0):
+            return {"error": "Fixed-price dynamic triggers require a positive finite value"}
 
     # A WATCH FOR SOMETHING THAT IS ALREADY TRUE IS NOT A WATCH.
     #

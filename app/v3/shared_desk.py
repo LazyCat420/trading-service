@@ -313,6 +313,8 @@ class SharedDesk:
             if not existing:
                 self.artifact_tags.pop(artifact_type, None)
 
+        from app.v3.arithmetic_audit import audit_artifact
+        audit_artifact(artifact)
         setattr(self, artifact_type, artifact)
         _size = len(json.dumps(artifact, default=str))
         logger.info(

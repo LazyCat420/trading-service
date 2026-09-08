@@ -78,3 +78,28 @@ def test_queued_question_carries_its_original_time_scope():
         'source_agent': 'quant', 'payload': {'question': 'Was volume decreasing in that five-day window?'}}])
     assert '2026-08-17T14:31:30Z' in block
     assert 'current snapshot does not answer a historical' in block
+
+@pytest.mark.asyncio
+async def test_synth_receives_arithmetic_corrections_and_current_plan_under_context_pressure():
+    desk = SharedDesk(ticker='TEST', cycle_id='fixture-arithmetic')
+    desk.cycle_metadata = {'decision_contract_version': 1, 'held': False,
+        'data_report': 'Unrelated source evidence. ' * 4000,
+        'technical_baseline_context': '  - close: 499.7   [price: age unknown]'}
+    desk.append_artifact('desk_note', {'summary': 'from 0 to 0.4 (4x). ' + 'Unrelated research. ' * 2000})
+    board = {'action': 'BUY', 'confidence': 72, 'reasoning': 'Current evidence supports the defined initial tranche.',
+        'position_size_pct': 1, 'stop_loss': 470.13, 'take_profit': 572.92,
+        'entry_mode': 'enter_now', 'trigger_purpose': 'none'}
+    desk.final_decision = deepcopy(board)
+    decision = {**board, 'source_board_ref': board_reference(board), 'source_board_action': 'BUY', 'decision_relation': 'preserve'}
+    captured = []
+    async def model(**kwargs):
+        captured.append(kwargs)
+        return {'response': json.dumps(decision), 'tokens_used': 100, 'loops_used': 1, 'stop_reason': 'completed'}
+    from app.v3.agents import decision_agent
+    with patch('app.agents.base_agent.run_agent', new=AsyncMock(side_effect=model)):
+        await run_v3_agent(desk=desk, agent_module=decision_agent, cycle_id=desk.cycle_id, bot_id='test', include_debate_context=True)
+    prompt = captured[0]['user_prompt']
+    assert 'undefined because the starting value is zero' in prompt
+    assert 'reward/risk 2.4762:1' in prompt
+    assert 'not a live execution quote' in prompt
+    assert desk.final_decision == board

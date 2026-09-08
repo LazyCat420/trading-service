@@ -16,6 +16,9 @@ def eligible_memory(memory: dict, *, as_of: datetime | None = None) -> bool:
         for source in evidence
     ):
         return False
+    from app.v3.arithmetic_audit import has_arithmetic_errors
+    if has_arithmetic_errors(memory.get('summary'), *(source.get('quote') for source in evidence)):
+        return False
     valid_from = ensure_aware(memory.get('valid_from'))
     valid_until = ensure_aware(memory.get('valid_until'))
     return bool(valid_from and valid_until and valid_from <= at < valid_until)

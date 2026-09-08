@@ -770,6 +770,15 @@ async def run_v3_agent(
         if contract_block:
             dynamic_sections.append((_KEEP, contract_block))
 
+        from app.v3.arithmetic_audit import arithmetic_handoff, board_plan_math
+        arithmetic_context = arithmetic_handoff(desk, include_debate=include_debate_context)
+        if arithmetic_context:
+            dynamic_sections.append((_KEEP, arithmetic_context))
+        if artifact_type == "trade_decision":
+            plan_math = board_plan_math(desk)
+            if plan_math:
+                dynamic_sections.append((_KEEP, plan_math))
+
         # Live macro snapshot — ONLY for the Regime Engine, which classifies
         # the global market state. Scoped to that agent so it doesn't bloat
         # every prompt (and the KV-cache user portion) with macro it ignores.
@@ -2056,6 +2065,7 @@ async def run_v3_agent(
         # Store quality info on the artifact itself for downstream visibility
         artifact["_quality_score"] = quality_score
         artifact["_quality_flag"] = quality_flag
+        artifact["_evidence_status"] = quality_result.get("evidence_status", "not_established")
         if failure_patterns:
             artifact["_failure_patterns"] = failure_patterns
 
@@ -2063,7 +2073,7 @@ async def run_v3_agent(
         direction = artifact.get("thesis_direction", artifact.get("action", "?"))
         confidence = artifact.get("confidence", artifact.get("final_confidence", 0))
 
-        quality_emoji = "🟢" if quality_flag == "good" else "🟡" if quality_flag == "weak" else "🔴"
+        quality_emoji = "🟢" if quality_flag == "good" else "🟡" if quality_flag in {"weak", "needs_review"} else "🔴"
 
         emit(
             "analyzing",

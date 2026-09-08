@@ -35,6 +35,10 @@ def queue_artifact_receipt(result: dict, *, cycle_id: str, ticker: str, role: st
     identity = result.get('learning_identity') or {}
     if not identity.get('conversation_id') or not identity.get('output_hash'):
         return None  # /chat has no Prism workflow; unknown identity grants nothing
+    from app.v3.arithmetic_audit import audit_artifact
+    arithmetic = audit_artifact(artifact)
+    arithmetic_invalid = bool(arithmetic['errors'])
+    valid = valid and not arithmetic_invalid
     key = hashlib.sha256(f"{identity['conversation_id']}:{identity['agent']}:{identity['output_hash']}".encode()).hexdigest()
     row = {
         'id': key, 'contract_version': CONTRACT_VERSION, 'validator': 'v3_artifact',
@@ -43,7 +47,9 @@ def queue_artifact_receipt(result: dict, *, cycle_id: str, ticker: str, role: st
         'outputHash': identity['output_hash'], 'cycle_id': cycle_id, 'ticker': ticker,
         'role': role, 'artifact_type': artifact_type,
         'artifact_hash': content_hash(json.dumps(artifact, sort_keys=True, default=str)),
-        'valid': valid, 'reason': 'validated_original' if valid else 'degraded_or_repaired',
+        'valid': valid, 'reason': ('arithmetic_inconsistent' if arithmetic_invalid else
+                                  'validated_original' if valid else 'degraded_or_repaired'),
+        'arithmetic_checked': arithmetic['checked'], 'arithmetic_errors': arithmetic['errors'],
         'created_at': datetime.now(timezone.utc), 'delivery_state': 'pending',
     }
     mongo_store.upsert_doc('learning_artifact_receipts', {'id': key}, row, insert_only=True)

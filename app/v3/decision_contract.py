@@ -67,6 +67,8 @@ def entry_errors(decision: dict) -> list[str]:
                 errors.append('dynamic_trigger.type must be evaluable by the monitor')
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 errors.append('dynamic_trigger.value must be a positive finite number')
+            elif isinstance(typ, str) and typ.startswith('rsi_') and value > 100:
+                errors.append('RSI trigger value must be at most 100')
             elif typ == 'trailing_drop' and value >= 1:
                 errors.append('trailing_drop.value must be a fraction between 0 and 1')
     return errors
@@ -131,6 +133,11 @@ def prompt_block(desk, artifact_type: str) -> str:
         'appropriate, explicitly choose enter_now. A post-entry monitor is not an entry condition.',
         'HOLD uses watch_only. SELL exits now and uses enter_now. A dynamic trigger with '
         'purpose entry/monitor/research needs its structured type and positive value.',
+        'Trigger semantics: price_below/value is price <= that fixed price; price_above/value is price >= that fixed price. '
+        'sma_20/50/200_drop compares price < the current moving average, and rise compares price > it; value is not a fixed-price threshold for SMA triggers. '
+        'rsi_14_oversold compares RSI <= value and overbought compares RSI >= value (0-100 scale); RSI does not imply a specific price. '
+        'trailing_drop/value is a fractional drop from the running high (0.05 means 5%), not a currency amount. '
+        'A conditional-entry trigger wakes re-analysis; it does not execute an order or guarantee the proposed entry price.',
         'State resolution_condition when there is an unresolved question worth watching: '
         '{"open_question":"...", "resolving_fact":"the observable fact that settles it"}. '
         'Use null if no unresolved question remains; do not invent one for the schema.',
