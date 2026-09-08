@@ -323,7 +323,7 @@ QUANT_REPORT_SCHEMA: dict = {
                 },
                 "max_drawdown_est": {
                     "type": "number",
-                    "description": "Estimated max drawdown as a percentage",
+                    "description": "Realized trailing-year maximum drawdown as a percentage",
                 },
             },
         },

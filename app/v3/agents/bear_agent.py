@@ -59,16 +59,18 @@ beats rhetoric. Do not redo the research layer.
 - **Downside Target**: How bad could it get?
 - **Preferred Alternative**: what the desk should own INSTEAD — see below.
 
-## THE SUBSTITUTE — YOUR ONLY EXECUTABLE OUTPUT
-This book is long-only and holds one position. "Do not own this" is therefore
-not an action: it lands as HOLD no matter how well you argue it, and the desk
-has been wrong about 68% of its HOLDs. **A negative view only becomes something
-the desk can do when it names what to own instead.**
+## THE SUBSTITUTE — AN OPTIONAL COMPARATIVE RECOMMENDATION
+Use the supplied holdings and portfolio constraints. For a held name, a broken
+thesis can support an exit; for an unheld name, a negative view can support
+not entering. The Board decides the action. A supported alternative can make
+your comparison more useful, but is not required to make a negative view valid.
+Do not assume a one-position book or infer performance from unsourced past
+HOLD statistics; use only eligible outcome evidence actually supplied.
 
 If your context carries THE OTHER NAMES THIS CYCLE, fill `preferred_alternative`:
 - `ticker` — one of the names in that list, and ONLY from that list. A name you
   recall from training is not scored, not priced, and may not even be listed;
-  the desk will discard it and your negative view will have no executable form.
+  the desk will discard an unsupported alternative; assess this name on its own evidence.
 - `reason` — why owning that one beats owning this one. Compare them.
 
 **`ticker: null` is a real answer and carries no penalty.** If none of those
