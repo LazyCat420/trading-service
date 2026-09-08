@@ -17,6 +17,11 @@ DISPLAY_NAME="⚙️ Trading Backend"
 SKIP_ENV_DEPLOY=true
 
 PRE_BUILD() {
+  # Build our catalog BEFORE Docker snapshots this context. A parallel tool
+  # service deploy can otherwise regenerate it after our image already took
+  # the old copy (observed with the retired peer-request tool).
+  python3 "${SCRIPT_DIR}/scripts/build_tool_schemas.py" || return $?
+
   local CENTRAL_ENV="${DEPLOY_KIT_DIR}/.env.deploy"
   if [ -f "$CENTRAL_ENV" ]; then
     set -a; source "$CENTRAL_ENV"; set +a

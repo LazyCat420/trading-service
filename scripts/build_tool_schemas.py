@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # This script lives in <sun>/trading-service/scripts (and is deploy-mirrored to
@@ -129,8 +130,17 @@ def build(source_dir: str = SOURCE_DIR) -> list:
         if not os.path.isdir(os.path.dirname(target)):
             print(f"skip (repo not present): {target}")
             continue
-        with open(target, "w") as f:
-            f.write(payload)
+        # Each consumer builds from the split source before taking its Docker
+        # context snapshot. Parallel builds must never see a half-written copy.
+        fd, temporary = tempfile.mkstemp(prefix=".tool-schemas-", dir=os.path.dirname(target))
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(payload)
+            os.chmod(temporary, os.stat(target).st_mode & 0o777 if os.path.exists(target) else 0o644)
+            os.replace(temporary, target)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
         print(f"wrote {len(tools)} tools -> {target}")
     return tools
 
