@@ -123,6 +123,18 @@ async def fetch_ohlcv_dataframe(ticker: str, period: str = "6mo"):
                 ticker, "/".join(cols),
             )
             return None
+        # The index is a session DATE, not the timestamp of its last trade.
+        # Preserve provider time only for a price- and session-matched quote.
+        try:
+            from app.trading.price_observation import quote_observation
+            metadata = await asyncio.to_thread(lambda: stock.history_metadata)
+            observation = quote_observation(ticker, df.index[-1].date(),
+                                            df.iloc[-1]["Close"], metadata)
+            if observation:
+                df.attrs['latest_quote_observation'] = observation
+        except Exception as metadata_error:
+            logger.debug("[yfinance] %s: quote timestamp unavailable: %s",
+                         ticker, type(metadata_error).__name__)
         return df
     except Exception as e:
         # WARNING with the exception TYPE, and never a bare message.
@@ -174,6 +186,8 @@ async def collect_price_history(ticker: str, period: str = "6mo") -> int:
         await _refresh_technicals(ticker)
         return 0
 
+    quote_metadata = dict(df.attrs.get('latest_quote_observation') or {})
+    quoted_date = df.index[-1].date() if quote_metadata and not df.empty else None
     from app.validation.schema import PriceHistorySchema
     import pandera.errors
 
@@ -296,6 +310,14 @@ async def collect_price_history(ticker: str, period: str = "6mo") -> int:
                     doc,
                     insert_only=True,
                 )
+                if quote_metadata and doc["date"] == quoted_date:
+                    # Refresh a formerly partial daily row along with its exact
+                    # quote provenance. A slower older fetch cannot regress it.
+                    mongo_store.update_docs("price_history", {
+                        "ticker": doc["ticker"], "date": doc["date"], "source": "yfinance",
+                        "$or": [{"price_as_of": {"$exists": False}},
+                                {"price_as_of": {"$lte": quote_metadata["price_as_of"]}}],
+                    }, {"$set": {**doc, **quote_metadata}})
 
         await asyncio.to_thread(_insert)
 

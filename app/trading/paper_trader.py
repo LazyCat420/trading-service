@@ -300,14 +300,16 @@ def _apply_execution_cost(
         }
 
 
-def _get_current_price(ticker: str) -> tuple[float | None, float | None]:
+def _get_current_price(ticker: str, *, now: datetime.datetime | None = None) -> tuple[float | None, float | None]:
     """Get latest price and its age in hours.
 
     Returns (price, age_hours) or (None, None) if no price data.
     Checks price_history first, then asset_prices (crypto/commodity).
     """
     # Try price_history first (stocks)
-    price_row = mongo_query.find_row('price_history', {'ticker': ticker}, ['close', 'date'], sort=[('date', -1)])
+    price_row = mongo_query.find_row('price_history', {'ticker': ticker},
+        ['close', 'date', 'price_as_of', 'price_as_of_source', 'observed_quote_price'],
+        sort=[('date', -1), ('price_as_of', -1)])
 
     # Fallback: asset_prices (crypto/commodity)
     if not price_row:
@@ -318,6 +320,12 @@ def _get_current_price(ticker: str) -> tuple[float | None, float | None]:
 
     price = price_row[0]
     price_date = price_row[1]
+    now = now or datetime.datetime.now(datetime.UTC)
+    if len(price_row) >= 5:
+        from app.trading.price_observation import verified_price_time
+        observed = verified_price_time(price, price_row[2], price_row[3], price_row[4], now=now)
+        if observed is not None:
+            return price, (now - observed).total_seconds() / 3600
 
     # Calculate age — handle date, datetime, and string types from DB
     if price_date:
@@ -339,7 +347,7 @@ def _get_current_price(ticker: str) -> tuple[float | None, float | None]:
             # Make aware if naive
             if hasattr(price_date, "tzinfo") and price_date.tzinfo is None:
                 price_date = price_date.replace(tzinfo=datetime.UTC)
-            age = datetime.datetime.now(datetime.UTC) - price_date
+            age = now - price_date
             age_hours = age.total_seconds() / 3600
             return price, age_hours
 
@@ -436,6 +444,7 @@ async def buy(
     logger.info("[TRACE][BUY] cash=%.2f for bot_id=%s", cash, bot_id)
 
     # Fix #3: Get price with staleness check
+    price_was_supplied = current_price is not None
     price_age_hours = None
     if current_price is None:
         current_price, price_age_hours = _get_current_price(ticker)
@@ -697,6 +706,8 @@ async def buy(
                     'fill_value': mongo_store.dec128(amount),
                     'fees': mongo_store.dec128(round(amount * cost["total_bps"] / 10_000.0, 6)),
                     'decision_price': mongo_store.dec128(reference_price),
+                    'reference_price_age_hours': price_age_hours,
+                    'reference_price_source': 'caller_supplied' if price_was_supplied else 'stored_price',
                     'filled_at': now,
                     'cycle_id': cycle_id,
                 }],
@@ -797,6 +808,7 @@ async def sell(
         return {"error": "Invalid sell quantity"}
 
     # Fix #3: Get price with staleness check
+    price_was_supplied = current_price is not None
     price_age_hours = None
     if current_price is None:
         current_price, price_age_hours = _get_current_price(ticker)
@@ -1004,6 +1016,8 @@ async def sell(
                     'fill_value': mongo_store.dec128(proceeds),
                     'fees': mongo_store.dec128(round(proceeds * sell_cost["total_bps"] / 10_000.0, 6)),
                     'decision_price': mongo_store.dec128(reference_price),
+                    'reference_price_age_hours': price_age_hours,
+                    'reference_price_source': 'caller_supplied' if price_was_supplied else 'stored_price',
                     'filled_at': now,
                     'cycle_id': cycle_id,
                 }],
