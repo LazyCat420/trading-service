@@ -9,6 +9,17 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
+def _format_fundamentals(rows) -> str:
+    """Render normalized fractional fundamentals in explicitly labeled percent units."""
+    percent_columns = {6, 7, 9, 14}  # profit margin, ROE, revenue growth, short float
+    displayed = [tuple(float(value) * 100 if i in percent_columns and value is not None else value
+                       for i, value in enumerate(row)) for row in rows]
+    return format_db_section("Fundamentals", displayed, [
+        "Date", "MarketCap", "PE", "ForwardPE", "PEG", "P/B", "NetMargin%", "ROE%",
+        "Revenue", "RevenueGrowth%", "D/E", "Beta", "52wHigh", "52wLow", "ShortFloat%",
+    ])
+
+
 class TickerInput(BaseModel):
     ticker: str = Field(description="The stock ticker symbol (e.g. AAPL)")
 
@@ -95,29 +106,7 @@ async def get_market_data(ticker: str) -> str:
 
     # Fundamentals
     rows = mongo_query.find_rows('fundamentals', {'ticker': ticker}, ['snapshot_date', 'market_cap', 'pe_ratio', 'forward_pe', 'peg_ratio', 'price_to_book', 'profit_margin', 'roe', 'revenue', 'revenue_growth', 'debt_to_equity', 'beta', 'week_52_high', 'week_52_low', 'short_float_pct'], sort=[('snapshot_date', -1)], limit=1)
-    sections.append(
-        format_db_section(
-            "Fundamentals",
-            rows,
-            [
-                "Date",
-                "MarketCap",
-                "PE",
-                "ForwardPE",
-                "PEG",
-                "P/B",
-                "NetMargin",
-                "ROE",
-                "Revenue",
-                "RevenueGrowth",
-                "D/E",
-                "Beta",
-                "52wHigh",
-                "52wLow",
-                "ShortFloat%",
-            ],
-        )
-    )
+    sections.append(_format_fundamentals(rows))
 
     # Quarterly Financials
     q_docs = mongo_store.find_docs(
