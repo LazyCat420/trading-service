@@ -1,0 +1,957 @@
+{
+  "protocol": "ticket-harness-protocol-2026-09-07.md",
+  "primary_cohort": "full replacement after outer-timeout correction",
+  "model": "GLM-5.3-Flash-EXL3",
+  "limits": {
+    "output_tokens": 4096,
+    "tool_turns_per_invocation": 6,
+    "role_seconds": 600,
+    "workflow_seconds": 1900,
+    "temperature": 0,
+    "min_p": 0,
+    "thinking": false
+  },
+  "aggregate": {
+    "no_tickets": {
+      "workflows": 4,
+      "contract_verified_correct_answers": 5,
+      "semantic_correct_answers": 10,
+      "answerable_questions": 10,
+      "correct_unknowns": 2,
+      "required_unknowns": 2,
+      "role_outcomes": {
+        "AGENT_ERROR": 2,
+        "DATA_GAP": 6,
+        "SUCCESS": 4
+      },
+      "accepted_role_artifacts": 10,
+      "role_attempts": 12,
+      "tool_calls": 26,
+      "tool_errors": 4,
+      "exact_duplicate_research_calls": 1,
+      "prompt_tokens": 229102,
+      "completion_tokens": 19753,
+      "model_invocations": 12,
+      "model_turns": 31,
+      "research_role_answer_repeats": 0,
+      "mean_workflow_wall_seconds": 207.00949984788895,
+      "usage_complete": true,
+      "boards_with_identified_fixture_issue": 4,
+      "ticket_dispositions": null
+    },
+    "tickets": {
+      "workflows": 4,
+      "contract_verified_correct_answers": 10,
+      "semantic_correct_answers": 10,
+      "answerable_questions": 10,
+      "correct_unknowns": 2,
+      "required_unknowns": 2,
+      "role_outcomes": {
+        "DATA_GAP": 7,
+        "SUCCESS": 4,
+        "AGENT_ERROR": 1
+      },
+      "accepted_role_artifacts": 11,
+      "role_attempts": 12,
+      "tool_calls": 17,
+      "tool_errors": 5,
+      "exact_duplicate_research_calls": 0,
+      "prompt_tokens": 184080,
+      "completion_tokens": 20978,
+      "model_invocations": 12,
+      "model_turns": 25,
+      "research_role_answer_repeats": 6,
+      "mean_workflow_wall_seconds": 204.1502521634102,
+      "usage_complete": true,
+      "boards_with_identified_fixture_issue": 3,
+      "ticket_dispositions": {
+        "answered": 10,
+        "deferred": 2,
+        "delivery_pending": 0
+      }
+    }
+  },
+  "pairs": [
+    {
+      "case": "complete",
+      "repeat": 0,
+      "no_tickets_wall_s": 172.69157791137695,
+      "tickets_wall_s": 214.09556078910828,
+      "ticket_minus_control_wall_s": 41.40398287773132
+    },
+    {
+      "case": "complete",
+      "repeat": 1,
+      "no_tickets_wall_s": 201.4240424633026,
+      "tickets_wall_s": 208.53375911712646,
+      "ticket_minus_control_wall_s": 7.1097166538238525
+    },
+    {
+      "case": "historical_missing",
+      "repeat": 0,
+      "no_tickets_wall_s": 179.24675107002258,
+      "tickets_wall_s": 231.18588185310364,
+      "ticket_minus_control_wall_s": 51.939130783081055
+    },
+    {
+      "case": "historical_missing",
+      "repeat": 1,
+      "no_tickets_wall_s": 274.67562794685364,
+      "tickets_wall_s": 162.78580689430237,
+      "ticket_minus_control_wall_s": -111.88982105255127
+    }
+  ],
+  "workflows": [
+    {
+      "case": "complete",
+      "repeat": 0,
+      "arm": "no_tickets",
+      "complete": true,
+      "fixture_sha256": "02cdb3ebe63c38d53df5966daedd935c1ac4f3eb8eff81b13572be6f5c106f73",
+      "model": "GLM-5.3-Flash-EXL3",
+      "elapsed_s": 172.69157791137695,
+      "role_outcomes": {
+        "v3_fundamental_analyst": "AGENT_ERROR",
+        "v3_quant_analyst": "DATA_GAP",
+        "v3_board_of_directors": "SUCCESS"
+      },
+      "degraded_roles": [],
+      "model_invocations": 3,
+      "model_turns": 8,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exact_duplicate_research_calls": 0,
+      "usage_complete": true,
+      "prompt_tokens": 56594,
+      "completion_tokens": 3709,
+      "verified_ids": [
+        "q-debt",
+        "q-history",
+        "q-margin"
+      ],
+      "repeated_answer_ids": {},
+      "ticket_delivery": null,
+      "raw_output_sha256": "efceda0d3a1738d90a1d2c1256020a36428212824b34bbbb381efe1f9ee38cbc",
+      "semantic_review": {
+        "case": "complete",
+        "repeat": 0,
+        "arm": "no_tickets",
+        "correct_unresolved_ids": [],
+        "unsupported_answer_ids": [],
+        "board_retains_required_unknown": null,
+        "board_action": "HOLD",
+        "board_fixture_errors": [
+          {
+            "claim": "A 15x forward P/E is roughly market-average",
+            "issue": "No market valuation comparison is supplied by the fixture or tool evidence; this is an unsupported comparison, not a verified fixture fact."
+          }
+        ],
+        "note": "Quant supplied all supported answers after Fundamental exhausted its six tool turns without an artifact.",
+        "contract_verified_correct_ids": [
+          "q-margin",
+          "q-debt",
+          "q-history"
+        ],
+        "semantic_correct_answer_ids": [
+          "q-margin",
+          "q-debt",
+          "q-history"
+        ]
+      },
+      "accepted_role_artifacts": 2,
+      "research_role_answer_repeats": 0,
+      "board_delivery": [
+        {
+          "agent": "v3_board_of_directors",
+          "artifact_type": "final_decision",
+          "system_sha256": "e1e92b56c595ed4a17403085404dc37bd04563dfed2d9f0209c689917660baf1",
+          "user_sha256": "ba60c54a8a482c212b57b13845a4dfa2ba8aff57b13014d828279ea7e2d8dc89",
+          "contract_delivered": true,
+          "defense_delivered": true,
+          "defense_records_omitted": false,
+          "research_answers_delivered": false,
+          "prior_research_answers_delivered": false,
+          "system_chars": 9430,
+          "user_chars": 10436
+        }
+      ]
+    },
+    {
+      "case": "complete",
+      "repeat": 0,
+      "arm": "tickets",
+      "complete": true,
+      "fixture_sha256": "02cdb3ebe63c38d53df5966daedd935c1ac4f3eb8eff81b13572be6f5c106f73",
+      "model": "GLM-5.3-Flash-EXL3",
+      "elapsed_s": 214.09556078910828,
+      "role_outcomes": {
+        "v3_fundamental_analyst": "DATA_GAP",
+        "v3_quant_analyst": "DATA_GAP",
+        "v3_board_of_directors": "SUCCESS"
+      },
+      "degraded_roles": [],
+      "model_invocations": 3,
+      "model_turns": 3,
+      "tool_calls": 0,
+      "tool_errors": 0,
+      "exact_duplicate_research_calls": 0,
+      "usage_complete": true,
+      "prompt_tokens": 21552,
+      "completion_tokens": 5844,
+      "verified_ids": [
+        "q-debt",
+        "q-history",
+        "q-margin"
+      ],
+      "repeated_answer_ids": {
+        "q-margin": 3,
+        "q-debt": 3,
+        "q-history": 3
+      },
+      "ticket_delivery": {
+        "answered": 3,
+        "deferred": 0,
+        "delivery_pending": 0
+      },
+      "raw_output_sha256": "87c60ef8d3cdb80a5ddc9bcc40cc87770cfd7d2aef2f4118a5cf75f5d048bceb",
+      "semantic_review": {
+        "case": "complete",
+        "repeat": 0,
+        "arm": "tickets",
+        "correct_unresolved_ids": [],
+        "unsupported_answer_ids": [],
+        "board_retains_required_unknown": null,
+        "board_action": "HOLD",
+        "board_fixture_errors": [
+          {
+            "claim": "Forward P/E 15 and 12 percent revenue growth imply PEG about 1.25",
+            "issue": "The fixture supplies revenue growth, not EPS growth; the PEG estimate substitutes a different growth measure without support."
+          }
+        ],
+        "note": "All question answers are supported. Quant and Board repeat the Fundamental structured answers.",
+        "contract_verified_correct_ids": [
+          "q-margin",
+          "q-debt",
+          "q-history"
+        ],
+        "semantic_correct_answer_ids": [
+          "q-margin",
+          "q-debt",
+          "q-history"
+        ]
+      },
+      "accepted_role_artifacts": 3,
+      "research_role_answer_repeats": 3,
+      "board_delivery": [
+        {
+          "agent": "v3_board_of_directors",
+          "artifact_type": "final_decision",
+          "system_sha256": "e1e92b56c595ed4a17403085404dc37bd04563dfed2d9f0209c689917660baf1",
+          "user_sha256": "94588fa9dd390c7d6327b8c82db4f2ec26a3b667b0416bc6a9006c0ef7cbf37c",
+          "contract_delivered": true,
+          "defense_delivered": true,
+          "defense_records_omitted": false,
+          "research_answers_delivered": true,
+          "prior_research_answers_delivered": false,
+          "system_chars": 9430,
+          "user_chars": 15462
+        }
+      ]
+    },
+    {
+      "case": "complete",
+      "repeat": 1,
+      "arm": "no_tickets",
+      "complete": true,
+      "fixture_sha256": "02cdb3ebe63c38d53df5966daedd935c1ac4f3eb8eff81b13572be6f5c106f73",
+      "model": "GLM-5.3-Flash-EXL3",
+      "elapsed_s": 201.4240424633026,
+      "role_outcomes": {
+        "v3_fundamental_analyst": "DATA_GAP",
+        "v3_quant_analyst": "DATA_GAP",
+        "v3_board_of_directors": "SUCCESS"
+      },
+      "degraded_roles": [],
+      "model_invocations": 3,
+      "model_turns": 3,
+      "tool_calls": 0,
+      "tool_errors": 0,
+      "exact_duplicate_research_calls": 0,
+      "usage_complete": true,
+      "prompt_tokens": 20303,
+      "completion_tokens": 5255,
+      "verified_ids": [],
+      "repeated_answer_ids": {},
+      "ticket_delivery": null,
+      "raw_output_sha256": "9d166efa4134f33d59c599a605c07fb5e9c1cf7b6ad276565d44da90251143e6",
+      "semantic_review": {
+        "case": "complete",
+        "repeat": 1,
+        "arm": "no_tickets",
+        "contract_verified_correct_ids": [],
+        "semantic_correct_answer_ids": [
+          "q-margin",
+          "q-debt",
+          "q-history"
+        ],
+        "correct_unresolved_ids": [],
+        "unsupported_answer_ids": [],
+        "board_retains_required_unknown": null,
+        "board_action": "HOLD",
+        "board_fixture_errors": [
+          {
+            "claim": "15x forward P/E against 12 percent revenue growth is roughly 0.8 PEG",
+            "issue": "EPS growth is absent; even using the revenue-growth proxy, 15/12 is 1.25, not 0.8."
+          }
+        ],
+        "note": "Fundamental places correct answers under peer_research_answers, not research_answers. Quant repeats the correct facts in prose. The business contract accepts no answer records despite correct content."
+      },
+      "accepted_role_artifacts": 3,
+      "research_role_answer_repeats": 0,
+      "board_delivery": [
+        {
+          "agent": "v3_board_of_directors",
+          "artifact_type": "final_decision",
+          "system_sha256": "e1e92b56c595ed4a17403085404dc37bd04563dfed2d9f0209c689917660baf1",
+          "user_sha256": "c3e95aa883ce0d49a57125cdbd8c413f8dafca3888a724ada372649975772dc1",
+          "contract_delivered": true,
+          "defense_delivered": true,
+          "defense_records_omitted": false,
+          "research_answers_delivered": false,
+          "prior_research_answers_delivered": false,
+          "system_chars": 9430,
+          "user_chars": 14300
+        }
+      ]
+    },
+    {
+      "case": "complete",
+      "repeat": 1,
+      "arm": "tickets",
+      "complete": true,
+      "fixture_sha256": "02cdb3ebe63c38d53df5966daedd935c1ac4f3eb8eff81b13572be6f5c106f73",
+      "model": "GLM-5.3-Flash-EXL3",
+      "elapsed_s": 208.53375911712646,
+      "role_outcomes": {
+        "v3_fundamental_analyst": "DATA_GAP",
+        "v3_quant_analyst": "DATA_GAP",
+        "v3_board_of_directors": "SUCCESS"
+      },
+      "degraded_roles": [],
+      "model_invocations": 3,
+      "model_turns": 6,
+      "tool_calls": 4,
+      "tool_errors": 1,
+      "exact_duplicate_research_calls": 0,
+      "usage_complete": true,
+      "prompt_tokens": 45152,
+      "completion_tokens": 5704,
+      "verified_ids": [
+        "q-debt",
+        "q-history",
+        "q-margin"
+      ],
+      "repeated_answer_ids": {
+        "q-margin": 3,
+        "q-debt": 3,
+        "q-history": 3
+      },
+      "ticket_delivery": {
+        "answered": 3,
+        "deferred": 0,
+        "delivery_pending": 0
+      },
+      "raw_output_sha256": "141c44e8cbf184da890f6bd1e882a0ab859d48430ab57a104b853d4c158d407b",
+      "semantic_review": {
+        "case": "complete",
+        "repeat": 1,
+        "arm": "tickets",
+        "contract_verified_correct_ids": [
+          "q-margin",
+          "q-debt",
+          "q-history"
+        ],
+        "semantic_correct_answer_ids": [
+          "q-margin",
+          "q-debt",
+          "q-history"
+        ],
+        "correct_unresolved_ids": [],
+        "unsupported_answer_ids": [],
+        "board_retains_required_unknown": null,
+        "board_action": "HOLD",
+        "board_fixture_errors": [
+          {
+            "claim": "Price 100 is 41.7 percent of the 95\u2013115 band",
+            "issue": "The position above support is (100-95)/(115-95)=25 percent, not 41.7 percent."
+          }
+        ],
+        "note": "All three research answers are correct and accepted; Quant and Board repeat them. Board adds an incorrect range calculation."
+      },
+      "accepted_role_artifacts": 3,
+      "research_role_answer_repeats": 3,
+      "board_delivery": [
+        {
+          "agent": "v3_board_of_directors",
+          "artifact_type": "final_decision",
+          "system_sha256": "e1e92b56c595ed4a17403085404dc37bd04563dfed2d9f0209c689917660baf1",
+          "user_sha256": "f03202dce7f6e126dc0d0106eee94842db0bb46fcd0baceaa671041f3beceddf",
+          "contract_delivered": true,
+          "defense_delivered": true,
+          "defense_records_omitted": false,
+          "research_answers_delivered": true,
+          "prior_research_answers_delivered": false,
+          "system_chars": 9430,
+          "user_chars": 16849
+        }
+      ]
+    },
+    {
+      "case": "historical_missing",
+      "repeat": 0,
+      "arm": "no_tickets",
+      "complete": true,
+      "fixture_sha256": "770f5a8456f721916f42111060e2c5f256f47d14ab5664b885194155c34cd2b3",
+      "model": "GLM-5.3-Flash-EXL3",
+      "elapsed_s": 179.24675107002258,
+      "role_outcomes": {
+        "v3_fundamental_analyst": "AGENT_ERROR",
+        "v3_quant_analyst": "DATA_GAP",
+        "v3_board_of_directors": "SUCCESS"
+      },
+      "degraded_roles": [],
+      "model_invocations": 3,
+      "model_turns": 8,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exact_duplicate_research_calls": 0,
+      "usage_complete": true,
+      "prompt_tokens": 55688,
+      "completion_tokens": 4174,
+      "verified_ids": [],
+      "repeated_answer_ids": {},
+      "ticket_delivery": null,
+      "raw_output_sha256": "26ead0bde5529e8592278c198627b8d813319a47fd569ba699a7753e40669c60",
+      "semantic_review": {
+        "case": "historical_missing",
+        "repeat": 0,
+        "arm": "no_tickets",
+        "contract_verified_correct_ids": [],
+        "semantic_correct_answer_ids": [
+          "q-margin",
+          "q-debt"
+        ],
+        "correct_unresolved_ids": [
+          "q-history"
+        ],
+        "unsupported_answer_ids": [],
+        "board_retains_required_unknown": true,
+        "board_action": "HOLD",
+        "board_fixture_errors": [
+          {
+            "claim": "100 is the exact geometric midpoint of 95\u2013115",
+            "issue": "The geometric midpoint is approximately 104.52; 100 is not either geometric or arithmetic midpoint."
+          }
+        ],
+        "note": "Quant emitted correct answers and exact quotes as a JSON string inside sub_analyses_requested rather than a top-level research_answers array. Content is correct, but the contract verifier accepts none. Board retains the historical unknown. Fundamental exhausted six tool turns."
+      },
+      "accepted_role_artifacts": 2,
+      "research_role_answer_repeats": 0,
+      "board_delivery": [
+        {
+          "agent": "v3_board_of_directors",
+          "artifact_type": "final_decision",
+          "system_sha256": "e1e92b56c595ed4a17403085404dc37bd04563dfed2d9f0209c689917660baf1",
+          "user_sha256": "edf6a8f38dce6745b977a37a02a4fb6ad5efe02d0e7be33f49bac9b69f4fcce2",
+          "contract_delivered": true,
+          "defense_delivered": true,
+          "defense_records_omitted": false,
+          "research_answers_delivered": false,
+          "prior_research_answers_delivered": false,
+          "system_chars": 9430,
+          "user_chars": 12903
+        }
+      ]
+    },
+    {
+      "case": "historical_missing",
+      "repeat": 0,
+      "arm": "tickets",
+      "complete": true,
+      "fixture_sha256": "770f5a8456f721916f42111060e2c5f256f47d14ab5664b885194155c34cd2b3",
+      "model": "GLM-5.3-Flash-EXL3",
+      "elapsed_s": 231.18588185310364,
+      "role_outcomes": {
+        "v3_fundamental_analyst": "DATA_GAP",
+        "v3_quant_analyst": "DATA_GAP",
+        "v3_board_of_directors": "SUCCESS"
+      },
+      "degraded_roles": [],
+      "model_invocations": 3,
+      "model_turns": 8,
+      "tool_calls": 5,
+      "tool_errors": 1,
+      "exact_duplicate_research_calls": 0,
+      "usage_complete": true,
+      "prompt_tokens": 60068,
+      "completion_tokens": 5659,
+      "verified_ids": [
+        "q-debt",
+        "q-margin"
+      ],
+      "repeated_answer_ids": {
+        "q-margin": 2,
+        "q-debt": 2
+      },
+      "ticket_delivery": {
+        "answered": 2,
+        "deferred": 1,
+        "delivery_pending": 0
+      },
+      "raw_output_sha256": "719f8b0670d557d141050ff0b73f6c28b534378201ed21d084636444a89dfb56",
+      "semantic_review": {
+        "case": "historical_missing",
+        "repeat": 0,
+        "arm": "tickets",
+        "correct_unresolved_ids": [
+          "q-history"
+        ],
+        "unsupported_answer_ids": [],
+        "board_retains_required_unknown": true,
+        "board_action": "HOLD",
+        "board_fixture_errors": [
+          {
+            "claim": "15x forward P/E against 12 percent revenue growth implies PEG about 1.25",
+            "issue": "EPS growth is not supplied, so substituting revenue growth does not establish that PEG."
+          }
+        ],
+        "note": "The two answerable facts are supported, and both research and Board retain the dated historical unknown. Queue disposition is two answered, one deferred.",
+        "contract_verified_correct_ids": [
+          "q-margin",
+          "q-debt"
+        ],
+        "semantic_correct_answer_ids": [
+          "q-margin",
+          "q-debt"
+        ]
+      },
+      "accepted_role_artifacts": 3,
+      "research_role_answer_repeats": 0,
+      "board_delivery": [
+        {
+          "agent": "v3_board_of_directors",
+          "artifact_type": "final_decision",
+          "system_sha256": "e1e92b56c595ed4a17403085404dc37bd04563dfed2d9f0209c689917660baf1",
+          "user_sha256": "c1dbd3a4ef264a0e5fdfd6b7453d8e0ac5993d8b8b2509225c3e2168d4d5408a",
+          "contract_delivered": true,
+          "defense_delivered": true,
+          "defense_records_omitted": false,
+          "research_answers_delivered": true,
+          "prior_research_answers_delivered": false,
+          "system_chars": 9430,
+          "user_chars": 15803
+        }
+      ]
+    },
+    {
+      "case": "historical_missing",
+      "repeat": 1,
+      "arm": "no_tickets",
+      "complete": true,
+      "fixture_sha256": "770f5a8456f721916f42111060e2c5f256f47d14ab5664b885194155c34cd2b3",
+      "model": "GLM-5.3-Flash-EXL3",
+      "elapsed_s": 274.67562794685364,
+      "role_outcomes": {
+        "v3_fundamental_analyst": "DATA_GAP",
+        "v3_quant_analyst": "DATA_GAP",
+        "v3_board_of_directors": "SUCCESS"
+      },
+      "degraded_roles": [],
+      "model_invocations": 3,
+      "model_turns": 12,
+      "tool_calls": 14,
+      "tool_errors": 4,
+      "exact_duplicate_research_calls": 1,
+      "usage_complete": true,
+      "prompt_tokens": 96517,
+      "completion_tokens": 6615,
+      "verified_ids": [
+        "q-debt",
+        "q-margin"
+      ],
+      "repeated_answer_ids": {},
+      "ticket_delivery": null,
+      "raw_output_sha256": "11a899606fbb4e26342348e0221b8efeb75c0ac085efcef25c90d8939097f2fb",
+      "semantic_review": {
+        "case": "historical_missing",
+        "repeat": 1,
+        "arm": "no_tickets",
+        "contract_verified_correct_ids": [
+          "q-margin",
+          "q-debt"
+        ],
+        "semantic_correct_answer_ids": [
+          "q-margin",
+          "q-debt"
+        ],
+        "correct_unresolved_ids": [
+          "q-history"
+        ],
+        "unsupported_answer_ids": [],
+        "board_retains_required_unknown": true,
+        "board_action": "HOLD",
+        "board_fixture_errors": [
+          {
+            "claim": "Arm rsi_14_oversold at the price support 95.00",
+            "issue": "The actual artifact uses an RSI threshold of 95.0, conflating a price level with an indicator value."
+          },
+          {
+            "claim": "About 14 OHLCV sessions would make SMA-200 computable",
+            "issue": "A 200-session simple moving average needs 200 observations, not about 14."
+          }
+        ],
+        "note": "Research question answers and historical uncertainty are correct. Board range position 0.25 is correct, but its wake condition has a unit mismatch and insufficient-history claim."
+      },
+      "accepted_role_artifacts": 3,
+      "research_role_answer_repeats": 0,
+      "board_delivery": [
+        {
+          "agent": "v3_board_of_directors",
+          "artifact_type": "final_decision",
+          "system_sha256": "e1e92b56c595ed4a17403085404dc37bd04563dfed2d9f0209c689917660baf1",
+          "user_sha256": "6351b31229e8388386fd4dd43079974e50116cae19866934c2d2bbfcc8e1264e",
+          "contract_delivered": true,
+          "defense_delivered": true,
+          "defense_records_omitted": false,
+          "research_answers_delivered": false,
+          "prior_research_answers_delivered": false,
+          "system_chars": 9430,
+          "user_chars": 17664
+        }
+      ]
+    },
+    {
+      "case": "historical_missing",
+      "repeat": 1,
+      "arm": "tickets",
+      "complete": true,
+      "fixture_sha256": "770f5a8456f721916f42111060e2c5f256f47d14ab5664b885194155c34cd2b3",
+      "model": "GLM-5.3-Flash-EXL3",
+      "elapsed_s": 162.78580689430237,
+      "role_outcomes": {
+        "v3_fundamental_analyst": "AGENT_ERROR",
+        "v3_quant_analyst": "DATA_GAP",
+        "v3_board_of_directors": "SUCCESS"
+      },
+      "degraded_roles": [],
+      "model_invocations": 3,
+      "model_turns": 8,
+      "tool_calls": 8,
+      "tool_errors": 3,
+      "exact_duplicate_research_calls": 0,
+      "usage_complete": true,
+      "prompt_tokens": 57308,
+      "completion_tokens": 3771,
+      "verified_ids": [
+        "q-debt",
+        "q-margin"
+      ],
+      "repeated_answer_ids": {
+        "q-margin": 2,
+        "q-debt": 2
+      },
+      "ticket_delivery": {
+        "answered": 2,
+        "deferred": 1,
+        "delivery_pending": 0
+      },
+      "raw_output_sha256": "2c6c02158d96f6a601084b011ef7006360570a322c9f5d4d972e19ab50060b1d",
+      "semantic_review": {
+        "case": "historical_missing",
+        "repeat": 1,
+        "arm": "tickets",
+        "contract_verified_correct_ids": [
+          "q-margin",
+          "q-debt"
+        ],
+        "semantic_correct_answer_ids": [
+          "q-margin",
+          "q-debt"
+        ],
+        "correct_unresolved_ids": [
+          "q-history"
+        ],
+        "unsupported_answer_ids": [],
+        "board_retains_required_unknown": true,
+        "board_action": "HOLD",
+        "board_fixture_errors": [],
+        "note": "Quant supplies both correct accepted answers after Fundamental exhausts six turns. Board retains historical uncertainty and does not invent missing technical inputs. No concrete fixture contradiction identified in this Board rationale."
+      },
+      "accepted_role_artifacts": 2,
+      "research_role_answer_repeats": 0,
+      "board_delivery": [
+        {
+          "agent": "v3_board_of_directors",
+          "artifact_type": "final_decision",
+          "system_sha256": "e1e92b56c595ed4a17403085404dc37bd04563dfed2d9f0209c689917660baf1",
+          "user_sha256": "558c1d182096970048194b7381ab70fc29ff4ef9986277f7e52df24c9de4493f",
+          "contract_delivered": true,
+          "defense_delivered": true,
+          "defense_records_omitted": false,
+          "research_answers_delivered": true,
+          "prior_research_answers_delivered": false,
+          "system_chars": 9430,
+          "user_chars": 13387
+        }
+      ]
+    }
+  ],
+  "interrupted_pilot": {
+    "reason": "Inherited pytest whole-test timeout of 300 seconds killed workflow 7; workflow 8 never started. Entire cohort was restarted; no best-of selection.",
+    "completed_workflows": 6,
+    "partial_workflows": 1,
+    "unstarted_workflows": 1,
+    "completed_contract_answers_by_arm": {
+      "no_tickets": 8,
+      "tickets": 8
+    },
+    "workflows": [
+      {
+        "case": "complete",
+        "repeat": 0,
+        "arm": "no_tickets",
+        "complete": true,
+        "fixture_sha256": "02cdb3ebe63c38d53df5966daedd935c1ac4f3eb8eff81b13572be6f5c106f73",
+        "model": "GLM-5.3-Flash-EXL3",
+        "elapsed_s": 232.70239210128784,
+        "role_outcomes": {
+          "v3_fundamental_analyst": "DATA_GAP",
+          "v3_quant_analyst": "DATA_GAP",
+          "v3_board_of_directors": "SUCCESS"
+        },
+        "degraded_roles": [],
+        "model_invocations": 3,
+        "model_turns": 6,
+        "tool_calls": 4,
+        "tool_errors": 0,
+        "exact_duplicate_research_calls": 0,
+        "usage_complete": true,
+        "prompt_tokens": 43320,
+        "completion_tokens": 5408,
+        "verified_ids": [
+          "q-debt",
+          "q-history",
+          "q-margin"
+        ],
+        "repeated_answer_ids": {},
+        "ticket_delivery": null
+      },
+      {
+        "case": "complete",
+        "repeat": 0,
+        "arm": "tickets",
+        "complete": true,
+        "fixture_sha256": "02cdb3ebe63c38d53df5966daedd935c1ac4f3eb8eff81b13572be6f5c106f73",
+        "model": "GLM-5.3-Flash-EXL3",
+        "elapsed_s": 233.8764238357544,
+        "role_outcomes": {
+          "v3_fundamental_analyst": "DATA_GAP",
+          "v3_quant_analyst": "DATA_GAP",
+          "v3_board_of_directors": "SUCCESS"
+        },
+        "degraded_roles": [],
+        "model_invocations": 3,
+        "model_turns": 3,
+        "tool_calls": 0,
+        "tool_errors": 0,
+        "exact_duplicate_research_calls": 0,
+        "usage_complete": true,
+        "prompt_tokens": 21575,
+        "completion_tokens": 5869,
+        "verified_ids": [
+          "q-debt",
+          "q-history",
+          "q-margin"
+        ],
+        "repeated_answer_ids": {
+          "q-margin": 3,
+          "q-debt": 3,
+          "q-history": 3
+        },
+        "ticket_delivery": {
+          "answered": 3,
+          "deferred": 0,
+          "delivery_pending": 0
+        }
+      },
+      {
+        "case": "complete",
+        "repeat": 1,
+        "arm": "no_tickets",
+        "complete": true,
+        "fixture_sha256": "02cdb3ebe63c38d53df5966daedd935c1ac4f3eb8eff81b13572be6f5c106f73",
+        "model": "GLM-5.3-Flash-EXL3",
+        "elapsed_s": 209.12084770202637,
+        "role_outcomes": {
+          "v3_fundamental_analyst": "DATA_GAP",
+          "v3_quant_analyst": "DATA_GAP",
+          "v3_board_of_directors": "SUCCESS"
+        },
+        "degraded_roles": [],
+        "model_invocations": 3,
+        "model_turns": 3,
+        "tool_calls": 0,
+        "tool_errors": 0,
+        "exact_duplicate_research_calls": 0,
+        "usage_complete": true,
+        "prompt_tokens": 20402,
+        "completion_tokens": 5151,
+        "verified_ids": [
+          "q-debt",
+          "q-history",
+          "q-margin"
+        ],
+        "repeated_answer_ids": {},
+        "ticket_delivery": null
+      },
+      {
+        "case": "complete",
+        "repeat": 1,
+        "arm": "tickets",
+        "complete": true,
+        "fixture_sha256": "02cdb3ebe63c38d53df5966daedd935c1ac4f3eb8eff81b13572be6f5c106f73",
+        "model": "GLM-5.3-Flash-EXL3",
+        "elapsed_s": 238.91604781150818,
+        "role_outcomes": {
+          "v3_fundamental_analyst": "DATA_GAP",
+          "v3_quant_analyst": "DATA_GAP",
+          "v3_board_of_directors": "SUCCESS"
+        },
+        "degraded_roles": [],
+        "model_invocations": 3,
+        "model_turns": 3,
+        "tool_calls": 0,
+        "tool_errors": 0,
+        "exact_duplicate_research_calls": 0,
+        "usage_complete": true,
+        "prompt_tokens": 21660,
+        "completion_tokens": 6336,
+        "verified_ids": [
+          "q-debt",
+          "q-history",
+          "q-margin"
+        ],
+        "repeated_answer_ids": {
+          "q-margin": 3,
+          "q-debt": 3,
+          "q-history": 3
+        },
+        "ticket_delivery": {
+          "answered": 3,
+          "deferred": 0,
+          "delivery_pending": 0
+        }
+      },
+      {
+        "case": "historical_missing",
+        "repeat": 0,
+        "arm": "no_tickets",
+        "complete": true,
+        "fixture_sha256": "770f5a8456f721916f42111060e2c5f256f47d14ab5664b885194155c34cd2b3",
+        "model": "GLM-5.3-Flash-EXL3",
+        "elapsed_s": 177.4977490901947,
+        "role_outcomes": {
+          "v3_fundamental_analyst": "AGENT_ERROR",
+          "v3_quant_analyst": "DATA_GAP",
+          "v3_board_of_directors": "SUCCESS"
+        },
+        "degraded_roles": [],
+        "model_invocations": 3,
+        "model_turns": 8,
+        "tool_calls": 6,
+        "tool_errors": 0,
+        "exact_duplicate_research_calls": 0,
+        "usage_complete": true,
+        "prompt_tokens": 55318,
+        "completion_tokens": 4131,
+        "verified_ids": [
+          "q-debt",
+          "q-margin"
+        ],
+        "repeated_answer_ids": {},
+        "ticket_delivery": null
+      },
+      {
+        "case": "historical_missing",
+        "repeat": 0,
+        "arm": "tickets",
+        "complete": true,
+        "fixture_sha256": "770f5a8456f721916f42111060e2c5f256f47d14ab5664b885194155c34cd2b3",
+        "model": "GLM-5.3-Flash-EXL3",
+        "elapsed_s": 230.68973803520203,
+        "role_outcomes": {
+          "v3_fundamental_analyst": "DATA_GAP",
+          "v3_quant_analyst": "DATA_GAP",
+          "v3_board_of_directors": "SUCCESS"
+        },
+        "degraded_roles": [],
+        "model_invocations": 3,
+        "model_turns": 8,
+        "tool_calls": 7,
+        "tool_errors": 2,
+        "exact_duplicate_research_calls": 0,
+        "usage_complete": true,
+        "prompt_tokens": 58569,
+        "completion_tokens": 5697,
+        "verified_ids": [
+          "q-debt",
+          "q-margin"
+        ],
+        "repeated_answer_ids": {
+          "q-margin": 2,
+          "q-debt": 2
+        },
+        "ticket_delivery": {
+          "answered": 2,
+          "deferred": 1,
+          "delivery_pending": 0
+        }
+      },
+      {
+        "case": "historical_missing",
+        "repeat": 1,
+        "arm": "no_tickets",
+        "complete": false,
+        "fixture_sha256": "770f5a8456f721916f42111060e2c5f256f47d14ab5664b885194155c34cd2b3",
+        "model": "GLM-5.3-Flash-EXL3",
+        "elapsed_s": null,
+        "role_outcomes": {
+          "v3_fundamental_analyst": "DATA_GAP",
+          "v3_quant_analyst": "DATA_GAP",
+          "v3_board_of_directors": "incomplete"
+        },
+        "degraded_roles": [],
+        "model_invocations": 3,
+        "model_turns": 7,
+        "tool_calls": 5,
+        "tool_errors": 1,
+        "exact_duplicate_research_calls": 0,
+        "usage_complete": true,
+        "prompt_tokens": 51059,
+        "completion_tokens": 6974,
+        "verified_ids": [],
+        "repeated_answer_ids": {},
+        "ticket_delivery": null
+      }
+    ]
+  },
+  "limitations": [
+    "Small synthetic fixture, not investment performance.",
+    "Both arms receive answer-format instructions; ticket mode also carries the production claimed-question contract. This does not isolate queue storage from prompt salience.",
+    "Fixture-backed tool transport and bounded role budgets differ from production.",
+    "DATA_GAP artifacts are expected from missing broader financial/technical inputs; they are separate from AGENT_ERROR.",
+    "Board review is a documented manual check, not an exhaustive error-rate benchmark.",
+    "Wall-clock timings and shared hardware are diagnostic; failures may end early.",
+    "The interrupted pilot is retained separately; its completed pairs tied on contract coverage."
+  ]
+}
