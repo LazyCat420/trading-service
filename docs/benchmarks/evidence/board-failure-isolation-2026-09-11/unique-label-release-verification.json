@@ -1,0 +1,19 @@
+{
+  "git_sha": "228bcfb8",
+  "checks_passed": true,
+  "examples": 4,
+  "source_sha256": {
+    "app/v3/agent_runner.py": "6ef5ca4325e3fe014cc2ae2cdc1473a4e80b640fe2b0b60d7aee48450d0c506b",
+    "app/v3/decision_contract.py": "acbfaaebbd10ca406596810135497bfb0bebeba8e698f8836f2ece6a6f84bb04"
+  },
+  "health_status": 200,
+  "captured_at": "2026-09-11T05:23:02.223619+00:00",
+  "container_state": "running",
+  "container_health": "healthy",
+  "deployment_exit_code": 0,
+  "failed_attempt": {
+    "reason": "Debian dependency download stalled; build timed out at 600 seconds before transfer or restart",
+    "log_sha256": "611cafc9535cccc65daf1afc94abbd5fba34ad3d6f9b3f0d8af7ff9fa407a258"
+  },
+  "successful_retry_log_sha256": "999294a78c9272c95a0db89429de4c41e9747e3d9579b9f756f135cb39c39383"
+}

@@ -33,7 +33,7 @@ The original artifact, exact patch and normalized artifact are recorded in `arti
 | `live-repairs-unique-labels-r1` | 5/5 | 1 |
 | `live-repairs-unique-labels-r2` | 5/5 | 1 |
 
-There were 22 new tool-disabled Nemotron calls through the authorized NAS proxy, all retained. The final two replay sets each replayed four original responses entirely locally and made one provider call for row 09. No orders or database writes were performed by these tests. Each model repair stayed within the existing one-call budget.
+There were 22 new tool-disabled Nemotron calls through the authorized NAS proxy, all retained. The final two replay sets each replayed four original responses entirely locally and made one provider call for row 09. No orders or trading-pipeline database writes were performed by these test runners; the proxy retains its normal request/session logs. Each model repair stayed within the existing one-call budget.
 
 Comparing every original authored field with the final artifacts in both final repeats found exactly these changes: row 04 entry_mode, row 05 entry_mode, row 06 trigger_purpose, row 11 entry_mode. Research answers, questions, triggers and financial fields were unchanged. The original 12-response corpus and previous reviews remain intact. [The prior audit](board-failure-isolation-2026-09-11.md) remains the record of the earlier 4/5 result and evaluator correction.
 
@@ -41,4 +41,4 @@ The final row 09 repairs still contain financial inconsistencies, and the normal
 
 ## Validation and release
 
-The final full unit suite passed: **7,119 passed, 102 skipped**. NAS verification will be appended after deployment. Focused tests cover unique correction, unchanged data, ambiguity, invalid triggers, exclusion of BUY, and strict preservation on model fallback.
+The final full unit suite passed: **7,119 passed, 102 skipped**. The final focused suites also passed (54 tests), including the recorded normalization event. The first deploy build timed out on a Debian dependency download before transfer/restart. A fresh deploy-kit retry succeeded: NAS `trading-service` is running healthy at **228bcfb8**, and `/health` returned HTTP 200. In-container checks verified four normalization examples, unchanged inputs, exclusion of BUY, and abstention on ambiguous or invalid-trigger inputs; deployed source hashes match the validated files. The pipeline was idle at deployment. The client and adapter repositories are unchanged. [Release verification](evidence/board-failure-isolation-2026-09-11/unique-label-release-verification.json) retains both deployment outcomes. Focused tests cover unique correction, unchanged data, ambiguity, invalid triggers, exclusion of BUY, and strict preservation on model fallback.
