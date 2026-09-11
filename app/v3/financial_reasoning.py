@@ -189,7 +189,9 @@ def render_reasoning_artifact(artifact, record):
     from app.v3.financial_claims import _question_requirements, _supports_question_date
     for answer in answers:
         if not isinstance(answer, dict) or not isinstance(answer.get("item_id"), str) or answer["item_id"] not in questions:
-            errors.append("research_answers contains an unknown question ID.")
+            errors.append("research_answers contains an unknown question ID. Allowed question IDs: "
+                          + json.dumps(list(questions)) + "."
+                          + (" Return research_answers: []; the financial record has no questions." if not questions else ""))
             continue
         q = questions[answer["item_id"]]
         steps = select(answer.get("step_ids"), "research_answers." + answer["item_id"])

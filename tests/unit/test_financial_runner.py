@@ -265,3 +265,27 @@ async def test_empty_research_answer_step_ids_receives_catalog_grounding_repair(
     assert 'headroom' in prompt
     assert "Never emit 'step_ids': []" in prompt
     assert desk_status(desk)['status'] == 'consistent'
+
+
+@pytest.mark.asyncio
+async def test_empty_question_record_does_not_promote_debate_topics_during_repair():
+    desk, module, _ = fixture()
+    module.TOOL_WHITELIST = []
+    desk.cycle_metadata['financial_evidence_record']['questions'] = []
+    desk.cycle_metadata['debate_frame_context'] = '[DATA_SUFFICIENCY] Is there enough verified evidence to take a position?'
+    bad = {'financial_reasoning_version': 2, 'action': 'HOLD', 'confidence': 72,
+           'position_size_pct': 0, 'entry_mode': 'watch_only', 'trigger_purpose': 'none',
+           'dynamic_trigger': None, 'resolution_condition': None, 'reasoning_steps': ['headroom'],
+           'research_answers': [{'item_id': '[DATA_SUFFICIENCY]', 'step_ids': ['headroom']}]}
+    good = {**bad, 'research_answers': []}
+    outcome, model = await run(desk, module, [bad, good])
+    assert model.await_count == 2
+    for call in model.call_args_list:
+        prompt = call.kwargs['user_prompt']
+        assert 'complete allowed item_id list for research_answers is: []' in prompt
+        assert 'Return research_answers: []' in prompt
+    assert 'Allowed question IDs: []' in model.call_args_list[1].kwargs['user_prompt']
+    assert desk_status(desk)['status'] == 'consistent'
+    assert desk.final_decision['research_answers'] == []
+    assert desk.final_decision['action'] == good['action']
+    assert desk.final_decision['confidence'] == good['confidence']

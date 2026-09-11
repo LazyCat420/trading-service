@@ -221,7 +221,7 @@ FINANCIAL_OUTPUT_RULES = """
 ## REQUIRED STRUCTURED FINANCIAL DECISION
 Return ONE flat JSON object. Required model-authored fields are financial_reasoning_version (always 2), action (BUY/HOLD/SELL), confidence, position_size_pct, entry_mode, trigger_purpose, dynamic_trigger, resolution_condition, reasoning_steps, research_answers.
 reasoning_steps is a NONEMPTY concise list of IDs from SELECTABLE FINANCIAL REASONING STEPS. Select the relationships that explain YOUR decision. Read their statements: they already interpret the calculations accurately. Action, confidence and sizing remain your judgment, subject to the supplied risk limits.
-research_answers is an ARRAY containing EVERY supplied question exactly once in this form: {"item_id":"supplied question ID","step_ids":["selected catalog step ID"]}. Every question MUST contain at least one step ID in step_ids; NEVER leave step_ids empty []. Select all steps needed to cover every part of that question. Select the unavailable-observation step when history is absent. Do not substitute a true but unrelated observation.
+research_answers is an ARRAY containing EVERY question in the FINANCIAL EVIDENCE CONTRACT record.questions exactly once. Debate topics, peer questions and data gaps are NOT research question IDs. When record.questions is empty, return research_answers: []. Otherwise use this form: {"item_id":"supplied question ID","step_ids":["selected catalog step ID"]}. Every question MUST contain at least one step ID in step_ids; NEVER leave step_ids empty []. Select all steps needed to cover every part of that question. Select the unavailable-observation step when history is absent. Do not substitute a true but unrelated observation.
 Do NOT emit reasoning, financial_claims, question text, answer prose, fact_ids or answer status. Code renders those fields from your selected steps and the immutable source records. Do not write a second financial explanation in optional fields. In particular, never relabel a false proposal-fit result as sufficient capacity, compare different margin/return metrics, or treat hypothetical prices as executable quotes.
 Preserve the ordinary decision timing contract. HOLD uses watch_only; SELL uses enter_now; a conditional BUY uses enter_on_condition with an entry trigger. If no trigger or research wake is needed, use trigger_purpose=none with null dynamic_trigger and resolution_condition. For trade_decision also supply attribution and signal_weights required by its decision contract.
 """
@@ -235,10 +235,22 @@ def correction_system_prompt(artifact_type):
             + FINANCIAL_OUTPUT_RULES)
 
 
+def question_selection_prompt(record):
+    questions = record.get('questions') or []
+    return ('\n## AUTHORITATIVE FINANCIAL RESEARCH QUESTION IDS\n'
+            'The complete allowed item_id list for research_answers is: '
+            + json.dumps([q['id'] for q in questions]) + '. '
+            + ('Return research_answers: []. There are no research questions to answer. '
+               if not questions else 'Answer each of these IDs exactly once using nonempty step_ids. ')
+            + 'Do not promote debate-frame topics, peer objections or data gaps into item_id values. '
+            'Those may inform reasoning_steps, but are not additional research questions.\n')
+
+
 def evidence_prompt(record):
     expanded = {**record, 'facts': list(calculated_facts(record).values())}
     return ('## FINANCIAL EVIDENCE CONTRACT v1\n'
             'Immutable source observations and code calculations follow. A missing value is UNKNOWN, never zero. '
             'Metric, unit, source, period and original date belong to each record. '
             'The selectable reasoning-step catalog interprets these records; choose its step IDs for the structured decision.\n'
-            + json.dumps(expanded, separators=(',', ':'), default=str))
+            + json.dumps(expanded, separators=(',', ':'), default=str)
+            + question_selection_prompt(record))
