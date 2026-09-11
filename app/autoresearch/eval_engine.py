@@ -19,6 +19,10 @@ class TraceRecord(BaseModel):
     id: str
     run_id: str
     cycle_id: Optional[str] = None
+    trace_created_at: Optional[datetime] = None
+    model_name: Optional[str] = None
+    endpoint_name: Optional[str] = None
+    model_attribution: Optional[str] = None
     agent_name: Optional[str] = None
     task_type: Optional[str] = None
     goal: Optional[str] = None
@@ -36,6 +40,13 @@ class TraceRecord(BaseModel):
     decision_action: Optional[str] = None
     decision_confidence: Optional[float] = 0.0
     pnl_pct: Optional[float] = 0.0
+
+    @field_validator("tokens_before", "tokens_after", "latency_ms", mode="before")
+    @classmethod
+    def _unknown_counters(cls, value):
+        # Historical Mongo rows can explicitly contain null. These fields
+        # are not used by the rubric; unknown must not strand the queue.
+        return 0 if value is None else value
 
     @field_validator("decision_confidence", "pnl_pct", mode="before")
     @classmethod
@@ -251,7 +262,7 @@ def process_and_store_trace(trace: TraceRecord):
     bucket = classify_failure(trace, score)
     
     try:
-        mongo_store.insert_docs('eval_scores', [{'id': str(uuid.uuid4()), 'run_id': trace.run_id, 'completion_score': score["completion_score"], 'tool_correctness_score': score["tool_correctness_score"], 'efficiency_score': score["efficiency_score"], 'error_recovery_score': score["error_recovery_score"], 'stop_quality_score': score["stop_quality_score"], 'final_score': score["final_score"], 'created_at': datetime.now(timezone.utc)}])
+        mongo_store.insert_docs('eval_scores', [{'id': str(uuid.uuid4()), 'run_id': trace.run_id, 'cycle_id':trace.cycle_id, 'trace_created_at':trace.trace_created_at, 'model_name':trace.model_name, 'endpoint_name':trace.endpoint_name, 'model_attribution':trace.model_attribution or 'legacy_unverified', 'completion_score': score["completion_score"], 'tool_correctness_score': score["tool_correctness_score"], 'efficiency_score': score["efficiency_score"], 'error_recovery_score': score["error_recovery_score"], 'stop_quality_score': score["stop_quality_score"], 'final_score': score["final_score"], 'created_at': datetime.now(timezone.utc)}])
             
         if bucket:
             mongo_store.insert_docs('failure_buckets', [{'id': str(uuid.uuid4()), 'run_id': trace.run_id, 'bucket_type': bucket, 'description': f"Auto-classified based on score {score['final_score']}", 'error_class': classify_error_class(bucket), 'created_at': datetime.now(timezone.utc)}])
@@ -315,7 +326,7 @@ def evaluate_confidence_calibration(ticker: str | None = None, limit: int = 20) 
             "status": f"error: {e}",
         }
 
-def process_pending_traces(limit: int = 50) -> int:
+def process_pending_traces(limit: int = 50, *, cycle_id: str | None = None) -> int:
     """Find and evaluate pending traces."""
     processed_count = 0
     try:
@@ -328,12 +339,13 @@ def process_pending_traces(limit: int = 50) -> int:
         scored = [rid for rid in mongo_store.distinct_values(
             'eval_scores', 'run_id') if rid is not None]
         rows = mongo_query.find_rows(
-            'agent_traces', {'id': {'$nin': scored}},
+            'agent_traces', {'id': {'$nin': scored}, **({'run_id':cycle_id} if cycle_id else {})},
             ["id", "run_id", "agent_name", "task_type", "goal",
              "planned_next_action", "tool_name", "tool_args",
              "tool_result_summary", "why_tool_was_called",
              "tokens_before", "tokens_after", "latency_ms",
-             "did_tool_change_decision", "loop_step", "stop_reason"],
+             "did_tool_change_decision", "loop_step", "stop_reason",
+             "created_at", "model_name", "endpoint_name", "model_attribution"],
             sort=[('created_at', 1)], limit=limit)
 
         columns = [
@@ -341,7 +353,8 @@ def process_pending_traces(limit: int = 50) -> int:
             "planned_next_action", "tool_name", "tool_args", 
             "tool_result_summary", "why_tool_was_called", 
             "tokens_before", "tokens_after", "latency_ms", 
-            "did_tool_change_decision", "loop_step", "stop_reason"
+            "did_tool_change_decision", "loop_step", "stop_reason",
+            "trace_created_at", "model_name", "endpoint_name", "model_attribution"
         ]
 
         for row in rows:

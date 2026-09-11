@@ -676,6 +676,8 @@ async def run_agent(
         # Late-bound model identity for the tool-result hook: the hook closure
         # is built before the model is resolved, so it reads this holder at
         # call time. _agent_llm_call fills it right after resolution.
+        from uuid import uuid4
+        _trace_attempt_id = uuid4().hex
         _model_holder = {"model": None, "provider": None}
 
         def _on_tool_result(tool_name: str, arguments: dict, result, was_blocked: bool, elapsed_ms: int = 0) -> None:
@@ -819,6 +821,7 @@ async def run_agent(
                     latency_ms=elapsed_ms,
                     model_name=_model_holder["model"],
                     endpoint_name=_model_holder["provider"],
+                    agent_attempt_id=_trace_attempt_id,
                 )
                 
                 if provider:
@@ -1136,6 +1139,10 @@ async def run_agent(
                     )
         finally:
             _active_agents.discard(agent_name)
+            from app.autoresearch.trace_writer import confirm_agent_trace_model
+            confirm_agent_trace_model(cycle_id, _trace_attempt_id,
+                                      getattr(harness, "last_model", None),
+                                      getattr(harness, "last_provider", None))
             # Snapshot BEFORE unwinding: on the raise path above this is the
             # only record of what the attempt cost. ACCUMULATED across attempts,
             # because aresilient_call re-enters this function and every attempt

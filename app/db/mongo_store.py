@@ -362,6 +362,8 @@ def ensure_indexes(session: Optional[Any] = None) -> None:
     _try("decision_outcomes", "resolved_at")
     _try("decision_outcomes", "created_at")
     _try("decision_outcomes", [("cycle_id", pymongo.ASCENDING), ("ticker", pymongo.ASCENDING)])
+    _try("agent_traces", [("run_id", 1), ("created_at", 1)])
+    _try("eval_scores", "run_id")
     _try("pipeline_trace_events", [("cycle_id", 1), ("ticker", 1), ("created_at", 1)])
     _try("pipeline_trace_events", "created_at", expireAfterSeconds=30 * 86400)
     # Content stays immutable; retention follows the newest referencing cycle.

@@ -1,37 +1,36 @@
-# AutoResearch model attribution audit — September 10, 2026
+# Corrected AutoResearch attribution audit — September 10, 2026
 
-The recorded tool-evaluation scores do **not** support the explanation that recent AutoResearch used only Nemotron because GLM was unavailable. Recent scored tool traces explicitly identify GLM. The main trading pipeline did use Nemotron on September 9–10, and its Board artifacts had contract failures. These are different populations.
+**Correction:** the earlier report incorrectly treated grading dates as execution dates and compared tool-call scores with the AutoResearch dashboard's combined score. Its claim that September 10 scores proved GLM was serving that day is withdrawn. The supplied records do not establish current GLM availability.
 
-Read-only capture: 2026-09-10 23:09:13.488211+00:00. Day boundaries below are UTC. The capture contains 3,900 scores, 3,782 tool traces, and 1,362 agent-attempt telemetry records over approximately ten days. Scores join on `eval_scores.run_id = agent_traces.id`, as the current scorecard code does; joining to `agent_traces.run_id` would be wrong. 1,024 scores have no matching trace in this capture and remain unattributed.
+## What the dates actually show
 
-## Tool-evaluation scores with model attribution
+The read-only capture contains 3,900 tool-evaluation scores, 3,782 tool traces, and 1,362 agent-attempt rows over approximately ten days. Scores join on `eval_scores.run_id = agent_traces.id`; 1,024 scores lack a matching trace in that capture and remain unattributed.
 
-| UTC date | Recorded model | Scored tool rows | Mean score / 100 | Error tool rows |
-|---|---|---:|---:|---:|
-| 2026-09-04 | deepseek-v4-flash-0731 | 155 | 92.7 | 12 |
-| 2026-09-04 | nemotron35 | 121 | 78.8 | 26 |
-| 2026-09-05 | GLM-5.3-Flash-EXL3 | 68 | 90.0 | 6 |
-| 2026-09-05 | nemotron35 | 582 | 75.3 | 154 |
-| 2026-09-06 | GLM-5.3-Flash-EXL3 | 73 | 74.5 | 21 |
-| 2026-09-06 | nemotron35 | 377 | 74.7 | 105 |
-| 2026-09-07 | GLM-5.3-Flash-EXL3 | 281 | 79.2 | 63 |
-| 2026-09-07 | nemotron35 | 69 | 78.1 | 17 |
-| 2026-09-08 | GLM-5.3-Flash-EXL3 | 350 | 85.3 | 55 |
-| 2026-09-09 | GLM-5.3-Flash-EXL3 | 350 | 91.2 | 26 |
-| 2026-09-10 | GLM-5.3-Flash-EXL3 | 450 | 91.7 | 33 |
+| Grading day (UTC) | Underlying execution day (UTC) | Recorded model | Scored tool rows |
+|---|---|---|---:|
+| September 8 | September 6 | GLM | 350 |
+| September 9 | September 6 | GLM | 113 |
+| September 9 | September 7 | GLM | 237 |
+| September 10 | September 7 | GLM | 340 |
+| September 10 | September 8 | GLM | 110 |
 
-Recent averages rise from 85.3 on September 8 to 91.2 on September 9 and 91.7 on September 10, all attributed to GLM in this capture. Earlier Nemotron cohorts do have lower scores on some days, but model, task, tool availability and pipeline version changed together. This is observational evidence, not a controlled model comparison.
+The quoted September 10 mean of 91.7 belongs to delayed grading of September 7–8 tool calls. It is not the September 10 dashboard score and does not show GLM running on September 10. The 333 September 9 and 306 September 10 tool traces recorded as Nemotron had **zero matched scores** in the frozen capture. Their absence from the score average reflects the grading backlog, not evidence that Nemotron was unused.
 
-## Trading-agent failures
+## The score visible in AutoResearch
 
-On September 9, 100 recorded Nemotron agent attempts contained 21 schema failures; on September 10, 99 contained 22 schema failures. These are attempts, not independent cycles. The separate 72-hour scheduling audit found 42 Board schema failures across 21 cycle/ticker cases, plus one fundamental-report schema failure.
+The latest completed report in the follow-up read is `ar-ebfc8ec68b10`, for `cycle-v3-1789076658` (CRWV): data quality 93.9, decision quality 50.0, LLM performance 64.8, overall 69.6. Its named issue is 2 failures among 7 agent attempts. Its decision cohort explicitly says `cold_start`: zero eligible resolved outcomes and at least three required. The 50 is a neutral insufficient-evidence default, not a measured judgment of Nemotron.
 
-There is direct evidence for harness faults: the adapter's last user message replaced the full task with a retrieval index, which led a Board attempt to search for the company's corporate directors; Board persona examples also omitted required timing fields. A weaker or differently prompted model can be more sensitive to these faults, but the telemetry cannot isolate that causal effect. The task-delivery and contract fixes address observed faults on our side.
+The LLM score combines this cycle's attempt failures with historical judge and tool averages. Prior code selected the latter by grading time, allowing old model executions to enter a new window. It also graded only 50 oldest pending tools after a model-dependent report finished, so a failed report could prevent even deterministic grading. These facts explain why model availability cannot be inferred from that score.
 
-## Limits and next validation
+Board schema failures are independently observed: the 72-hour audit identified 42 rejected Board attempts across 21 cycle/ticker cases. The adapter replaced the full task with a retrieval index, and persona examples omitted contract fields. Those are harness defects regardless of which model was more sensitive to them. No controlled experiment has isolated a Nemotron-versus-GLM quality effect.
 
-The AutoResearch rubric grades individual tool rows using completion status, error text and loop position. It does not measure complete artifact validity, trading returns or learning improvement. A high tool score can coexist with a later rejected Board decision. Successful GLM-attributed rows prove GLM was serving those recorded calls; they do not prove uninterrupted uptime or explain why the main pipeline selected Nemotron.
+## Corrective changes
 
-Keep the frozen learning benchmark and full-cycle validation separate from these historical scores. The live NAS-proxy generation and subsequent paper-cycle check are pending explicit approval after automatic review blocked the probe. No model-routing change was made based on this observational comparison.
+- Record execution and grading timestamps separately. Select the seven-day tool window by execution time and expose pending counts and delay.
+- Grade the current cycle first and drain a bounded historical batch before model-dependent reflection. Deterministic grading works with one or zero model endpoints online.
+- Retain requested model/provider separately. New tool rows stay unconfirmed until the stream reports model identity; confirmation is scoped to the exact attempt. Legacy labels remain explicitly unverified.
+- When model-not-found recovery changes the selected model, change the provider with it and honor an explicit endpoint override. Ordinary routing already supports one available endpoint; regression tests cover that behavior.
+- Show the selected cycle's recorded models, failures, tool counts and both clocks in AutoResearch. Mark a cold-start decision score as unmeasured and explain its neutral contribution to the saved overall score.
+- Preserve historical score records. Do not silently rewrite old reports as if the corrected instrumentation had produced them.
 
-Evidence: [attributed score rows and aggregates](autoresearch-model-evidence-2026-09-10.json). The source capture hash is retained in that file. No new LLM calls were made for this audit.
+Evidence: [original score rows, joins and corrected date cross-tab](autoresearch-model-evidence-2026-09-10.json). The original capture hash remains in that file. New test and deployment results are recorded after validation.

@@ -60,6 +60,7 @@ def write_agent_trace(
     latency_ms: int,
     model_name: str | None = None,
     endpoint_name: str | None = None,
+    agent_attempt_id: str | None = None,
 ) -> None:
     """Insert one agent_traces row. Never raises — telemetry must not break runs."""
     try:
@@ -69,7 +70,9 @@ def write_agent_trace(
         from app.v3.data_trace import record
         record(cycle_id, ticker, agent_name, "tool.result",
                data={"tool":tool_name,"arguments":tool_args,"result":tool_result},
-               failed=failed, latency_ms=latency_ms, model=model_name, provider=endpoint_name)
+               failed=failed, latency_ms=latency_ms, requested_model=model_name,
+               requested_provider=endpoint_name, model_attribution="requested",
+               agent_attempt_id=agent_attempt_id)
         run_id = cycle_id or "nocycle"
         step_key = f"{run_id}:{ticker or '?'}:{agent_name or '?'}"
 
@@ -91,8 +94,33 @@ def write_agent_trace(
             "latency_ms": int(latency_ms or 0), "loop_step": _loop_steps[step_key],
             "stop_reason": "error" if failed else "completed",
             "created_at": datetime.now(timezone.utc), "service_source": "trading-service",
-            "model_name": model_name, "endpoint_name": endpoint_name,
+            "requested_model": model_name, "requested_endpoint": endpoint_name,
+            "model_name": None if agent_attempt_id else model_name,
+            "endpoint_name": None if agent_attempt_id else endpoint_name,
+            "model_attribution": "unconfirmed" if agent_attempt_id else "legacy_unverified",
+            "agent_attempt_id": agent_attempt_id,
         }
         mongo_store.insert_docs("agent_traces", [_rec])
     except Exception as e:
         logger.debug("[TraceWriter] Failed to write agent trace (non-fatal): %s", e)
+
+
+def confirm_agent_trace_model(cycle_id, agent_attempt_id, model, provider):
+    """Attach stream-reported identity only to this attempt's tool rows.
+
+    Requested routing and /models discovery are not proof of generation.
+    A stream without response metadata stays unconfirmed.
+    """
+    if not cycle_id or not agent_attempt_id or not isinstance(model, str) or not model.strip():
+        return
+    try:
+        mongo_store.update_docs('agent_traces', {
+            'run_id':cycle_id, 'agent_attempt_id':agent_attempt_id,
+        }, {'$set':{'model_name':model, 'endpoint_name':provider,
+                    'model_attribution':'response_metadata'}})
+        from app.v3.data_trace import record
+        record(cycle_id, '', 'transport', 'model.identity',
+               agent_attempt_id=agent_attempt_id, model=model, provider=provider,
+               model_attribution='response_metadata')
+    except Exception as exc:
+        logger.debug('Could not confirm trace model identity: %s', type(exc).__name__)

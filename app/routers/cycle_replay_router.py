@@ -959,3 +959,13 @@ async def trace_export(cycle_id: str, ticker: str = ""):
         raise HTTPException(413,"Trace exceeds export bound; select a ticker scope")
     name = re.sub(r'[^A-Za-z0-9_.-]', '_', cycle_id)[:160]
     return JSONResponse(otlp_export(events),headers={"Content-Disposition":f'attachment; filename="{name}.otlp.json"'})
+
+
+@router.get("/{cycle_id}/score-evidence")
+async def score_evidence(cycle_id: str):
+    from app.autoresearch.trace_evidence import trace_quality_window
+    evidence = trace_quality_window(cycle_id=cycle_id)
+    attempts = mongo_store.find_docs('v3_agent_telemetry', {'cycle_id':cycle_id},
+        projection={'_id':0,'agent_name':1,'model_used':1,'provider':1,'outcome':1,'failure_reason':1}, limit=1000)
+    return {'tool_evidence':evidence, 'agent_attempts':attempts,
+            'basis':'Retained evidence for this cycle; historical report scores are not recalculated.'}

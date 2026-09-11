@@ -47,7 +47,8 @@ class _FakeMongoQuery:
 
 
 def _audit_with(fake, cycle_id="cycle-test-1"):
-    with patch.object(llm_audit, "mongo_query", fake):
+    with patch.object(llm_audit, "mongo_query", fake), \
+         patch.object(llm_audit, "trace_quality_window", return_value={"scored_count":0,"trace_count":0,"pending_count":0,"mean_score":None}):
         return _audit_llm_traces(cycle_id)
 
 

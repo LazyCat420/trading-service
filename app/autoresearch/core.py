@@ -202,6 +202,10 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
             # rejects — this block is persisted verbatim into the report row.
             return float(v) if isinstance(v, (int, float)) or hasattr(v, "__float__") else v
 
+        perf_metrics["llm_evidence"] = {
+            k:llm_analysis.get(k) for k in (
+                "score_version", "total_calls", "failed_calls", "score_components", "tool_evidence")
+        }
         perf_metrics["decision_cohort"] = {
             "score_version": decision_quality.get("score_version"),
             "per_cycle_judge_score": _jsonsafe(decision_quality.get("per_cycle_judge_score")),
@@ -301,7 +305,7 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
             )
 
         score_ver = decision_quality.get("score_version", "v6")
-        mongo_store.update_docs('autoresearch_reports', {'id': report_id}, {'$set': {'score_version': score_ver, 'data_quality_score': round(data_score, 1), 'decision_quality_score': round(decision_score, 1), 'llm_performance_score': round(llm_score, 1), 'overall_score': round(overall, 1), 'data_gaps': json.dumps(data_quality.get("gaps", [])), 'decision_issues': json.dumps(decision_quality.get("issues", [])), 'llm_issues': json.dumps(llm_analysis.get("issues", [])), 'performance_metrics': json.dumps(perf_metrics), 'reflection': json.dumps(reflection), 'recovery_stats': json.dumps(recovery), 'status': 'done'}})
+        mongo_store.update_docs('autoresearch_reports', {'id': report_id}, {'$set': {'score_version': score_ver, 'llm_score_version':llm_analysis.get('score_version'), 'data_quality_score': round(data_score, 1), 'decision_quality_score': round(decision_score, 1), 'llm_performance_score': round(llm_score, 1), 'overall_score': round(overall, 1), 'data_gaps': json.dumps(data_quality.get("gaps", [])), 'decision_issues': json.dumps(decision_quality.get("issues", [])), 'llm_issues': json.dumps(llm_analysis.get("issues", [])), 'performance_metrics': json.dumps(perf_metrics), 'reflection': json.dumps(reflection), 'recovery_stats': json.dumps(recovery), 'status': 'done'}})
 
         try:
             lesson_result = _store_lessons(reflection, cycle_id)

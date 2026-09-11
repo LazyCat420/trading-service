@@ -1,6 +1,9 @@
 import logging
 
 from app.db import mongo_query
+from app.autoresearch.trace_evidence import trace_quality_window
+
+LLM_SCORE_VERSION = "llm_execution_time_v2"
 from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
@@ -30,7 +33,8 @@ def _audit_llm_traces(cycle_id: str) -> dict:
         None (not 1.0) when the cycle has no telemetry rows at all
       - judge quality (0.3): decision_evaluations.final_quality_score (0-5,
         LLM-as-judge over real decisions), 7d average
-      - eval quality (0.2): eval_scores.final_score (0-100 trace evals), 7d avg
+      - eval quality (0.2): scored tool traces executed in the last 7d
+        (grading time cannot make an old model call recent)
     The score is the weighted average renormalized over the components that
     have evidence; a component with no evidence contributes nothing rather
     than borrowing another component's number. No evidence anywhere -> 0.5
@@ -72,6 +76,7 @@ def _audit_llm_traces(cycle_id: str) -> dict:
         judge_avg = None
         eval_avg = None
         deepeval_dead = False
+        tool_evidence = {}
         try:
             row = mongo_query.agg_row('decision_evaluations', {'timestamp': {'$gt': (datetime.now(timezone.utc) - timedelta(days=7))}, 'final_quality_score': {'$ne': None}}, [('avg', 'final_quality_score'), ('count', None)])
             if row and row[1] and row[1] >= 3:
@@ -95,9 +100,11 @@ def _audit_llm_traces(cycle_id: str) -> dict:
             if de_total >= 3 and de_errors > de_total * 0.5:
                 deepeval_dead = True
 
-            ev = mongo_query.agg_row('eval_scores', {'created_at': {'$gt': (datetime.now(timezone.utc) - timedelta(days=7))}, 'final_score': {'$ne': None}}, [('avg', 'final_score'), ('count', None)])
-            if ev and ev[1] and ev[1] >= 10:
-                eval_avg = max(0.0, min(1.0, float(ev[0]) / 100.0))
+            tool_evidence = trace_quality_window()
+            if tool_evidence['scored_count'] >= 10 and tool_evidence['mean_score'] is not None:
+                eval_avg = max(0.0, min(1.0, tool_evidence['mean_score'] / 100.0))
+            if tool_evidence['pending_count']:
+                issues.append({'issue':f"Tool grading incomplete: {tool_evidence['pending_count']} of {tool_evidence['trace_count']} recent calls await grading", 'severity':'warning'})
         except Exception as q_err:
             logger.debug("[LLM-AUDIT] Quality component lookup skipped: %s", q_err)
 
@@ -125,7 +132,7 @@ def _audit_llm_traces(cycle_id: str) -> dict:
         # the old subsystem_benchmarks module was deleted in the V3 purge).
         history_scores = []
         try:
-            rows = mongo_query.find_rows('autoresearch_reports', {'llm_performance_score': {'$ne': None}}, ['llm_performance_score'], sort=[('created_at', -1)], limit=10)
+            rows = mongo_query.find_rows('autoresearch_reports', {'llm_performance_score': {'$ne': None}, 'llm_score_version':LLM_SCORE_VERSION}, ['llm_performance_score'], sort=[('created_at', -1)], limit=10)
             history_scores = [float(r[0]) / 100.0 for r in rows if r[0] is not None]
         except Exception as trend_err:
             logger.debug("[LLM-AUDIT] Trend lookup skipped: %s", trend_err)
@@ -152,6 +159,10 @@ def _audit_llm_traces(cycle_id: str) -> dict:
 
         return {
             "score": round(current_score, 3),
+            "score_version": LLM_SCORE_VERSION,
+            "score_components": {"cycle_agent_success":availability, "historical_judge_7d":judge_avg,
+                                 "historical_tool_execution_7d":eval_avg},
+            "tool_evidence": tool_evidence,
             "total_calls": total_calls,
             "failed_calls": failed,
             "llm_calls_logged": llm_calls_logged,

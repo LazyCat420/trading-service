@@ -768,7 +768,9 @@ async def call_prism_agent(
                 if "404" in str(e) or "not exist" in str(e).lower() or "not found" in str(e).lower():
                     logger.warning(f"[PrismAgentCaller] 404 Model Not Found. Forcing refresh and retrying...")
                     # Fetch fresh model and try exactly one more time
-                    fresh_model, _ = await resolve_default_model_for_agent(fallback_agent_name or agent_id, force_refresh=True)
+                    fresh_model, fresh_provider = await resolve_default_model_for_agent(
+                        fallback_agent_name or agent_id, force_refresh=True,
+                        endpoint_override=endpoint_override)
                     resp = await prism_client.call_agent(
                         model=fresh_model,
                         messages=messages,
@@ -778,10 +780,10 @@ async def call_prism_agent(
                         temperature=temperature,
                         project=project or settings.PROJECT_NAME,
                         max_iterations=max_iter,
-                        provider=provider,
+                        provider=fresh_provider,
                         thinking_enabled=False,
                         bench_task=bench_task,
-                        **min_p_kwargs(provider, fresh_model),
+                        **min_p_kwargs(fresh_provider, fresh_model),
                     )
                 else:
                     raise e

@@ -51121,5 +51121,38 @@
       "agent": null,
       "stop_reason": null
     }
+  ],
+  "correction": "scores_by_day groups grading time, not model execution time. Model labels are historical and unverified. Do not infer current model availability.",
+  "grading_day_to_execution_day": [
+    {
+      "graded_day_utc": "2026-09-08",
+      "executed_day_utc": "2026-09-06",
+      "recorded_model": "GLM-5.3-Flash-EXL3",
+      "rows": 350
+    },
+    {
+      "graded_day_utc": "2026-09-09",
+      "executed_day_utc": "2026-09-06",
+      "recorded_model": "GLM-5.3-Flash-EXL3",
+      "rows": 113
+    },
+    {
+      "graded_day_utc": "2026-09-09",
+      "executed_day_utc": "2026-09-07",
+      "recorded_model": "GLM-5.3-Flash-EXL3",
+      "rows": 237
+    },
+    {
+      "graded_day_utc": "2026-09-10",
+      "executed_day_utc": "2026-09-07",
+      "recorded_model": "GLM-5.3-Flash-EXL3",
+      "rows": 340
+    },
+    {
+      "graded_day_utc": "2026-09-10",
+      "executed_day_utc": "2026-09-08",
+      "recorded_model": "GLM-5.3-Flash-EXL3",
+      "rows": 110
+    }
   ]
 }

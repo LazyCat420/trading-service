@@ -13,6 +13,14 @@ async def run_autoresearch(job_id: str, payload: dict):
     # ── Run Core Autoresearch Audit & Reports ──
     cycle_id = payload.get("cycle_id")
     cycle_summary = payload.get("cycle_summary")
+    # Tool grading is deterministic and needs no model. Grade this cycle
+    # before its report, then drain a bounded historical batch independently
+    # of whether the LLM-based reflection succeeds.
+    processed_count = 0
+    if cycle_id:
+        processed_count += await asyncio.to_thread(process_pending_traces, limit=1000, cycle_id=cycle_id)
+    processed_count += await asyncio.to_thread(process_pending_traces, limit=500)
+    logger.info("Processed %d tool traces before model-dependent audit", processed_count)
     if cycle_id and cycle_summary:
         from app.autoresearch.core import run_autoresearch as run_autoresearch_core
         try:
@@ -22,11 +30,6 @@ async def run_autoresearch(job_id: str, payload: dict):
             logger.error("Failed running core run_autoresearch: %s", e)
             raise Exception(f"Core run_autoresearch failed: {e}")
     
-    # Process pending traces from recent cycles (part of eval_engine)
-    logger.info("Processing pending traces...")
-    processed_count = process_pending_traces(limit=50)
-    logger.info("Processed %d traces", processed_count)
-
     # Aggregate trace scores into the tool playbook. This was defined but
     # never scheduled (its only caller, run_eval_worker, had no scheduler),
     # so eval_scores was write-only and tool_playbook stayed empty forever.
