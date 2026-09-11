@@ -1,0 +1,166 @@
+{
+  "rows": [
+    {
+      "file": "01-headroom-current.json",
+      "scope": "Entire raw response, including all sibling research_answers",
+      "audit": {
+        "version": 1,
+        "scope": "explicit_operand_arithmetic_only",
+        "checked": 0,
+        "errors": 0,
+        "scan_truncated": false,
+        "checks": [],
+        "checks_omitted": 0
+      }
+    },
+    {
+      "file": "02-headroom-no_method.json",
+      "scope": "Entire raw response, including all sibling research_answers",
+      "audit": {
+        "version": 1,
+        "scope": "explicit_operand_arithmetic_only",
+        "checked": 0,
+        "errors": 0,
+        "scan_truncated": false,
+        "checks": [],
+        "checks_omitted": 0
+      }
+    },
+    {
+      "file": "03-headroom-stale_memory.json",
+      "scope": "Entire raw response, including all sibling research_answers",
+      "audit": {
+        "version": 1,
+        "scope": "explicit_operand_arithmetic_only",
+        "checked": 0,
+        "errors": 0,
+        "scan_truncated": false,
+        "checks": [],
+        "checks_omitted": 0
+      }
+    },
+    {
+      "file": "04-missing_history-stale_memory.json",
+      "scope": "Entire raw response, including all sibling research_answers",
+      "audit": {
+        "version": 1,
+        "scope": "explicit_operand_arithmetic_only",
+        "checked": 0,
+        "errors": 0,
+        "scan_truncated": false,
+        "checks": [],
+        "checks_omitted": 0
+      }
+    },
+    {
+      "file": "05-missing_history-no_method.json",
+      "scope": "Entire raw response, including all sibling research_answers",
+      "audit": {
+        "version": 1,
+        "scope": "explicit_operand_arithmetic_only",
+        "checked": 0,
+        "errors": 0,
+        "scan_truncated": false,
+        "checks": [],
+        "checks_omitted": 0
+      }
+    },
+    {
+      "file": "06-missing_history-current.json",
+      "scope": "Entire raw response, including all sibling research_answers",
+      "audit": {
+        "version": 1,
+        "scope": "explicit_operand_arithmetic_only",
+        "checked": 0,
+        "errors": 0,
+        "scan_truncated": false,
+        "checks": [],
+        "checks_omitted": 0
+      }
+    },
+    {
+      "file": "07-held_deterioration-current.json",
+      "scope": "Entire raw response, including all sibling research_answers",
+      "audit": {
+        "version": 1,
+        "scope": "explicit_operand_arithmetic_only",
+        "checked": 0,
+        "errors": 0,
+        "scan_truncated": false,
+        "checks": [],
+        "checks_omitted": 0
+      }
+    },
+    {
+      "file": "08-held_deterioration-no_method.json",
+      "scope": "Entire raw response, including all sibling research_answers",
+      "audit": {
+        "version": 1,
+        "scope": "explicit_operand_arithmetic_only",
+        "checked": 0,
+        "errors": 0,
+        "scan_truncated": false,
+        "checks": [],
+        "checks_omitted": 0
+      }
+    },
+    {
+      "file": "09-held_deterioration-stale_memory.json",
+      "scope": "Entire raw response, including all sibling research_answers",
+      "audit": {
+        "version": 1,
+        "scope": "explicit_operand_arithmetic_only",
+        "checked": 0,
+        "errors": 0,
+        "scan_truncated": false,
+        "checks": [],
+        "checks_omitted": 0
+      }
+    },
+    {
+      "file": "10-conditional_entry-stale_memory.json",
+      "scope": "Entire raw response, including all sibling research_answers",
+      "audit": {
+        "version": 1,
+        "scope": "explicit_operand_arithmetic_only",
+        "checked": 0,
+        "errors": 0,
+        "scan_truncated": false,
+        "checks": [],
+        "checks_omitted": 0
+      }
+    },
+    {
+      "file": "11-conditional_entry-no_method.json",
+      "scope": "Entire raw response, including all sibling research_answers",
+      "audit": {
+        "version": 1,
+        "scope": "explicit_operand_arithmetic_only",
+        "checked": 0,
+        "errors": 0,
+        "scan_truncated": false,
+        "checks": [],
+        "checks_omitted": 0
+      }
+    },
+    {
+      "file": "12-conditional_entry-current.json",
+      "scope": "Entire raw response, including all sibling research_answers",
+      "audit": {
+        "version": 1,
+        "scope": "explicit_operand_arithmetic_only",
+        "checked": 0,
+        "errors": 0,
+        "scan_truncated": false,
+        "checks": [],
+        "checks_omitted": 0
+      }
+    }
+  ],
+  "minimal_uncovered_examples": {
+    "15/20 = 1.5": [],
+    "30/5 = 6, expressed as 3:1": [],
+    "Operating margin is 30 percent.": []
+  },
+  "interpretation": "All zero checks. Guard only recognizes specific transition/growth relationships, not division equalities, equivalent ratios, or source metric identity. Zero is not mathematical verification."
+}

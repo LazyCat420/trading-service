@@ -1,0 +1,16 @@
+{
+  "git_sha": "521bc3fe",
+  "checks_passed": true,
+  "source_sha256": {
+    "app/v3/agent_runner.py": "eeb64f03cd2f54db1fce770b6eccf421e0d62b1229a0d8d37f050625f33bd86e",
+    "app/v3/decision_contract.py": "c34df0d7908755517aa36d87c883bc4d51c66f0d8c5cb63f5cd0f56bdfbf118b"
+  },
+  "health_status": 200,
+  "captured_at": "2026-09-11T04:21:32.602624+00:00",
+  "container_state": "running",
+  "container_health": "healthy",
+  "deployment_exit_code": 0,
+  "deploy_log_sha256": "7cdb2c90b5879b1dabab918413fc52a8f2beebb19dd3d16b9206e0fbefc9e4d2",
+  "transfer_verified": true,
+  "restart_verified": true
+}
