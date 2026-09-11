@@ -79,13 +79,45 @@ def _question_requirements(question):
         groups.append({'free_cash_flow'})
     if ('exposure' in text and ('additional' in text or 'fit' in text)) or 'headroom' in text:
         groups.append({'calc_headroom_pct', 'calc_headroom_usd'})
+    if 'fit' in text and ('purchase' in text or 'proposal' in text or 'proposed' in text):
+        groups.append({'calc_proposal_fits'})
     if 'independent' in text and ('source' in text or 'report' in text):
         groups.append({'underlying_filing_count'})
     if 'volume' in text and ('five' in text or '5' in text):
         groups.append({'volume_five_session_trend'})
+    if 'rsi' in text and ('support' in text or 'price' in text):
+        groups.extend([{'support'}, {'rsi_14'}])
     if '200' in text and ('moving average' in text or 'sma' in text):
         groups.append({'sma_200'})
     return groups
+
+
+def materialize_claim_references(decision, record):
+    """Resolve authored fact IDs, never replace an authored metric or value.
+
+    Explicit claim objects remain untouched and undergo the full coordinate
+    audit. Unknown IDs remain invalid. The raw response is retained by tracing.
+    """
+    if not isinstance(decision, dict):
+        return decision
+    result = deepcopy(decision)
+    claims = result.get('financial_claims')
+    if not isinstance(claims, list):
+        return result
+    catalog = calculated_facts(record, result)
+    expanded = []
+    refs = []
+    for item in claims:
+        if isinstance(item, str) and item in catalog:
+            fact = catalog[item]
+            expanded.append({'fact_id':item, **{k:fact[k] for k in ('metric','value','unit','as_of','source')}})
+            refs.append(item)
+        else:
+            expanded.append(item)
+    result['financial_claims'] = expanded
+    if refs:
+        result['_financial_claim_reference_ids'] = refs
+    return result
 
 
 def audit_decision(decision, record):
@@ -118,7 +150,13 @@ def audit_decision(decision, record):
     if record_errors:
         return {'version':1,'status':'unresolved','record_sha256':record_hash(record),
                 'checked_claims':0,'errors':[{'kind':'invalid_record','field':'record','message':m} for m in record_errors]}
+    if decision.get('financial_reasoning_version') == 2:
+        from app.v3.financial_reasoning import render_reasoning_artifact
+        decision, rendering_errors = render_reasoning_artifact(decision, record)
+        for message in rendering_errors:
+            error('structured_reasoning', 'reasoning_steps', message)
     catalog = calculated_facts(record, decision)
+    decision = materialize_claim_references(decision, record)
     claims = decision.get('financial_claims')
     if not isinstance(claims, list):
         error('missing_claims', 'financial_claims', 'Return financial_claims with exact metric, value, unit, date and source fields.')
@@ -180,7 +218,9 @@ def audit_decision(decision, record):
         elif comparison['relation'] != ('above' if a>b else 'below' if a<b else 'equal'):
             error('comparison_value', path, 'The stated relation disagrees with the source operands.')
 
-    prose = [(key, decision.get(key)) for key in ('reasoning','rationale','override_reason','timing_override_reason','dissent_resolution')]
+    prose = [(key, decision.get(key)) for key in ('reasoning','rationale','mispricing_basis','override_reason','override_justification','timing_override_reason','dissent_resolution')]
+    if isinstance(decision.get('bear_verdict_response'), dict):
+        prose.append(('bear_verdict_response.decisive_claim', decision['bear_verdict_response'].get('decisive_claim')))
     answers = decision.get('research_answers')
     if not isinstance(answers, list):
         answers=[]
@@ -256,36 +296,44 @@ def audit_decision(decision, record):
         clean=REFERENCE.sub('',text)
         if re.search(r'\d', clean):
             error('unstructured_number',path,'Put quantitative assertions in financial_claims and cite [fact_id]; explain implications qualitatively in prose.')
-        # These categorical contradictions caused real failures even when the
-        # numeric operands were copied correctly. Negated/corrected quotes are
-        # excluded; wider investment-logic judgments remain separately scored.
-        if not re.search(r'\b(?:not|incorrect|wrong|rather than|never)\b',clean,re.I):
+        # Scope negation to the sentence containing the assertion. An unrelated
+        # "not compelling" must not disable checks for the whole rationale.
+        for sentence in re.split(r'(?<=[.;!?])\s+|\n', text):
+            clean_sentence = REFERENCE.sub('', sentence)
+            fits = catalog.get('calc_proposal_fits', {}).get('value')
+            if fits is False and re.search(r'\b(?:proposed|proposal|purchase|addition)\b', clean_sentence, re.I):
+                if (re.search(r'\b(?:purchase|proposal|addition)\s+(?:\[[^]]+\]\s*)?fits\b', sentence, re.I)
+                        or re.search(r'\bdoes not (?:breach|exceed)\b[^.;]{0,30}(?:limit|cap)', clean_sentence, re.I)):
+                    error('proposal_fit_relation',path,'The supplied proposal does not fit: calc_proposal_fits is false; the addition exceeds available headroom.')
+            if re.search(r'\b(?:not|incorrect|wrong|rather than|never)\b',clean_sentence,re.I):
+                continue
             relation = catalog.get('calc_price_vs_support',{}).get('value')
-            m=re.search(r'\b(?:price|close|stock)\b[^.;\n]{0,45}\b(above|below)\s+(?:its\s+|the\s+)?support\b',clean,re.I)
+            m=re.search(r'\b(?:price|close|stock)\b[^.;\n]{0,45}\b(above|below)\s+(?:its\s+|the\s+)?support\b',clean_sentence,re.I)
             if m and relation and m[1].lower()!=relation:
                 error('price_support_relation',path,f'Code comparison places close {relation} support.')
             for pattern, metric in ((r'operating margin','operating_margin_pct'),
                                      (r'gross margin','gross_margin_pct'),
                                      (r'free cash flow|fcf','free_cash_flow'),
                                      (r'roic','roic_pct')):
-                assertion=re.search(r'\b(?:'+pattern+r')\b\s*(?:is|are|remains?|was|turned|currently|now|:)?\s*(positive|negative)\b',clean,re.I)
+                assertion=re.search(r'\b(?:'+pattern+r')\b\s*(?:is|are|remains?|was|turned|currently|now|:)?\s*(positive|negative)\b',clean_sentence,re.I)
                 value=number(catalog.get(metric,{}).get('value'))
                 if assertion and value is not None and ((assertion[1].lower()=='positive' and value<=0) or (assertion[1].lower()=='negative' and value>=0)):
                     error('metric_sign',path,metric+' has the opposite sign in the supplied evidence.')
             range_position=number(catalog.get('calc_range_position_pct',{}).get('value'))
-            if range_position is not None:
-                for sentence in re.split(r'[.;\n]', text):
-                    if not re.search(r'range|support|resistance',sentence,re.I):
-                        continue
-                    wrong_range = (bool(re.search(r'midpoint|halfway',sentence,re.I)) and abs(range_position-50)>1)
-                    wrong_range |= (bool(re.search(r'one[ -]third|a third',sentence,re.I)) and abs(range_position-Decimal(100)/3)>1)
-                    wrong_range |= (bool(re.search(r'lower third',sentence,re.I)) and range_position>Decimal(100)/3)
-                    wrong_range |= (bool(re.search(r'upper third',sentence,re.I)) and range_position<Decimal(200)/3)
-                    if wrong_range:
-                        error('range_position_relation',path,'The stated range location disagrees with the code-computed position.')
+            if range_position is not None and re.search(r'range|support|resistance',sentence,re.I):
+                wrong_range = (bool(re.search(r'midpoint|halfway',sentence,re.I)) and abs(range_position-50)>1)
+                wrong_range |= (bool(re.search(r'one[ -]third|a third',sentence,re.I)) and abs(range_position-Decimal(100)/3)>1)
+                wrong_range |= (bool(re.search(r'lower third',sentence,re.I)) and range_position>Decimal(100)/3)
+                wrong_range |= (bool(re.search(r'upper third',sentence,re.I)) and range_position<Decimal(200)/3)
+                if wrong_range:
+                    error('range_position_relation',path,f'The stated range location disagrees with calc_range_position_pct={range_position}; the midpoint is fifty percent.')
             guidance=catalog.get('guidance_record',{}).get('value')
-            if guidance=='met' and re.search(r'\b(?:beat\w*[^.;\n]{0,25}guidance|guidance\s+beat\w*)\b',clean,re.I):
+            if guidance=='met' and re.search(r'\b(?:beat\w*[^.;\n]{0,25}guidance|guidance\s+beat\w*)\b',clean_sentence,re.I):
                 error('guidance_overstatement',path,'The source says guidance was met, not beaten.')
+            for comparison in re.finditer(REFERENCE.pattern+r'\s+(?:exceeds?|is above|is below|is less than|is greater than)\b[^.;\n\[\]]{0,45}'+REFERENCE.pattern,sentence,re.I):
+                left,right=(catalog.get(key) for key in comparison.groups())
+                if left and right and (_family(left['metric']) != _family(right['metric'])):
+                    error('prose_comparison_metric',path,f"{left['metric']} and {right['metric']} measure different things; this comparison is unsupported.")
     if not checked:
         error('no_evidence', 'financial_claims', 'Declare the facts that support the decision; zero checked claims is not a pass.')
     if checked and not cited and not answers:
@@ -309,15 +357,17 @@ def audit_decision(decision, record):
 
 
 def correction_prompt(user_prompt, artifact, audit, record):
+    proposal = {k:artifact[k] for k in ('action','confidence','position_size_pct','stop_loss','take_profit','entry_mode','trigger_purpose','dynamic_trigger') if k in artifact}
     return (user_prompt+'\n\n## FINANCIAL EVIDENCE RECONSIDERATION\n'
-            'The previous decision has these specific evidence/coverage errors:\n'+json.dumps(audit['errors'])+
-            '\nPrevious JSON:\n'+json.dumps(artifact,default=str)+
+            'Your previous decision was rejected. Write a fresh complete decision using the source records. '
+            'The prior proposal is provided only to let you reconsider its action and price plan:\n'+json.dumps(proposal,default=str)+
+            '\nCorrect ALL of these evidence/coverage errors:\n'+json.dumps(audit['errors'])+
             '\nReconsider the investment conclusion from the supplied facts. You may change action, confidence, '
             'size or plan when the corrected facts justify it. Do not merely relabel the error as verified. '
             'Preserve the original questions and distinguish unknown history from current observations. '
-            'Return complete decision JSON with financial_claims, research_answers and valid timing fields. '
-            'Keep numerical facts in typed financial_claims; reasoning/answers explain their implications '
-            'qualitatively and cite [fact_id]. The harness will revalidate every claim. '
+            'Return financial_reasoning_version=2 with reasoning_steps and research_answers containing item_id and step_ids, plus the complete decision and timing fields. '
+            'Select steps from the supplied catalog; code renders the explanation and numerical records. '
+            'Do not emit financial_claims or authored reasoning/answer prose. The harness will revalidate every selection. '
             'If evidence is insufficient, state the unresolved question; do not invent a value. '
             'Use only records in the supplied FINANCIAL EVIDENCE CONTRACT. '+
             '\nCode-calculated values for your previous plan (not executable quotes):\n'+

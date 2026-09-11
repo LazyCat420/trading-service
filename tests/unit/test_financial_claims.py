@@ -193,3 +193,49 @@ def test_filing_month_is_checked_even_without_an_explicit_day():
     assert any(e['kind']=='historical_evidence' for e in audit_decision(d,record)['errors'])
     d['research_answers'][0].update(status='unresolved',answer='The requested earlier filing is not supplied.',fact_ids=[])
     assert audit_decision(d,record)['status']=='consistent'
+
+
+@pytest.mark.parametrize('field', ['reasoning','mispricing_basis','override_justification','bear_verdict_response'])
+def test_pilot_midpoint_error_survives_unrelated_negation_in_other_sentence(field):
+    record=deepcopy(CASES['headroom']);record['questions']=[]
+    text='Price is at the midpoint of the range [calc_range_position_pct]. Valuation is not compelling.'
+    d={'reasoning':'The location is recorded [calc_range_position_pct].',
+       'financial_claims':[claim(calculated_facts(record)['calc_range_position_pct'])]}
+    d[field]={'decisive_claim':text} if field=='bear_verdict_response' else text
+    assert any(e['kind']=='range_position_relation' for e in audit_decision(d,record)['errors'])
+
+
+def test_correct_proposal_boolean_cannot_mask_wrong_fit_interpretation():
+    record=deepcopy(CASES['headroom']);record['questions']=[]
+    d={'reasoning':'The proposed purchase fits [calc_proposal_fits].',
+       'financial_claims':[claim(calculated_facts(record)['calc_proposal_fits'])]}
+    assert any(e['kind']=='proposal_fit_relation' for e in audit_decision(d,record)['errors'])
+    d['reasoning']='The proposed purchase does not fit [calc_proposal_fits].'
+    assert audit_decision(d,record)['status']=='consistent'
+
+
+def test_pilot_operating_margin_cannot_compare_to_sector_roic_in_prose():
+    record=deepcopy(CASES['headroom']);record['questions']=[];facts=calculated_facts(record)
+    d={'reasoning':'Operating margin [operating_margin_pct] exceeds sector returns [sector_roic_pct].',
+       'financial_claims':[claim(facts[k]) for k in ('operating_margin_pct','sector_roic_pct')]}
+    assert any(e['kind']=='prose_comparison_metric' for e in audit_decision(d,record)['errors'])
+
+
+
+def test_explicit_fact_references_materialize_without_rewriting_authored_values():
+    from app.v3.financial_claims import materialize_claim_references
+    record,d=decision();expected=deepcopy(d['financial_claims'])
+    d['financial_claims']=[c['fact_id'] for c in expected];before=deepcopy(d)
+    assert audit_decision(d,record)['status']=='consistent'
+    assert d==before
+    resolved=materialize_claim_references(d,record)
+    assert resolved['financial_claims']==expected
+    bad=deepcopy(expected);bad[0]['value']=999
+    d['financial_claims']=bad
+    assert materialize_claim_references(d,record)['financial_claims']==bad
+    assert audit_decision(d,record)['status']=='unresolved'
+
+
+def test_unknown_reference_is_never_promoted_to_a_fact():
+    record,d=decision();d['financial_claims']=['invented_fact']
+    assert audit_decision(d,record)['status']=='unresolved'

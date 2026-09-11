@@ -183,7 +183,9 @@ class TestTheRepairPassRefusesIt:
         assert gate < repair, (
             "the transport-failure branch must precede the repair branch"
         )
-        assert "elif artifact is None and final_text and bool(tool_whitelist):" in src
+        # Toolless evidence-backed decisions also qualify for repair. The
+        # transport refusal is exercised through the real runner in
+        # test_financial_toolless_repair_still_refuses_unexecuted_tool_calls.
 
 
 class TestTheProseFallbackRefusesIt:

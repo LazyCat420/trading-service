@@ -49,7 +49,10 @@ async def test_real_runner_repairs_the_financial_conclusion_once_and_traces_evid
     assert model.await_count==2
     assert model.call_args_list[1].kwargs['enable_tools'] is False
     assert 'FINANCIAL EVIDENCE RECONSIDERATION' in model.call_args_list[1].kwargs['user_prompt']
+    assert 'reviewing an investment decision' in model.call_args_list[1].kwargs['system_prompt']
     assert 'FINANCIAL EVIDENCE CONTRACT v1' in model.call_args_list[0].kwargs['user_prompt']
+    assert 'REQUIRED STRUCTURED FINANCIAL DECISION' in model.call_args_list[0].kwargs['system_prompt']
+    assert 'Research agents: return research_answers=' not in model.call_args_list[0].kwargs['user_prompt']
     assert desk.final_decision['action']=='HOLD'
     assert desk_status(desk)['status']=='consistent'
     stages=[call.args[3] for call in trace.call_args_list if len(call.args)>3]
@@ -134,3 +137,70 @@ async def test_real_pipeline_dispatch_accepts_a_correct_control_and_blocks_a_for
         buy.assert_not_called()
         sell.assert_not_called()
         assert bad['no_trade_reason']=='HOLD_POLICY_BLOCKED_FINANCIAL_EVIDENCE'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('bad', ['{"financial_claims":[', json.dumps({'financial_claims':[], 'decision':{'action':'HOLD'}})])
+async def test_toolless_evidence_board_repairs_truncation_and_nested_decision_once(bad):
+    from app.v3.agent_runner import run_v3_agent
+    desk,module,good=fixture();module.TOOL_WHITELIST=[]
+    with patch('app.agents.base_agent.run_agent',new_callable=AsyncMock,side_effect=[
+        {'response':bad,'tokens_used':10,'loops_used':1},
+        {'response':json.dumps(good),'tokens_used':20,'loops_used':1},
+    ]) as model, patch.object(data_trace.mongo_store,'insert_docs'), patch.object(data_trace.mongo_store,'update_docs'):
+        outcome=await run_v3_agent(desk,module,cycle_id=desk.cycle_id,bot_id='test')
+    assert model.await_count==2
+    assert all(c.kwargs['enable_tools'] is False for c in model.call_args_list)
+    assert outcome in (PhaseOutcome.SUCCESS,PhaseOutcome.DATA_GAP)
+    assert desk_status(desk)['status']=='consistent'
+
+
+@pytest.mark.asyncio
+async def test_model_fact_references_survive_runner_and_revalidate_at_execution():
+    from app.v3.orchestrator import _build_v1_compatible_result
+    desk,module,good=fixture()
+    good.update(action='BUY',entry_mode='enter_now',position_size_pct=.2,
+                reasoning='The smaller addition respects the available capacity [calc_headroom_pct].')
+    good['financial_claims']=['calc_headroom_pct']
+    outcome,model=await run(desk,module,[good])
+    assert model.await_count==1
+    assert desk.final_decision['_financial_claim_reference_ids']==['calc_headroom_pct']
+    assert desk.final_decision['financial_claims'][0]['value']==.6
+    assert desk_status(desk)['status']=='consistent'
+    result=_build_v1_compatible_result(desk)
+    assert execution_errors(result)==[]
+    result['financial_decision']['financial_claims'][0]['value']=2.5
+    assert execution_errors(result)
+
+
+@pytest.mark.asyncio
+async def test_financial_toolless_repair_still_refuses_unexecuted_tool_calls():
+    from app.v3.agent_runner import run_v3_agent
+    from app.v3.output_rules import classify_output
+    desk,module,_=fixture();module.TOOL_WHITELIST=[]
+    raw='<tool_call>{"name":"get_sec_filings","arguments":{"ticker":"EVLT"}}</tool_call>'
+    assert classify_output(raw).transport_failure
+    with patch('app.agents.base_agent.run_agent',new_callable=AsyncMock,return_value={'response':raw,'tokens_used':10,'loops_used':1}) as model, \
+         patch.object(data_trace.mongo_store,'insert_docs'),patch.object(data_trace.mongo_store,'update_docs'):
+        outcome=await run_v3_agent(desk,module,cycle_id=desk.cycle_id,bot_id='test')
+    assert model.await_count==1
+    assert outcome==PhaseOutcome.AGENT_ERROR
+    assert desk.final_decision is None
+
+
+@pytest.mark.asyncio
+async def test_structured_model_selection_renders_before_schema_and_execution_checks():
+    from app.v3.orchestrator import _build_v1_compatible_result
+    desk,module,_=fixture();module.TOOL_WHITELIST=[]
+    raw={'financial_reasoning_version':2,'action':'BUY','confidence':72,'position_size_pct':.2,
+         'entry_mode':'enter_now','trigger_purpose':'none','dynamic_trigger':None,'resolution_condition':None,
+         'reasoning_steps':['headroom','proposal_fit'],'research_answers':[]}
+    outcome,model=await run(desk,module,[raw])
+    assert model.await_count==1
+    assert desk.final_decision['action']=='BUY' and desk.final_decision['position_size_pct']==.2
+    assert desk_status(desk)['status']=='consistent'
+    assert desk.final_decision['_financial_explanation_provenance']=='model_selected_steps_code_rendered_statements'
+    result=_build_v1_compatible_result(desk)
+    assert execution_errors(result)==[]
+    result['financial_decision']['reasoning']='The original supplied purchase fits.'
+    assert execution_errors(result)

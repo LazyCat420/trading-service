@@ -802,12 +802,17 @@ async def run_v3_agent(
 
         if (artifact_type in ('final_decision', 'trade_decision')
                 and desk.cycle_metadata.get('financial_evidence_version') == 1):
-            from app.v3.financial_evidence import build_record, evidence_prompt
+            from app.v3.financial_evidence import build_record, evidence_prompt, FINANCIAL_OUTPUT_RULES
             financial_record = desk.cycle_metadata.get('financial_evidence_record')
             if financial_record is None:
                 financial_record = build_record(desk)
                 desk.cycle_metadata['financial_evidence_record'] = financial_record
-            financial_context = evidence_prompt(financial_record)
+            # Replace only the old output-example section; keep role and risk policy.
+            import re
+            system_prompt = re.sub(r'(?ms)^## OUTPUT[^\n]*\n.*?(?=^## |\Z)', '', system_prompt)
+            system_prompt += FINANCIAL_OUTPUT_RULES
+            from app.v3.financial_reasoning import reasoning_prompt
+            financial_context = evidence_prompt(financial_record) + reasoning_prompt(financial_record)
             desk.cycle_metadata['financial_evidence_context'] = financial_context
             dynamic_sections.append((_KEEP, financial_context))
             trace_data(cycle_id, desk.ticker, agent_name, 'financial.evidence', data=financial_record)
@@ -1218,7 +1223,10 @@ async def run_v3_agent(
             )
 
         from app.services.research_work import question_block
-        user_prompt += question_block(desk.cycle_metadata.get("research_questions") or [])
+        if financial_record is None:
+            user_prompt += question_block(desk.cycle_metadata.get("research_questions") or [])
+        else:
+            user_prompt += FINANCIAL_OUTPUT_RULES
 
         user_prompt += (
             "## OUTPUT DIRECTIVE REMINDER\n"
@@ -1393,6 +1401,9 @@ async def run_v3_agent(
                    data=final_text, model=model_used, provider=provider_used, stop_reason=stop_reason,
                    tokens=token_usage, loops=loops_used, attempt=attempt_no)
         artifact = _parse_artifact(final_text, artifact_type, agent_name)
+        if financial_record is not None:
+            from app.v3.financial_reasoning import render_reasoning_artifact
+            artifact, _ = render_reasoning_artifact(artifact, financial_record)
         trace_data(cycle_id, desk.ticker, agent_name, "artifact.parsed",
                    data=artifact, artifact_type=artifact_type, parse_success=artifact is not None)
 
@@ -1431,7 +1442,10 @@ async def run_v3_agent(
                 prose_script_share(artifact) * 100,
             )
             fragment, artifact = artifact, None
-        elif artifact is not None and _is_wrong_shape(artifact_type, artifact):
+        elif artifact is not None and (_is_wrong_shape(artifact_type, artifact) or (
+                financial_record is not None and any(
+                    not artifact.get(key) for key in ("action", "reasoning")
+                ))):
             wrong_shape = True
             logger.warning(
                 "[V3Runner] %s: parsed output is not a %s — it carries none of "
@@ -1458,7 +1472,10 @@ async def run_v3_agent(
         rule = None
         repaired: bool | None = None
         if artifact is None:
-            rule = classify_output(final_text, wrong_shape=wrong_shape)
+            # A parsed tool-call payload is still an unexecuted tool call;
+            # WRONG_SHAPE must not hide the transport-failure classification.
+            raw_rule = classify_output(final_text)
+            rule = raw_rule if raw_rule.transport_failure else classify_output(final_text, wrong_shape=wrong_shape)
 
         # A TRANSPORT fault is not repairable by re-asking. The tool-less
         # repair exists to recover an artifact from research the model has
@@ -1475,7 +1492,7 @@ async def run_v3_agent(
                 "tool-call parser (see app/v3/output_rules.py).",
                 agent_name, rule.name, desk.ticker, len(final_text or ""),
             )
-        elif artifact is None and final_text and bool(tool_whitelist):
+        elif artifact is None and final_text and (bool(tool_whitelist) or financial_record is not None):
             logger.warning(
                 "[V3Runner] %s: %s for %s (%d chars) — attempting tool-less "
                 "artifact repair",
@@ -1580,6 +1597,9 @@ async def run_v3_agent(
                            reason=rule.name)
                 repair_text = repair_result.get("response", "")
                 artifact = _parse_artifact(repair_text, artifact_type, agent_name)
+                if financial_record is not None:
+                    from app.v3.financial_reasoning import render_reasoning_artifact
+                    artifact, _ = render_reasoning_artifact(artifact, financial_record)
                 repaired = artifact is not None
                 if artifact is not None:
                     logger.info(
@@ -1907,6 +1927,9 @@ async def run_v3_agent(
                                    data={"errors":contract_failures,"prompt":repair_prompt,
                                          "response":correction.get("response", "")})
                         candidate = _parse_artifact(correction.get("response", ""), artifact_type, agent_name)
+                        if financial_record is not None:
+                            from app.v3.financial_reasoning import render_reasoning_artifact
+                            candidate, _ = render_reasoning_artifact(candidate, financial_record)
                         token_usage += correction.get("tokens_used", 0)
                         elapsed_ms = int((time.monotonic() - t_start) * 1000)
                         from app.v3.decision_contract import correction_errors
@@ -1942,8 +1965,9 @@ async def run_v3_agent(
 
         if financial_record is not None:
             from copy import deepcopy
-            from app.v3.financial_claims import audit_decision, correction_prompt
+            from app.v3.financial_claims import audit_decision, correction_prompt, materialize_claim_references
             from app.v3.decision_contract import contract_errors, evidence_sources, effective_decision, unique_nonentry_timing_correction
+            artifact = materialize_claim_references(artifact, financial_record)
             financial_audit = audit_decision(artifact, financial_record)
             first_financial_audit = deepcopy(financial_audit)
             original_financial_artifact = deepcopy(artifact)
@@ -1954,12 +1978,14 @@ async def run_v3_agent(
                 if remaining > 1:
                     repaired = False
                     repair_prompt = correction_prompt(user_prompt, artifact, financial_audit, financial_record)
+                    from app.v3.financial_evidence import correction_system_prompt
+                    review_system = correction_system_prompt(artifact_type)
                     try:
                         correction = await asyncio.wait_for(_with_heartbeat(run_agent(
                             agent_name=agent_name, ticker=desk.ticker, cycle_id=cycle_id,
-                            bot_id=bot_id, system_prompt=system_prompt, user_prompt=repair_prompt,
+                            bot_id=bot_id, system_prompt=review_system, user_prompt=repair_prompt,
                             max_tokens=_safe_max_tokens(agent_name=agent_name,
-                                system_prompt=system_prompt, user_prompt=repair_prompt, tool_whitelist=None),
+                                system_prompt=review_system, user_prompt=repair_prompt, tool_whitelist=None),
                             enable_tools=False, model_override=model_override,
                             prism_overrides=prism_overrides, cost_sink=_cost_sink,
                             soft_deadline_s=remaining * 0.5,
@@ -1968,6 +1994,9 @@ async def run_v3_agent(
                         token_usage += correction.get('tokens_used', 0)
                         elapsed_ms = int((time.monotonic() - t_start) * 1000)
                         candidate = _parse_artifact(correction.get('response', ''), artifact_type, agent_name)
+                        if financial_record is not None:
+                            from app.v3.financial_reasoning import render_reasoning_artifact
+                            candidate, _ = render_reasoning_artifact(candidate, financial_record)
                         candidate_errors = validate_artifact(artifact_type, deepcopy(candidate)) if isinstance(candidate, dict) else ['Not a decision object.']
                         if not candidate_errors:
                             candidate = _coerce_artifact(artifact_type, candidate, desk=desk)
@@ -1977,6 +2006,7 @@ async def run_v3_agent(
                             candidate_errors = contract_errors(candidate, board=board_source,
                                 evidence_sources=evidence_sources(desk))
                             candidate = effective_decision(candidate, board_source)
+                            candidate = materialize_claim_references(candidate, financial_record)
                             candidate_audit = audit_decision(candidate, financial_record)
                             candidate_errors += [e['message'] for e in candidate_audit['errors']]
                         trace_data(cycle_id, desk.ticker, agent_name, 'financial.correction',

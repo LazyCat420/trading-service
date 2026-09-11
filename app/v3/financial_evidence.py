@@ -199,25 +199,28 @@ def calculated_facts(record, decision=None):
             any(operand in facts for operand in v['input_ids'])}
 
 
+FINANCIAL_OUTPUT_RULES = """
+## REQUIRED STRUCTURED FINANCIAL DECISION
+Return ONE flat JSON object. Required model-authored fields are financial_reasoning_version (always 2), action (BUY/HOLD/SELL), confidence, position_size_pct, entry_mode, trigger_purpose, dynamic_trigger, resolution_condition, reasoning_steps, research_answers.
+reasoning_steps is a NONEMPTY concise list of IDs from SELECTABLE FINANCIAL REASONING STEPS. Select the relationships that explain YOUR decision. Read their statements: they already interpret the calculations accurately. Action, confidence and sizing remain your judgment, subject to the supplied risk limits.
+research_answers is an ARRAY containing EVERY supplied question exactly once in this form: {"item_id":"supplied question ID","step_ids":["selected catalog step ID"]}. Select all steps needed to cover every part of that question. Select the unavailable-observation step when history is absent. Do not substitute a true but unrelated observation.
+Do NOT emit reasoning, financial_claims, question text, answer prose, fact_ids or answer status. Code renders those fields from your selected steps and the immutable source records. Do not write a second financial explanation in optional fields. In particular, never relabel a false proposal-fit result as sufficient capacity, compare different margin/return metrics, or treat hypothetical prices as executable quotes.
+Preserve the ordinary decision timing contract. HOLD uses watch_only; SELL uses enter_now; a conditional BUY uses enter_on_condition with an entry trigger. If no trigger or research wake is needed, use trigger_purpose=none with null dynamic_trigger and resolution_condition. For trade_decision also supply attribution and signal_weights required by its decision contract.
+"""
+
+
+def correction_system_prompt(artifact_type):
+    return ('You are reviewing an investment decision against immutable financial evidence. '
+            'Correct the evidence selection and reconsider the action or size when required by the supplied facts. '
+            'Return only complete '+artifact_type+' JSON. Select existing code-verified reasoning steps; '
+            'do not write replacement financial prose. Respect the supplied risk and decision contracts. '
+            + FINANCIAL_OUTPUT_RULES)
+
+
 def evidence_prompt(record):
     expanded = {**record, 'facts': list(calculated_facts(record).values())}
     return ('## FINANCIAL EVIDENCE CONTRACT v1\n'
-            'The records below are source observations or code calculations. Dates, units, metrics and '
-            'periods are part of each fact. A missing value is UNKNOWN, never zero. A proposal is not an '
-            'executable quote. Repeated reports with the same source are one underlying source. '
-            'Do not replace current evidence with memory. EPS QoQ/revenue growth are not next-year EPS growth.\n'
-            'Return financial_claims as an array. Each claim copies these exact fields from a record: '
-            '{"fact_id":"record id", "metric":"record metric", "value":0, "unit":"record unit", '
-            '"as_of":"record date", "source":"record source"}. Copy null for unknown values. '
-            'Cite the claim in reasoning as [record_id]. Put quantitative facts ONLY in financial_claims; '
-            'reasoning and answer prose should explain the qualitative implications without repeating numbers. '
-            'Use the code calculations, not mental arithmetic. Current and conditional reward/risk are distinct. '
-            'Do not claim certainty about the investment outcome from correct arithmetic. '
-            'For every supplied question return research_answers with item_id, the exact question text, '
-            'status (answered or unresolved), a qualitative answer, and fact_ids referring to financial_claims. '
-            'An unresolved historical question must retain its original date and remain unresolved when the dated observations are absent. '
-            'For a comparison, optionally return financial_comparisons=[{"id":"comparison_name", '
-            '"left_id":"fact id", "right_id":"fact id", "relation":"above|below|equal"}] and cite [comparison_name]. '
-            'Compare like metrics; company operating margin is not sector gross margin. '
-            'Include the ordinary complete decision JSON and timing contract fields as well.\n'
+            'Immutable source observations and code calculations follow. A missing value is UNKNOWN, never zero. '
+            'Metric, unit, source, period and original date belong to each record. '
+            'The selectable reasoning-step catalog interprets these records; choose its step IDs for the structured decision.\n'
             + json.dumps(expanded, separators=(',', ':'), default=str))
