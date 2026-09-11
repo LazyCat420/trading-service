@@ -134,8 +134,12 @@ def render_reasoning_artifact(artifact, record):
     selected = []
 
     def select(ids, field):
-        if not isinstance(ids, list) or not ids or any(not isinstance(i, str) or i not in catalog for i in ids):
+        if not isinstance(ids, list) or not ids:
             errors.append(f"{field}: select nonempty step IDs from the supplied catalog.")
+            return []
+        unknown = [i for i in ids if not isinstance(i, str) or i not in catalog]
+        if unknown:
+            errors.append(f"{field}: unknown step IDs {json.dumps(unknown)}; select only IDs from the supplied catalog.")
             return []
         if len(ids) != len(set(ids)):
             errors.append(f"{field}: do not repeat steps.")

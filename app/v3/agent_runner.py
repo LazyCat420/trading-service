@@ -1401,9 +1401,10 @@ async def run_v3_agent(
                    data=final_text, model=model_used, provider=provider_used, stop_reason=stop_reason,
                    tokens=token_usage, loops=loops_used, attempt=attempt_no)
         artifact = _parse_artifact(final_text, artifact_type, agent_name)
+        financial_render_errors = []
         if financial_record is not None:
             from app.v3.financial_reasoning import render_reasoning_artifact
-            artifact, _ = render_reasoning_artifact(artifact, financial_record)
+            artifact, financial_render_errors = render_reasoning_artifact(artifact, financial_record)
         trace_data(cycle_id, desk.ticker, agent_name, "artifact.parsed",
                    data=artifact, artifact_type=artifact_type, parse_success=artifact is not None)
 
@@ -1561,6 +1562,18 @@ async def run_v3_agent(
                     f"object. Start with '{{' and end with '}}'. "
                     f"No markdown fences, no commentary. {_decision_shape}\n"
                 )
+                repair_system = system_prompt
+                if financial_render_errors and isinstance(fragment, dict):
+                    # The decision schema is incomplete because rendering failed.
+                    # Report the rejected selections, not a missing prose field
+                    # that the structured contract explicitly forbids authoring.
+                    from app.v3.financial_claims import correction_prompt
+                    from app.v3.financial_evidence import correction_system_prompt
+                    repair_prompt = correction_prompt(user_prompt, fragment, {
+                        "errors": [{"kind": "structured_reasoning", "message": message}
+                                   for message in financial_render_errors],
+                    }, financial_record)
+                    repair_system = correction_system_prompt(artifact_type)
                 logger.info(
                     "[V3Runner] %s: repairing %s with %d recovered tool "
                     "result(s) (%d chars of findings)",
@@ -1575,11 +1588,11 @@ async def run_v3_agent(
                         ticker=desk.ticker,
                         cycle_id=cycle_id,
                         bot_id=bot_id,
-                        system_prompt=system_prompt,
+                        system_prompt=repair_system,
                         user_prompt=repair_prompt,
                         max_tokens=_safe_max_tokens(
                             agent_name=agent_name,
-                            system_prompt=system_prompt,
+                            system_prompt=repair_system,
                             user_prompt=repair_prompt,
                             tool_whitelist=None,
                         ),

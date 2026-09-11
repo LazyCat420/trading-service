@@ -204,3 +204,25 @@ async def test_structured_model_selection_renders_before_schema_and_execution_ch
     assert execution_errors(result)==[]
     result['financial_decision']['reasoning']='The original supplied purchase fits.'
     assert execution_errors(result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repair_valid", [True, False])
+async def test_unknown_structured_selections_receive_precise_bounded_repair(repair_valid):
+    desk,module,_=fixture();module.TOOL_WHITELIST=[]
+    good={'financial_reasoning_version':2,'action':'HOLD','confidence':72,'position_size_pct':0,
+          'entry_mode':'watch_only','trigger_purpose':'none','dynamic_trigger':None,
+          'resolution_condition':None,'reasoning_steps':['headroom'],'research_answers':[]}
+    bad=deepcopy(good);bad['reasoning_steps']=['invented_financial_step']
+    outcome,model=await run(desk,module,[bad,good if repair_valid else bad])
+    assert model.await_count==2
+    prompt=model.call_args_list[1].kwargs['user_prompt']
+    assert 'unknown step IDs' in prompt and 'invented_financial_step' in prompt
+    assert 'Required top-level decision keys: action, confidence, reasoning.' not in prompt
+    assert 'reviewing an investment decision' in model.call_args_list[1].kwargs['system_prompt']
+    if repair_valid:
+        assert desk_status(desk)['status']=='consistent'
+        assert desk.final_decision['action']=='HOLD'
+    else:
+        assert outcome==PhaseOutcome.AGENT_ERROR
+        assert desk.final_decision is None
