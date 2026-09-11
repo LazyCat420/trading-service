@@ -1,0 +1,83 @@
+{
+  "started_at": "2026-09-11T01:18:43.141289+00:00",
+  "before": {
+    "scope": "rolling_execution_window",
+    "cycle_id": null,
+    "window_days": 7,
+    "time_basis": "agent_traces.created_at",
+    "trace_count": 2924,
+    "scored_count": 2018,
+    "pending_count": 906,
+    "mean_score": 84.45,
+    "models": [
+      {
+        "model": "nemotron35",
+        "provider": "vllm",
+        "attribution": "legacy_unverified",
+        "trace_count": 1085,
+        "scored_count": 446,
+        "mean_score": 75.20179372197309,
+        "first_trace_at": "2026-09-04T09:53:25.630000+00:00",
+        "last_trace_at": "2026-09-10T22:02:19.517000+00:00",
+        "last_scored_at": "2026-09-07T05:03:40.451000+00:00",
+        "max_grading_delay_hours": 45.23
+      },
+      {
+        "model": "GLM-5.3-Flash-EXL3",
+        "provider": "vllm-2",
+        "attribution": "legacy_unverified",
+        "trace_count": 1839,
+        "scored_count": 1572,
+        "mean_score": 87.07697201017811,
+        "first_trace_at": "2026-09-04T01:19:10.710000+00:00",
+        "last_trace_at": "2026-09-08T20:45:14.407000+00:00",
+        "last_scored_at": "2026-09-10T22:04:30.350000+00:00",
+        "max_grading_delay_hours": 72.94
+      }
+    ],
+    "note": "Tool-call diagnostics; not complete decision quality. Model labels without response metadata are unverified."
+  },
+  "processed": 906,
+  "batches": [
+    500,
+    406
+  ],
+  "after": {
+    "scope": "rolling_execution_window",
+    "cycle_id": null,
+    "window_days": 7,
+    "time_basis": "agent_traces.created_at",
+    "trace_count": 2922,
+    "scored_count": 2922,
+    "pending_count": 0,
+    "mean_score": 86.23,
+    "models": [
+      {
+        "model": "GLM-5.3-Flash-EXL3",
+        "provider": "vllm-2",
+        "attribution": "legacy_unverified",
+        "trace_count": 1837,
+        "scored_count": 1837,
+        "mean_score": 87.8198149156233,
+        "first_trace_at": "2026-09-04T01:19:45.164000+00:00",
+        "last_trace_at": "2026-09-08T20:45:14.407000+00:00",
+        "last_scored_at": "2026-09-11T01:18:52.390000+00:00",
+        "max_grading_delay_hours": 72.94
+      },
+      {
+        "model": "nemotron35",
+        "provider": "vllm",
+        "attribution": "legacy_unverified",
+        "trace_count": 1085,
+        "scored_count": 1085,
+        "mean_score": 83.53456221198157,
+        "first_trace_at": "2026-09-04T09:53:25.630000+00:00",
+        "last_trace_at": "2026-09-10T22:02:19.517000+00:00",
+        "last_scored_at": "2026-09-11T01:19:10.916000+00:00",
+        "max_grading_delay_hours": 45.23
+      }
+    ],
+    "note": "Tool-call diagnostics; not complete decision quality. Model labels without response metadata are unverified."
+  },
+  "finished_at": "2026-09-11T01:19:12.095409+00:00"
+}

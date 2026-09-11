@@ -34,3 +34,15 @@ Board schema failures are independently observed: the 72-hour audit identified 4
 - Preserve historical score records. Do not silently rewrite old reports as if the corrected instrumentation had produced them.
 
 Evidence: [original score rows, joins and corrected date cross-tab](autoresearch-model-evidence-2026-09-10.json). The original capture hash remains in that file. New test and deployment results are recorded after validation.
+
+## Repair and validation, September 10 PDT
+
+Backend revision `99f3f825` was transferred and restarted on the NAS; the container is healthy and its HTTP health and score-evidence endpoints returned 200. The deterministic repair graded 906 pending stored traces in batches of 500 and 406, reducing the seven-day execution window backlog from 906 to zero. No model or trading execution was invoked by this repair. All 33 retained tool traces for `cycle-v3-1789076658` now have grades, and the endpoint exposes seven agent attempts. Historical reports were preserved.
+
+Validation: full backend suite 7,080 passed, 97 skipped; focused regression suite 60 passed; three integration tests passed against an isolated real Mongo database. Frontend production build and a muted browser interaction check passed. The browser test verified the evidence expansion and absence of page errors.
+
+Repair evidence: [before and after counts](autoresearch-backlog-repair-2026-09-10.json), [NAS API and client proxy responses](autoresearch-score-http-verification-2026-09-10.json).
+
+Live Board delivery, a fresh paper cycle, and the frozen learning benchmark remain unvalidated: automatic approval review rejected transmitting the repository Board instructions and cycle/test context to the NAS proxy. The specific authorization request is pending. Offline regression results and the stored-trace repair do not establish live model delivery or trading decision quality.
+
+Frontend revision `aefbce81` was subsequently transferred and restarted successfully. Final NAS inspection: trading-service `99f3f825`, trading-client `aefbce81`, and lazy-agent-service `83bbd73` all running and healthy. Final HTTP checks passed for both health endpoints, the client page, score evidence through both backend and client proxy, retained trace snapshots, and OTLP export; cross-cycle blob access correctly returned 404. The first frontend Docker build failed on a transient Google font download; the targeted retry completed successfully. Deploy-kit reported existing edge DNS conflicts while leaving its Caddyfile unchanged; service availability passed.

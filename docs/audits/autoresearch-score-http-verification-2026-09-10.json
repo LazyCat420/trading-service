@@ -1,0 +1,46 @@
+{
+  "backend": {
+    "status": 200,
+    "time_basis": "agent_traces.created_at",
+    "trace_count": 33,
+    "scored_count": 33,
+    "pending_count": 0,
+    "models": [
+      {
+        "model": "nemotron35",
+        "provider": "vllm",
+        "attribution": "legacy_unverified",
+        "trace_count": 33,
+        "scored_count": 33,
+        "mean_score": 95.3030303030303,
+        "first_trace_at": "2026-09-10T21:51:02.187000+00:00",
+        "last_trace_at": "2026-09-10T22:02:19.517000+00:00",
+        "last_scored_at": "2026-09-11T01:19:10.916000+00:00",
+        "max_grading_delay_hours": 3.47
+      }
+    ],
+    "attempts": 7
+  },
+  "client": {
+    "status": 200,
+    "time_basis": "agent_traces.created_at",
+    "trace_count": 33,
+    "scored_count": 33,
+    "pending_count": 0,
+    "models": [
+      {
+        "model": "nemotron35",
+        "provider": "vllm",
+        "attribution": "legacy_unverified",
+        "trace_count": 33,
+        "scored_count": 33,
+        "mean_score": 95.3030303030303,
+        "first_trace_at": "2026-09-10T21:51:02.187000+00:00",
+        "last_trace_at": "2026-09-10T22:02:19.517000+00:00",
+        "last_scored_at": "2026-09-11T01:19:10.916000+00:00",
+        "max_grading_delay_hours": 3.47
+      }
+    ],
+    "attempts": 7
+  }
+}
