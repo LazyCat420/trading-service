@@ -219,10 +219,13 @@ async def run_v3_pipeline(
         try:
             from app.quant.technical_baseline import build_technical_baseline_block
 
+            snapshot = {}
             tech_block = await asyncio.wait_for(
-                asyncio.to_thread(build_technical_baseline_block, ticker),
+                asyncio.to_thread(build_technical_baseline_block, ticker,
+                    snapshot_sink=snapshot),
                 timeout=15,
             )
+            desk.cycle_metadata["financial_technical_snapshot"] = snapshot
             if tech_block:
                 desk.cycle_metadata["technical_baseline_context"] = tech_block
                 logger.info("[V3] %s: verified technical baseline injected (%d chars)",
@@ -296,10 +299,13 @@ async def run_v3_pipeline(
     async def _build_valuation_task():
         try:
             from app.quant.valuation_block import build_valuation_block
+            snapshot = {}
             val_block = await asyncio.wait_for(
-                asyncio.to_thread(build_valuation_block, ticker),
+                asyncio.to_thread(build_valuation_block, ticker,
+                    snapshot_sink=snapshot),
                 timeout=15,
             )
+            desk.cycle_metadata["financial_valuation_snapshot"] = snapshot
             if val_block:
                 desk.cycle_metadata["valuation_context"] = val_block
                 logger.info("[V3] %s: precomputed valuation math injected (%d chars)",
@@ -322,10 +328,13 @@ async def run_v3_pipeline(
     async def _build_fundamental_task():
         try:
             from app.quant.fundamental_block import build_fundamental_block
+            snapshot = {}
             fund_block = await asyncio.wait_for(
-                asyncio.to_thread(build_fundamental_block, ticker),
+                asyncio.to_thread(build_fundamental_block, ticker,
+                    snapshot_sink=snapshot),
                 timeout=10,
             )
+            desk.cycle_metadata["financial_fundamental_snapshot"] = snapshot
             if fund_block:
                 desk.cycle_metadata["fundamental_context"] = fund_block
                 logger.info("[V3] %s: precomputed fundamental snapshot injected (%d chars)",
@@ -462,10 +471,13 @@ async def run_v3_pipeline(
     async def _build_book_brief_task():
         try:
             from app.v3.book_brief import build_book_brief
+            snapshot = {}
             book_brief = await asyncio.wait_for(
-                asyncio.to_thread(build_book_brief, ticker, bot_id),
+                asyncio.to_thread(build_book_brief, ticker, bot_id,
+                    snapshot_sink=snapshot),
                 timeout=20,
             )
+            desk.cycle_metadata["financial_book_snapshot"] = snapshot
             if book_brief:
                 desk.cycle_metadata["book_brief_context"] = book_brief
                 logger.info("[V3] %s: book brief injected (%d chars)", ticker, len(book_brief))

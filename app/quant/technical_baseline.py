@@ -461,7 +461,7 @@ def compute_technical_baseline(ticker: str) -> dict:
         return {}
 
 
-def build_technical_baseline_block(ticker: str) -> str:
+def build_technical_baseline_block(ticker: str, *, snapshot_sink: dict | None = None) -> str:
     """The injectable briefing section.
 
     Never returns "" for a ticker with no data — see the NO DATA branch. A
@@ -469,6 +469,9 @@ def build_technical_baseline_block(ticker: str) -> str:
     price history and nothing in the prompt saying so (2026-07-26).
     """
     b = compute_technical_baseline(ticker)
+    if snapshot_sink is not None:
+        from copy import deepcopy
+        snapshot_sink.update(deepcopy(b or {}))
     if not b:
         # ABSENCE MUST BE LOUDER THAN STALENESS. The old code returned ""
         # here, so the one case where the agent knew least produced the least

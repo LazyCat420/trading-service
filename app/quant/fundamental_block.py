@@ -311,13 +311,16 @@ def compute_fundamental_baseline(ticker: str) -> dict | None:
         return None
 
 
-def build_fundamental_block(ticker: str) -> str:
+def build_fundamental_block(ticker: str, *, snapshot_sink: dict | None = None) -> str:
     """The injectable briefing section.
 
     Never returns "" — a silent empty block is how a ticker reaches a desk with
     nothing and no complaint in the logs.
     """
     b = compute_fundamental_baseline(ticker)
+    if snapshot_sink is not None:
+        from copy import deepcopy
+        snapshot_sink.update(deepcopy(b or {}))
     if not b:
         return _NO_DATA
 

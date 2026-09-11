@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 _MAX_CORR_POSITIONS = 8  # correlation lines only for the largest holdings
 
 
-def build_book_brief(ticker: str, bot_id: str = "") -> str:
+def build_book_brief(ticker: str, bot_id: str = "", *, snapshot_sink: dict | None = None) -> str:
     """Book-level brief for the sizing agents. "" when the book is empty."""
     ticker = (ticker or "").strip().upper()
     try:
@@ -37,7 +37,19 @@ def build_book_brief(ticker: str, bot_id: str = "") -> str:
 
     cash = float(portfolio.get("cash") or 0.0)
     positions = portfolio.get("positions") or []
+    if snapshot_sink is not None:
+        from datetime import datetime, timezone
+        snapshot_sink.update(as_of=datetime.now(timezone.utc).isoformat(), cash=cash,
+                             valuation_complete=False)
+        try:
+            from app.services.parameter_store import get_param
+            snapshot_sink['single_name_limit_pct'] = float(get_param('MAX_CONCENTRATION_PCT')) * 100
+            snapshot_sink['max_order_size_pct'] = float(get_param('MAX_POSITION_SIZE_PCT')) * 100
+        except Exception:
+            pass  # Unavailable policy is unknown, never a guessed default.
     if not positions:
+        if snapshot_sink is not None:
+            snapshot_sink.update(equity=cash, exposure_pct=0, valuation_complete=True)
         return (
             "## PORTFOLIO BOOK BRIEF (code-computed)\n"
             f"- Book is ALL CASH (${cash:,.0f}). A new position carries no "
@@ -45,23 +57,30 @@ def build_book_brief(ticker: str, bot_id: str = "") -> str:
             "per-position caps."
         )
 
+    valuation_complete = True
     rows = []  # (ticker, market_value, pnl_pct)
     for p in positions:
         try:
             price, _ = _get_current_price(p["ticker"])
             if price is None:
+                valuation_complete = False
                 price = p["avg_entry_price"]
             mv = float(p["qty"]) * float(price)
             entry = float(p["avg_entry_price"]) or 0.0
             pnl = ((float(price) - entry) / entry * 100) if entry else 0.0
             rows.append((p["ticker"].upper(), mv, pnl))
         except Exception:
+            valuation_complete = False
             continue
     if not rows:
         return ""
     rows.sort(key=lambda r: -r[1])
     total_pos = sum(r[1] for r in rows)
     equity = cash + total_pos
+    if snapshot_sink is not None:
+        snapshot_sink.update(equity=equity,
+            exposure_pct=sum(mv for t, mv, _ in rows if t == ticker) / equity * 100 if equity > 0 else None,
+            valuation_complete=valuation_complete and equity > 0)
 
     lines = [
         "## PORTFOLIO BOOK BRIEF (code-computed — the whole book, not just this ticker)",

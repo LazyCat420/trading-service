@@ -517,6 +517,7 @@ def compute_valuation_baseline(ticker: str) -> dict:
                          "file — no TTM computed (a partial sum would understate)")
         else:
             prov["ttm"] = f"4 quarters ending {ttm.get('_period_end')}"
+            b["ttm_as_of"] = ttm.get("_period_end")
             # ONE line naming all of them, not one line each. Four consecutive
             # "null in at least one of the 4 quarters" bullets is prompt bloat
             # that buries the metrics which DID compute.
@@ -757,7 +758,7 @@ def _money(v: float) -> str:
     return f"${v:,.0f}"
 
 
-def build_valuation_block(ticker: str) -> str:
+def build_valuation_block(ticker: str, *, snapshot_sink: dict | None = None) -> str:
     """The injectable briefing section.
 
     Never returns "" — a silent empty block is how a ticker reaches the board
@@ -765,6 +766,9 @@ def build_valuation_block(ticker: str) -> str:
     the NO DATA branch into technical_baseline).
     """
     b = compute_valuation_baseline(ticker)
+    if snapshot_sink is not None:
+        from copy import deepcopy
+        snapshot_sink.update(deepcopy(b or {}))
     if not b:
         return _NO_DATA
 

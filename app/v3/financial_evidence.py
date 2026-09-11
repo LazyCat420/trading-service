@@ -1,0 +1,211 @@
+"""Dated source facts and deterministic calculations for Board decisions.
+
+Inputs are captured baseline/portfolio snapshots, never analyst prose or memory.
+A proposal is a scenario, an absent operand stays unknown, and matching this
+record verifies consistency with supplied evidence, not the vendor's truth.
+"""
+from __future__ import annotations
+
+from copy import deepcopy
+from decimal import Decimal, InvalidOperation
+import hashlib
+import json
+
+VERSION = 1
+TECH_FIELDS = {'close': ('close', 'USD'), 'rsi': ('rsi_14', 'RSI_points'),
+               'atr': ('atr_14', 'USD'), 'support': ('support', 'USD'),
+               'resistance': ('resistance', 'USD'), 'sma_50': ('sma_50', 'USD'),
+               'sma_200': ('sma_200', 'USD')}
+FUND_FIELDS = {'oper_margin': ('operating_margin_pct', 'percent'),
+               'gross_margin': ('gross_margin_pct', 'percent'),
+               'profit_margin': ('net_margin_pct', 'percent'),
+               'roic': ('roic_pct', 'percent'), 'roe': ('roe_pct', 'percent'),
+               'roa': ('roa_pct', 'percent'), 'debt_to_equity': ('debt_to_equity', 'ratio'),
+               'forward_pe': ('forward_pe', 'ratio'), 'pe_ratio': ('trailing_pe', 'ratio'),
+               'peg_ratio': ('vendor_peg', 'ratio'),
+               'revenue_growth': ('revenue_growth_pct', 'percent'),
+               'eps_growth_qoq': ('eps_growth_qoq_pct', 'percent'),
+               'dividend_yield': ('dividend_yield_pct', 'percent')}
+
+
+def number(value):
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        result = Decimal(str(value))
+        return result if result.is_finite() else None
+    except (ValueError, TypeError, InvalidOperation):
+        return None
+
+
+def fact(metric, value, unit, *, as_of=None, source, entity, period='current', reason=None):
+    result = {'id': metric, 'metric': metric, 'value': value, 'unit': unit,
+              'as_of': str(as_of) if as_of is not None else None,
+              'source': source, 'entity': entity, 'period': period,
+              'status': 'unknown' if value is None else 'known'}
+    if reason:
+        result['reason'] = reason
+    return result
+
+
+def record_hash(record):
+    return hashlib.sha256(json.dumps(record, sort_keys=True, separators=(',', ':'),
+                                     default=str).encode()).hexdigest()
+
+
+def build_record(desk):
+    """Build only from snapshots captured when their original brief was built."""
+    meta = desk.cycle_metadata
+    ticker = desk.ticker
+    facts = []
+    for key, mapping in (('financial_technical_snapshot', TECH_FIELDS),
+                         ('financial_fundamental_snapshot', FUND_FIELDS)):
+        snapshot = meta.get(key) or {}
+        for field, (metric, unit) in mapping.items():
+            provenance = (snapshot.get('field_as_of') or {}).get(field) or snapshot
+            value = number(snapshot.get(field))
+            # Match the existing fundamental briefing's documented vendor
+            # percent display convention. Do not apply it to ratio fields.
+            if value is not None and unit == 'percent' and abs(value) <= 1:
+                value *= 100
+            source = ':'.join((key, ticker, str(provenance.get('as_of')),
+                               str(provenance.get('source') or 'unspecified_vendor')))
+            facts.append(fact(metric, float(value) if value is not None else None, unit,
+                              as_of=provenance.get('as_of'), source=source, entity=ticker,
+                              reason='Not present in the captured source snapshot.' if value is None else None))
+    valuation = meta.get('financial_valuation_snapshot') or {}
+    for key, metric in (('fcf_ttm', 'free_cash_flow'), ('revenue_ttm', 'revenue_ttm'),
+                        ('ebit_ttm', 'operating_income_ttm')):
+        value = number(valuation.get(key))
+        facts.append(fact(metric, float(value) if value is not None else None, 'USD',
+                          as_of=valuation.get('ttm_as_of'),
+                          source='financial_history:'+ticker+':'+str(valuation.get('ttm_as_of')),
+                          entity=ticker, period='trailing_four_quarters',
+                          reason='Complete quarterly source observations not available.' if value is None else None))
+    position = meta.get('position') or {}
+    if position.get('held') is True:
+        value = number(position.get('avg_entry'))
+        facts.append(fact('average_cost', float(value) if value is not None else None, 'USD',
+                          as_of=meta.get('timestamp'), source='position_snapshot:'+ticker,
+                          entity=ticker, period='holding_cost'))
+    book = meta.get('financial_book_snapshot') or {}
+    for metric, unit in (('equity', 'USD'), ('cash', 'USD'), ('exposure_pct', 'percent')):
+        value = number(book.get(metric)) if book.get('valuation_complete') is True else None
+        facts.append(fact(metric, float(value) if value is not None else None, unit,
+                          as_of=book.get('as_of'), source='portfolio_snapshot:'+ticker,
+                          entity=ticker, reason='Portfolio valuation incomplete or unavailable.' if value is None else None))
+    for metric in ('single_name_limit_pct', 'max_order_size_pct'):
+        value = number(book.get(metric))
+        facts.append(fact(metric, float(value) if value is not None else None, 'percent',
+                          as_of=book.get('as_of'), source='parameter_store:'+metric, entity=ticker))
+    # Pending orders are deliberately not assumed to be zero. The executor
+    # rechecks actual order capacity. Until a reservation snapshot is provided,
+    # final purchase headroom is unknown even with a complete held book.
+    facts.append(fact('pending_exposure_pct', None, 'percent', source='missing:'+ticker,
+                      entity=ticker, reason='No captured pending-order reservation snapshot.'))
+    # EPS QoQ and a vendor PEG are not next-year EPS growth. Do not reverse
+    # engineer a growth rate from them to make forward PEG computable.
+    facts.append(fact('eps_growth_next_year_pct', None, 'percent', source='missing:'+ticker,
+                      entity=ticker, period='next_fiscal_year',
+                      reason='No typed next-year EPS-growth observation is supplied.'))
+    questions = []
+    for q in meta.get('research_questions') or []:
+        questions.append({'id': q.get('id'), 'question': q.get('question') or
+                          (q.get('payload') or {}).get('question') or q.get('reason') or '',
+                          'asked_at': str(q.get('created_at') or '')})
+    return {'version': VERSION, 'ticker': ticker, 'as_of': meta.get('timestamp'),
+            'facts': facts, 'questions': questions}
+
+
+def calculated_facts(record, decision=None):
+    """Fixed formulas with dimensional checks. No eval and no inferred operands."""
+    facts = {f['id']: deepcopy(f) for f in record.get('facts', [])}
+    if decision:
+        for key, metric in (('stop_loss', 'plan_stop'), ('take_profit', 'plan_target')):
+            value = number(decision.get(key))
+            facts[metric] = fact(metric, float(value) if value is not None else None, 'USD',
+                                 as_of=record.get('as_of'), source='decision_proposal',
+                                 entity=record['ticker'], period='proposed')
+        trigger = decision.get('dynamic_trigger')
+        if isinstance(trigger, dict) and trigger.get('type') in ('price_below', 'price_above'):
+            value = number(trigger.get('value'))
+            facts['plan_entry'] = fact('plan_entry', float(value) if value is not None else None,
+                                      'USD', as_of=record.get('as_of'), source='decision_proposal',
+                                      entity=record['ticker'], period='hypothetical')
+
+    def calc(name, operands, units, unit, formula, fn, *, period='current', valid=None):
+        inputs = [facts.get(k) for k in operands]
+        values = [number(f.get('value')) if f and f.get('status') == 'known' else None for f in inputs]
+        reason = None
+        if any(v is None for v in values):
+            reason = 'Missing operand: ' + ', '.join(k for k, v in zip(operands, values) if v is None)
+        elif any(f['unit'] != u for f, u in zip(inputs, units)):
+            reason = 'Operand units do not match formula.'
+        elif valid and not valid(*values):
+            reason = 'Formula domain invalid (including zero denominator or invalid price ordering).'
+        value = None
+        if reason is None:
+            try:
+                value = fn(*values)
+                if isinstance(value, Decimal):
+                    value = float(value)
+            except (ArithmeticError, ValueError):
+                reason = 'Undefined arithmetic.'
+        result = fact(name, value, unit, as_of=record.get('as_of'), source='calculation:'+name,
+                      entity=record['ticker'], period=period, reason=reason)
+        result.update(input_ids=list(operands), formula=formula,
+                      source_ids=sorted({s for f in inputs if f for s in f.get('source_ids', [f['source']])}))
+        facts[name] = result
+
+    calc('calc_range_position_pct', ('close', 'support', 'resistance'), ('USD',)*3,
+         'percent', '(close-support)/(resistance-support)*100', lambda p,s,r:(p-s)/(r-s)*100,
+         valid=lambda p,s,r:r>s)
+    calc('calc_price_vs_support', ('close', 'support'), ('USD',)*2, 'category',
+         'compare(close,support)', lambda p,s:'above' if p>s else 'below' if p<s else 'at')
+    calc('calc_holding_return_pct', ('close', 'average_cost'), ('USD',)*2, 'percent',
+         '(close-average_cost)/average_cost*100', lambda p,c:(p-c)/c*100, valid=lambda p,c:c>0 and p>=0)
+    calc('calc_forward_peg', ('forward_pe', 'eps_growth_next_year_pct'), ('ratio','percent'),
+         'ratio', 'forward_pe/eps_growth_next_year_pct', lambda pe,g:pe/g, valid=lambda pe,g:pe>0 and g>0,
+         period='next_fiscal_year')
+    calc('calc_headroom_pct', ('single_name_limit_pct','exposure_pct','pending_exposure_pct'),
+         ('percent',)*3, 'percentage_points', 'max(0,limit-exposure-pending)',
+         lambda cap,held,pending:max(Decimal(0),cap-held-pending), valid=lambda cap,held,pending:cap>=0 and held>=0 and pending>=0)
+    calc('calc_headroom_usd', ('calc_headroom_pct','equity'), ('percentage_points','USD'),
+         'USD', 'headroom_pct/100*equity', lambda h,e:h/100*e, valid=lambda h,e:e>0)
+    calc('calc_proposal_fits', ('proposed_purchase_pct','calc_headroom_pct'),
+         ('percent','percentage_points'), 'boolean', 'proposed_purchase_pct<=headroom_pct',
+         lambda p,h:p<=h, valid=lambda p,h:p>=0)
+    for prefix, stop, target, entry in (('proposed', 'proposed_stop', 'proposed_target', 'proposed_entry'),
+                                       ('plan', 'plan_stop', 'plan_target', 'plan_entry')):
+        if prefix == 'plan' and not decision:
+            continue
+        for scenario, price in (('current','close'), ('conditional',entry)):
+            calc(f'calc_{prefix}_{scenario}_reward_risk', (price,stop,target), ('USD',)*3,
+                 'ratio', '(target-entry)/(entry-stop)', lambda p,s,t:(t-p)/(p-s),
+                 valid=lambda p,s,t:Decimal(0)<s<p<t,
+                 period='hypothetical' if scenario=='conditional' else 'current_reference_price')
+    # Omit calculations with no operand at all. Retain partially known
+    # calculations as explicit unknowns instead of quietly using a substitute.
+    return {k:v for k,v in facts.items() if not k.startswith('calc_') or
+            any(operand in facts for operand in v['input_ids'])}
+
+
+def evidence_prompt(record):
+    expanded = {**record, 'facts': list(calculated_facts(record).values())}
+    return ('## FINANCIAL EVIDENCE CONTRACT v1\n'
+            'The records below are source observations or code calculations. Dates, units, metrics and '
+            'periods are part of each fact. A missing value is UNKNOWN, never zero. A proposal is not an '
+            'executable quote. Repeated reports with the same source are one underlying source. '
+            'Do not replace current evidence with memory. EPS QoQ/revenue growth are not next-year EPS growth.\n'
+            'Return financial_claims as an array. Each claim copies these exact fields from a record: '
+            '{"fact_id":"record id", "metric":"record metric", "value":0, "unit":"record unit", '
+            '"as_of":"record date", "source":"record source"}. Copy null for unknown values. '
+            'Cite the claim in reasoning as [record_id]. Put quantitative facts ONLY in financial_claims; '
+            'reasoning and answer prose should explain the qualitative implications without repeating numbers. '
+            'Use the code calculations, not mental arithmetic. Current and conditional reward/risk are distinct. '
+            'Do not claim certainty about the investment outcome from correct arithmetic. '
+            'For every supplied question return research_answers with item_id, the exact question text, '
+            'status (answered or unresolved), a qualitative answer, and fact_ids referring to financial_claims. '
+            'An unresolved historical question must retain its original date and remain unresolved when the dated observations are absent. '
+            'Include the ordinary complete decision JSON and timing contract fields as well.\n'
+            + json.dumps(expanded, separators=(',', ':'), default=str))
