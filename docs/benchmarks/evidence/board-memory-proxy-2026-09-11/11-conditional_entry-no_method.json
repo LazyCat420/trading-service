@@ -1,0 +1,63 @@
+{
+  "case": "conditional_entry",
+  "arm": "no_method",
+  "cycle_id": "bench-memory-proxy-31fedf12f809",
+  "started_at": 1789092762.5319846,
+  "http_status": 200,
+  "response": "{\n    \"research_answers\": [\n        {\n            \"question_id\": \"q-now\",\n            \"answer\": \"Reward/risk at current price 115 with stop 95 and target 130 is 7.5:10. The upside from 115 to 130 is 15 dollars; the downside from 115 to 95 is 20 dollars. The ratio of upside to downside is 15/20 = 0.75, expressed as 7.5:10.\"\n        },\n        {\n            \"question_id\": \"q-wait\",\n            \"answer\": \"Reward/risk at proposed entry price 100 with stop 95 and target 130 is 3:1. The upside from 100 to 130 is 30 dollars; the downside from 100 to 95 is 5 dollars. The ratio is 30/5 = 6, expressed as 3:1.\"\n        },\n        {\n            \"question_id\": \"q-units\",\n            \"answer\": \"No. Support price 95 cannot be used as RSI threshold 95 on this evidence. RSI is unitless on a 0-100 scale; a threshold of 95 would indicate extreme overbought conditions, which is inconsistent with the technical setup where price is near 95. The two metrics measure different things and are not interchangeable.\"\n        }\n    ],\n    \"final_decision\": {\n        \"action\": \"HOLD\",\n        \"confidence\": 65,\n        \"reasoning\": \"The fundamental outlook is positive: revenue of $1B, growing gross margins (40/41/42%), ROIC of 14% vs sector 10%, management delivering guidance, and low debt/equity of 0.4. Peers trade at forward P/E 22-24 vs EVLT's 20, with expected EPS growth of 16%. However, the present entry is extended. EVLT close is 115, well above the proposed entry of 100, and above key moving averages (SMA-50 98, SMA-200 94). RSI-14 is 72, indicating overbought conditions. The reward/risk at current price is 7.5:10, which is below the 1:1 threshold at the proposed entry price of 100 (3:1). The stock is overbought, above trend, and the contradiction between positive fundamentals and extended technicals resolves in favor of waiting. No position is held; cash is 25000. Maximum single-name exposure is 5% of equity, so position sizing is not constrained by the cap. The decision is HOLD with a dynamic trigger to re-enter on a technical pullback.\",\n        \"position_size_pct\": 0,\n        \"stop_loss\": 95,\n        \"take_profit\": 130,\n        \"entry_mode\": \"enter_on_condition\",\n        \"trigger_purpose\": \"monitor\",\n        \"resolution_condition\": {\n            \"open_question\": \"When will EVLT pull back to or below the entry trigger price of 100?\",\n            \"resolving_fact\": \"EVLT price trading at or below 100\"\n        },\n        \"dynamic_trigger\": {\n            \"type\": \"price_below\",\n            \"value\": 100\n        },\n        \"mispricing_basis\": \"Extended entry above SMA-50 and SMA-200 with overbought RSI-14 of 72 contradicts positive fundamental outlook; mispricing is the technical extension relative to fundamentals.\",\n        \"edge_type\": \"structural\",\n        \"bear_verdict_response\": {\n            \"decisive_claim\": \"present entry is extended; RSI-14 72 indicates overbought; price above SMA-50 and SMA-200\",\n            \"claim_type\": \"size_or_timing\",\n            \"overrode_bear\": false\n        },\n        \"confidence_floor\": 0,\n        \"conviction_vector\": {\n            \"data_quality\": 75,\n            \"consensus_strength\": 60,\n            \"regime_alignment\": 85,\n            \"risk_adjusted\": 70\n        },\n        \"overrides_veto\": false,\n        \"override_justification\": \"\",\n        \"persona_used\": \"jane_street\",\n        \"regime\": \"CONTRADICTORY\"\n    }\n}",
+  "model": "nemotron35",
+  "provider": "vllm",
+  "usage": {
+    "inputTokens": 3793,
+    "outputTokens": 1000,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 3793
+  },
+  "conversation_id": "ccd503ea-6391-4009-9bc1-c385c9ab09d3",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 65,
+    "reasoning": "The fundamental outlook is positive: revenue of $1B, growing gross margins (40/41/42%), ROIC of 14% vs sector 10%, management delivering guidance, and low debt/equity of 0.4. Peers trade at forward P/E 22-24 vs EVLT's 20, with expected EPS growth of 16%. However, the present entry is extended. EVLT close is 115, well above the proposed entry of 100, and above key moving averages (SMA-50 98, SMA-200 94). RSI-14 is 72, indicating overbought conditions. The reward/risk at current price is 7.5:10, which is below the 1:1 threshold at the proposed entry price of 100 (3:1). The stock is overbought, above trend, and the contradiction between positive fundamentals and extended technicals resolves in favor of waiting. No position is held; cash is 25000. Maximum single-name exposure is 5% of equity, so position sizing is not constrained by the cap. The decision is HOLD with a dynamic trigger to re-enter on a technical pullback.",
+    "position_size_pct": 0,
+    "stop_loss": 95,
+    "take_profit": 130,
+    "entry_mode": "enter_on_condition",
+    "trigger_purpose": "monitor",
+    "resolution_condition": {
+      "open_question": "When will EVLT pull back to or below the entry trigger price of 100?",
+      "resolving_fact": "EVLT price trading at or below 100"
+    },
+    "dynamic_trigger": {
+      "type": "price_below",
+      "value": 100
+    },
+    "mispricing_basis": "Extended entry above SMA-50 and SMA-200 with overbought RSI-14 of 72 contradicts positive fundamental outlook; mispricing is the technical extension relative to fundamentals.",
+    "edge_type": "structural",
+    "bear_verdict_response": {
+      "decisive_claim": "present entry is extended; RSI-14 72 indicates overbought; price above SMA-50 and SMA-200",
+      "claim_type": "size_or_timing",
+      "overrode_bear": false
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 75,
+      "consensus_strength": 60,
+      "regime_alignment": 85,
+      "risk_adjusted": 70
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY"
+  },
+  "schema_errors": [],
+  "entry_errors": [
+    "enter_on_condition requires BUY and trigger_purpose=entry",
+    "HOLD requires entry_mode=watch_only"
+  ],
+  "elapsed_s": 13.648337364196777
+}

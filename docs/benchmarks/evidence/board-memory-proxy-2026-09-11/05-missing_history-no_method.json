@@ -1,0 +1,57 @@
+{
+  "case": "missing_history",
+  "arm": "no_method",
+  "cycle_id": "bench-memory-proxy-fac3f2a3ac1b",
+  "started_at": 1789092686.5720303,
+  "http_status": 200,
+  "response": "{\n    \"research_answers\": [\n        {\n            \"id\": \"q-history\",\n            \"answer\": \"No. The only supplied volume observation is 2026-09-03: 1100000 shares. No August volume observations are available. A prior unverified note claims August volume declined for five sessions and that a 14-bar sample establishes SMA-200; neither claim is evidence.\"\n        },\n        {\n            \"id\": \"q-peg\",\n            \"answer\": \"No. PEG requires EPS growth, which is not available in the supplied evidence. Forward P/E of 20 and revenue growth of 10 percent are insufficient to compute PEG.\"\n        },\n        {\n            \"id\": \"q-sma\",\n            \"answer\": \"No. Only 14 daily closes are supplied; SMA-200 requires 200 sessions of data and is NOT available.\"\n        }\n    ],\n    \"final_decision\": {\n        \"action\": \"HOLD\",\n        \"confidence\": 72,\n        \"reasoning\": \"EVLT presents a structurally sound but fully valued setup. Revenue of $1B, FCF of $120M, and cash of $300M against $200M debt yields a healthy balance sheet. Operating margin of 14 percent exceeds the sector 38 percent gross and 10 percent ROIC versus 10 percent sector, indicating durable profitability. Forward P/E of 20 with 10 percent revenue growth is fairly priced relative to peers trading 22-24 P/E with similar margins. The stock at $100 with 14 percent RSI and ATR of $2 sits near its 95-115 range, with no technical breakdown. However, the unresolved SMA-200 question, missing EPS growth, and the absence of volume trend data create genuine uncertainty. The bear case on volume/SMA remains unrefuted but unproven. The contradiction between strong fundamentals and missing technical confirmation warrants caution. With portfolio equity of $100K and a 5 percent single-name cap ($5K), a small speculative position is justifiable, but the unresolved technicals and missing EPS growth prevent a higher conviction call. HOLD is the calibrated response to a setup that is attractive but not yet fully confirmed.\",\n        \"position_size_pct\": 1.5,\n        \"stop_loss\": 95.0,\n        \"take_profit\": 115.0,\n        \"exit_style\": \"hard_stop\",\n        \"entry_mode\": \"enter_now\",\n        \"trigger_purpose\": \"none\",\n        \"resolution_condition\": null,\n        \"dynamic_trigger\": null,\n        \"mispricing_basis\": \"Forward P/E of 20 is fair relative to peers at 22-24; no structural mispricing evident. The contradiction lies between robust fundamentals (ROIC 14% vs sector 10%, stable FCF, guidance track record) and missing technical confirmation (SMA-200 unestablished, volume trend unknown, EPS growth unavailable).\",\n        \"edge_type\": \"quality_at_fair_price\",\n        \"bear_verdict_response\": {\n            \"decisive_claim\": \"unresolved SMA-200 and missing volume/EPS data\",\n            \"claim_type\": \"size_or_timing\",\n            \"overrode_bear\": true\n        },\n        \"confidence_floor\": 0,\n        \"conviction_vector\": {\n            \"data_quality\": 70,\n            \"consensus_strength\": 55,\n            \"regime_alignment\": 80,\n            \"risk_adjusted\": 65\n        },\n        \"overrides_veto\": false,\n        \"override_justification\": \"\",\n        \"persona_used\": \"jane_street\",\n        \"regime\": \"CONTRADICTORY\"\n    }\n}",
+  "model": "nemotron35",
+  "provider": "vllm",
+  "usage": {
+    "inputTokens": 3726,
+    "outputTokens": 839,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 3726
+  },
+  "conversation_id": "76f402da-9211-4e3a-aa66-ebd3721e2808",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 72,
+    "reasoning": "EVLT presents a structurally sound but fully valued setup. Revenue of $1B, FCF of $120M, and cash of $300M against $200M debt yields a healthy balance sheet. Operating margin of 14 percent exceeds the sector 38 percent gross and 10 percent ROIC versus 10 percent sector, indicating durable profitability. Forward P/E of 20 with 10 percent revenue growth is fairly priced relative to peers trading 22-24 P/E with similar margins. The stock at $100 with 14 percent RSI and ATR of $2 sits near its 95-115 range, with no technical breakdown. However, the unresolved SMA-200 question, missing EPS growth, and the absence of volume trend data create genuine uncertainty. The bear case on volume/SMA remains unrefuted but unproven. The contradiction between strong fundamentals and missing technical confirmation warrants caution. With portfolio equity of $100K and a 5 percent single-name cap ($5K), a small speculative position is justifiable, but the unresolved technicals and missing EPS growth prevent a higher conviction call. HOLD is the calibrated response to a setup that is attractive but not yet fully confirmed.",
+    "position_size_pct": 1.5,
+    "stop_loss": 95.0,
+    "take_profit": 115.0,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_now",
+    "trigger_purpose": "none",
+    "resolution_condition": null,
+    "dynamic_trigger": null,
+    "mispricing_basis": "Forward P/E of 20 is fair relative to peers at 22-24; no structural mispricing evident. The contradiction lies between robust fundamentals (ROIC 14% vs sector 10%, stable FCF, guidance track record) and missing technical confirmation (SMA-200 unestablished, volume trend unknown, EPS growth unavailable).",
+    "edge_type": "quality_at_fair_price",
+    "bear_verdict_response": {
+      "decisive_claim": "unresolved SMA-200 and missing volume/EPS data",
+      "claim_type": "size_or_timing",
+      "overrode_bear": true
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 70,
+      "consensus_strength": 55,
+      "regime_alignment": 80,
+      "risk_adjusted": 65
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY"
+  },
+  "schema_errors": [],
+  "entry_errors": [
+    "HOLD requires entry_mode=watch_only"
+  ],
+  "elapsed_s": 14.818826913833618
+}

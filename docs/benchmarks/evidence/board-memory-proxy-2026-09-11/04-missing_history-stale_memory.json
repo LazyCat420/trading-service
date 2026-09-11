@@ -1,0 +1,60 @@
+{
+  "case": "missing_history",
+  "arm": "stale_memory",
+  "cycle_id": "bench-memory-proxy-468f99009ffa",
+  "started_at": 1789092675.0424,
+  "http_status": 200,
+  "response": "{\n    \"research_answers\": [\n        {\n            \"id\": \"q-history\",\n            \"answer\": \"No. The supplied 14 daily closes end on 2026-09-03; the five sessions preceding that date are 2026-08-28, 2026-08-27, 2026-08-26, 2026-08-25, 2026-08-24. No volume observations are supplied for any of those dates, so the question cannot be resolved from the evidence.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"id\": \"q-peg\",\n            \"answer\": \"No. PEG requires estimated EPS growth, which is not supplied. Revenue growth of 10 percent and forward P/E of 20 are available, but without EPS growth the ratio cannot be computed.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"id\": \"q-sma\",\n            \"answer\": \"No. Only 14 daily closes are supplied; a 200-session moving average requires 200 closes. The prior unverified note claiming a 14-bar sample establishes SMA-200 is not evidence.\",\n            \"as_of\": \"2026-09-03\"\n        }\n    ],\n    \"final_decision\": {\n        \"action\": \"HOLD\",\n        \"confidence\": 65,\n        \"reasoning\": \"EVLT trades at 100 with RSI-14 at 46 (neutral), ATR-14 of 2 dollars, and price between support 95 and resistance 115. The company generates 1 billion in revenue, 120 million free cash flow, 300 million cash, and 200 million debt (debt/equity 0.4). ROIC of 14 percent exceeds the sector 10 percent. Forward P/E of 20 and 10 percent revenue growth are supplied, but EPS growth is unavailable, so PEG cannot be computed. Volume data for the five sessions before 2026-09-03 is absent, and SMA-200 is not established with only 14 closes. No earnings event occurs in the next seven sessions. The unresolved technical questions (volume trend, SMA-200) and the inability to compute PEG introduce uncertainty. With no position held and cash of 25000, the conservative posture is HOLD pending resolution of those questions or a clearer technical signal.\",\n        \"position_size_pct\": 0,\n        \"stop_loss\": null,\n        \"take_profit\": null,\n        \"exit_style\": \"hard_stop\",\n        \"entry_mode\": \"enter_now\",\n        \"trigger_purpose\": \"none\",\n        \"resolution_condition\": {\n            \"open_question\": \"Whether volume declined across the five sessions preceding 2026-09-03 and whether SMA-200 can be established\",\n            \"resolving_fact\": \"Supplied volume and close data for the required lookback period\"\n        },\n        \"dynamic_trigger\": null,\n        \"mispricing_basis\": null,\n        \"edge_type\": \"none\",\n        \"bear_verdict_response\": {\n            \"decisive_claim\": null,\n            \"claim_type\": null,\n            \"overrode_bear\": false\n        },\n        \"confidence_floor\": 0,\n        \"conviction_vector\": {\n            \"data_quality\": 60,\n            \"consensus_strength\": 50,\n            \"regime_alignment\": 70,\n            \"risk_adjusted\": 65\n        },\n        \"overrides_veto\": false,\n        \"override_justification\": \"\",\n        \"persona_used\": \"jane_street\",\n        \"regime\": \"CONTRADICTORY\"\n    }\n}",
+  "model": "nemotron35",
+  "provider": "vllm",
+  "usage": {
+    "inputTokens": 3956,
+    "outputTokens": 868,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 3956
+  },
+  "conversation_id": "243abd8d-43bc-4155-bc9e-832cc7102f4f",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 65,
+    "reasoning": "EVLT trades at 100 with RSI-14 at 46 (neutral), ATR-14 of 2 dollars, and price between support 95 and resistance 115. The company generates 1 billion in revenue, 120 million free cash flow, 300 million cash, and 200 million debt (debt/equity 0.4). ROIC of 14 percent exceeds the sector 10 percent. Forward P/E of 20 and 10 percent revenue growth are supplied, but EPS growth is unavailable, so PEG cannot be computed. Volume data for the five sessions before 2026-09-03 is absent, and SMA-200 is not established with only 14 closes. No earnings event occurs in the next seven sessions. The unresolved technical questions (volume trend, SMA-200) and the inability to compute PEG introduce uncertainty. With no position held and cash of 25000, the conservative posture is HOLD pending resolution of those questions or a clearer technical signal.",
+    "position_size_pct": 0,
+    "stop_loss": null,
+    "take_profit": null,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_now",
+    "trigger_purpose": "none",
+    "resolution_condition": {
+      "open_question": "Whether volume declined across the five sessions preceding 2026-09-03 and whether SMA-200 can be established",
+      "resolving_fact": "Supplied volume and close data for the required lookback period"
+    },
+    "dynamic_trigger": null,
+    "mispricing_basis": null,
+    "edge_type": "none",
+    "bear_verdict_response": {
+      "decisive_claim": null,
+      "claim_type": null,
+      "overrode_bear": false
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 60,
+      "consensus_strength": 50,
+      "regime_alignment": 70,
+      "risk_adjusted": 65
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY"
+  },
+  "schema_errors": [],
+  "entry_errors": [
+    "HOLD requires entry_mode=watch_only"
+  ],
+  "elapsed_s": 11.529083251953125
+}

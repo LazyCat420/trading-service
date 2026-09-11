@@ -1,0 +1,60 @@
+{
+  "case": "missing_history",
+  "arm": "current",
+  "cycle_id": "bench-memory-proxy-4d1b493c9be4",
+  "started_at": 1789092701.3912168,
+  "http_status": 200,
+  "response": "{\n    \"research_answers\": [\n        {\n            \"id\": \"q-history\",\n            \"answer\": \"No. The only supplied volume observation is 2026-09-03: 1100000 shares. No August volume observations are available. A prior unverified note claims August volume declined for five sessions and that a 14-bar sample establishes SMA-200; neither claim is evidence.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"id\": \"q-peg\",\n            \"answer\": \"No. PEG requires EPS growth, which is not available in the supplied evidence. Forward P/E is 20 and revenue growth is 10 percent, but without EPS growth PEG cannot be computed.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"id\": \"q-sma\",\n            \"answer\": \"No. Only 14 daily closes are supplied; SMA-200 requires 200 sessions of data and is NOT available.\",\n            \"as_of\": \"2026-09-03\"\n        }\n    ],\n    \"final_decision\": {\n        \"action\": \"HOLD\",\n        \"confidence\": 65,\n        \"reasoning\": \"EVLT trades at 100 with RSI-14 at 46 (neutral), ATR-14 of 2 dollars, and a 2026-09-03 close of 100. Support is 95, resistance is 115. The company shows structural quality: revenue $1B, FCF $120M, cash $300M, debt $200M, ROIC 14% vs sector 10%, operating margin 14%, forward P/E 20, revenue growth 10%, dividend yield 1%. Gross margin improved over three years (40/41/42%) versus sector 38%. Shares declined 2% over the last year. However, key technical confirmations are unresolved: volume trend over five sessions cannot be verified (no August data), SMA-200 is not established with only 14 closes, and PEG cannot be computed without EPS growth. Portfolio equity is 100000; maximum single-name exposure is 5% (5000); cash on hand is 25000. No position is held. The combination of verifiable fundamental strength and unconfirmed technical signals supports a HOLD \u2014 the thesis is intact but not yet actionable without resolved technical confirmation.\",\n        \"position_size_pct\": 0,\n        \"stop_loss\": null,\n        \"take_profit\": null,\n        \"exit_style\": null,\n        \"entry_mode\": \"watch_only\",\n        \"trigger_purpose\": \"research\",\n        \"resolution_condition\": {\n            \"open_question\": \"Whether volume declined across the preceding five trading sessions as of August 17, 2026, and whether SMA-200 can be established from 14 supplied closes\",\n            \"resolving_fact\": \"August volume observations and 200-session of closing prices\"\n        },\n        \"dynamic_trigger\": null,\n        \"mispricing_basis\": \"Structural quality mispriced relative to sector but technically unconfirmed; price at 100 sits between support 95 and resistance 115 with neutral RSI.\",\n        \"edge_type\": \"fundamental_strength_vs_technical_gap\",\n        \"bear_verdict_response\": {\n            \"decisive_claim\": \"volume decline and SMA-200 unestablished\",\n            \"claim_type\": \"size_or_timing\",\n            \"overrode_bear\": true\n        },\n        \"confidence_floor\": 0,\n        \"conviction_vector\": {\n            \"data_quality\": 70,\n            \"consensus_strength\": 55,\n            \"regime_alignment\": 80,\n            \"risk_adjusted\": 65\n        },\n        \"overrides_veto\": false,\n        \"override_justification\": \"\",\n        \"persona_used\": \"jane_street\",\n        \"regime\": \"CONTRADICTORY\"\n    }\n}",
+  "model": "nemotron35",
+  "provider": "vllm",
+  "usage": {
+    "inputTokens": 3847,
+    "outputTokens": 930,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 3847
+  },
+  "conversation_id": "909cb9b3-8495-49e9-ba35-cc9f060cfce9",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 65,
+    "reasoning": "EVLT trades at 100 with RSI-14 at 46 (neutral), ATR-14 of 2 dollars, and a 2026-09-03 close of 100. Support is 95, resistance is 115. The company shows structural quality: revenue $1B, FCF $120M, cash $300M, debt $200M, ROIC 14% vs sector 10%, operating margin 14%, forward P/E 20, revenue growth 10%, dividend yield 1%. Gross margin improved over three years (40/41/42%) versus sector 38%. Shares declined 2% over the last year. However, key technical confirmations are unresolved: volume trend over five sessions cannot be verified (no August data), SMA-200 is not established with only 14 closes, and PEG cannot be computed without EPS growth. Portfolio equity is 100000; maximum single-name exposure is 5% (5000); cash on hand is 25000. No position is held. The combination of verifiable fundamental strength and unconfirmed technical signals supports a HOLD \u2014 the thesis is intact but not yet actionable without resolved technical confirmation.",
+    "position_size_pct": 0,
+    "stop_loss": null,
+    "take_profit": null,
+    "exit_style": null,
+    "entry_mode": "watch_only",
+    "trigger_purpose": "research",
+    "resolution_condition": {
+      "open_question": "Whether volume declined across the preceding five trading sessions as of August 17, 2026, and whether SMA-200 can be established from 14 supplied closes",
+      "resolving_fact": "August volume observations and 200-session of closing prices"
+    },
+    "dynamic_trigger": null,
+    "mispricing_basis": "Structural quality mispriced relative to sector but technically unconfirmed; price at 100 sits between support 95 and resistance 115 with neutral RSI.",
+    "edge_type": "fundamental_strength_vs_technical_gap",
+    "bear_verdict_response": {
+      "decisive_claim": "volume decline and SMA-200 unestablished",
+      "claim_type": "size_or_timing",
+      "overrode_bear": true
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 70,
+      "consensus_strength": 55,
+      "regime_alignment": 80,
+      "risk_adjusted": 65
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY"
+  },
+  "schema_errors": [],
+  "entry_errors": [
+    "trigger purpose requires a structured dynamic_trigger"
+  ],
+  "elapsed_s": 12.59458875656128
+}

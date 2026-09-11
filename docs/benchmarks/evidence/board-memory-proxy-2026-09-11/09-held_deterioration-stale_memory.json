@@ -1,0 +1,48 @@
+{
+  "case": "held_deterioration",
+  "arm": "stale_memory",
+  "cycle_id": "bench-memory-proxy-ffe1480b6f81",
+  "started_at": 1789092736.7186778,
+  "http_status": 200,
+  "response": "{\n    \"research_answers\": [\n        {\n            \"question_id\": \"q-current\",\n            \"answer\": \"The current free cash flow is -40000000 and the current operating margin is 28 percent, as reported in the 2026-09-03 filing.\"\n        },\n        {\n            \"question_id\": \"q-loss\",\n            \"answer\": \"-16.67 percent. The position is underwater from cost 120 to price 100.\"\n        },\n        {\n            \"question_id\": \"q-independent\",\n            \"answer\": \"No. The two reports repeat the same September 2026 filing; they are one source, not two independent confirmations.\"\n        }\n    ],\n    \"rationale\": \"The 2026-09-03 filing introduces severe deterioration: operating margin minus 2 percent (from 42 percent to 30 percent), debt/equity 2.5 (up from 2.0 in the August baseline), negative next-year EPS, free cash flow minus 40 million (from positive 120 million), and gross margin down to 30 percent (from 42 percent). Revenue remains 1 billion but profitability has collapsed. The stock is at 100 versus cost 120, a -16.67 percent unrealized loss. The two repeating September reports are a single source, so there is no independent duplication. The prior bullish note that cites only the August free cash flow ignores the new negative filing. The regime is CONTRADICTORY: the old data suggested a quality compounder, but the current filing shows a structurally impaired business. The position is already open with 10 percent equity exposure (10000 / 100000), which exceeds the 5 percent maximum single-name limit. The holding must be reduced. Given the sharp profit margin compression, negative cash flow, and elevated leverage, a SELL is warranted to bring exposure within policy and lock in the remaining capital before further deterioration. The bear case is decisive on the current fundamentals; the bull case rests on stale August data that has been superseded.\"\n}",
+  "model": "nemotron35",
+  "provider": "vllm",
+  "usage": {
+    "inputTokens": 3998,
+    "outputTokens": 467,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 3998
+  },
+  "conversation_id": "9e25a571-2523-40df-942c-53815f7efc5d",
+  "artifact": {
+    "research_answers": [
+      {
+        "question_id": "q-current",
+        "answer": "The current free cash flow is -40000000 and the current operating margin is 28 percent, as reported in the 2026-09-03 filing."
+      },
+      {
+        "question_id": "q-loss",
+        "answer": "-16.67 percent. The position is underwater from cost 120 to price 100."
+      },
+      {
+        "question_id": "q-independent",
+        "answer": "No. The two reports repeat the same September 2026 filing; they are one source, not two independent confirmations."
+      }
+    ],
+    "rationale": "The 2026-09-03 filing introduces severe deterioration: operating margin minus 2 percent (from 42 percent to 30 percent), debt/equity 2.5 (up from 2.0 in the August baseline), negative next-year EPS, free cash flow minus 40 million (from positive 120 million), and gross margin down to 30 percent (from 42 percent). Revenue remains 1 billion but profitability has collapsed. The stock is at 100 versus cost 120, a -16.67 percent unrealized loss. The two repeating September reports are a single source, so there is no independent duplication. The prior bullish note that cites only the August free cash flow ignores the new negative filing. The regime is CONTRADICTORY: the old data suggested a quality compounder, but the current filing shows a structurally impaired business. The position is already open with 10 percent equity exposure (10000 / 100000), which exceeds the 5 percent maximum single-name limit. The holding must be reduced. Given the sharp profit margin compression, negative cash flow, and elevated leverage, a SELL is warranted to bring exposure within policy and lock in the remaining capital before further deterioration. The bear case is decisive on the current fundamentals; the bull case rests on stale August data that has been superseded."
+  },
+  "schema_errors": [
+    "Missing required field: action",
+    "Missing required field: confidence",
+    "Missing required field: reasoning"
+  ],
+  "entry_errors": [
+    "entry_mode must be enter_now, enter_on_condition, or watch_only",
+    "trigger_purpose must be none, entry, monitor, or research"
+  ],
+  "elapsed_s": 10.261550903320312
+}

@@ -1,0 +1,55 @@
+{
+  "case": "headroom",
+  "arm": "stale_memory",
+  "cycle_id": "bench-memory-proxy-b655e1fdee0a",
+  "started_at": 1789092659.1488414,
+  "http_status": 200,
+  "response": "{\n    \"research_answers\": [\n        {\n            \"id\": \"q-headroom\",\n            \"answer\": \"The portfolio currently holds 44 shares of EVLT worth 4400, representing 4.4% of the 100000 portfolio equity. The single-name exposure limit is 5% of equity (5000). The proposed incremental purchase of 2.5% of portfolio equity equals 2500, which would bring total exposure to 6.9% (7500), exceeding the 5% limit. The maximum additional exposure that can fit under the limit is 600 (0.6% of equity), meaning the proposed 2.5% purchase does not fit under the current limit without reducing existing positions.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"id\": \"q-peg\",\n            \"answer\": \"Forward PEG cannot be computed from the supplied data. Forward P/E is 20, and forward-year EPS growth is 16 percent. PEG = P/E / growth = 20 / 16 = 1.25. However, revenue growth of 10 percent is a different metric (revenue growth \u2260 EPS growth), and using revenue growth for PEG is not supported by the source data. The forward PEG based on EPS growth is 1.25; if revenue growth were used erroneously, the ratio would be 2.0, but that calculation is not valid here.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"id\": \"q-range\",\n            \"answer\": \"The close at 100 is above the proposed stop/support of 95 and below the proposed resistance/target of 115, placing it 5 points above support and 15 points below resistance. The reward/risk ratio based on the 95\u2013115 range is 3:1 ( upside of 15 vs downside of 5). The close's position within the range is 20% from support and 75% from resistance, or equivalently 25% from resistance.\",\n            \"as_of\": \"2026-09-03\"\n        }\n    ],\n    \"final_decision\": {\n        \"action\": \"HOLD\",\n        \"confidence\": 72,\n        \"reasoning\": \"The portfolio already holds EVLT at 4.4% of equity, leaving only 0.6% headroom under the 5% single-name limit. The proposed 2.5% incremental purchase exceeds this limit and cannot execute as proposed. The forward PEG of 1.25 (based on EPS growth) suggests the stock is fairly valued relative to growth. The close at 100 sits within the 95\u2013115 support-resistance range with a 3:1 reward/risk ratio. No earnings event occurs in the next seven sessions. Given the headroom constraint and fair valuation, the position is best maintained at current size.\",\n        \"position_size_pct\": 4.4,\n        \"stop_loss\": 95.0,\n        \"take_profit\": 115.0,\n        \"exit_style\": \"hard_stop\",\n        \"entry_mode\": \"watch_only\",\n        \"trigger_purpose\": \"none\",\n        \"resolution_condition\": null,\n        \"dynamic_trigger\": null,\n        \"mispricing_basis\": \"Current position at 4.4% equity; proposed 2.5% purchase exceeds 5% single-name limit; forward PEG 1.25 indicates fair valuation; close at 100 within 95\u2013115 range with 3:1 reward/risk\",\n        \"edge_type\": \"structural\",\n        \"bear_verdict_response\": {\n            \"decisive_claim\": \"the proposed 2.5% purchase exceeds the 5% single-name exposure limit\",\n            \"claim_type\": \"size_or_timing\",\n            \"overrode_bear\": false\n        },\n        \"confidence_floor\": 0,\n        \"conviction_vector\": {\n            \"data_quality\": 75,\n            \"consensus_strength\": 60,\n            \"regime_alignment\": 85,\n            \"risk_adjusted\": 70\n        },\n        \"overrides_veto\": false,\n        \"override_justification\": \"\",\n        \"persona_used\": \"jane_street\",\n        \"regime\": \"CONTRADICTORY\"\n    }\n}",
+  "model": "nemotron35",
+  "provider": "vllm",
+  "usage": {
+    "inputTokens": 3990,
+    "outputTokens": 983,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 3990
+  },
+  "conversation_id": "b2f73bdb-60e7-41d6-a1a4-30ea3faa9a08",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 72,
+    "reasoning": "The portfolio already holds EVLT at 4.4% of equity, leaving only 0.6% headroom under the 5% single-name limit. The proposed 2.5% incremental purchase exceeds this limit and cannot execute as proposed. The forward PEG of 1.25 (based on EPS growth) suggests the stock is fairly valued relative to growth. The close at 100 sits within the 95\u2013115 support-resistance range with a 3:1 reward/risk ratio. No earnings event occurs in the next seven sessions. Given the headroom constraint and fair valuation, the position is best maintained at current size.",
+    "position_size_pct": 4.4,
+    "stop_loss": 95.0,
+    "take_profit": 115.0,
+    "exit_style": "hard_stop",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "none",
+    "resolution_condition": null,
+    "dynamic_trigger": null,
+    "mispricing_basis": "Current position at 4.4% equity; proposed 2.5% purchase exceeds 5% single-name limit; forward PEG 1.25 indicates fair valuation; close at 100 within 95\u2013115 range with 3:1 reward/risk",
+    "edge_type": "structural",
+    "bear_verdict_response": {
+      "decisive_claim": "the proposed 2.5% purchase exceeds the 5% single-name exposure limit",
+      "claim_type": "size_or_timing",
+      "overrode_bear": false
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 75,
+      "consensus_strength": 60,
+      "regime_alignment": 85,
+      "risk_adjusted": 70
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY"
+  },
+  "schema_errors": [],
+  "entry_errors": [],
+  "elapsed_s": 15.893157243728638
+}

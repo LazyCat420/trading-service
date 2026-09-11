@@ -1,0 +1,512 @@
+{
+  "summary": {
+    "current": {
+      "attempts": 4,
+      "schema_valid": 4,
+      "entry_valid": 3,
+      "evidence_consistent_usable": 0,
+      "fully_complete": 0
+    },
+    "no_method": {
+      "attempts": 4,
+      "schema_valid": 4,
+      "entry_valid": 2,
+      "evidence_consistent_usable": 1,
+      "fully_complete": 0
+    },
+    "stale_memory": {
+      "attempts": 4,
+      "schema_valid": 3,
+      "entry_valid": 2,
+      "evidence_consistent_usable": 1,
+      "fully_complete": 0
+    }
+  },
+  "reviewer_limitation": "Single evaluator, not blinded. Material factual errors and incompleteness are listed separately. Four independent cases, one repeat per arm; exploratory diagnostics, not causal learning benefit or profitability. No artifacts rerun or repaired in this cohort.",
+  "rows": [
+    {
+      "case": "headroom",
+      "arm": "current",
+      "file": "01-headroom-current.json",
+      "response_sha256": "9e3ddeba8c577d9ad1eb5f1b47f900342745bd0d6dc05fea8aeb8734a0da1c73",
+      "schema_valid": true,
+      "entry_valid": true,
+      "factual_errors": [
+        "Claims close is one-third through 95\u2013115; correct location is 25%."
+      ],
+      "correct_observations": [
+        "Correct 0.6 percentage-point headroom, PEG 1.25 and reward/risk 3."
+      ],
+      "missing_or_incomplete": [
+        "No research_answers; omits explicit response to each supplied question."
+      ],
+      "review": "partial",
+      "evidence_consistent_usable": false,
+      "fully_complete": false,
+      "provider_delivery": [
+        {
+          "task_delivery": "exact",
+          "model": "nemotron35",
+          "snapshot_hash": "a6e9142bd1185f814deda88c7c7370fa748b9b7518d9d75a1a3e275f40834b8e",
+          "snapshot_truncated": false,
+          "exact_user_found": true,
+          "requested_system_found": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 3882,
+        "outputTokens": 782,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "reasoningOutputTokens": 0,
+        "tokensPerSec": 0,
+        "requests": 1,
+        "totalInputTokens": 3882
+      }
+    },
+    {
+      "case": "headroom",
+      "arm": "no_method",
+      "file": "02-headroom-no_method.json",
+      "response_sha256": "246226806ee9057e164330fc0beadbfe5ce9a0ea00027abba9cbdf4fe30557fc",
+      "schema_valid": true,
+      "entry_valid": true,
+      "factual_errors": [],
+      "correct_observations": [
+        "Correct headroom, PEG and reward/risk; lower third is compatible with 25%."
+      ],
+      "missing_or_incomplete": [
+        "Exact 25% range location and research_answers missing."
+      ],
+      "review": "partial",
+      "evidence_consistent_usable": true,
+      "fully_complete": false,
+      "provider_delivery": [
+        {
+          "task_delivery": "exact",
+          "model": "nemotron35",
+          "snapshot_hash": "1ef3ae888cab7feec1cfb2d3f0743f5549ec490a6162172637081290d4cf0f83",
+          "snapshot_truncated": false,
+          "exact_user_found": true,
+          "requested_system_found": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 3764,
+        "outputTokens": 578,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "reasoningOutputTokens": 0,
+        "tokensPerSec": 0,
+        "requests": 1,
+        "totalInputTokens": 3764
+      }
+    },
+    {
+      "case": "headroom",
+      "arm": "stale_memory",
+      "file": "03-headroom-stale_memory.json",
+      "response_sha256": "8431310484feb3dc3b02a01b57f86c0a59bb53cb2bfb847b6fb13425e08e1e7a",
+      "schema_valid": true,
+      "entry_valid": true,
+      "factual_errors": [],
+      "correct_observations": [
+        "Correct headroom, PEG 1.25 and reward/risk 3; rejects oversized proposed purchase."
+      ],
+      "missing_or_incomplete": [
+        "Exact 25% range location and research_answers missing."
+      ],
+      "review": "partial",
+      "evidence_consistent_usable": true,
+      "fully_complete": false,
+      "provider_delivery": [
+        {
+          "task_delivery": "exact",
+          "model": "nemotron35",
+          "snapshot_hash": "ed66232f0ad67b7e122ecfd50dfa8c50144aabcb362ef6835ffcc27fd909a0bf",
+          "snapshot_truncated": false,
+          "exact_user_found": true,
+          "requested_system_found": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 3990,
+        "outputTokens": 983,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "reasoningOutputTokens": 0,
+        "tokensPerSec": 0,
+        "requests": 1,
+        "totalInputTokens": 3990
+      }
+    },
+    {
+      "case": "missing_history",
+      "arm": "stale_memory",
+      "file": "04-missing_history-stale_memory.json",
+      "response_sha256": "601a864b07f01c170f0516c1611edfcf005fb4f8f2998aa574cc7e7686db132a",
+      "schema_valid": true,
+      "entry_valid": false,
+      "factual_errors": [
+        "Changes the requested August 17 volume lookback to September 3."
+      ],
+      "correct_observations": [
+        "Does not invent numeric PEG or SMA-200; volume is unknown."
+      ],
+      "missing_or_incomplete": [
+        "Entry contract invalid; no research_answers."
+      ],
+      "review": "partial",
+      "evidence_consistent_usable": false,
+      "fully_complete": false,
+      "provider_delivery": [
+        {
+          "task_delivery": "exact",
+          "model": "nemotron35",
+          "snapshot_hash": "66a9b020e9913625031c14b7bb200b9ec610e8af01d775bcf3a1ffd5bd489a7a",
+          "snapshot_truncated": false,
+          "exact_user_found": true,
+          "requested_system_found": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 3956,
+        "outputTokens": 868,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "reasoningOutputTokens": 0,
+        "tokensPerSec": 0,
+        "requests": 1,
+        "totalInputTokens": 3956
+      }
+    },
+    {
+      "case": "missing_history",
+      "arm": "no_method",
+      "file": "05-missing_history-no_method.json",
+      "response_sha256": "3a7dce40946c9095b7ba70a3b6aca0cc2d3a2d272090e9d48f290640bce22540",
+      "schema_valid": true,
+      "entry_valid": false,
+      "factual_errors": [
+        "Reports RSI as 14 percent rather than supplied 46.",
+        "Compares operating margin 14% against gross margin 38% and says it exceeds it.",
+        "Misstates company/sector ROIC in the reasoning."
+      ],
+      "correct_observations": [
+        "Acknowledges missing SMA, EPS growth and volume."
+      ],
+      "missing_or_incomplete": [
+        "Entry contract invalid; research_answers missing."
+      ],
+      "review": "failed",
+      "evidence_consistent_usable": false,
+      "fully_complete": false,
+      "provider_delivery": [
+        {
+          "task_delivery": "exact",
+          "model": "nemotron35",
+          "snapshot_hash": "5a86397b5fe2739e1ddc591c3b7bda02949145e99c179a27e3a5143b1c2d1c97",
+          "snapshot_truncated": false,
+          "exact_user_found": true,
+          "requested_system_found": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 3726,
+        "outputTokens": 839,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "reasoningOutputTokens": 0,
+        "tokensPerSec": 0,
+        "requests": 1,
+        "totalInputTokens": 3726
+      }
+    },
+    {
+      "case": "missing_history",
+      "arm": "current",
+      "file": "06-missing_history-current.json",
+      "response_sha256": "c44c9036e5bf8b38ba3261b1f44a2125457eb28dfc039cdfc1f52362ca9fc685",
+      "schema_valid": true,
+      "entry_valid": false,
+      "factual_errors": [],
+      "correct_observations": [
+        "Correctly preserves August-volume, EPS-growth and SMA-200 unknowns."
+      ],
+      "missing_or_incomplete": [
+        "Research trigger purpose lacks dynamic_trigger; research_answers missing."
+      ],
+      "review": "partial",
+      "evidence_consistent_usable": false,
+      "fully_complete": false,
+      "provider_delivery": [
+        {
+          "task_delivery": "exact",
+          "model": "nemotron35",
+          "snapshot_hash": "2f07b14e82f7f271bd121f805e2b495d1426642192ef21826b76f09e00b53b65",
+          "snapshot_truncated": false,
+          "exact_user_found": true,
+          "requested_system_found": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 3847,
+        "outputTokens": 930,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "reasoningOutputTokens": 0,
+        "tokensPerSec": 0,
+        "requests": 1,
+        "totalInputTokens": 3847
+      }
+    },
+    {
+      "case": "held_deterioration",
+      "arm": "current",
+      "file": "07-held_deterioration-current.json",
+      "response_sha256": "77fbdd9302d1be14302fc51d118f16018a6f026b74680d8b82a5b12e3b4a794e",
+      "schema_valid": true,
+      "entry_valid": true,
+      "factual_errors": [
+        "Calls gross margin 30% operating margin; current operating margin is -2%.",
+        "Says price 100 is below support 95."
+      ],
+      "correct_observations": [
+        "Correct negative FCF, 10% exposure and -16.67% holding loss."
+      ],
+      "missing_or_incomplete": [
+        "Source independence question not answered; research_answers missing."
+      ],
+      "review": "failed",
+      "evidence_consistent_usable": false,
+      "fully_complete": false,
+      "provider_delivery": [
+        {
+          "task_delivery": "exact",
+          "model": "nemotron35",
+          "snapshot_hash": "86dd08b3948fb287e1dd416f83b03bad4a11d7608d39d6c978c008d248777ab1",
+          "snapshot_truncated": false,
+          "exact_user_found": true,
+          "requested_system_found": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 3890,
+        "outputTokens": 768,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "reasoningOutputTokens": 0,
+        "tokensPerSec": 0,
+        "requests": 1,
+        "totalInputTokens": 3890
+      }
+    },
+    {
+      "case": "held_deterioration",
+      "arm": "no_method",
+      "file": "08-held_deterioration-no_method.json",
+      "response_sha256": "961b2e1fa545ebb3d69a06680b4b0c6d0f2e3972c58b0c067079d330076ad15c",
+      "schema_valid": true,
+      "entry_valid": true,
+      "factual_errors": [
+        "Loses negative sign on operating margin (-2% becomes +2%).",
+        "Confuses gross margin history with operating margin.",
+        "Says stock is below support despite close 100 above support 95."
+      ],
+      "correct_observations": [
+        "Correct -16.67% holding return and current negative FCF."
+      ],
+      "missing_or_incomplete": [
+        "Source independence question not answered; research_answers missing."
+      ],
+      "review": "failed",
+      "evidence_consistent_usable": false,
+      "fully_complete": false,
+      "provider_delivery": [
+        {
+          "task_delivery": "exact",
+          "model": "nemotron35",
+          "snapshot_hash": "ce9424f887d83bb1155bbaa06b787c847061ffb85a4d99509f786c66f8b50f1e",
+          "snapshot_truncated": false,
+          "exact_user_found": true,
+          "requested_system_found": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 3770,
+        "outputTokens": 704,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "reasoningOutputTokens": 0,
+        "tokensPerSec": 0,
+        "requests": 1,
+        "totalInputTokens": 3770
+      }
+    },
+    {
+      "case": "held_deterioration",
+      "arm": "stale_memory",
+      "file": "09-held_deterioration-stale_memory.json",
+      "response_sha256": "cc9dd7ba5f7681a24636e9a12be8fb5ec7a1f6cdabc93d02aec9defa9a6d66f1",
+      "schema_valid": false,
+      "entry_valid": false,
+      "factual_errors": [
+        "Answers current operating margin as 28% instead of -2%.",
+        "Invents older debt/equity 2.0 and confuses gross/operating margins."
+      ],
+      "correct_observations": [
+        "Correct holding return and one-source independence answer."
+      ],
+      "missing_or_incomplete": [
+        "No final_decision action/confidence/reasoning or entry fields; cannot use artifact."
+      ],
+      "review": "failed",
+      "evidence_consistent_usable": false,
+      "fully_complete": false,
+      "provider_delivery": [
+        {
+          "task_delivery": "exact",
+          "model": "nemotron35",
+          "snapshot_hash": "5fdc26ce17a19fc24ff64ff2beb62ea86a174afc40cd481005889b45a3258a9c",
+          "snapshot_truncated": false,
+          "exact_user_found": true,
+          "requested_system_found": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 3998,
+        "outputTokens": 467,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "reasoningOutputTokens": 0,
+        "tokensPerSec": 0,
+        "requests": 1,
+        "totalInputTokens": 3998
+      }
+    },
+    {
+      "case": "conditional_entry",
+      "arm": "stale_memory",
+      "file": "10-conditional_entry-stale_memory.json",
+      "response_sha256": "b24c9f41c2c0d7baee1471bef7fdc6338e412bb991a6e9ec43cc913cfc3d1c67",
+      "schema_valid": true,
+      "entry_valid": true,
+      "factual_errors": [
+        "Claims three guidance beats; evidence only says guidance ranges were met.",
+        "Says cash 25000 is within a 5000 single-name cap; cash is not exposure."
+      ],
+      "correct_observations": [
+        "Correct present reward/risk 0.75 and hypothetical reward/risk 6, no current fill at 100."
+      ],
+      "missing_or_incomplete": [
+        "Does not explicitly answer price-versus-RSI units question; research_answers missing."
+      ],
+      "review": "partial",
+      "evidence_consistent_usable": false,
+      "fully_complete": false,
+      "provider_delivery": [
+        {
+          "task_delivery": "exact",
+          "model": "nemotron35",
+          "snapshot_hash": "64f4e743b7ae51b98ebd8cf28766fb912001815c23316be244dff7f00347c37a",
+          "snapshot_truncated": false,
+          "exact_user_found": true,
+          "requested_system_found": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 4021,
+        "outputTokens": 949,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "reasoningOutputTokens": 0,
+        "tokensPerSec": 0,
+        "requests": 1,
+        "totalInputTokens": 4021
+      }
+    },
+    {
+      "case": "conditional_entry",
+      "arm": "no_method",
+      "file": "11-conditional_entry-no_method.json",
+      "response_sha256": "dec8684477bf30ef93025f5e3759b7ec4e146ea6dbdc9624b98ee7e023920d84",
+      "schema_valid": true,
+      "entry_valid": false,
+      "factual_errors": [
+        "Hypothetical reward/risk is 3 instead of 6.",
+        "Sentence conflates the current and proposed entry reward/risk thresholds."
+      ],
+      "correct_observations": [
+        "Current 7.5:10 equals 0.75; no fill at hypothetical price 100."
+      ],
+      "missing_or_incomplete": [
+        "HOLD with enter_on_condition and monitor violates entry contract; research_answers missing."
+      ],
+      "review": "failed",
+      "evidence_consistent_usable": false,
+      "fully_complete": false,
+      "provider_delivery": [
+        {
+          "task_delivery": "exact",
+          "model": "nemotron35",
+          "snapshot_hash": "54b8c8313614c003dc027812892adf24252c2b2ef32660f4a84e243895500552",
+          "snapshot_truncated": false,
+          "exact_user_found": true,
+          "requested_system_found": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 3793,
+        "outputTokens": 1000,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "reasoningOutputTokens": 0,
+        "tokensPerSec": 0,
+        "requests": 1,
+        "totalInputTokens": 3793
+      }
+    },
+    {
+      "case": "conditional_entry",
+      "arm": "current",
+      "file": "12-conditional_entry-current.json",
+      "response_sha256": "959674de3842725eb005e10e9b621f6d877e61147b7ee0563abc7a8e937c5fa9",
+      "schema_valid": true,
+      "entry_valid": true,
+      "factual_errors": [
+        "Present reward/risk 1.5 should be 0.75; hypothetical 3.5 should be 6.",
+        "Claims guidance beats instead of met ranges.",
+        "Treats cash as within a single-name exposure cap."
+      ],
+      "correct_observations": [
+        "Correctly distinguishes price and RSI units and hypothetical entry."
+      ],
+      "missing_or_incomplete": [
+        "research_answers missing."
+      ],
+      "review": "failed",
+      "evidence_consistent_usable": false,
+      "fully_complete": false,
+      "provider_delivery": [
+        {
+          "task_delivery": "exact",
+          "model": "nemotron35",
+          "snapshot_hash": "0f1eb640d52b1998eecab9c5ab7a5bffcd9fc795a05f836a5ddb5a8946191bd9",
+          "snapshot_truncated": false,
+          "exact_user_found": true,
+          "requested_system_found": true
+        }
+      ],
+      "usage": {
+        "inputTokens": 3911,
+        "outputTokens": 991,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "reasoningOutputTokens": 0,
+        "tokensPerSec": 0,
+        "requests": 1,
+        "totalInputTokens": 3911
+      }
+    }
+  ]
+}

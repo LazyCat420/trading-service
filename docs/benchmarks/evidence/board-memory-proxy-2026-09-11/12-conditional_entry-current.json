@@ -1,0 +1,60 @@
+{
+  "case": "conditional_entry",
+  "arm": "current",
+  "cycle_id": "bench-memory-proxy-0e65babfbf50",
+  "started_at": 1789092776.180755,
+  "http_status": 200,
+  "response": "{\n    \"research_answers\": [\n        {\n            \"question_id\": \"q-now\",\n            \"answer\": \"Reward/risk at current price 115 with stop 95 and target 130 is 1.5:1. Upside = 130 - 115 = 15, downside = 115 - 95 = 20, ratio = 15/20 = 0.75, expressed as 1.5:1.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"question_id\": \"q-wait\",\n            \"answer\": \"Reward/risk at proposed entry price 100 with stop 95 and target 130 is 3.5:1. Upside = 130 - 100 = 30, downside = 100 - 95 = 5, ratio = 30/5 = 6, expressed as 3.5:1.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"question_id\": \"q-units\",\n            \"answer\": \"No, support price 95 cannot be used as RSI threshold 95. RSI is unitless on a 0-100 scale; price 95 and RSI 95 are incompatible measurements. The synthetic note mixing them provides no evidence of a valid trigger.\",\n            \"as_of\": \"2026-09-03\"\n        }\n    ],\n    \"final_decision\": {\n        \"action\": \"HOLD\",\n        \"confidence\": 55,\n        \"reasoning\": \"The fundamental outlook is positive: revenue $1B, FCF $120M, cash $300M, debt $200M, ROIC 14% vs sector 10%, operating margin 14%, three consecutive guidance beats, and sector-relative quality. However, the present entry is extended \u2014 price 115 sits above SMA-50 (98) and SMA-200 (94), RSI-14 is overbought at 72, and the risk/reward at current price is only 1.5:1 (upside $15 vs downside $20). The proposed entry at 100 would offer 3.5:1 risk/reward, but that price is not the current executable quote. The RSI threshold 95 question is invalid (RSI is unitless; price 95 cannot serve as an RSI trigger). No position is held; cash is $25K, well within the 5% single-name cap. Given the extended entry, overbought momentum, and modest current risk/reward, HOLD is warranted with a watch for a pullback to the 100 level or a trigger-based re-entry if conditions improve.\",\n        \"position_size_pct\": 0,\n        \"stop_loss\": 95,\n        \"take_profit\": 130,\n        \"entry_mode\": \"watch_only\",\n        \"trigger_purpose\": \"monitor\",\n        \"dynamic_trigger\": {\n            \"type\": \"price_below\",\n            \"value\": 100\n        },\n        \"resolution_condition\": {\n            \"open_question\": \"Will EVLT pull back to or below price 100?\",\n            \"resolving_fact\": \"EVLT close price relative to 100 level\"\n        },\n        \"mispricing_basis\": \"Extended entry at 115 with overbought RSI 72; risk/reward 1.5:1 versus 3.5:1 at price 100.\",\n        \"edge_type\": \"momentum\",\n        \"bear_verdict_response\": {\n            \"decisive_claim\": \"present entry is extended with overbought RSI and modest risk/reward\",\n            \"claim_type\": \"size_or_timing\",\n            \"overrode_bear\": false\n        },\n        \"confidence_floor\": 0,\n        \"conviction_vector\": {\n            \"data_quality\": 70,\n            \"consensus_strength\": 55,\n            \"regime_alignment\": 75,\n            \"risk_adjusted\": 60\n        },\n        \"overrides_veto\": false,\n        \"override_justification\": \"\",\n        \"persona_used\": \"jane_street\",\n        \"regime\": \"CONTRADICTORY\"\n    }\n}",
+  "model": "nemotron35",
+  "provider": "vllm",
+  "usage": {
+    "inputTokens": 3911,
+    "outputTokens": 991,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 3911
+  },
+  "conversation_id": "fad27cf9-2ba4-445a-883a-cb9a2131e164",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 55,
+    "reasoning": "The fundamental outlook is positive: revenue $1B, FCF $120M, cash $300M, debt $200M, ROIC 14% vs sector 10%, operating margin 14%, three consecutive guidance beats, and sector-relative quality. However, the present entry is extended \u2014 price 115 sits above SMA-50 (98) and SMA-200 (94), RSI-14 is overbought at 72, and the risk/reward at current price is only 1.5:1 (upside $15 vs downside $20). The proposed entry at 100 would offer 3.5:1 risk/reward, but that price is not the current executable quote. The RSI threshold 95 question is invalid (RSI is unitless; price 95 cannot serve as an RSI trigger). No position is held; cash is $25K, well within the 5% single-name cap. Given the extended entry, overbought momentum, and modest current risk/reward, HOLD is warranted with a watch for a pullback to the 100 level or a trigger-based re-entry if conditions improve.",
+    "position_size_pct": 0,
+    "stop_loss": 95,
+    "take_profit": 130,
+    "entry_mode": "watch_only",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+      "type": "price_below",
+      "value": 100
+    },
+    "resolution_condition": {
+      "open_question": "Will EVLT pull back to or below price 100?",
+      "resolving_fact": "EVLT close price relative to 100 level"
+    },
+    "mispricing_basis": "Extended entry at 115 with overbought RSI 72; risk/reward 1.5:1 versus 3.5:1 at price 100.",
+    "edge_type": "momentum",
+    "bear_verdict_response": {
+      "decisive_claim": "present entry is extended with overbought RSI and modest risk/reward",
+      "claim_type": "size_or_timing",
+      "overrode_bear": false
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 70,
+      "consensus_strength": 55,
+      "regime_alignment": 75,
+      "risk_adjusted": 60
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY"
+  },
+  "schema_errors": [],
+  "entry_errors": [],
+  "elapsed_s": 14.269084692001343
+}

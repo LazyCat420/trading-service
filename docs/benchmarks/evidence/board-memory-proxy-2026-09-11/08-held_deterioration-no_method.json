@@ -1,0 +1,55 @@
+{
+  "case": "held_deterioration",
+  "arm": "no_method",
+  "cycle_id": "bench-memory-proxy-c78c8fbb7d0e",
+  "started_at": 1789092726.5341525,
+  "http_status": 200,
+  "response": "{\n    \"research_answers\": [\n        {\n            \"id\": \"q-current\",\n            \"answer\": \"The current free cash flow is -40000000 and the current operating margin is 2 percent, as reported in the 2026-09-03 filing.\"\n        },\n        {\n            \"id\": \"q-loss\",\n            \"answer\": \"-16.67 percent. The holding lost 20 dollars from the cost basis of 120 against the price of 100.\"\n        },\n        {\n            \"id\": \"q-independent\",\n            \"answer\": \"No. The two reports repeat the same September filing; they are one source, not two independent confirmations.\"\n        }\n    ],\n    \"final_decision\": {\n        \"action\": \"SELL\",\n        \"confidence\": 85,\n        \"reasoning\": \"The 2026-09-03 filing reveals a structural deterioration: operating margin fell to 2 percent (from 40-42 percent), free cash flow turned negative at -40 million, and debt/equity rose to 2.5. ROIC of 14 percent is no longer supported by current profitability. The stock is below support at 95, RSI-14 is 38, and price (100) is under SMA-50 (110) and SMA-200 (115). The bear case is confirmed by the latest fundamentals; the bear won the debate on concrete data. The position is underwater (-16.67 percent) but the thesis that opened it no longer holds. Per the regime directive, the bear win is not a reflexive HOLD \u2014 the intact-thesis rule does not apply because the thesis is broken. SELL exits the 10 percent exposure.\",\n        \"position_size_pct\": 0,\n        \"stop_loss\": null,\n        \"take_profit\": null,\n        \"exit_style\": \"hard_stop\",\n        \"entry_mode\": \"enter_now\",\n        \"trigger_purpose\": \"none\",\n        \"resolution_condition\": null,\n        \"dynamic_trigger\": null,\n        \"mispricing_basis\": \"Operating margin collapse from 40-42 percent to 2 percent, free cash flow deterioration from +120 million to -40 million, and debt/equity increase to 2.5. The market price of 100 does not reflect the current fundamental breakdown.\",\n        \"edge_type\": \"structural\",\n        \"bear_verdict_response\": {\n            \"decisive_claim\": \"operating margin collapse to 2 percent and free cash flow turn negative\",\n            \"claim_type\": \"size_or_timing\",\n            \"overrode_bear\": false\n        },\n        \"confidence_floor\": 0,\n        \"conviction_vector\": {\n            \"data_quality\": 80,\n            \"consensus_strength\": 55,\n            \"regime_alignment\": 90,\n            \"risk_adjusted\": 75\n        },\n        \"overrides_veto\": false,\n        \"override_justification\": \"\",\n        \"persona_used\": \"jane_street\",\n        \"regime\": \"CONTRADICTORY\"\n    }\n}",
+  "model": "nemotron35",
+  "provider": "vllm",
+  "usage": {
+    "inputTokens": 3770,
+    "outputTokens": 704,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 3770
+  },
+  "conversation_id": "ee93e896-d228-4039-b2f5-301ed62aeba3",
+  "artifact": {
+    "action": "SELL",
+    "confidence": 85,
+    "reasoning": "The 2026-09-03 filing reveals a structural deterioration: operating margin fell to 2 percent (from 40-42 percent), free cash flow turned negative at -40 million, and debt/equity rose to 2.5. ROIC of 14 percent is no longer supported by current profitability. The stock is below support at 95, RSI-14 is 38, and price (100) is under SMA-50 (110) and SMA-200 (115). The bear case is confirmed by the latest fundamentals; the bear won the debate on concrete data. The position is underwater (-16.67 percent) but the thesis that opened it no longer holds. Per the regime directive, the bear win is not a reflexive HOLD \u2014 the intact-thesis rule does not apply because the thesis is broken. SELL exits the 10 percent exposure.",
+    "position_size_pct": 0,
+    "stop_loss": null,
+    "take_profit": null,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_now",
+    "trigger_purpose": "none",
+    "resolution_condition": null,
+    "dynamic_trigger": null,
+    "mispricing_basis": "Operating margin collapse from 40-42 percent to 2 percent, free cash flow deterioration from +120 million to -40 million, and debt/equity increase to 2.5. The market price of 100 does not reflect the current fundamental breakdown.",
+    "edge_type": "structural",
+    "bear_verdict_response": {
+      "decisive_claim": "operating margin collapse to 2 percent and free cash flow turn negative",
+      "claim_type": "size_or_timing",
+      "overrode_bear": false
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 80,
+      "consensus_strength": 55,
+      "regime_alignment": 90,
+      "risk_adjusted": 75
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY"
+  },
+  "schema_errors": [],
+  "entry_errors": [],
+  "elapsed_s": 10.184074401855469
+}

@@ -1,0 +1,61 @@
+{
+  "case": "conditional_entry",
+  "arm": "stale_memory",
+  "cycle_id": "bench-memory-proxy-171dda80a71f",
+  "started_at": 1789092746.9806778,
+  "http_status": 200,
+  "response": "{\n    \"research_answers\": [\n        {\n            \"question_id\": \"q-now\",\n            \"answer\": \"Reward/risk at current price 115 with stop 95 and target 130 is 15/20 = 0.75:1 (risk of $20 for reward of $15).\"\n        },\n        {\n            \"question_id\": \"q-wait\",\n            \"answer\": \"Reward/risk at proposed entry price 100 with stop 95 and target 130 is 30/5 = 6:1 (risk of $5 for reward of $30).\"\n        },\n        {\n            \"question_id\": \"q-units\",\n            \"answer\": \"No, support price 95 cannot be used as RSI threshold 95. RSI is unitless on 0-100; price 95 is a dollar amount. The prior note that mixed them lacked evidence.\"\n        }\n    ],\n    \"final_decision\": {\n        \"action\": \"HOLD\",\n        \"confidence\": 65,\n        \"reasoning\": \"The fundamental outlook is positive: revenue $1B, FCF $120M, cash $300M, debt $200M, ROIC 14% vs sector 10%, operating margin 14% and three years of guidance beats. Gross margin trending 40-42% above sector 38%. However, at current price 115 the reward/risk is only 0.75:1 ($15 reward vs $20 risk to stop 95), and the stock is extended above SMA-50 (98) and SMA-200 (94) with RSI-14 at 72 (overbought). The proposed entry at 100 offers a much better 6:1 reward/risk but is not the current executable quote. The bear argument that present entry is extended is valid on the technicals. Given no position is held and cash is 25000 (well within the 5% single-name cap of $5000 allowed on equity 100000), the rational course is to wait for the price to reach 100 where the reward/risk improves to 6:1, or for an overbought RSI to subside. Entering now at 115 offers poor risk/reward and catches a overbought name. HOLD with a watch is appropriate until the trigger condition (price 100 or RSI improvement) is met.\",\n        \"position_size_pct\": 0,\n        \"stop_loss\": 95.0,\n        \"take_profit\": 130.0,\n        \"exit_style\": \"hard_stop\",\n        \"entry_mode\": \"watch_only\",\n        \"trigger_purpose\": \"monitor\",\n        \"dynamic_trigger\": {\n            \"type\": \"price_below\",\n            \"value\": 100\n        },\n        \"resolution_condition\": {\n            \"open_question\": \"Will price reach 100 or RSI moderate from overbought 72 before the next earnings date?\",\n            \"resolving_fact\": \"EVLT price trading at or below 100, or RSI-14 dropping below 72 on next data print\"\n        },\n        \"mispricing_basis\": \"Current price 115 offers inadequate 0.75:1 reward/risk; mispricing resolves at entry price 100 where reward/risk becomes 6:1.\",\n        \"edge_type\": \"technical\",\n        \"bear_verdict_response\": {\n            \"decisive_claim\": \"present entry is extended with overbought RSI and inadequate reward/risk\",\n            \"claim_type\": \"size_or_timing\",\n            \"overrode_bear\": false\n        },\n        \"confidence_floor\": 0,\n        \"conviction_vector\": {\n            \"data_quality\": 70,\n            \"consensus_strength\": 65,\n            \"regime_alignment\": 80,\n            \"risk_adjusted\": 60\n        },\n        \"overrides_veto\": false,\n        \"override_justification\": \"\",\n        \"persona_used\": \"jane_street\",\n        \"regime\": \"CONTRADICTORY\"\n    }\n}",
+  "model": "nemotron35",
+  "provider": "vllm",
+  "usage": {
+    "inputTokens": 4021,
+    "outputTokens": 949,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 4021
+  },
+  "conversation_id": "87ae90e1-8b53-4449-86dd-a17d9bc9c391",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 65,
+    "reasoning": "The fundamental outlook is positive: revenue $1B, FCF $120M, cash $300M, debt $200M, ROIC 14% vs sector 10%, operating margin 14% and three years of guidance beats. Gross margin trending 40-42% above sector 38%. However, at current price 115 the reward/risk is only 0.75:1 ($15 reward vs $20 risk to stop 95), and the stock is extended above SMA-50 (98) and SMA-200 (94) with RSI-14 at 72 (overbought). The proposed entry at 100 offers a much better 6:1 reward/risk but is not the current executable quote. The bear argument that present entry is extended is valid on the technicals. Given no position is held and cash is 25000 (well within the 5% single-name cap of $5000 allowed on equity 100000), the rational course is to wait for the price to reach 100 where the reward/risk improves to 6:1, or for an overbought RSI to subside. Entering now at 115 offers poor risk/reward and catches a overbought name. HOLD with a watch is appropriate until the trigger condition (price 100 or RSI improvement) is met.",
+    "position_size_pct": 0,
+    "stop_loss": 95.0,
+    "take_profit": 130.0,
+    "exit_style": "hard_stop",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+      "type": "price_below",
+      "value": 100
+    },
+    "resolution_condition": {
+      "open_question": "Will price reach 100 or RSI moderate from overbought 72 before the next earnings date?",
+      "resolving_fact": "EVLT price trading at or below 100, or RSI-14 dropping below 72 on next data print"
+    },
+    "mispricing_basis": "Current price 115 offers inadequate 0.75:1 reward/risk; mispricing resolves at entry price 100 where reward/risk becomes 6:1.",
+    "edge_type": "technical",
+    "bear_verdict_response": {
+      "decisive_claim": "present entry is extended with overbought RSI and inadequate reward/risk",
+      "claim_type": "size_or_timing",
+      "overrode_bear": false
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 70,
+      "consensus_strength": 65,
+      "regime_alignment": 80,
+      "risk_adjusted": 60
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY"
+  },
+  "schema_errors": [],
+  "entry_errors": [],
+  "elapsed_s": 15.550893545150757
+}

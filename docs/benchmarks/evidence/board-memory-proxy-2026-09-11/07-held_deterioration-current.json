@@ -1,0 +1,58 @@
+{
+  "case": "held_deterioration",
+  "arm": "current",
+  "cycle_id": "bench-memory-proxy-2c768ee71f0c",
+  "started_at": 1789092713.9862013,
+  "http_status": 200,
+  "response": "{\n    \"research_answers\": [\n        {\n            \"id\": \"q-current\",\n            \"answer\": \"The current free cash flow is -40000000 and the current operating margin is 30 percent, as reported in the 2026-09-03 filing.\"\n        },\n        {\n            \"id\": \"q-loss\",\n            \"answer\": \"-16.67 percent. The position is underwater from cost 120 to price 100.\"\n        },\n        {\n            \"id\": \"q-independent\",\n            \"answer\": \"No. The two reports repeat the same September filing; they are one source, not two independent confirmations.\"\n        }\n    ],\n    \"final_decision\": {\n        \"action\": \"HOLD\",\n        \"confidence\": 55,\n        \"reasoning\": \"The September 3 filing shows a severe deterioration: operating margin fell to 30 percent (from 40-42), free cash flow turned negative at -40 million, and debt/equity rose to 2.5. RSI-14 at 38 is neutral, and price at 100 sits below support 95 and below SMA-50 110 and SMA-200 115, indicating downtrend. The position is already 10 percent of equity (cost 120, price 100, 100 shares, equity 100000), which exceeds the 5 percent single-name cap, and the holding is unrealized -16.67 percent from cost. No new catalyst offsets the deterioration. The board's frozen evidence assessment, with no earnings event for seven sessions and neutral macro, supports a HOLD to avoid adding to a deteriorating position while exposure is already above the cap.\",\n        \"position_size_pct\": 0,\n        \"stop_loss\": null,\n        \"take_profit\": null,\n        \"exit_style\": \"hard_stop\",\n        \"entry_mode\": \"watch_only\",\n        \"trigger_purpose\": \"none\",\n        \"resolution_condition\": {\n            \"open_question\": \"Whether the position can be reduced below the 5 percent equity cap before the next earnings date.\",\n            \"resolving_fact\": \"Observable share price or share count change that brings single-name exposure below 5 percent of equity.\"\n        },\n        \"dynamic_trigger\": null,\n        \"mispricing_basis\": \"Operating margin contraction from 40-42 percent to 30 percent and free cash flow deterioration from +120 million to -40 million, as of the 2026-09-03 filing.\",\n        \"edge_type\": \"structural\",\n        \"bear_verdict_response\": {\n            \"decisive_claim\": \"The September 3 filing's deterioration of operating margin to 30 percent and free cash flow to -40 million, combined with exposure already at 10 percent of equity.\",\n            \"claim_type\": \"size_or_timing\",\n            \"overrode_bear\": true\n        },\n        \"confidence_floor\": 0,\n        \"conviction_vector\": {\n            \"data_quality\": 70,\n            \"consensus_strength\": 55,\n            \"regime_alignment\": 65,\n            \"risk_adjusted\": 50\n        },\n        \"overrides_veto\": false,\n        \"override_justification\": \"\",\n        \"persona_used\": \"jane_street\",\n        \"regime\": \"CONTRADICTORY\"\n    }\n}",
+  "model": "nemotron35",
+  "provider": "vllm",
+  "usage": {
+    "inputTokens": 3890,
+    "outputTokens": 768,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 3890
+  },
+  "conversation_id": "b5835afb-3bc8-4a35-8a65-5d8e91b57f28",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 55,
+    "reasoning": "The September 3 filing shows a severe deterioration: operating margin fell to 30 percent (from 40-42), free cash flow turned negative at -40 million, and debt/equity rose to 2.5. RSI-14 at 38 is neutral, and price at 100 sits below support 95 and below SMA-50 110 and SMA-200 115, indicating downtrend. The position is already 10 percent of equity (cost 120, price 100, 100 shares, equity 100000), which exceeds the 5 percent single-name cap, and the holding is unrealized -16.67 percent from cost. No new catalyst offsets the deterioration. The board's frozen evidence assessment, with no earnings event for seven sessions and neutral macro, supports a HOLD to avoid adding to a deteriorating position while exposure is already above the cap.",
+    "position_size_pct": 0,
+    "stop_loss": null,
+    "take_profit": null,
+    "exit_style": "hard_stop",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "none",
+    "resolution_condition": {
+      "open_question": "Whether the position can be reduced below the 5 percent equity cap before the next earnings date.",
+      "resolving_fact": "Observable share price or share count change that brings single-name exposure below 5 percent of equity."
+    },
+    "dynamic_trigger": null,
+    "mispricing_basis": "Operating margin contraction from 40-42 percent to 30 percent and free cash flow deterioration from +120 million to -40 million, as of the 2026-09-03 filing.",
+    "edge_type": "structural",
+    "bear_verdict_response": {
+      "decisive_claim": "The September 3 filing's deterioration of operating margin to 30 percent and free cash flow to -40 million, combined with exposure already at 10 percent of equity.",
+      "claim_type": "size_or_timing",
+      "overrode_bear": true
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 70,
+      "consensus_strength": 55,
+      "regime_alignment": 65,
+      "risk_adjusted": 50
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY"
+  },
+  "schema_errors": [],
+  "entry_errors": [],
+  "elapsed_s": 12.547324895858765
+}

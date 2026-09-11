@@ -1,0 +1,55 @@
+{
+  "case": "headroom",
+  "arm": "current",
+  "cycle_id": "bench-memory-proxy-25c430fa3f11",
+  "started_at": 1789092636.6136465,
+  "http_status": 200,
+  "response": "{\n    \"research_answers\": [\n        {\n            \"id\": \"q-headroom\",\n            \"answer\": \"The portfolio currently holds 4.4 percent exposure (44 shares at $100 = $4,400). The proposed incremental purchase of 2.5 percent of portfolio equity adds $2,500, bringing total exposure to 6.9 percent, which exceeds the 5 percent single-name limit. The purchase does not fit under the limit without reducing the existing position or the incremental size.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"id\": \"q-peg\",\n            \"answer\": \"Forward PEG = Forward P/E / Next-year EPS growth = 20 / 16 = 1.25.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"id\": \"q-range\",\n            \"answer\": \"Reward/Risk ratio = (Resistance - Close) / (Close - Support) = (115 - 100) / (100 - 95) = 15 / 5 = 3.0. Close is 5 points above support and 15 points below resistance, placing it one-third of the way from support toward resistance.\",\n            \"as_of\": \"2026-09-03\"\n        }\n    ],\n    \"final_decision\": {\n        \"action\": \"HOLD\",\n        \"confidence\": 72,\n        \"reasoning\": \"The portfolio already holds 4.4 percent exposure in EVLT, leaving only 0.6 percent headroom under the 5 percent single-name limit. The proposed 2.5 percent incremental purchase would push total exposure to 6.9 percent, breaching the limit. The forward PEG of 1.25 suggests the stock is fairly valued relative to growth. The reward/risk ratio of 3.0 is attractive, with the close positioned one-third from support toward resistance. However, the headroom constraint is binding. No new position is taken; the existing 4.4 percent holding is maintained (HOLD = KEEP at current size). The existing position is not exited because the thesis (profitable growth, acknowledged downside to support) remains intact.\",\n        \"position_size_pct\": 4.4,\n        \"stop_loss\": 95.0,\n        \"take_profit\": 115.0,\n        \"exit_style\": \"hard_stop\",\n        \"entry_mode\": \"watch_only\",\n        \"trigger_purpose\": \"none\",\n        \"resolution_condition\": null,\n        \"dynamic_trigger\": null,\n        \"mispricing_basis\": \"Headroom constraint under single-name exposure limit; fair value per forward PEG; attractive risk/reward but cannot increase size.\",\n        \"edge_type\": \"structural\",\n        \"bear_verdict_response\": {\n            \"decisive_claim\": \"The proposed 2.5 percent purchase exceeds the 5 percent single-name exposure limit.\",\n            \"claim_type\": \"size_or_timing\",\n            \"overrode_bear\": false\n        },\n        \"confidence_floor\": 0,\n        \"conviction_vector\": {\n            \"data_quality\": 75,\n            \"consensus_strength\": 60,\n            \"regime_alignment\": 85,\n            \"risk_adjusted\": 70\n        },\n        \"overrides_veto\": false,\n        \"override_justification\": \"\",\n        \"persona_used\": \"jane_street\",\n        \"regime\": \"CONTRADICTORY\"\n    }\n}",
+  "model": "nemotron35",
+  "provider": "vllm",
+  "usage": {
+    "inputTokens": 3882,
+    "outputTokens": 782,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 3882
+  },
+  "conversation_id": "fa8bd23b-8db7-4321-92e8-73012c065792",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 72,
+    "reasoning": "The portfolio already holds 4.4 percent exposure in EVLT, leaving only 0.6 percent headroom under the 5 percent single-name limit. The proposed 2.5 percent incremental purchase would push total exposure to 6.9 percent, breaching the limit. The forward PEG of 1.25 suggests the stock is fairly valued relative to growth. The reward/risk ratio of 3.0 is attractive, with the close positioned one-third from support toward resistance. However, the headroom constraint is binding. No new position is taken; the existing 4.4 percent holding is maintained (HOLD = KEEP at current size). The existing position is not exited because the thesis (profitable growth, acknowledged downside to support) remains intact.",
+    "position_size_pct": 4.4,
+    "stop_loss": 95.0,
+    "take_profit": 115.0,
+    "exit_style": "hard_stop",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "none",
+    "resolution_condition": null,
+    "dynamic_trigger": null,
+    "mispricing_basis": "Headroom constraint under single-name exposure limit; fair value per forward PEG; attractive risk/reward but cannot increase size.",
+    "edge_type": "structural",
+    "bear_verdict_response": {
+      "decisive_claim": "The proposed 2.5 percent purchase exceeds the 5 percent single-name exposure limit.",
+      "claim_type": "size_or_timing",
+      "overrode_bear": false
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 75,
+      "consensus_strength": 60,
+      "regime_alignment": 85,
+      "risk_adjusted": 70
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY"
+  },
+  "schema_errors": [],
+  "entry_errors": [],
+  "elapsed_s": 13.442900896072388
+}
