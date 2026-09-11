@@ -1,0 +1,22 @@
+{
+  "recorded_at": "2026-09-11T18:07:53.659625+00:00",
+  "runtime_commit": "28cbc032",
+  "basis": [
+    "fresh-r1/03",
+    "fresh-r2/01",
+    "fresh-r2/03",
+    "frozen-r1/02",
+    "frozen-r1/09"
+  ],
+  "heldout_outputs_reviewed_before_this_plan": false,
+  "changes": [
+    "Use the structured financial correction contract for every financial schema repair, including initially malformed legacy outputs. Do not request authored reasoning prose.",
+    "Treat repeated known evidence-step references idempotently. Preserve raw authored selection lists, deduplicate rendered statements and source records, and continue rejecting unknown IDs and conflicting authored fields."
+  ],
+  "validation": [
+    "Focused regression tests for both success and bounded failure.",
+    "Full unit suite and numerical corruption controls.",
+    "Saved-response replays explicitly labeled as offline, plus a new fresh confirmation cohort and repeat variant regression."
+  ],
+  "limitations": "This plan is recorded before reading held-out responses. No arithmetic, financial threshold, source value, question requirement or investment action will be changed to fit a held-out result."
+}

@@ -1,0 +1,120 @@
+{
+  "reviewed_at": "2026-09-11T18:11:28.820831+00:00",
+  "rubric": "Assess supplied-source factual correctness and semantic answers to all original questions. Do not require candidate-only typed schema from baseline. Investment merit is not graded.",
+  "reviewer_limitations": "Single evaluator, not blinded; eight synthetic variants. Ambiguous wording is noted conservatively rather than counted as a material factual error.",
+  "rows": [
+    {
+      "index": 1,
+      "case": "headroom_a",
+      "response_sha256": "ad3b08ebdc1b052707132be98fe337cfa20dc6c5057a29ff2322d7575b7a3542",
+      "material_factual_errors": [
+        "Rationale says price 87 is above moving averages 98 and 94; it is below both."
+      ],
+      "missing_or_incomplete": [
+        "Does not explicitly state remaining reserved capacity of 0.50 percentage points, although the purchase-overrun arithmetic is correct."
+      ],
+      "notes": [],
+      "evidence_consistent_complete": false,
+      "action": "HOLD"
+    },
+    {
+      "index": 2,
+      "case": "headroom_b",
+      "response_sha256": "691d44ecc0c5f56e50df6dbe02a1f4fcedb9339a83b9f36d43a069fce28beba7",
+      "material_factual_errors": [
+        "Range position is stated as 50%; (67-61)/(79-61) is 33.333333 percent.",
+        "Rationale says 2.7 + 0.6 exceeds 3.5, which is false; the separate answer correctly includes pending exposure 0.35 and computes 3.65."
+      ],
+      "missing_or_incomplete": [],
+      "notes": [],
+      "evidence_consistent_complete": false,
+      "action": "HOLD"
+    },
+    {
+      "index": 3,
+      "case": "missing_a",
+      "response_sha256": "0c9a290d1bb7491919e64bc555044b7da886f9af7a15044766899647d0c021a8",
+      "material_factual_errors": [],
+      "missing_or_incomplete": [],
+      "notes": [
+        "Correctly abstains on dated volume, PEG and SMA. The word improving applied to gross margin is not established by comparison with a sector level; excluded from material-error count because the wording is ambiguous."
+      ],
+      "evidence_consistent_complete": true,
+      "action": "HOLD"
+    },
+    {
+      "index": 4,
+      "case": "missing_b",
+      "response_sha256": "626ba40daa6e25cfa79953d19674a3a66bf50a882617a4468cb7c74fb482599c",
+      "material_factual_errors": [
+        "Compares operating margin 6 percent with sector ROIC 12 percent to infer mispricing; these are different metrics."
+      ],
+      "missing_or_incomplete": [],
+      "notes": [],
+      "evidence_consistent_complete": false,
+      "action": "HOLD"
+    },
+    {
+      "index": 5,
+      "case": "held_a",
+      "response_sha256": "68c1f1445957dbea89985a1d2f8c2355242158b9c584bcce1fc784b31fbb565b",
+      "material_factual_errors": [],
+      "missing_or_incomplete": [
+        "Calls source independence unresolved despite supplied underlying_filing_count=1."
+      ],
+      "notes": [
+        "Correct current negative metrics and -26.25 percent holding return. Rationale calls aligned negative technical/fundamental signals contradictory."
+      ],
+      "evidence_consistent_complete": false,
+      "action": "HOLD"
+    },
+    {
+      "index": 6,
+      "case": "held_b",
+      "response_sha256": "b3c229e237c6192d9c3bfdee64effea48ef18f811af7f89ad902abefbc23d81d",
+      "material_factual_errors": [
+        "Compares company gross margin 28 percent with sector ROIC 10 percent as sector-relative strength, and operating margin with sector gross margin in mispricing_basis."
+      ],
+      "missing_or_incomplete": [
+        "Calls source independence unresolved despite supplied underlying_filing_count=1."
+      ],
+      "notes": [
+        "Correct +9.8 percent holding return and current negative filing values."
+      ],
+      "evidence_consistent_complete": false,
+      "action": "HOLD"
+    },
+    {
+      "index": 7,
+      "case": "conditional_a",
+      "response_sha256": "f8689de0930926109ac4f410b6936088d22039af9b0a40d1ba2feaba6b41dfa9",
+      "material_factual_errors": [
+        "Current reward/risk is 11/12 = 0.916667, not 2.6; downside from 87 to 75 is 12, not 4.2.",
+        "Future reward/risk at entry 80 is 18/5 = 3.6, not 3.5."
+      ],
+      "missing_or_incomplete": [
+        "Labels the correctly explained units distinction unresolved."
+      ],
+      "notes": [],
+      "evidence_consistent_complete": false,
+      "action": "HOLD"
+    },
+    {
+      "index": 8,
+      "case": "conditional_b",
+      "response_sha256": "7c630e76f812ac00c324978d4f4b11ae843e0d6cfb215a43f426f3d23bbbe2ca",
+      "material_factual_errors": [],
+      "missing_or_incomplete": [],
+      "notes": [
+        "Correct current 1.833333 and future 7.5 reward/risk, and correct units distinction."
+      ],
+      "evidence_consistent_complete": true,
+      "action": "HOLD"
+    }
+  ],
+  "summary": {
+    "responses": 8,
+    "responses_with_material_factual_errors": 5,
+    "evidence_consistent_complete": 2
+  }
+}

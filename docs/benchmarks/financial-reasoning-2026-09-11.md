@@ -1,8 +1,8 @@
 # Financial evidence validation: candidate and benchmark results
 
-**The candidate is implemented, but fresh live validation and NAS deployment remain pending.** The early live pilots did not establish improved financial reasoning. A revised structured explanation passed local controls and an offline replay of one saved model repair. That is not yet evidence of repeatable live improvement.
+**Validation is complete; NAS deployment is pending.** The final candidate passed 10 of 12 fresh cases, 11 of 12 saved-response repairs, and all eight variant repeats. Its first held-out run also passed all eight cases; matched baseline review found five responses with material factual errors and only two complete, consistent responses. The improvement is in code-calculated, code-rendered financial explanations and evidence coverage—not learned arithmetic or investment performance.
 
-Automatic approval review rejected the revised four-case run twice. A renewed request is pending for the exact NAS endpoint, synthetic fixtures, revised Board prompts and generated responses. Neither rejected command started. The candidate has not been deployed.
+Automatic approval review initially rejected the revised run twice; neither command started. The user subsequently authorized the revised benchmark and follow-up validation. Fresh testing resumed. The candidate has not been deployed.
 
 ## What the candidate does
 
@@ -37,13 +37,14 @@ The renderer does not overwrite conflicting authored prose, questions or numeric
 | Corrupted numerical claims rejected | 129 / 129 |
 | Correct structured selection controls accepted | 12 / 12 |
 | Structured tampering cases rejected | 48 / 48 |
-| Latest focused tests | 123 passed |
-| Final candidate full unit suite | 7,247 passed, 114 skipped |
-| Saved model-response replay on final candidate | 1 / 1 consistent; zero new endpoint calls |
+| Final focused financial tests | 124 passed |
+| Final complete unit suite | 7,257 passed, 114 skipped |
+| Final saved fresh-response replays | 24 / 24 consistent; zero new endpoint calls |
+| Final saved frozen-response replays | 11 / 12 consistent; conflicting authored prose still rejected |
 
-[Offline controls, r4](evidence/financial-reasoning-2026-09-11/offline-controls-r4.json) retain inputs, outputs, audits and source hashes. The structured controls include nonzero BUY, SELL and HOLD selections. They are constructed controls, not generated model successes. Tampering tests cover conflicting prose, altered values, changed questions and unknown steps. Additional real-runner tests verify that a smaller BUY passes financial validation and that tampering is rejected at execution.
+[Offline controls, r6](evidence/financial-reasoning-2026-09-11/offline-controls-r6.json) retain inputs, outputs, audits and source hashes. The structured controls include nonzero BUY, SELL and HOLD selections. They are constructed controls, not generated model successes. Tampering tests cover conflicting prose, altered values, changed questions and unknown steps. Additional real-runner tests verify that a smaller BUY passes financial validation and that tampering is rejected at execution.
 
-The earlier candidate's complete suite passed 7,205 tests with 114 skips. During live refinements, a broad run reported 7,217 passed, 114 skipped and one failure: a source-string assertion still expected the old tool-only repair condition. It was updated, and a stronger behavioral test found and verified the transport-classification fix described above. A later full run was deliberately stopped when the final answer-completeness refinement superseded it. The final run passed 7,247 tests with 114 skips in 341.65 seconds. [Final validation record](evidence/financial-reasoning-2026-09-11/candidate-validation-r2.json) records the exact runtime commit, source hashes and test-log hashes.
+The final complete unit suite passed 7,257 tests with 114 skips in 486.93 seconds. [Final validation record](evidence/financial-reasoning-2026-09-11/candidate-validation-r3.json) records runtime commit `b374c5e9`, exact source hashes, test-log hashes, all cohort counts and execution-boundary checks. Earlier validation records and failed development attempts remain preserved.
 
 ## Retained live development attempts
 
@@ -58,18 +59,60 @@ The earlier candidate's complete suite passed 7,205 tests with 114 skips. During
 | pilot-r6 | 1 | 2 | 0 | Fact references shortened output; interpretation errors remained. |
 | thinking-16k-ablation-r1 | 1 | 1 | 0 | Full 16,384-token allowance used; no final decision. |
 | structured-pilot-r1 | 1 | 2 | 0 | Repair selected the needed evidence and HOLD, but used equivalent unsupported shapes. |
+| structured-pilot-r2 | 4 | 7 | 2 | Unknown or empty selections reached an inappropriate generic schema-repair prompt. |
+| structured-pilot-r3 | 4 | 6 | 4 | Precise selection diagnostics; two first-response passes and two corrected passes. |
 
-These are development attempts, not a completed release benchmark. In total they made 36 endpoint calls across 21 cases. Zero passes at those revisions does not mean every statement was false; it means no output satisfied the entire financial contract at that revision.
+These are development attempts, not a completed release benchmark. The first nine cohorts made 36 endpoint calls across 21 cases with no financial pass at their respective revisions. The next two structured pilots added eight cases and 13 calls, with six passes. Every attempt is retained; a financial failure does not imply every statement was false.
 
 The final renderer accepts the saved structured repair without changing its HOLD action, confidence or evidence selections. The headroom, PEG and range answers retain their original question identities and source dates. The [final replay](evidence/financial-reasoning-2026-09-11/structured-pilot-r1-release-replay/01.json) is recorded separately from live attempts and makes no new inference requests. It cannot establish a repeatable improvement or generalization.
 
-[Provider receipts](evidence/financial-reasoning-2026-09-11/provider-receipts/) retain the prepared provider requests for all completed live attempts. They confirm full prompt delivery and reveal upstream recovery attempts: **40 provider request snapshots for 36 endpoint calls**. For example, `pilot-r4` has nine provider requests for eight endpoint calls. The runner's two-call limit concerns endpoint calls; it is not a guarantee of exactly two underlying inference attempts. Some recovery requests change sampling settings. A provider request snapshot does not by itself prove completed inference.
+[Provider receipts](evidence/financial-reasoning-2026-09-11/provider-receipts/) retain prepared provider requests. Across development and validation there were **113 live-assisted case runs, 151 endpoint calls and 155 provider request snapshots**. These runs include repeated cases and saved-initial repair cohorts; they are not 113 independent test scenarios. The four additional provider snapshots came from upstream recovery during early development. For example, `pilot-r4` has nine provider requests for eight endpoint calls. The runner's two-call limit concerns endpoint calls; a provider snapshot does not by itself prove completed inference. Offline replays are counted separately and generate no new requests.
 
-## Remaining release checks
+## Full benchmark results before the final format fixes
 
-After renewed authorization, run a fresh four-case pilot, then two twelve-response fresh cohorts, a frozen-response repair cohort, and matched baseline/candidate runs on eight unseen variants. Keep every attempt. Review delivered explanations, question completeness, selected evidence, action consistency and useful abstention separately from schema/transport status. Compare first-pass and corrected results. Distinguish code-rendered financial correctness from raw-model mathematical reasoning.
+All rows below ran against runtime commit `28cbc032`, with the same frozen synthetic sources. First-response passes require no correction. A financial pass checks supplied-source consistency and question coverage, not investment merit.
 
-Release requires no known factual/calculation regression escaping validation, useful correct outputs rather than a higher refusal rate alone, and independent order enforcement for unresolved errors. After passing that evaluation and local validation, deploy only `trading-service` through deploy-kit and verify the NAS container revision and HTTP health. Deployment is already authorized; the outstanding approval concerns the revised benchmark request.
+| Cohort | Cases | New endpoint calls | First-response passes | Final financial passes |
+|---|---:|---:|---:|---:|
+| Fresh r1 | 12 | 17 | 7 | 11 |
+| Fresh r2 | 12 | 15 | 9 | 10 |
+| Original saved responses plus one fresh repair | 12 | 12 | 0 | 10 |
+| First held-out candidate run | 8 | 10 | 6 | 8 |
+
+The three fresh failures changed the oversized BUY to HOLD in their raw correction, but repeated a step ID. The renderer rejected the correction and retained the original oversized proposal as unresolved. One frozen repair had the same duplicate-reference problem. Another frozen repair included conflicting authored financial prose, including an incorrect margin-history comparison; it was rejected.
+
+[Independent arithmetic and explanation reviews](evidence/financial-reasoning-2026-09-11/fresh-r1-review.json) recompute core calculations directly from raw fixture values, separately from the production validator. The [repeat-cohort review](evidence/financial-reasoning-2026-09-11/fresh-r2-review.json), [frozen review](evidence/financial-reasoning-2026-09-11/frozen-r1-review.json), and [held-out candidate review](evidence/financial-reasoning-2026-09-11/holdout-candidate-r1-review.json) retain every question, selected value and explanation. No arithmetic discrepancy was found in their checked claims. Missing claims or unresolved artifacts are not counted as successes merely because that arithmetic check had nothing to inspect.
+
+The matched [held-out baseline review](evidence/financial-reasoning-2026-09-11/holdout-baseline-r1-manual-review.json) found material factual errors in five of eight responses; two were complete and consistent with supplied evidence. It was judged on factual content and semantic question coverage, not penalized for lacking the candidate-only schema. Errors included saying a price below its moving averages was above them, using the wrong range denominator, comparing operating margin with sector ROIC, and incorrect current/future reward-risk arithmetic. The baseline also produced correct answers and useful abstentions, retained in the review.
+
+The candidate answered all eight first-held-out cases consistently, including the changed headroom, positive versus negative holding returns, current filing values, source independence and different current/future reward-risk ratios. Both baseline and candidate chose HOLD in these eight cases. Two frozen-response repairs produced evidence-consistent SELL decisions. This is an improvement in financial explanation and coverage; it does not establish an improvement in investment selection or profitability.
+
+## Final format fixes and confirmation
+
+The [follow-up plan](evidence/financial-reasoning-2026-09-11/followup-format-plan.json) was recorded from fresh/frozen development failures **before reviewing any held-out response**. Runtime commit `b374c5e9` makes two changes:
+
+- Repeated known step references are idempotent: raw selection lists remain intact, while each statement and source record is rendered once. Repetition cannot manufacture independent corroboration. Unknown IDs and conflicting authored fields still fail.
+- Every financial schema repair uses the structured financial contract, including malformed legacy responses. It no longer requests authored prose that the same contract forbids.
+
+New regressions failed in five cases before these changes and passed afterward; all 124 financial tests and all corruption controls passed. [Exact-response replay verification](evidence/financial-reasoning-2026-09-11/final-offline-replay-verification.json) confirms that all 24 saved fresh cases now pass using identical model responses, with no new endpoint calls and no changes to accepted action, confidence, size or selections. Eleven of twelve saved frozen pairs pass; the remaining authored-prose conflict is still rejected. These are offline replays, not new model successes.
+
+Final live confirmation ran on the committed version:
+
+| Final cohort | Cases | New endpoint calls | First-response passes | Final financial passes |
+|---|---:|---:|---:|---:|
+| Fresh confirmation | 12 | 18 | 6 | 10 |
+| Original saved responses plus fresh repair | 12 | 12 | 0 | 11 |
+| Variant regression repeat | 8 | 10 | 6 | 8 |
+
+The two fresh failures left `q-units` without any selected evidence even after correction. The frozen failure selected an unknown `held_deterioration` step ID. All three remain blocked. The prior duplicate-reference failures and the conflicting schema-repair prompt were resolved. [Fresh review](evidence/financial-reasoning-2026-09-11/final-fresh-r1-review.json), [repair review](evidence/financial-reasoning-2026-09-11/final-frozen-r1-review.json), and [variant-repeat review](evidence/financial-reasoning-2026-09-11/variant-regression-r1-review.json) retain all outputs, including failures. The repeat variants are not newly unseen data.
+
+The final 32-case execution check rejected all three unresolved outputs despite forged saved pass labels, and rejected value tampering in all 29 accepted outputs. Accepted action, confidence, size and evidence selections exactly match the model's final response. The final runs include two accepted SELL decisions and a conditional BUY: that BUY waits for a price condition and re-analysis, rather than authorizing an immediate order. All benchmark tools and orders were disabled.
+
+## Benchmark protocol and release
+
+The benchmark includes development pilots, two fresh twelve-response cohorts, saved-response repair, and matched baseline/candidate runs on eight variants frozen before live candidate testing. Every attempt is retained. Review considers delivered explanations, question completeness, selected evidence, action consistency and useful abstention separately from schema/transport status. First-response and corrected results are reported separately. Final repeat validation follows the two format fixes.
+
+Release criteria were met: no known factual/calculation error escaped final validation; accepted outputs supplied useful financial answers and explicit unknowns; unresolved errors failed the independent execution check. Remaining model instruction-following failures are reported above. Deployment is scoped to `trading-service` through deploy-kit, followed by NAS container-revision and HTTP-health verification. Deployment evidence will be recorded after that check.
 
 Reproduction from the `trading-service` directory:
 
@@ -80,13 +123,16 @@ Reproduction from the `trading-service` directory:
 # Offline replay only: no new model request.
 RUN_FINANCIAL_BENCHMARK=1 FINANCIAL_BENCH_COHORT=replay-new FINANCIAL_BENCH_REPLAY_COHORT=structured-pilot-r1 FINANCIAL_BENCH_INDICES=1 .venv/bin/python -m pytest tests/unit/test_financial_live_benchmark.py -q -s
 
-# Revised live runs: pending renewed authorization.
+# Revised live runs: authorized; preserve every attempt under a unique cohort name.
 RUN_FINANCIAL_BENCHMARK=1 FINANCIAL_BENCH_COHORT=structured-pilot-r2 FINANCIAL_BENCH_INDICES=1,6,7,12 .venv/bin/python -m pytest tests/unit/test_financial_live_benchmark.py -q -s
 RUN_FINANCIAL_BENCHMARK=1 FINANCIAL_BENCH_COHORT=fresh-r1 .venv/bin/python -m pytest tests/unit/test_financial_live_benchmark.py -q -s
 RUN_FINANCIAL_BENCHMARK=1 FINANCIAL_BENCH_COHORT=fresh-r2 .venv/bin/python -m pytest tests/unit/test_financial_live_benchmark.py -q -s
 RUN_FINANCIAL_BENCHMARK=1 FINANCIAL_BENCH_MODE=frozen FINANCIAL_BENCH_COHORT=frozen-r1 .venv/bin/python -m pytest tests/unit/test_financial_live_benchmark.py -q -s
 RUN_FINANCIAL_BENCHMARK=1 FINANCIAL_BENCH_FAMILY=holdout FINANCIAL_BENCH_VARIANT=baseline FINANCIAL_BENCH_COHORT=holdout-baseline-r1 .venv/bin/python -m pytest tests/unit/test_financial_live_benchmark.py -q -s
 RUN_FINANCIAL_BENCHMARK=1 FINANCIAL_BENCH_FAMILY=holdout FINANCIAL_BENCH_VARIANT=candidate FINANCIAL_BENCH_COHORT=holdout-candidate-r1 .venv/bin/python -m pytest tests/unit/test_financial_live_benchmark.py -q -s
+
+# Final confirmation used final-fresh-r1, final-frozen-r1 and variant-regression-r1.
+# Existing cohort names are retained and cannot be overwritten: choose new names for another run.
 ```
 
 The driver uses the literal `http://10.0.0.16:5591/prism-proxy/agent?stream=false`, checks it against the frozen manifest, and disables tools, function calling, workspaces and orders. Pipeline database inputs/writes are mocked. The fixtures are unchanged synthetic EVLT observations; they are not live portfolio or security data. The proxy retains its normal request/session logs.
@@ -94,5 +140,7 @@ The driver uses the literal `http://10.0.0.16:5591/prism-proxy/agent?stream=fals
 ## Limits
 
 Consistency with supplied evidence does not prove vendor truth, investment merit or future returns. The structured catalog covers supported financial relationships; it does not prove arbitrary qualitative claims. Unsupported questions remain unresolved. Arbitrary tool prose and memory are not automatically promoted into facts. Next-year EPS growth and pending-order reservations remain unknown when not captured, so exact forward PEG and fully reserved headroom are unavailable in those cases.
+
+Explanations can remain repetitive and may include extra, relevant or irrelevant observations. Numerical answers live in the referenced typed claim records, rather than duplicated numbers in prose. Single-evaluator review was not blinded, and the sample contains a small set of synthetic case families. These tests do not establish real-portfolio performance.
 
 No Prism, adapter or client repository was modified by this work.

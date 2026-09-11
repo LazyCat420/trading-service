@@ -1,0 +1,300 @@
+{
+  "recorded_at": "2026-09-11T18:17:16.098673+00:00",
+  "runtime_commit": "b374c5e9",
+  "interpretation": "Offline acceptance under final format handling; no new inference and no claim of newly generated model improvement. Conflicting authored prose in frozen case 09 remains rejected.",
+  "rows": [
+    {
+      "source_cohort": "fresh-r1",
+      "index": 1,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r1",
+      "index": 2,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r1",
+      "index": 3,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r1",
+      "index": 4,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r1",
+      "index": 5,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r1",
+      "index": 6,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r1",
+      "index": 7,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r1",
+      "index": 8,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r1",
+      "index": 9,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r1",
+      "index": 10,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r1",
+      "index": 11,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r1",
+      "index": 12,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r2",
+      "index": 1,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r2",
+      "index": 2,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r2",
+      "index": 3,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r2",
+      "index": 4,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r2",
+      "index": 5,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r2",
+      "index": 6,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r2",
+      "index": 7,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r2",
+      "index": 8,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r2",
+      "index": 9,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r2",
+      "index": 10,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r2",
+      "index": 11,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "fresh-r2",
+      "index": 12,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "frozen-r1",
+      "index": 1,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "frozen-r1",
+      "index": 2,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "frozen-r1",
+      "index": 3,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "frozen-r1",
+      "index": 4,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "frozen-r1",
+      "index": 5,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "frozen-r1",
+      "index": 6,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "frozen-r1",
+      "index": 7,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "frozen-r1",
+      "index": 8,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "frozen-r1",
+      "index": 9,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "unresolved",
+      "accepted_authored_fields_preserved": null
+    },
+    {
+      "source_cohort": "frozen-r1",
+      "index": 10,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "frozen-r1",
+      "index": 11,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    },
+    {
+      "source_cohort": "frozen-r1",
+      "index": 12,
+      "raw_responses_identical": true,
+      "new_endpoint_calls": 0,
+      "financial_status": "consistent",
+      "accepted_authored_fields_preserved": true
+    }
+  ],
+  "summary": {
+    "cases": 36,
+    "consistent": 35,
+    "new_endpoint_calls": 0
+  }
+}

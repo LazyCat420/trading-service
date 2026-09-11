@@ -1,0 +1,535 @@
+{
+  "recorded_at": "2026-09-11T18:27:36.607746+00:00",
+  "runtime_commit": "b374c5e9",
+  "git_head_at_validation": "b374c5e9b243ee1a52fbc7cd7874a82282a45450",
+  "source_hashes": {
+    "app/v3/agent_runner.py": "41c5401d1490adfdbac9bd42221600d3c6d0c533fbde9733d5d63a6ce99682f3",
+    "app/v3/financial_evidence.py": "59ad421bf3242b7c7f340a75b421d0b1bbac0a3d30d3efbb6c2b9ffb0a40378f",
+    "app/v3/financial_claims.py": "b9e50f66d4988bdada284b24680284d8d3671eaf4b37c82cf8605a17df0247b4",
+    "app/v3/financial_reasoning.py": "5080d9c2070f4a0a8a700799aedd72f2edc51833396d6bba1af1e5367c2ec2f1",
+    "tests/unit/test_financial_live_benchmark.py": "b82710df5c17223e2346897f372ae20300829e7e655266b0f442241b7d004845"
+  },
+  "full_unit": {
+    "passed": 7257,
+    "skipped": 114,
+    "warnings": 236,
+    "seconds": 486.93
+  },
+  "focused_passed": 124,
+  "controls": {
+    "original_responses": 12,
+    "original_expression_checks": 0,
+    "original_responses_with_reviewed_factual_errors": 9,
+    "original_fully_complete": 0,
+    "correct_controls": 12,
+    "correct_controls_accepted": 12,
+    "corruptions": 129,
+    "corruptions_caught": 129,
+    "structured_controls": 12,
+    "structured_controls_accepted": 12,
+    "structured_tamper_cases": 48,
+    "structured_tamper_cases_caught": 48
+  },
+  "test_logs": {
+    "full_unit": {
+      "path": "/tmp/financial-final-full-unit.log",
+      "sha256": "b9977fd82c0ffa04dc31175450f4306a2ad834e735b86037ae0d0963d4c21ced"
+    },
+    "financial_focused": {
+      "path": "/tmp/financial-final-focused.log",
+      "sha256": "e2b74791359a1dc9fd1fd3ffa4a3fa2ac0624f8e58c8353d12d1f7d80b24aa33"
+    },
+    "regressions_before_fix": {
+      "path": "/tmp/financial-format-regression-red.log",
+      "sha256": "7a027e71a9a9ad3d17f9e54a0afd81a6d8131a85854a56c4989bf65c2226cac1"
+    },
+    "regressions_after_fix": {
+      "path": "/tmp/financial-format-regression-green.log",
+      "sha256": "1447d151db092336d55bc055bb996cbb4950e04d22c3d32f9ce26bd681b35b95"
+    }
+  },
+  "cohorts": [
+    {
+      "name": "pilot-r1",
+      "group": "development",
+      "cases": 4,
+      "endpoint_calls": 4,
+      "provider_snapshots": 6,
+      "financial_passes": 0,
+      "first_response_passes": 0,
+      "baseline_not_subject_to_candidate_schema": false
+    },
+    {
+      "name": "pilot-r2",
+      "group": "development",
+      "cases": 4,
+      "endpoint_calls": 8,
+      "provider_snapshots": 9,
+      "financial_passes": 0,
+      "first_response_passes": 0,
+      "baseline_not_subject_to_candidate_schema": false
+    },
+    {
+      "name": "pilot-r3",
+      "group": "development",
+      "cases": 4,
+      "endpoint_calls": 8,
+      "provider_snapshots": 8,
+      "financial_passes": 0,
+      "first_response_passes": 0,
+      "baseline_not_subject_to_candidate_schema": false
+    },
+    {
+      "name": "pilot-r4",
+      "group": "development",
+      "cases": 4,
+      "endpoint_calls": 8,
+      "provider_snapshots": 9,
+      "financial_passes": 0,
+      "first_response_passes": 0,
+      "baseline_not_subject_to_candidate_schema": false
+    },
+    {
+      "name": "thinking-ablation-r1",
+      "group": "development",
+      "cases": 1,
+      "endpoint_calls": 1,
+      "provider_snapshots": 1,
+      "financial_passes": 0,
+      "first_response_passes": 0,
+      "baseline_not_subject_to_candidate_schema": false
+    },
+    {
+      "name": "pilot-r5",
+      "group": "development",
+      "cases": 1,
+      "endpoint_calls": 2,
+      "provider_snapshots": 2,
+      "financial_passes": 0,
+      "first_response_passes": 0,
+      "baseline_not_subject_to_candidate_schema": false
+    },
+    {
+      "name": "pilot-r6",
+      "group": "development",
+      "cases": 1,
+      "endpoint_calls": 2,
+      "provider_snapshots": 2,
+      "financial_passes": 0,
+      "first_response_passes": 0,
+      "baseline_not_subject_to_candidate_schema": false
+    },
+    {
+      "name": "thinking-16k-ablation-r1",
+      "group": "development",
+      "cases": 1,
+      "endpoint_calls": 1,
+      "provider_snapshots": 1,
+      "financial_passes": 0,
+      "first_response_passes": 0,
+      "baseline_not_subject_to_candidate_schema": false
+    },
+    {
+      "name": "structured-pilot-r1",
+      "group": "development",
+      "cases": 1,
+      "endpoint_calls": 2,
+      "provider_snapshots": 2,
+      "financial_passes": 0,
+      "first_response_passes": 0,
+      "baseline_not_subject_to_candidate_schema": false
+    },
+    {
+      "name": "structured-pilot-r2",
+      "group": "development",
+      "cases": 4,
+      "endpoint_calls": 7,
+      "provider_snapshots": 7,
+      "financial_passes": 2,
+      "first_response_passes": 1,
+      "baseline_not_subject_to_candidate_schema": false
+    },
+    {
+      "name": "structured-pilot-r3",
+      "group": "development",
+      "cases": 4,
+      "endpoint_calls": 6,
+      "provider_snapshots": 6,
+      "financial_passes": 4,
+      "first_response_passes": 2,
+      "baseline_not_subject_to_candidate_schema": false
+    },
+    {
+      "name": "fresh-r1",
+      "group": "prior_candidate",
+      "cases": 12,
+      "endpoint_calls": 17,
+      "provider_snapshots": 17,
+      "financial_passes": 11,
+      "first_response_passes": 7,
+      "baseline_not_subject_to_candidate_schema": false
+    },
+    {
+      "name": "fresh-r2",
+      "group": "prior_candidate",
+      "cases": 12,
+      "endpoint_calls": 15,
+      "provider_snapshots": 15,
+      "financial_passes": 10,
+      "first_response_passes": 9,
+      "baseline_not_subject_to_candidate_schema": false
+    },
+    {
+      "name": "frozen-r1",
+      "group": "prior_candidate",
+      "cases": 12,
+      "endpoint_calls": 12,
+      "provider_snapshots": 12,
+      "financial_passes": 10,
+      "first_response_passes": 0,
+      "baseline_not_subject_to_candidate_schema": false
+    },
+    {
+      "name": "holdout-baseline-r1",
+      "group": "prior_candidate",
+      "cases": 8,
+      "endpoint_calls": 8,
+      "provider_snapshots": 8,
+      "financial_passes": 0,
+      "first_response_passes": 0,
+      "baseline_not_subject_to_candidate_schema": true
+    },
+    {
+      "name": "holdout-candidate-r1",
+      "group": "prior_candidate",
+      "cases": 8,
+      "endpoint_calls": 10,
+      "provider_snapshots": 10,
+      "financial_passes": 8,
+      "first_response_passes": 6,
+      "baseline_not_subject_to_candidate_schema": false
+    },
+    {
+      "name": "final-fresh-r1",
+      "group": "final_candidate",
+      "cases": 12,
+      "endpoint_calls": 18,
+      "provider_snapshots": 18,
+      "financial_passes": 10,
+      "first_response_passes": 6,
+      "baseline_not_subject_to_candidate_schema": false
+    },
+    {
+      "name": "final-frozen-r1",
+      "group": "final_candidate",
+      "cases": 12,
+      "endpoint_calls": 12,
+      "provider_snapshots": 12,
+      "financial_passes": 11,
+      "first_response_passes": 0,
+      "baseline_not_subject_to_candidate_schema": false
+    },
+    {
+      "name": "variant-regression-r1",
+      "group": "final_candidate",
+      "cases": 8,
+      "endpoint_calls": 10,
+      "provider_snapshots": 10,
+      "financial_passes": 8,
+      "first_response_passes": 6,
+      "baseline_not_subject_to_candidate_schema": false
+    }
+  ],
+  "totals": {
+    "live_assessed_cases": 113,
+    "endpoint_calls": 151,
+    "provider_snapshots": 155
+  },
+  "final_execution_checks": [
+    {
+      "cohort": "final-fresh-r1",
+      "index": 1,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-fresh-r1",
+      "index": 2,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-fresh-r1",
+      "index": 3,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-fresh-r1",
+      "index": 4,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-fresh-r1",
+      "index": 5,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-fresh-r1",
+      "index": 6,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-fresh-r1",
+      "index": 7,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-fresh-r1",
+      "index": 8,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-fresh-r1",
+      "index": 9,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-fresh-r1",
+      "index": 10,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-fresh-r1",
+      "index": 11,
+      "financial_status": "unresolved",
+      "authored_fields_preserved": null,
+      "execution_errors_despite_forged_saved_pass": [
+        "Return financial_claims with exact metric, value, unit, date and source fields.",
+        "Answer q-now exactly once, including an explicit unresolved answer when needed.",
+        "Answer q-wait exactly once, including an explicit unresolved answer when needed.",
+        "Answer q-units exactly once, including an explicit unresolved answer when needed.",
+        "Declare the facts that support the decision; zero checked claims is not a pass."
+      ],
+      "tamper_rejected": null
+    },
+    {
+      "cohort": "final-fresh-r1",
+      "index": 12,
+      "financial_status": "unresolved",
+      "authored_fields_preserved": null,
+      "execution_errors_despite_forged_saved_pass": [
+        "Return financial_claims with exact metric, value, unit, date and source fields.",
+        "Answer q-now exactly once, including an explicit unresolved answer when needed.",
+        "Answer q-wait exactly once, including an explicit unresolved answer when needed.",
+        "Answer q-units exactly once, including an explicit unresolved answer when needed.",
+        "Declare the facts that support the decision; zero checked claims is not a pass."
+      ],
+      "tamper_rejected": null
+    },
+    {
+      "cohort": "final-frozen-r1",
+      "index": 1,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-frozen-r1",
+      "index": 2,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-frozen-r1",
+      "index": 3,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-frozen-r1",
+      "index": 4,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-frozen-r1",
+      "index": 5,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-frozen-r1",
+      "index": 6,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-frozen-r1",
+      "index": 7,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-frozen-r1",
+      "index": 8,
+      "financial_status": "unresolved",
+      "authored_fields_preserved": null,
+      "execution_errors_despite_forged_saved_pass": [
+        "Return financial_claims with exact metric, value, unit, date and source fields.",
+        "Answer only the supplied exact question ids.",
+        "Answer only the supplied exact question ids.",
+        "Answer only the supplied exact question ids.",
+        "Answer q-current exactly once, including an explicit unresolved answer when needed.",
+        "Answer q-loss exactly once, including an explicit unresolved answer when needed.",
+        "Answer q-independent exactly once, including an explicit unresolved answer when needed.",
+        "Put quantitative assertions in financial_claims and cite [fact_id]; explain implications qualitatively in prose.",
+        "Code comparison places close above support.",
+        "Put quantitative assertions in financial_claims and cite [fact_id]; explain implications qualitatively in prose.",
+        "Put quantitative assertions in financial_claims and cite [fact_id]; explain implications qualitatively in prose.",
+        "Declare the facts that support the decision; zero checked claims is not a pass.",
+        "An executable action cannot rely exclusively on unavailable observations."
+      ],
+      "tamper_rejected": null
+    },
+    {
+      "cohort": "final-frozen-r1",
+      "index": 9,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-frozen-r1",
+      "index": 10,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-frozen-r1",
+      "index": 11,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "final-frozen-r1",
+      "index": 12,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "variant-regression-r1",
+      "index": 1,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "variant-regression-r1",
+      "index": 2,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "variant-regression-r1",
+      "index": 3,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "variant-regression-r1",
+      "index": 4,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "variant-regression-r1",
+      "index": 5,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "variant-regression-r1",
+      "index": 6,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "variant-regression-r1",
+      "index": 7,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    },
+    {
+      "cohort": "variant-regression-r1",
+      "index": 8,
+      "financial_status": "consistent",
+      "authored_fields_preserved": true,
+      "execution_errors_despite_forged_saved_pass": [],
+      "tamper_rejected": true
+    }
+  ],
+  "live_tools_and_orders_enabled": false,
+  "deployment": "Pending; recorded separately after container restart and health/revision verification.",
+  "limitations": "Code-calculated and code-rendered financial consistency, not learned arithmetic or investment performance. Held-out first exposure and variant repeat are separate. Failed cases and all development attempts are retained; offline replay counts are recorded separately."
+}

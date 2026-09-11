@@ -1,0 +1,599 @@
+{
+  "scope": "Independent arithmetic recomputation plus rationale review aid; no automatic investment-quality judgment.",
+  "rows": [
+    {
+      "index": 1,
+      "case": "headroom",
+      "arm": "current",
+      "outcome": "SUCCESS",
+      "financial_status": "consistent",
+      "calls": 2,
+      "action": "HOLD",
+      "confidence": 72,
+      "size": 4.4,
+      "entry_mode": "watch_only",
+      "arithmetic_checked": [
+        "calc_range_position_pct",
+        "calc_headroom_pct",
+        "calc_proposed_current_reward_risk",
+        "calc_forward_peg"
+      ],
+      "arithmetic_discrepancies": [],
+      "reasoning": "This supplied observation is available. [close] This supplied observation is available. [support] This supplied observation is available. [resistance] The close is nearer support than resistance. [calc_range_position_pct] This supplied observation is available. [calc_price_vs_support] This supplied observation is available. [rsi_14] The supplied operating margin is positive. [operating_margin_pct] The supplied free cash flow is positive. [free_cash_flow] The supplied gross margin is positive. [gross_margin_pct] The supplied return on invested capital is positive. [roic_pct] The remaining single-name capacity limits additional sizing. [calc_headroom_pct] This supplied observation is available. [calc_unreserved_headroom_pct] The supplied purchase exceeds the available capacity. [calc_proposal_fits] Prospective gain exceeds defined downside at the current reference price. [calc_proposed_current_reward_risk] This supplied observation is available. [debt_to_equity] The supplied record says management met its guidance. [guidance_record] This supplied observation is available. [sector_roic_pct] This supplied observation is available. [sector_gross_margin_pct] This supplied observation is available. [revenue_growth_pct] This supplied observation is available. [eps_growth_next_year_pct] This supplied observation is available. [forward_pe] The forward growth-adjusted multiple uses the supplied next-year earnings growth. [calc_forward_peg] This supplied observation is available. [single_name_limit_pct] This supplied observation is available. [exposure_pct] This supplied observation is available. [pending_exposure_pct] This supplied observation is available. [proposed_purchase_pct] This supplied observation is available. [proposed_stop] This supplied observation is available. [proposed_target]",
+      "answers": [
+        {
+          "id": "q-headroom",
+          "question": "How much additional EVLT exposure can fit under the total 5 percent single-name limit, and does the proposed 2.5 percent purchase fit?",
+          "status": "answered",
+          "answer": "The remaining single-name capacity limits additional sizing. [calc_headroom_pct] This supplied observation is available. [calc_unreserved_headroom_pct] The supplied purchase exceeds the available capacity. [calc_proposal_fits]",
+          "values": {
+            "calc_headroom_pct": 0.6,
+            "calc_unreserved_headroom_pct": 0.6,
+            "calc_proposal_fits": false
+          }
+        },
+        {
+          "id": "q-peg",
+          "question": "Using the supplied EPS growth, what is forward PEG?",
+          "status": "answered",
+          "answer": "The forward growth-adjusted multiple uses the supplied next-year earnings growth. [calc_forward_peg]",
+          "values": {
+            "calc_forward_peg": 1.25
+          }
+        },
+        {
+          "id": "q-range",
+          "question": "What are the reward/risk ratio and the close's position within the support-resistance range?",
+          "status": "answered",
+          "answer": "The close is nearer support than resistance. [calc_range_position_pct] Prospective gain exceeds defined downside at the current reference price. [calc_proposed_current_reward_risk]",
+          "values": {
+            "calc_range_position_pct": 25.0,
+            "calc_proposed_current_reward_risk": 3.0
+          }
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "case": "headroom",
+      "arm": "no_method",
+      "outcome": "SUCCESS",
+      "financial_status": "unresolved",
+      "calls": 2,
+      "action": "HOLD",
+      "confidence": 55,
+      "size": 0,
+      "entry_mode": "watch_only",
+      "arithmetic_checked": [],
+      "arithmetic_discrepancies": [],
+      "reasoning": "The proposed 2.5 percent incremental purchase exceeds the available headroom (0.6 percent) under the 5 percent single-name limit, so it cannot execute. The forward PEG of 1.25 suggests the stock is fairly valued relative to growth. Reward/risk is 3.0 with the close positioned in the lower third of the support-resistance range. Existing position is intact with an acknowledged constructive thesis, but the size constraint prevents new entry.",
+      "answers": [
+        {
+          "id": null,
+          "question": null,
+          "status": null,
+          "answer": "The portfolio has 4.4 percent exposure from 44 shares. The single-name limit is 5 percent, leaving 0.6 percent headroom. The proposed 2.5 percent purchase exceeds available headroom and does not fit under the limit.",
+          "values": {}
+        },
+        {
+          "id": null,
+          "question": null,
+          "status": null,
+          "answer": "Forward PEG = Forward P/E / EPS growth = 20 / 16 = 1.25",
+          "values": {}
+        },
+        {
+          "id": null,
+          "question": null,
+          "status": null,
+          "answer": "Reward/risk ratio = (115 - 100) / (100 - 95) = 15 / 5 = 3.0. Close is 2 percent above support (100 vs 95) and 18 percent below resistance (115 vs 100), positioned in the lower-third of the range.",
+          "values": {}
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "case": "headroom",
+      "arm": "stale_memory",
+      "outcome": "SUCCESS",
+      "financial_status": "consistent",
+      "calls": 2,
+      "action": "HOLD",
+      "confidence": 72,
+      "size": 4.4,
+      "entry_mode": "watch_only",
+      "arithmetic_checked": [
+        "calc_range_position_pct",
+        "calc_headroom_pct",
+        "calc_proposed_current_reward_risk",
+        "calc_forward_peg"
+      ],
+      "arithmetic_discrepancies": [],
+      "reasoning": "This supplied observation is available. [close] This supplied observation is available. [support] This supplied observation is available. [resistance] The close is nearer support than resistance. [calc_range_position_pct] This supplied observation is available. [calc_price_vs_support] The remaining single-name capacity limits additional sizing. [calc_headroom_pct] The supplied purchase exceeds the available capacity. [calc_proposal_fits] Prospective gain exceeds defined downside at the current reference price. [calc_proposed_current_reward_risk] The supplied operating margin is positive. [operating_margin_pct] The supplied free cash flow is positive. [free_cash_flow] The supplied gross margin is positive. [gross_margin_pct] The supplied return on invested capital is positive. [roic_pct] The forward growth-adjusted multiple uses the supplied next-year earnings growth. [calc_forward_peg] The supplied prior leverage observation is unavailable. [debt_to_equity_prior] The supplied record says management met its guidance. [guidance_record] Price support and the oscillator measure different quantities. [support] [rsi_14] The supplied company gross margin exceeds the sector's same metric. [gross_margin_pct] [sector_gross_margin_pct] The supplied company return on invested capital exceeds the sector's same metric. [roic_pct] [sector_roic_pct] This supplied observation is available. [equity] This supplied observation is available. [cash] This supplied observation is available. [exposure_pct] This supplied observation is available. [single_name_limit_pct] This supplied observation is available. [pending_exposure_pct] This supplied observation is available. [proposed_purchase_pct] This supplied observation is available. [forward_pe] This supplied observation is available. [revenue_growth_pct] This supplied observation is available. [eps_growth_next_year_pct] This supplied observation is available. [proposed_stop] This supplied observation is available. [proposed_target] This supplied observation is available. [calc_unreserved_headroom_pct] This supplied observation is available. [calc_headroom_usd]",
+      "answers": [
+        {
+          "id": "q-headroom",
+          "question": "How much additional EVLT exposure can fit under the total 5 percent single-name limit, and does the proposed 2.5 percent purchase fit?",
+          "status": "answered",
+          "answer": "The remaining single-name capacity limits additional sizing. [calc_headroom_pct] The supplied purchase exceeds the available capacity. [calc_proposal_fits]",
+          "values": {
+            "calc_headroom_pct": 0.6,
+            "calc_proposal_fits": false
+          }
+        },
+        {
+          "id": "q-peg",
+          "question": "Using the supplied EPS growth, what is forward PEG?",
+          "status": "answered",
+          "answer": "The forward growth-adjusted multiple uses the supplied next-year earnings growth. [calc_forward_peg]",
+          "values": {
+            "calc_forward_peg": 1.25
+          }
+        },
+        {
+          "id": "q-range",
+          "question": "What are the reward/risk ratio and the close's position within the support-resistance range?",
+          "status": "answered",
+          "answer": "The close is nearer support than resistance. [calc_range_position_pct] Prospective gain exceeds defined downside at the current reference price. [calc_proposed_current_reward_risk]",
+          "values": {
+            "calc_range_position_pct": 25.0,
+            "calc_proposed_current_reward_risk": 3.0
+          }
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "case": "missing_history",
+      "arm": "stale_memory",
+      "outcome": "SUCCESS",
+      "financial_status": "consistent",
+      "calls": 2,
+      "action": "HOLD",
+      "confidence": 55,
+      "size": 0,
+      "entry_mode": "watch_only",
+      "arithmetic_checked": [
+        "calc_range_position_pct",
+        "calc_forward_peg",
+        "calc_proposed_current_reward_risk",
+        "calc_headroom_pct"
+      ],
+      "arithmetic_discrepancies": [],
+      "reasoning": "This supplied observation is available. [close] This supplied observation is available. [support] This supplied observation is available. [resistance] This supplied observation is available. [rsi_14] The close is nearer support than resistance. [calc_range_position_pct] This supplied observation is available. [calc_price_vs_support] The supplied operating margin is positive. [operating_margin_pct] The supplied free cash flow is positive. [free_cash_flow] The supplied gross margin is positive. [gross_margin_pct] The supplied return on invested capital is positive. [roic_pct] This supplied observation is available. [debt_to_equity] This supplied observation is available. [sector_roic_pct] This supplied observation is available. [sector_gross_margin_pct] The supplied record says management met its guidance. [guidance_record] This supplied observation is available. [equity] This supplied observation is available. [cash] This supplied observation is available. [exposure_pct] This supplied observation is available. [single_name_limit_pct] This supplied observation is available. [forward_pe] This supplied observation is available. [revenue_growth_pct] This supplied observation is available. [calc_unreserved_headroom_pct] The supplied dated volume trend is unavailable. [volume_five_session_trend] The supplied long moving average is unavailable. [sma_200] The supplied prior leverage observation is unavailable. [debt_to_equity_prior] This supplied observation is unavailable. [eps_growth_next_year_pct] The required earnings-growth observation is unavailable, so forward PEG is unresolved. [calc_forward_peg] Whether the supplied purchase fits remains unresolved. [calc_proposal_fits] Reward/risk at the current reference price is unknown. [calc_proposed_current_reward_risk] Reserved concentration capacity is unknown. [calc_headroom_pct] This supplied observation is unavailable. [calc_headroom_usd]",
+      "answers": [
+        {
+          "id": "q-history",
+          "question": "As of August 17, 2026, was volume declining across its preceding five trading sessions?",
+          "status": "unresolved",
+          "answer": "The supplied dated volume trend is unavailable. [volume_five_session_trend] The supplied long moving average is unavailable. [sma_200]",
+          "values": {
+            "volume_five_session_trend": null,
+            "sma_200": null
+          }
+        },
+        {
+          "id": "q-peg",
+          "question": "Can PEG be computed from the supplied evidence?",
+          "status": "unresolved",
+          "answer": "The required earnings-growth observation is unavailable, so forward PEG is unresolved. [calc_forward_peg]",
+          "values": {
+            "calc_forward_peg": null
+          }
+        },
+        {
+          "id": "q-sma",
+          "question": "Is a 200-session moving average established by these 14 supplied closes?",
+          "status": "unresolved",
+          "answer": "The supplied long moving average is unavailable. [sma_200]",
+          "values": {
+            "sma_200": null
+          }
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "case": "missing_history",
+      "arm": "no_method",
+      "outcome": "SUCCESS",
+      "financial_status": "consistent",
+      "calls": 2,
+      "action": "HOLD",
+      "confidence": 55,
+      "size": 0,
+      "entry_mode": "watch_only",
+      "arithmetic_checked": [
+        "calc_range_position_pct",
+        "calc_headroom_pct",
+        "calc_forward_peg",
+        "calc_proposed_current_reward_risk"
+      ],
+      "arithmetic_discrepancies": [],
+      "reasoning": "This supplied observation is available. [close] This supplied observation is available. [support] This supplied observation is available. [resistance] This supplied observation is available. [rsi_14] The close is nearer support than resistance. [calc_range_position_pct] This supplied observation is available. [calc_price_vs_support] The supplied operating margin is positive. [operating_margin_pct] The supplied free cash flow is positive. [free_cash_flow] The supplied gross margin is positive. [gross_margin_pct] The supplied return on invested capital is positive. [roic_pct] Reserved concentration capacity is unknown. [calc_headroom_pct] Whether the supplied purchase fits remains unresolved. [calc_proposal_fits] The supplied dated volume trend is unavailable. [volume_five_session_trend] The supplied long moving average is unavailable. [sma_200] The supplied prior leverage observation is unavailable. [debt_to_equity_prior] The supplied record says management met its guidance. [guidance_record] Price support and the oscillator measure different quantities. [support] [rsi_14] The supplied company gross margin exceeds the sector's same metric. [gross_margin_pct] [sector_gross_margin_pct] The supplied company return on invested capital exceeds the sector's same metric. [roic_pct] [sector_roic_pct] This supplied observation is available. [equity] This supplied observation is available. [cash] This supplied observation is available. [exposure_pct] This supplied observation is available. [single_name_limit_pct] This supplied observation is available. [forward_pe] This supplied observation is available. [revenue_growth_pct] This supplied observation is unavailable. [eps_growth_next_year_pct] The required earnings-growth observation is unavailable, so forward PEG is unresolved. [calc_forward_peg] This supplied observation is available. [calc_unreserved_headroom_pct] This supplied observation is unavailable. [calc_headroom_usd] Reward/risk at the current reference price is unknown. [calc_proposed_current_reward_risk]",
+      "answers": [
+        {
+          "id": "q-history",
+          "question": "As of August 17, 2026, was volume declining across its preceding five trading sessions?",
+          "status": "unresolved",
+          "answer": "The supplied dated volume trend is unavailable. [volume_five_session_trend]",
+          "values": {
+            "volume_five_session_trend": null
+          }
+        },
+        {
+          "id": "q-peg",
+          "question": "Can PEG be computed from the supplied evidence?",
+          "status": "unresolved",
+          "answer": "The required earnings-growth observation is unavailable, so forward PEG is unresolved. [calc_forward_peg]",
+          "values": {
+            "calc_forward_peg": null
+          }
+        },
+        {
+          "id": "q-sma",
+          "question": "Is a 200-session moving average established by these 14 supplied closes?",
+          "status": "unresolved",
+          "answer": "The supplied long moving average is unavailable. [sma_200]",
+          "values": {
+            "sma_200": null
+          }
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "case": "missing_history",
+      "arm": "current",
+      "outcome": "SUCCESS",
+      "financial_status": "consistent",
+      "calls": 2,
+      "action": "HOLD",
+      "confidence": 55,
+      "size": 0,
+      "entry_mode": "watch_only",
+      "arithmetic_checked": [
+        "calc_range_position_pct",
+        "calc_forward_peg",
+        "calc_proposed_current_reward_risk",
+        "calc_headroom_pct"
+      ],
+      "arithmetic_discrepancies": [],
+      "reasoning": "This supplied observation is available. [close] This supplied observation is available. [support] This supplied observation is available. [resistance] This supplied observation is available. [rsi_14] The close is nearer support than resistance. [calc_range_position_pct] This supplied observation is available. [calc_price_vs_support] The supplied operating margin is positive. [operating_margin_pct] The supplied free cash flow is positive. [free_cash_flow] The supplied gross margin is positive. [gross_margin_pct] The supplied return on invested capital is positive. [roic_pct] This supplied observation is available. [debt_to_equity] This supplied observation is available. [sector_roic_pct] This supplied observation is available. [sector_gross_margin_pct] The supplied record says management met its guidance. [guidance_record] This supplied observation is available. [equity] This supplied observation is available. [cash] This supplied observation is available. [exposure_pct] This supplied observation is available. [single_name_limit_pct] This supplied observation is available. [forward_pe] This supplied observation is available. [revenue_growth_pct] This supplied observation is available. [calc_unreserved_headroom_pct] The supplied dated volume trend is unavailable. [volume_five_session_trend] The supplied long moving average is unavailable. [sma_200] The supplied prior leverage observation is unavailable. [debt_to_equity_prior] This supplied observation is unavailable. [eps_growth_next_year_pct] The required earnings-growth observation is unavailable, so forward PEG is unresolved. [calc_forward_peg] Whether the supplied purchase fits remains unresolved. [calc_proposal_fits] Reward/risk at the current reference price is unknown. [calc_proposed_current_reward_risk] Reserved concentration capacity is unknown. [calc_headroom_pct] This supplied observation is unavailable. [calc_headroom_usd]",
+      "answers": [
+        {
+          "id": "q-history",
+          "question": "As of August 17, 2026, was volume declining across its preceding five trading sessions?",
+          "status": "unresolved",
+          "answer": "The supplied dated volume trend is unavailable. [volume_five_session_trend]",
+          "values": {
+            "volume_five_session_trend": null
+          }
+        },
+        {
+          "id": "q-peg",
+          "question": "Can PEG be computed from the supplied evidence?",
+          "status": "unresolved",
+          "answer": "The required earnings-growth observation is unavailable, so forward PEG is unresolved. [calc_forward_peg]",
+          "values": {
+            "calc_forward_peg": null
+          }
+        },
+        {
+          "id": "q-sma",
+          "question": "Is a 200-session moving average established by these 14 supplied closes?",
+          "status": "unresolved",
+          "answer": "The supplied long moving average is unavailable. [sma_200]",
+          "values": {
+            "sma_200": null
+          }
+        }
+      ]
+    },
+    {
+      "index": 7,
+      "case": "held_deterioration",
+      "arm": "current",
+      "outcome": "SUCCESS",
+      "financial_status": "consistent",
+      "calls": 2,
+      "action": "SELL",
+      "confidence": 92,
+      "size": 10,
+      "entry_mode": "enter_now",
+      "arithmetic_checked": [
+        "calc_holding_return_pct",
+        "calc_range_position_pct",
+        "calc_proposed_current_reward_risk"
+      ],
+      "arithmetic_discrepancies": [],
+      "reasoning": "The position is below its acquisition cost. [calc_holding_return_pct] The close is nearer support than resistance. [calc_range_position_pct] This supplied observation is available. [calc_price_vs_support] This supplied observation is available. [sma_50] The supplied long moving average is available. [sma_200] This supplied observation is available. [rsi_14] The supplied operating margin is negative. [operating_margin_pct] The supplied free cash flow is negative. [free_cash_flow] The supplied gross margin is positive. [gross_margin_pct] This supplied observation is available. [debt_to_equity] The supplied return on invested capital is positive. [roic_pct] This supplied observation is available. [sector_roic_pct] This supplied observation is available. [sector_gross_margin_pct] The supplied record says management met its guidance. [guidance_record] This supplied observation is available. [calc_unreserved_headroom_pct] The repeated reports share an underlying filing and do not provide independent corroboration. [underlying_filing_count] This supplied observation is available. [prior_gross_margin_pct] Whether the supplied purchase fits remains unresolved. [calc_proposal_fits] Reward/risk at the current reference price is unknown. [calc_proposed_current_reward_risk]",
+      "answers": [
+        {
+          "id": "q-current",
+          "question": "Which free cash flow and operating margin figures are current at the decision date?",
+          "status": "answered",
+          "answer": "The supplied free cash flow is negative. [free_cash_flow] The supplied operating margin is negative. [operating_margin_pct]",
+          "values": {
+            "free_cash_flow": -40000000,
+            "operating_margin_pct": -2
+          }
+        },
+        {
+          "id": "q-loss",
+          "question": "What is the holding's unrealized percentage return from cost 120 to price 100?",
+          "status": "answered",
+          "answer": "The position is below its acquisition cost. [calc_holding_return_pct]",
+          "values": {
+            "calc_holding_return_pct": -16.666666666666668
+          }
+        },
+        {
+          "id": "q-independent",
+          "question": "Do the two reports repeating the same September filing provide two independent sources?",
+          "status": "answered",
+          "answer": "The repeated reports share an underlying filing and do not provide independent corroboration. [underlying_filing_count]",
+          "values": {
+            "underlying_filing_count": 1
+          }
+        }
+      ]
+    },
+    {
+      "index": 8,
+      "case": "held_deterioration",
+      "arm": "no_method",
+      "outcome": "SUCCESS",
+      "financial_status": "consistent",
+      "calls": 2,
+      "action": "SELL",
+      "confidence": 92,
+      "size": 0,
+      "entry_mode": "enter_now",
+      "arithmetic_checked": [
+        "calc_holding_return_pct",
+        "calc_range_position_pct",
+        "calc_proposed_current_reward_risk"
+      ],
+      "arithmetic_discrepancies": [],
+      "reasoning": "The position is below its acquisition cost. [calc_holding_return_pct] The close is nearer support than resistance. [calc_range_position_pct] This supplied observation is available. [calc_price_vs_support] The supplied operating margin is negative. [operating_margin_pct] The supplied free cash flow is negative. [free_cash_flow] The supplied gross margin is positive. [gross_margin_pct] The supplied return on invested capital is positive. [roic_pct] This supplied observation is available. [debt_to_equity] The repeated reports share an underlying filing and do not provide independent corroboration. [underlying_filing_count] The supplied record says management met its guidance. [guidance_record] Whether the supplied purchase fits remains unresolved. [calc_proposal_fits] Reward/risk at the current reference price is unknown. [calc_proposed_current_reward_risk]",
+      "answers": [
+        {
+          "id": "q-current",
+          "question": "Which free cash flow and operating margin figures are current at the decision date?",
+          "status": "answered",
+          "answer": "The supplied free cash flow is negative. [free_cash_flow] The supplied operating margin is negative. [operating_margin_pct]",
+          "values": {
+            "free_cash_flow": -40000000,
+            "operating_margin_pct": -2
+          }
+        },
+        {
+          "id": "q-loss",
+          "question": "What is the holding's unrealized percentage return from cost 120 to price 100?",
+          "status": "answered",
+          "answer": "The position is below its acquisition cost. [calc_holding_return_pct]",
+          "values": {
+            "calc_holding_return_pct": -16.666666666666668
+          }
+        },
+        {
+          "id": "q-independent",
+          "question": "Do the two reports repeating the same September filing provide two independent sources?",
+          "status": "answered",
+          "answer": "The repeated reports share an underlying filing and do not provide independent corroboration. [underlying_filing_count]",
+          "values": {
+            "underlying_filing_count": 1
+          }
+        }
+      ]
+    },
+    {
+      "index": 9,
+      "case": "held_deterioration",
+      "arm": "stale_memory",
+      "outcome": "SUCCESS",
+      "financial_status": "unresolved",
+      "calls": 2,
+      "action": "SELL",
+      "confidence": 82,
+      "size": 0,
+      "entry_mode": "enter_now",
+      "arithmetic_checked": [],
+      "arithmetic_discrepancies": [],
+      "reasoning": "The 2026-09-03 filing shows severe deterioration: operating margin -2 percent (from 42 percent to 30 percent), debt/equity 2.5 (up from 2.0 in August baseline), negative next-year EPS, free cash flow -40 million (from positive 120 million), gross margin down to 30 percent (from 42 percent). Close 100 vs average cost 120 gives -16.67 percent holding return. Two repeating September reports share one underlying filing, so no independent corroboration. Exposure 10 percent exceeds the 5 percent single-name limit. The regime CONTRADICTORY: old data suggested quality compounder, current filing shows structurally impaired business. The bear case is decisive on current fundamentals; bull case rests on stale August data. SELL is required to bring exposure within policy and lock in remaining capital before further deterioration.",
+      "answers": [
+        {
+          "id": "q-current",
+          "question": null,
+          "status": null,
+          "answer": null,
+          "values": {}
+        },
+        {
+          "id": "q-loss",
+          "question": null,
+          "status": null,
+          "answer": null,
+          "values": {}
+        },
+        {
+          "id": "q-independent",
+          "question": null,
+          "status": null,
+          "answer": null,
+          "values": {}
+        }
+      ]
+    },
+    {
+      "index": 10,
+      "case": "conditional_entry",
+      "arm": "stale_memory",
+      "outcome": "SUCCESS",
+      "financial_status": "consistent",
+      "calls": 2,
+      "action": "HOLD",
+      "confidence": 55,
+      "size": 0,
+      "entry_mode": "watch_only",
+      "arithmetic_checked": [
+        "calc_range_position_pct",
+        "calc_forward_peg",
+        "calc_proposed_current_reward_risk",
+        "calc_proposed_conditional_reward_risk",
+        "calc_headroom_pct"
+      ],
+      "arithmetic_discrepancies": [],
+      "reasoning": "This supplied observation is available. [close] This supplied observation is available. [support] This supplied observation is available. [resistance] This supplied observation is available. [rsi_14] The close is nearer resistance than support. [calc_range_position_pct] This supplied observation is available. [calc_price_vs_support] The forward growth-adjusted multiple uses the supplied next-year earnings growth. [calc_forward_peg] Defined downside exceeds prospective gain at the current reference price. [calc_proposed_current_reward_risk] Prospective gain exceeds defined downside at the hypothetical future entry. [calc_proposed_conditional_reward_risk] The supplied operating margin is positive. [operating_margin_pct] The supplied free cash flow is positive. [free_cash_flow] The supplied gross margin is positive. [gross_margin_pct] The supplied return on invested capital is positive. [roic_pct] Reserved concentration capacity is unknown. [calc_headroom_pct] Whether the supplied purchase fits remains unresolved. [calc_proposal_fits] The supplied long moving average is available. [sma_200] The supplied prior leverage observation is unavailable. [debt_to_equity_prior] The supplied record says management met its guidance. [guidance_record] Price support and the oscillator measure different quantities. [support] [rsi_14] The supplied company gross margin exceeds the sector's same metric. [gross_margin_pct] [sector_gross_margin_pct] The supplied company return on invested capital exceeds the sector's same metric. [roic_pct] [sector_roic_pct] This supplied observation is available. [equity] This supplied observation is available. [cash] This supplied observation is available. [exposure_pct] This supplied observation is available. [single_name_limit_pct] This supplied observation is available. [forward_pe] This supplied observation is available. [revenue_growth_pct] This supplied observation is available. [eps_growth_next_year_pct] This supplied observation is available. [proposed_stop] This supplied observation is available. [proposed_target] This supplied observation is available. [proposed_entry] This supplied observation is available. [calc_unreserved_headroom_pct]",
+      "answers": [
+        {
+          "id": "q-now",
+          "question": "What is reward/risk at current price 115, stop 95 and target 130?",
+          "status": "answered",
+          "answer": "Defined downside exceeds prospective gain at the current reference price. [calc_proposed_current_reward_risk] The close is nearer resistance than support. [calc_range_position_pct] This supplied observation is available. [calc_price_vs_support]",
+          "values": {
+            "calc_proposed_current_reward_risk": 0.75,
+            "calc_range_position_pct": 100.0,
+            "calc_price_vs_support": "above"
+          }
+        },
+        {
+          "id": "q-wait",
+          "question": "What would reward/risk be at the proposed future entry price 100 with the same stop and target?",
+          "status": "answered",
+          "answer": "Prospective gain exceeds defined downside at the hypothetical future entry. [calc_proposed_conditional_reward_risk] The close is nearer resistance than support. [calc_range_position_pct] This supplied observation is available. [calc_price_vs_support]",
+          "values": {
+            "calc_proposed_conditional_reward_risk": 6.0,
+            "calc_range_position_pct": 100.0,
+            "calc_price_vs_support": "above"
+          }
+        },
+        {
+          "id": "q-units",
+          "question": "Can support price 95 be used as RSI threshold 95 on this evidence?",
+          "status": "answered",
+          "answer": "Price support and the oscillator measure different quantities. [support] [rsi_14] This supplied observation is available. [calc_price_vs_support]",
+          "values": {
+            "support": 95,
+            "rsi_14": 72,
+            "calc_price_vs_support": "above"
+          }
+        }
+      ]
+    },
+    {
+      "index": 11,
+      "case": "conditional_entry",
+      "arm": "no_method",
+      "outcome": "SUCCESS",
+      "financial_status": "consistent",
+      "calls": 2,
+      "action": "HOLD",
+      "confidence": 55,
+      "size": 0,
+      "entry_mode": "watch_only",
+      "arithmetic_checked": [
+        "calc_range_position_pct",
+        "calc_proposed_current_reward_risk",
+        "calc_proposed_conditional_reward_risk",
+        "calc_forward_peg",
+        "calc_headroom_pct",
+        "calc_holding_return_pct"
+      ],
+      "arithmetic_discrepancies": [],
+      "reasoning": "This supplied observation is available. [close] This supplied observation is available. [support] This supplied observation is available. [resistance] This supplied observation is available. [rsi_14] The close is nearer resistance than support. [calc_range_position_pct] This supplied observation is available. [calc_price_vs_support] Defined downside exceeds prospective gain at the current reference price. [calc_proposed_current_reward_risk] Prospective gain exceeds defined downside at the hypothetical future entry. [calc_proposed_conditional_reward_risk] The supplied operating margin is positive. [operating_margin_pct] The supplied free cash flow is positive. [free_cash_flow] The supplied gross margin is positive. [gross_margin_pct] The supplied return on invested capital is positive. [roic_pct] The forward growth-adjusted multiple uses the supplied next-year earnings growth. [calc_forward_peg] This supplied observation is available. [debt_to_equity] The supplied record says management met its guidance. [guidance_record] This supplied observation is available. [equity] This supplied observation is available. [cash] This supplied observation is available. [exposure_pct] This supplied observation is available. [single_name_limit_pct] This supplied observation is available. [forward_pe] This supplied observation is available. [revenue_growth_pct] This supplied observation is available. [eps_growth_next_year_pct] This supplied observation is available. [proposed_stop] This supplied observation is available. [proposed_target] This supplied observation is available. [proposed_entry] This supplied observation is available. [calc_unreserved_headroom_pct] Reserved concentration capacity is unknown. [calc_headroom_pct] This supplied observation is unavailable. [calc_headroom_usd] Whether the supplied purchase fits remains unresolved. [calc_proposal_fits] The supplied long moving average is available. [sma_200] This supplied observation is available. [sma_50] Price support and the oscillator measure different quantities. [support] [rsi_14] The supplied company gross margin exceeds the sector's same metric. [gross_margin_pct] [sector_gross_margin_pct] The supplied company return on invested capital exceeds the sector's same metric. [roic_pct] [sector_roic_pct] The supplied prior leverage observation is unavailable. [debt_to_equity_prior] The holding return is unknown. [calc_holding_return_pct]",
+      "answers": [
+        {
+          "id": "q-now",
+          "question": "What is reward/risk at current price 115, stop 95 and target 130?",
+          "status": "answered",
+          "answer": "Defined downside exceeds prospective gain at the current reference price. [calc_proposed_current_reward_risk] This supplied observation is available. [calc_price_vs_support] The close is nearer resistance than support. [calc_range_position_pct]",
+          "values": {
+            "calc_proposed_current_reward_risk": 0.75,
+            "calc_price_vs_support": "above",
+            "calc_range_position_pct": 100.0
+          }
+        },
+        {
+          "id": "q-wait",
+          "question": "What would reward/risk be at the proposed future entry price 100 with the same stop and target?",
+          "status": "answered",
+          "answer": "Prospective gain exceeds defined downside at the hypothetical future entry. [calc_proposed_conditional_reward_risk] This supplied observation is available. [calc_price_vs_support] The close is nearer resistance than support. [calc_range_position_pct]",
+          "values": {
+            "calc_proposed_conditional_reward_risk": 6.0,
+            "calc_price_vs_support": "above",
+            "calc_range_position_pct": 100.0
+          }
+        },
+        {
+          "id": "q-units",
+          "question": "Can support price 95 be used as RSI threshold 95 on this evidence?",
+          "status": "answered",
+          "answer": "This supplied observation is available. [calc_price_vs_support] Price support and the oscillator measure different quantities. [support] [rsi_14]",
+          "values": {
+            "calc_price_vs_support": "above",
+            "support": 95,
+            "rsi_14": 72
+          }
+        }
+      ]
+    },
+    {
+      "index": 12,
+      "case": "conditional_entry",
+      "arm": "current",
+      "outcome": "SUCCESS",
+      "financial_status": "consistent",
+      "calls": 2,
+      "action": "HOLD",
+      "confidence": 55,
+      "size": 0,
+      "entry_mode": "watch_only",
+      "arithmetic_checked": [
+        "calc_range_position_pct",
+        "calc_forward_peg",
+        "calc_proposed_current_reward_risk",
+        "calc_proposed_conditional_reward_risk",
+        "calc_headroom_pct"
+      ],
+      "arithmetic_discrepancies": [],
+      "reasoning": "This supplied observation is available. [close] This supplied observation is available. [support] This supplied observation is available. [resistance] This supplied observation is available. [rsi_14] This supplied observation is available. [sma_50] The supplied long moving average is available. [sma_200] The supplied operating margin is positive. [operating_margin_pct] The supplied gross margin is positive. [gross_margin_pct] The supplied return on invested capital is positive. [roic_pct] This supplied observation is available. [debt_to_equity] This supplied observation is available. [forward_pe] This supplied observation is available. [revenue_growth_pct] This supplied observation is available. [eps_growth_next_year_pct] The close is nearer resistance than support. [calc_range_position_pct] This supplied observation is available. [calc_price_vs_support] The forward growth-adjusted multiple uses the supplied next-year earnings growth. [calc_forward_peg] Defined downside exceeds prospective gain at the current reference price. [calc_proposed_current_reward_risk] Prospective gain exceeds defined downside at the hypothetical future entry. [calc_proposed_conditional_reward_risk] This supplied observation is available. [calc_unreserved_headroom_pct] The supplied record says management met its guidance. [guidance_record] This supplied observation is available. [single_name_limit_pct] This supplied observation is available. [exposure_pct] This supplied observation is available. [equity] This supplied observation is available. [cash] Reserved concentration capacity is unknown. [calc_headroom_pct] Whether the supplied purchase fits remains unresolved. [calc_proposal_fits]",
+      "answers": [
+        {
+          "id": "q-now",
+          "question": "What is reward/risk at current price 115, stop 95 and target 130?",
+          "status": "answered",
+          "answer": "Defined downside exceeds prospective gain at the current reference price. [calc_proposed_current_reward_risk] The close is nearer resistance than support. [calc_range_position_pct] This supplied observation is available. [calc_price_vs_support]",
+          "values": {
+            "calc_proposed_current_reward_risk": 0.75,
+            "calc_range_position_pct": 100.0,
+            "calc_price_vs_support": "above"
+          }
+        },
+        {
+          "id": "q-wait",
+          "question": "What would reward/risk be at the proposed future entry price 100 with the same stop and target?",
+          "status": "answered",
+          "answer": "Prospective gain exceeds defined downside at the hypothetical future entry. [calc_proposed_conditional_reward_risk] The close is nearer resistance than support. [calc_range_position_pct] This supplied observation is available. [calc_price_vs_support]",
+          "values": {
+            "calc_proposed_conditional_reward_risk": 6.0,
+            "calc_range_position_pct": 100.0,
+            "calc_price_vs_support": "above"
+          }
+        },
+        {
+          "id": "q-units",
+          "question": "Can support price 95 be used as RSI threshold 95 on this evidence?",
+          "status": "answered",
+          "answer": "This supplied observation is available. [calc_price_vs_support] This supplied observation is available. [support] This supplied observation is available. [rsi_14] Price support and the oscillator measure different quantities. [support] [rsi_14]",
+          "values": {
+            "calc_price_vs_support": "above",
+            "support": 95,
+            "rsi_14": 72
+          }
+        }
+      ]
+    }
+  ]
+}

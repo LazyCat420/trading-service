@@ -265,5 +265,7 @@ reasoning steps and question evidence; code renders their verified financial
 statements and source records. The renderer preserves action/confidence and
 rejects conflicting authored fields. Its output is recomputed at execution.
 Equivalent question maps and source references are supported without adding
-unselected operands. See the report for the distinction between code-rendered
-financial correctness, saved-response replay and pending fresh live validation.
+unselected operands. Repeated known references render once while the authored
+selection list remains intact. Financial schema repairs use this same format.
+See the report for code-rendered financial correctness, fresh and saved-response
+benchmark results, remaining blocked model failures and deployment status.
