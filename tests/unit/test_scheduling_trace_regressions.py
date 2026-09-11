@@ -112,7 +112,7 @@ async def test_board_normalizes_unique_hold_labels_without_regenerating_decision
                for value in (original,fixed)]
     with patch('app.agents.base_agent.run_agent',new_callable=AsyncMock,side_effect=responses) as model, \
          patch.object(data_trace.mongo_store,'update_docs'),patch.object(data_trace.mongo_store,'insert_docs'), \
-         patch('app.v3.agent_runner.trace_data') as trace:
+         patch('app.v3.data_trace.record') as trace:
         outcome=await run_v3_agent(desk,module,cycle_id=desk.cycle_id,bot_id='test')
     assert outcome in (PhaseOutcome.SUCCESS,PhaseOutcome.DATA_GAP)
     assert model.await_count==1
