@@ -259,3 +259,11 @@ it does not add another retry. Unresolved outputs remain reviewable, but policy
 and order dispatch independently refuse financial order authority. A checked
 claim means consistency with supplied evidence, not investment merit. See the
 report for live benchmark and deployment status before claiming release.
+
+The candidate also supports `financial_reasoning_version: 2`: the model selects
+reasoning steps and question evidence; code renders their verified financial
+statements and source records. The renderer preserves action/confidence and
+rejects conflicting authored fields. Its output is recomputed at execution.
+Equivalent question maps and source references are supported without adding
+unselected operands. See the report for the distinction between code-rendered
+financial correctness, saved-response replay and pending fresh live validation.

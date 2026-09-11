@@ -62,11 +62,13 @@ async def test_financial_live_benchmark(index,live_http):
         desk.cycle_metadata['memory_context']=task.split('## Past Cycle Memory\n',1)[1].split('## DECISION CONTRACT',1)[0]
     module=SimpleNamespace(AGENT_NAME='v3_board_of_directors',ARTIFACT_TYPE='final_decision',
                            TOOL_WHITELIST=[],SYSTEM_PROMPT=plan['body']['systemPrompt'])
-    record={'index':index,'case':evidence['id'],'arm':plan['arm'],'mode':mode,'family':FAMILY,'variant':variant,'cycle_id':cid,
+    record={'index':index,'case':evidence['id'],'arm':plan['arm'],'mode':'offline_replay' if os.getenv('FINANCIAL_BENCH_REPLAY_COHORT') else mode,'family':FAMILY,'variant':variant,'cycle_id':cid,
             'started_at':time.time(),'endpoint':ENDPOINT,'calls':[],'evidence':evidence,
+            'replay_cohort':os.getenv('FINANCIAL_BENCH_REPLAY_COHORT'),
             'source_hashes':{p:hashlib.sha256((ROOT/p).read_bytes()).hexdigest() for p in
-                ('app/v3/agent_runner.py','app/v3/financial_evidence.py','app/v3/financial_claims.py')},
-            'limits':'At most two calls total (initial plus existing shared repair budget), tools disabled, no orders; test persistence mocked. Proxy retains normal request/session logs.',
+                ('app/v3/agent_runner.py','app/v3/financial_evidence.py','app/v3/financial_claims.py','app/v3/financial_reasoning.py','tests/unit/test_financial_live_benchmark.py')},
+            'limits':'At most two endpoint calls (initial plus shared repair); upstream may make additional recovery attempts, recorded separately. Tools disabled, no orders; persistence mocked. Proxy retains request/session logs.',
+            'ablation':{k:os.getenv(k) for k in ('FINANCIAL_BENCH_THINKING','FINANCIAL_BENCH_OUTPUT_TOKENS','FINANCIAL_BENCH_HTTP_TIMEOUT','FINANCIAL_BENCH_PHASE_TIMEOUT')},
             'comparison':'Synthetic frozen cases and original persona/method arms. Typed source evidence and financial contract are added. Expected answers/checks excluded. Acceptance alone is not reasoning quality.'}
     async def model(**kwargs):
         assert kwargs['enable_tools'] is False
@@ -74,16 +76,25 @@ async def test_financial_live_benchmark(index,live_http):
             frozen=json.loads(next(SOURCE.glob(f'{index:02}-*.json')).read_text())
             record['calls'].append({'kind':'frozen_initial','response':frozen['response']})
             return {'response':frozen['response'],'tokens_used':0,'loops_used':1,'stop_reason':'completed'}
+        replay=os.getenv('FINANCIAL_BENCH_REPLAY_COHORT')
+        if replay:
+            assert '/' not in replay and '..' not in replay
+            saved=json.loads((out.parent/replay/f'{index:02}.json').read_text())
+            n=len(record['calls'])
+            assert n<len(saved['calls']), 'Offline replay has no recorded correction'
+            call=deepcopy(saved['calls'][n]);call['kind']='offline_replay'
+            record['calls'].append(call)
+            return {'response':call['response'],'tokens_used':0,'loops_used':1,'stop_reason':'completed'}
         assert len(record['calls'])<2,'No extra model retry'
         body={'project':'vllm-trading-bot','username':'lazycat','provider':'vllm','model':'nemotron35',
               'agent':'CUSTOM_V3_BOARD_OF_DIRECTORS','conversationId':str(uuid.uuid4()),'createSession':True,
               'systemPrompt':kwargs['system_prompt'],'messages':[{'role':'user','content':kwargs['user_prompt']}],
-              'maxTokens':kwargs['max_tokens'],'enabledTools':[],'maxIterations':1,'temperature':0,
-              'functionCallingEnabled':False,'agenticLoopEnabled':False,'thinkingEnabled':False,'workspaceEnabled':False}
+              'maxTokens':int(os.getenv('FINANCIAL_BENCH_OUTPUT_TOKENS',str(kwargs['max_tokens']))),'enabledTools':[],'maxIterations':1,'temperature':0,
+              'functionCallingEnabled':False,'agenticLoopEnabled':False,'thinkingEnabled':os.getenv('FINANCIAL_BENCH_THINKING')=='1','workspaceEnabled':False}
         call={'kind':'live_initial' if not record['calls'] else 'live_repair','body':body,'started_at':time.time()}
         record['calls'].append(call);target.write_text(json.dumps(record,indent=2,default=str))
         try:
-            async with httpx.AsyncClient(timeout=180,trust_env=False) as client:
+            async with httpx.AsyncClient(timeout=float(os.getenv('FINANCIAL_BENCH_HTTP_TIMEOUT','180')),trust_env=False) as client:
                 response=await client.post(ENDPOINT,json=body,headers={'x-project':'vllm-trading-bot','x-username':'lazycat'})
             call['http_status']=response.status_code;response.raise_for_status();data=response.json()
             call.update(response=data.get('finalText') or data.get('text'),usage=data.get('usage'),model=data.get('model'))
@@ -97,9 +108,9 @@ async def test_financial_live_benchmark(index,live_http):
          patch('app.autoresearch.skill_loader.load_skill_prefix',return_value=''), \
          patch.object(data_trace.mongo_store,'insert_docs'),patch.object(data_trace.mongo_store,'update_docs'), \
          patch.object(data_trace.mongo_store,'find_docs',return_value=[]):
-        outcome=await run_v3_agent(desk,module,cycle_id=cid,bot_id='test',timeout_seconds=240,
+        outcome=await run_v3_agent(desk,module,cycle_id=cid,bot_id='test',timeout_seconds=float(os.getenv('FINANCIAL_BENCH_PHASE_TIMEOUT','240')),
             custom_instructions='Synthetic frozen evidence assessment. No tools or orders. Return the complete final_decision JSON and research_answers for every supplied question. Do not aim for a specified action.'+(' Follow the financial evidence contract.' if variant=='candidate' else ''))
-    record.update(outcome=outcome.value,artifact=desk.final_decision,audit=desk_status(desk),elapsed_s=time.time()-record['started_at'])
+    record.update(telemetry=desk.agent_telemetry,outcome=outcome.value,artifact=desk.final_decision,audit=desk_status(desk),elapsed_s=time.time()-record['started_at'])
     target.write_text(json.dumps(record,indent=2,default=str))
     print(json.dumps({'index':index,'outcome':record['outcome'],'audit':record['audit']['status'],'calls':len(record['calls'])}),flush=True)
     assert record['calls']

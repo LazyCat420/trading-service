@@ -8,6 +8,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from app.v3.financial_evidence import calculated_facts
 from app.v3.financial_claims import audit_decision
+from app.v3.financial_reasoning import render_reasoning_artifact
 from app.v3.arithmetic_audit import audit_artifact
 
 
@@ -53,10 +54,28 @@ def benchmark():
     cases=[]
     for name in ('financial_reasoning_v1.json','financial_reasoning_holdout_v1.json'):
         cases.extend(json.loads((ROOT/'tests/benchmarks/fixtures'/name).read_text())['cases'])
-    controls=[];mutations=[]
+    controls=[];mutations=[];structured=[];structured_mutations=[]
     for case in cases:
         artifact=control(case);audit=audit_decision(artifact,case)
         controls.append({'case':case['id'],'artifact':artifact,'audit':audit})
+        raw={k:deepcopy(artifact[k]) for k in ('action','confidence','position_size_pct','entry_mode','trigger_purpose','dynamic_trigger')}
+        if case.get('base_case',case['id'])=='headroom':
+            raw.update(action='BUY',position_size_pct=.2,entry_mode='enter_now')
+        raw.update(financial_reasoning_version=2,resolution_condition=None,
+                   reasoning_steps=[c['fact_id'] for c in artifact['financial_claims']],
+                   research_answers=[{'item_id':a['item_id'],'step_ids':a['fact_ids']} for a in artifact['research_answers']])
+        rendered,render_errors=render_reasoning_artifact(raw,case)
+        structured.append({'case':case['id'],'authored_selection':raw,'rendered':rendered,
+                           'render_errors':render_errors,'audit':audit_decision(rendered,case)})
+        for kind in ('authored_prose','authored_value','changed_question','unknown_step'):
+            bad=deepcopy(rendered)
+            if kind=='authored_prose':bad['reasoning']='RSI is 999.'
+            elif kind=='authored_value':bad['financial_claims'][0]['value']=999
+            elif kind=='changed_question':bad['research_answers'][0]['question']='A different question'
+            else:bad['reasoning_steps']=['invented_relationship']
+            result=audit_decision(bad,case)
+            structured_mutations.append({'case':case['id'],'kind':kind,'caught':result['status']=='unresolved','errors':result['errors']})
+
         for i,claim in enumerate(artifact['financial_claims']):
             bad=deepcopy(artifact);value=claim['value']
             wrong=not value if isinstance(value,bool) else 'invented' if isinstance(value,str) else 999 if value is None else value+1
@@ -66,13 +85,16 @@ def benchmark():
                               'caught':any(e['kind']=='fact_value' for e in result['errors'])})
     return {'interpretation':'Offline deterministic controls, authored from supplied facts. These are not live model successes, not a causal reasoning-improvement result, and not investment-performance evidence.',
             'baseline':baseline,'controls':controls,'mutations':mutations,
+            'structured_controls':structured,'structured_mutations':structured_mutations,
             'summary':{'original_responses':len(baseline),'original_expression_checks':sum(r['old_arithmetic_checked'] for r in baseline),
                        'original_responses_with_reviewed_factual_errors':sum(bool(r['factual_errors']) for r in baseline),
                        'original_fully_complete':sum(r['fully_complete'] for r in baseline),
                        'correct_controls':len(controls),'correct_controls_accepted':sum(r['audit']['status']=='consistent' for r in controls),
-                       'corruptions':len(mutations),'corruptions_caught':sum(r['caught'] for r in mutations)},
+                       'corruptions':len(mutations),'corruptions_caught':sum(r['caught'] for r in mutations),
+                       'structured_controls':len(structured),'structured_controls_accepted':sum(r['audit']['status']=='consistent' and not r['render_errors'] for r in structured),
+                       'structured_tamper_cases':len(structured_mutations),'structured_tamper_cases_caught':sum(r['caught'] for r in structured_mutations)},
             'source_hashes':{p:hashlib.sha256((ROOT/p).read_bytes()).hexdigest() for p in
-                ('app/v3/financial_evidence.py','app/v3/financial_claims.py','scripts/benchmark_financial_controls.py')}}
+                ('app/v3/financial_evidence.py','app/v3/financial_claims.py','app/v3/financial_reasoning.py','scripts/benchmark_financial_controls.py')}}
 
 
 if __name__=='__main__':
@@ -83,3 +105,6 @@ if __name__=='__main__':
     print(json.dumps(result['summary'],indent=2))
     assert result['summary']['correct_controls_accepted']==result['summary']['correct_controls']
     assert result['summary']['corruptions_caught']==result['summary']['corruptions']
+
+    assert result['summary']['structured_controls_accepted']==result['summary']['structured_controls']
+    assert result['summary']['structured_tamper_cases_caught']==result['summary']['structured_tamper_cases']

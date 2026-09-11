@@ -1,0 +1,128 @@
+{
+  "recorded_at": "2026-09-11T09:56:11.034783+00:00",
+  "runtime_commit": "a334acb7e83ffec5c7afb519834ab2ec4273c0e4",
+  "runtime_source_hashes": {
+    "app/v3/agent_runner.py": "fbebae1d2c3df733d310722401d8a8c26c4702d56ff84639303d6e46dda7b966",
+    "app/v3/financial_evidence.py": "59ad421bf3242b7c7f340a75b421d0b1bbac0a3d30d3efbb6c2b9ffb0a40378f",
+    "app/v3/financial_claims.py": "b9e50f66d4988bdada284b24680284d8d3671eaf4b37c82cf8605a17df0247b4",
+    "app/v3/financial_reasoning.py": "272f8c13f87e61d9b2ccdfe93ea1bc7b1d305ed65bd4fe106316ef892839eebe"
+  },
+  "full_unit_suite": {
+    "passed": 7247,
+    "skipped": 114,
+    "warnings": 236,
+    "seconds": 341.65
+  },
+  "focused_tests": 123,
+  "offline_controls": {
+    "original_responses": 12,
+    "original_expression_checks": 0,
+    "original_responses_with_reviewed_factual_errors": 9,
+    "original_fully_complete": 0,
+    "correct_controls": 12,
+    "correct_controls_accepted": 12,
+    "corruptions": 129,
+    "corruptions_caught": 129,
+    "structured_controls": 12,
+    "structured_controls_accepted": 12,
+    "structured_tamper_cases": 48,
+    "structured_tamper_cases_caught": 48
+  },
+  "retained_live_development": [
+    {
+      "cohort": "pilot-r1",
+      "cases": 4,
+      "endpoint_calls": 4,
+      "provider_request_snapshots": 6,
+      "consistent_at_recorded_revision": 0
+    },
+    {
+      "cohort": "pilot-r2",
+      "cases": 4,
+      "endpoint_calls": 8,
+      "provider_request_snapshots": 9,
+      "consistent_at_recorded_revision": 0
+    },
+    {
+      "cohort": "pilot-r3",
+      "cases": 4,
+      "endpoint_calls": 8,
+      "provider_request_snapshots": 8,
+      "consistent_at_recorded_revision": 0
+    },
+    {
+      "cohort": "pilot-r4",
+      "cases": 4,
+      "endpoint_calls": 8,
+      "provider_request_snapshots": 9,
+      "consistent_at_recorded_revision": 0
+    },
+    {
+      "cohort": "thinking-ablation-r1",
+      "cases": 1,
+      "endpoint_calls": 1,
+      "provider_request_snapshots": 1,
+      "consistent_at_recorded_revision": 0
+    },
+    {
+      "cohort": "pilot-r5",
+      "cases": 1,
+      "endpoint_calls": 2,
+      "provider_request_snapshots": 2,
+      "consistent_at_recorded_revision": 0
+    },
+    {
+      "cohort": "pilot-r6",
+      "cases": 1,
+      "endpoint_calls": 2,
+      "provider_request_snapshots": 2,
+      "consistent_at_recorded_revision": 0
+    },
+    {
+      "cohort": "thinking-16k-ablation-r1",
+      "cases": 1,
+      "endpoint_calls": 1,
+      "provider_request_snapshots": 1,
+      "consistent_at_recorded_revision": 0
+    },
+    {
+      "cohort": "structured-pilot-r1",
+      "cases": 1,
+      "endpoint_calls": 2,
+      "provider_request_snapshots": 2,
+      "consistent_at_recorded_revision": 0
+    }
+  ],
+  "final_saved_response_replay": {
+    "cases": 1,
+    "saved_responses": 2,
+    "new_endpoint_calls": 0,
+    "financial_status": "consistent",
+    "authored_action_preserved": "HOLD",
+    "authored_confidence_preserved": 50,
+    "reasoning_step_selection_preserved": true,
+    "raw_response_sha256": [
+      "2d4a511f7f97f7a57e21008d8b87cbf780138df0aed4ccefd16437d8ec7f7ee0",
+      "eb9ed1f386b013008b536173719d22853e8817bda74c7f37cbe9d3058e54b4fc"
+    ],
+    "evidence_path": "structured-pilot-r1-release-replay/01.json"
+  },
+  "test_logs": [
+    {
+      "path": "/tmp/financial-structured-final-unit.log",
+      "sha256": "0532e147e92284ba5e97178a416b81933fe445ef203cd361f24f4af50619e3c7"
+    },
+    {
+      "path": "/tmp/financial-release-focused.log",
+      "sha256": "8b74ac8bbd6c6f65ffda78fe0824e0d1f2ea1844cc23eb8655933682bb70d158"
+    },
+    {
+      "path": "/tmp/financial-release-model-replay.log",
+      "sha256": "e09ab6b9cf21f16d6a33b3d75bf4b668c0af86380a29b9d241cf5f205e504d83"
+    }
+  ],
+  "fresh_revised_live_validation": "blocked_by_automatic_approval_review_pending_renewed_user_authorization",
+  "repeatable_live_improvement_established": false,
+  "deployed": false,
+  "interpretation": "Constructed controls and a saved-response replay validate the candidate implementation. They do not establish fresh model improvement. Financial statements are code-rendered from model-selected immutable evidence; action/confidence remain model-authored."
+}
