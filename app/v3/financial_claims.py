@@ -65,8 +65,12 @@ def _question_requirements(question):
     text = question.casefold()
     groups = []
     if 'reward/risk' in text or 'reward-to-risk' in text:
-        scenario = 'conditional' if re.search(r'future|proposed|would|hypothetical', text) else 'current'
-        groups.append({f'calc_proposed_{scenario}_reward_risk', f'calc_plan_{scenario}_reward_risk'})
+        future = bool(re.search(r'future|would|hypothetical|conditional', text))
+        current = bool(re.search(r'current|present|today', text))
+        scenarios = ['current', 'conditional'] if current and future else [
+            'conditional' if future or ('proposed' in text and not current) else 'current']
+        for scenario in scenarios:
+            groups.append({f'calc_proposed_{scenario}_reward_risk', f'calc_plan_{scenario}_reward_risk'})
     if 'range' in text and ('position' in text or 'close' in text):
         groups.append({'calc_range_position_pct'})
     if 'peg' in text:
@@ -344,8 +348,14 @@ def audit_decision(decision, record):
         error('no_supported_basis','financial_claims','An executable action cannot rely exclusively on unavailable observations.')
     if str(decision.get('action','')).upper()=='BUY':
         size=number(decision.get('position_size_pct'))
-        for key in ('calc_headroom_pct','calc_unreserved_headroom_pct','max_order_size_pct'):
-            limit=number(catalog.get(key,{}).get('value'))
+        from app.v3.financial_evidence import decision_budget
+        if size is None or size <= 0:
+            error('invalid_purchase_size','position_size_pct','A BUY requires an explicit positive finite size.')
+        budget = decision_budget(record)
+        for key in budget['invalid_limits']:
+            error('invalid_capacity_limit', key, 'The current limit is invalid or has incompatible units.')
+        for key, bound in budget['limits'].items():
+            limit=number(bound)
             if size is not None and limit is not None and size>limit+Decimal('0.000001'):
                 error('size_exceeds_capacity','position_size_pct',f'Proposed size exceeds {key}={limit}.')
     return {'version':1,'status':'unresolved' if errors else 'consistent',
@@ -357,6 +367,8 @@ def audit_decision(decision, record):
 
 
 def correction_prompt(user_prompt, artifact, audit, record):
+    from app.v3.financial_repair import repair_context
+    targeted = repair_context(artifact, record)
     proposal = {k:artifact[k] for k in ('action','confidence','position_size_pct','stop_loss','take_profit','entry_mode','trigger_purpose','dynamic_trigger') if k in artifact}
     catalog_hint = ""
     question_hint = ""
@@ -364,20 +376,23 @@ def correction_prompt(user_prompt, artifact, audit, record):
         from app.v3.financial_reasoning import reasoning_catalog
         from app.v3.financial_evidence import question_selection_prompt
         question_hint = question_selection_prompt(record)
-        catalog_ids = sorted(reasoning_catalog(record).keys())
+        catalog_ids = sorted(reasoning_catalog(record, artifact).keys())
         catalog_hint = (
             '\nSelect ONLY from these valid catalog step IDs:\n' + json.dumps(catalog_ids) +
             "\nEvery question in research_answers MUST have a nonempty step_ids array. Never emit 'step_ids': []."
         )
     return (user_prompt+'\n\n## FINANCIAL EVIDENCE RECONSIDERATION\n'
-            'Your previous decision was rejected. Write a fresh complete decision using the source records. '
+            'Your previous decision was rejected. Correct the failed fields using the source records. '
             'The prior proposal is provided only to let you reconsider its action and price plan:\n'+json.dumps(proposal,default=str)+
             '\nCorrect ALL of these evidence/coverage errors:\n'+json.dumps(audit['errors'])+
-            catalog_hint+question_hint+
+            catalog_hint+question_hint+'\nTARGETED REPAIR CONTEXT\n'+json.dumps(targeted, default=str)+'\n' +
+            'You may return a financial_repair_version: 1 object containing only corrected decision fields and research_answers for failed questions. Validated unchanged answers are retained by code. '
+            'Validated unchanged questions are outside the repair scope: code retains their ORIGINAL selected evidence when a full response reauthors them, and records that preservation. No new evidence is invented. Newly authored conflicting prose or facts are rejected. '
+            'When your plan changes, explicitly reselect answers depending on that plan. All merged fields are revalidated. '+
             '\nReconsider the investment conclusion from the supplied facts. You may change action, confidence, '
             'size or plan when the corrected facts justify it. Do not merely relabel the error as verified. '
             'Preserve the original questions and distinguish unknown history from current observations. '
-            'Return financial_reasoning_version=2 with reasoning_steps and research_answers containing item_id and step_ids, plus the complete decision and timing fields. '
+            'For a full replacement return financial_reasoning_version=2 with reasoning_steps and research_answers containing item_id and step_ids, plus the complete decision and timing fields; for a targeted patch return financial_repair_version=1 and only changed fields. '
             'Select steps from the supplied catalog; code renders the explanation and numerical records. '
             'Do not emit financial_claims or authored reasoning/answer prose. The harness will revalidate every selection. '
             'If evidence is insufficient, state the unresolved question; do not invent a value. '

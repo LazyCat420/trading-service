@@ -123,8 +123,18 @@ def build_record(desk):
     # Pending orders are deliberately not assumed to be zero. The executor
     # rechecks actual order capacity. Until a reservation snapshot is provided,
     # final purchase headroom is unknown even with a complete held book.
-    facts.append(fact('pending_exposure_pct', None, 'percent', source='missing:'+ticker,
-                      entity=ticker, reason='No captured pending-order reservation snapshot.'))
+    reservations = book.get('reservations') or {}
+    pending = number(reservations.get('pending_exposure_pct'))
+    complete = (reservations.get('complete') is True and reservations.get('ticker') == ticker
+                and reservations.get('as_of') == book.get('as_of') and reservations.get('source')
+                and pending is not None and pending >= 0)
+    facts.append(fact('pending_exposure_pct', float(pending) if complete else None, 'percent',
+                      as_of=reservations.get('as_of'), source=reservations.get('source') or 'missing:'+ticker,
+                      entity=ticker, reason=None if complete else 'No complete matching pending-order reservation snapshot.'))
+    reserved_cash = number(reservations.get('cash_reserved')) if complete else None
+    facts.append(fact('pending_cash', float(reserved_cash) if reserved_cash is not None and reserved_cash >= 0 else None,
+                      'USD', as_of=reservations.get('as_of'), source=reservations.get('source') or 'missing:'+ticker,
+                      entity=ticker))
     # EPS QoQ and a vendor PEG are not next-year EPS growth. Do not reverse
     # engineer a growth rate from them to make forward PEG computable.
     facts.append(fact('eps_growth_next_year_pct', None, 'percent', source='missing:'+ticker,
@@ -232,7 +242,7 @@ def correction_system_prompt(artifact_type):
             'Correct the evidence selection and reconsider the action or size when required by the supplied facts. '
             'Return only complete '+artifact_type+' JSON. Select existing code-verified reasoning steps; '
             'do not write replacement financial prose. Respect the supplied risk and decision contracts. '
-            + FINANCIAL_OUTPUT_RULES)
+            + FINANCIAL_OUTPUT_RULES + '\nFor a structured original, a targeted financial_repair_version: 1 patch is also allowed; omit unchanged fields and validated answers. The harness merges and revalidates the complete decision.')
 
 
 def question_selection_prompt(record):
@@ -243,7 +253,8 @@ def question_selection_prompt(record):
             + ('Return research_answers: []. There are no research questions to answer. '
                if not questions else 'Answer each of these IDs exactly once using nonempty step_ids. ')
             + 'Do not promote debate-frame topics, peer objections or data gaps into item_id values. '
-            'Those may inform reasoning_steps, but are not additional research questions.\n')
+            'Those may inform reasoning_steps, but are not additional research questions.\n'
+            + question_components_prompt(record))
 
 
 def evidence_prompt(record):
@@ -253,4 +264,66 @@ def evidence_prompt(record):
             'Metric, unit, source, period and original date belong to each record. '
             'The selectable reasoning-step catalog interprets these records; choose its step IDs for the structured decision.\n'
             + json.dumps(expanded, separators=(',', ':'), default=str)
-            + question_selection_prompt(record))
+            + question_selection_prompt(record) + decision_budget_prompt(record))
+
+
+def decision_budget(record):
+    """Verified upper bound; incomplete reservations never become a zero balance."""
+    facts = calculated_facts(record)
+    limits = {}
+    invalid_limits = []
+    for key in ('calc_headroom_pct', 'calc_unreserved_headroom_pct', 'max_order_size_pct'):
+        f = facts.get(key, {})
+        value = number(f.get('value')) if f.get('status') == 'known' else None
+        expected_unit = 'percent' if key == 'max_order_size_pct' else 'percentage_points'
+        if f.get('status') == 'known' and (value is None or value < 0 or f.get('unit') != expected_unit):
+            invalid_limits.append(key)
+        elif value is not None:
+            limits[key] = float(value)
+    cash, equity = (number(facts.get(k, {}).get('value')) for k in ('cash', 'equity'))
+    if (cash is not None and equity is not None and cash >= 0 and equity > 0
+            and facts.get('cash', {}).get('unit') == facts.get('equity', {}).get('unit') == 'USD'):
+        reserved = number(facts.get('pending_cash', {}).get('value'))
+        limits['cash_capacity_pct'] = float(max(Decimal(0), cash - (reserved if reserved is not None and reserved >= 0 else 0)) / equity * 100)
+    return {'unit': 'percent_of_portfolio_equity', 'limits': limits, 'invalid_limits': invalid_limits,
+            'max_additional_purchase_pct': min(limits.values()) if limits else None,
+            'reservation_status': 'known' if facts.get('calc_headroom_pct', {}).get('status') == 'known' else 'unknown',
+            'authority': 'proposal_upper_bound_only; recheck current portfolio and reservations at execution',
+            'record_sha256': record_hash(record)}
+
+
+def decision_budget_prompt(record):
+    return ('\n## CURRENT DECISION BUDGET\n' + json.dumps(decision_budget(record)) +
+            '\nA BUY must have positive size no greater than every known limit. '
+            'Reconsider a smaller BUY or HOLD when the proposed purchase exceeds capacity. '
+            'A rejected scenario does not forbid a different, smaller purchase. '
+            'Unknown reservations are not zero and do not authorize execution. '
+            'Historical memory cannot change these limits. Size and action remain your decision.\n')
+
+
+def question_components(record):
+    from app.v3.financial_claims import _question_requirements
+    result = []
+    facts = calculated_facts(record)
+    source_ids = {f['id'] for f in record.get('facts', [])}
+    for q in record.get('questions', []):
+        components = []
+        for group in _question_requirements(q['question']):
+            # Source-scenario questions remain about that scenario even after HOLD.
+            supplied = {k for k in group if k.startswith('calc_proposed_')}
+            if supplied and any(k in facts and
+                                any(i in source_ids
+                                    for i in facts[k].get('input_ids', []) if i != 'close')
+                                for k in supplied):
+                group = supplied
+            label = next((k for k in sorted(group) if k in facts), sorted(group)[0])
+            components.append({'id': label, 'fact_ids_any_of': sorted(group)})
+        result.append({'item_id': q['id'], 'components': components})
+    return result
+
+
+def question_components_prompt(record):
+    return ('\n## REQUIRED QUESTION COMPONENTS\n' + json.dumps(question_components(record)) +
+            '\nCover EVERY component for each original question ID, including after HOLD. '
+            'fact_ids_any_of contains actual selectable source IDs; choose those IDs or equivalent catalog steps. '
+            'Select an explicit unknown observation when unavailable; empty selection is invalid.\n')

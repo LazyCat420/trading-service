@@ -269,3 +269,27 @@ unselected operands. Repeated known references render once while the authored
 selection list remains intact. Financial schema repairs use this same format.
 See the report for code-rendered financial correctness, fresh and saved-response
 benchmark results, remaining blocked model failures and deployment status.
+
+Financial decisions also receive an explicit current purchase-budget upper bound
+and a per-question component checklist. `calc_proposal_fits` describes the
+supplied concentration scenario; the complete purchase budget additionally
+checks cash and per-order limits. Unknown reservations never become zero.
+Evidence-backed paper orders recheck current capacity and pending orders and
+refuse a changed size instead of silently clipping an oversized proposal.
+
+A `financial_repair_version: 1` patch may update the failed decision fields.
+Previously validated answers to unchanged questions are retained from the
+original model selections, including when a full replacement accidentally
+drops a component. Equivalent catalog aliases identify the same evidence.
+Preservation is recorded in `_financial_repair_preservation`; it is not new
+model-authored evidence. Plan-dependent answers require explicit reselection
+when the plan changes. Newly authored conflicting prose/facts and unknown
+references remain invalid. All merged outputs are revalidated, within the
+existing single shared correction allowance.
+
+`financial_attempts`, `financial_quality_metrics`, and
+`financial_execution_validation` distinguish initial acceptance, repair,
+prevented answer regressions, and order-boundary enforcement. A blocked
+proposal is not a model-authored HOLD. See
+[the edge-case handoff](docs/handoffs/financial-edge-cases-2026-09-11.md) for the
+latest audit, release verification, remaining model failure, and next steps.

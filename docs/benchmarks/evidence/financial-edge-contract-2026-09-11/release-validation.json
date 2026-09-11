@@ -1,0 +1,456 @@
+{
+  "created_at": "2026-09-11T23:35:11.436211+00:00",
+  "status": "validated_awaiting_deployment",
+  "runtime_source_hashes": {
+    "app/v3/financial_evidence.py": "af6b2a7c8cdbef18b34a68496e1ef780e9b6cbe0f0f1f508d6638aa0e1dbe483",
+    "app/v3/financial_claims.py": "c15291979083475371fa585e3a23c6c5acd9d5e552728f8b61c3d94169b2550f",
+    "app/v3/financial_reasoning.py": "38ec6be5e44577d26f4c440a19d71f626f537c4e366c9acf1915a297e0cb7422",
+    "app/v3/financial_repair.py": "450b7de4e331946d59095b425f02c9e1aa4cb5ddb448d76d94d5cbecb36a1ca0",
+    "app/v3/financial_metrics.py": "38d840ba9f11759144ad6e9cfbc4e726b8667e3123bb8604d2050be8af08d66f",
+    "app/v3/agent_runner.py": "c3f1a4f02d56006a1bad71dd0c9d21b27da0bcc1d0095e427a4ec3ea0998cd13",
+    "app/v3/orchestrator.py": "a0731881029800d1fc4d7c6b4da873a83aea5999c06a746c611d988c3ef679db",
+    "app/v3/book_brief.py": "10e68956577d84dee4c35ebe2e4654c3321841f0b68a88661da1f1b5b9e88065",
+    "app/services/memory/retriever.py": "bdbb6ea532713d7e11010a3dc5fddf34c1a07c2ef75a1000940210279094e300",
+    "app/services/pipeline_service.py": "d0a01100dd0f719acff36809c7e2f2989ecaf11b4c7bb30d9da60f2587f57133",
+    "app/trading/order_capacity.py": "364d11a841ce3bcb8981fbc51ac233772e6730dd8d131501079f10b4b7cd7649",
+    "app/trading/paper_trader.py": "f17813649c6dbcfb6a4cc517dc0d2278f85a1060bf93ac31dafcc34dc959dc32"
+  },
+  "unit_tests": {
+    "passed": 7329,
+    "skipped": 114,
+    "warnings": 236,
+    "seconds": 337.45,
+    "log_sha256": "1a13144745a61598bba5a14c51c3f519dcc117b804cabb0ceab70fb766fe432b"
+  },
+  "controls": {
+    "original_responses": 12,
+    "original_expression_checks": 0,
+    "original_responses_with_reviewed_factual_errors": 9,
+    "original_fully_complete": 0,
+    "correct_controls": 12,
+    "correct_controls_accepted": 12,
+    "corruptions": 129,
+    "corruptions_caught": 129,
+    "structured_controls": 12,
+    "structured_controls_accepted": 12,
+    "structured_tamper_cases": 48,
+    "structured_tamper_cases_caught": 48
+  },
+  "portfolio_probe": {
+    "brief_built": true,
+    "valuation_complete": true,
+    "reservations_complete": true,
+    "budget_status": "known",
+    "budget_has_limits": true,
+    "invalid_limits": [],
+    "write_attempts": 0,
+    "as_of": "2026-09-11T23:22:14.516520+00:00",
+    "scope": "Actual stored paper portfolio and pending orders, read-only. No collector, model, or order invocation."
+  },
+  "independent_arithmetic_reviews": {
+    "original": {
+      "cases": 12,
+      "calculations_checked": 37,
+      "arithmetic_discrepancies": 0,
+      "sha256": "aee0eea6127b76d87bb352c2b71dc70a1b2105b542da8dfa73c60164e66229a6"
+    },
+    "new-scenarios": {
+      "cases": 12,
+      "calculations_checked": 48,
+      "arithmetic_discrepancies": 0,
+      "sha256": "2828735a325fa9d413b065c1bfb8b4ee30130fc13b3d944eda038eb617d3c49b"
+    }
+  },
+  "cohorts": {
+    "edge-contract-original-r1": {
+      "rows": 12,
+      "modes": {
+        "fresh": 12
+      },
+      "completed": 12,
+      "scenario_families": {
+        "headroom": 3,
+        "missing_history": 3,
+        "held_deterioration": 3,
+        "conditional_entry": 3
+      },
+      "live_calls": 14,
+      "http_200": 14,
+      "quality_measured_rows": 12,
+      "unmeasured_rows": 0,
+      "first_response_accepted": 10,
+      "first_response_acceptance_rate": 0.8333333333333334,
+      "repair_attempts": 2,
+      "repair_successes": 0,
+      "repair_success_rate": 0.0,
+      "repair_valid_answer_regressions": 0,
+      "prevented_answer_regressions": 0,
+      "final_evidence_consistent": 10,
+      "final_actions": {
+        "NO_DECISION": 2,
+        "HOLD": 10
+      },
+      "accepted_actions": {
+        "HOLD": 10
+      },
+      "execution_gate_tested_rows": 12,
+      "invalid_proposals_admitted": 0,
+      "orders_submitted": 0,
+      "error_kinds": {
+        "missing_claims": 2,
+        "question_coverage": 6,
+        "no_evidence": 2
+      },
+      "limitation": "Evidence consistency and safety checks are separate. Repeated variants are not independent financial scenarios. HOLD frequency is reported; acceptance is not investment merit. Missing measurements are not zero.",
+      "artifact_hashes": {
+        "01.json": "89f3b7a3eaa8221acea6d2f5e0d999d6c8d366601387e5f2c3a82a24ae8c3f02",
+        "02.json": "051ffa475d293a376e6642e3b53fb6e0d8bc51c5bc1d2ad8c2cc9ac1b1ef3e08",
+        "03.json": "2bbeeb20bf07856966b044c594d913629064f9a4dea333c5fb932ef67a58ad62",
+        "04.json": "ba551014e9c5c582856bcdae8b06c8dbb908e1605ad7da12cb72afebb00f77d3",
+        "05.json": "e9c6c2e041eee3f1a48accdbe47d211934bc8b4ca32de8bca89c24c8ef31fd19",
+        "06.json": "ac950ac1b7089fdec914065489d86072494cc39f4220f0a5f62441c0b1f6cead",
+        "07.json": "3ae2c7697d6fc650098b4ea15e96bdda0e6ca8107dfccbce07e354d60643f4ff",
+        "08.json": "18c8e726b14f5edd43139d5a6629962d2ac380a41aa2dc4a52e6cc710fff3607",
+        "09.json": "81aa6d35936cbff5f897d99593d0ff1ed47ec6b2bcb6aef8115ef0c18c78bdd7",
+        "10.json": "2f7540619d601b152643a6d3d7623cdfe1f9fecdd1d6f512c3b094415153c304",
+        "11.json": "28bf9e1e2129d1d11ec896ce38d337d41be3d03f76f04e45d27625c9a3883923",
+        "12.json": "5d587473047568c2643561d7ccb076f3d30e7cbcca02ad6e21e74552673d7138"
+      },
+      "base_source_families": [
+        "conditional_entry",
+        "headroom",
+        "held_deterioration",
+        "missing_history"
+      ]
+    },
+    "edge-contract-original-final": {
+      "rows": 12,
+      "modes": {
+        "fresh": 12
+      },
+      "completed": 12,
+      "scenario_families": {
+        "headroom": 3,
+        "missing_history": 3,
+        "held_deterioration": 3,
+        "conditional_entry": 3
+      },
+      "live_calls": 12,
+      "http_200": 12,
+      "quality_measured_rows": 12,
+      "unmeasured_rows": 0,
+      "first_response_accepted": 12,
+      "first_response_acceptance_rate": 1.0,
+      "repair_attempts": 0,
+      "repair_successes": 0,
+      "repair_success_rate": null,
+      "repair_valid_answer_regressions": 0,
+      "prevented_answer_regressions": 0,
+      "final_evidence_consistent": 12,
+      "final_actions": {
+        "HOLD": 12
+      },
+      "accepted_actions": {
+        "HOLD": 12
+      },
+      "execution_gate_tested_rows": 12,
+      "invalid_proposals_admitted": 0,
+      "orders_submitted": 0,
+      "error_kinds": {},
+      "limitation": "Evidence consistency and safety checks are separate. Repeated variants are not independent financial scenarios. HOLD frequency is reported; acceptance is not investment merit. Missing measurements are not zero.",
+      "artifact_hashes": {
+        "01.json": "5503e06b36c3fde99e61473c72ed1b04ef22b932995178d54d8d38ae82081182",
+        "02.json": "90257cb3a4570392783dfc07175fed46ab08f83860ba7685d1d81f984518fc6d",
+        "03.json": "dcab99ddd6989d9ad0b8dc10529bfd4edf9b7342d1d1d41e0eb9d56dcf789cdd",
+        "04.json": "0618c040856bb3258a74fe72966cdbd0be50bf4161f11492914ba743d1f37c43",
+        "05.json": "81427622903ae3f88df5678b96440f987baeced165783959564d5badd4764c59",
+        "06.json": "2a17dfc236d6441d2db20fe9b3bc4005f2e470bd4326d7b72d19cc7c770e01bc",
+        "07.json": "74c14824f06b4aeb08fe49a654f83c824c602047eb7e41303924cfb623bb842e",
+        "08.json": "f81b30813153943bf2164ee59dcab9476772d4a2d978156e844ad1c2c2e5f44e",
+        "09.json": "6b3034a813b10d6b252311a25c039f2b9247e405991be7d0b20ae1d30d1bc2a6",
+        "10.json": "63b1aba310f8952f5aea16fc78c437102a65f52eb63b9b994597a77a821584e8",
+        "11.json": "6c5c9d08b7325cb3c5e1caf520cdf7b0966d365d75a30e94256eabf3202d8dab",
+        "12.json": "6490c9fabcc2c68960b83238ee12305f19872e3b63df7405b71345c4a37ddcec"
+      },
+      "base_source_families": [
+        "conditional_entry",
+        "headroom",
+        "held_deterioration",
+        "missing_history"
+      ]
+    },
+    "edge-contract-new-scenarios-final": {
+      "rows": 12,
+      "modes": {
+        "fresh": 12
+      },
+      "completed": 12,
+      "scenario_families": {
+        "cash_limited": 1,
+        "reserved_concentration": 1,
+        "zero_headroom": 1,
+        "missing_reservations": 1,
+        "per_order_limit": 1,
+        "compound_reversed": 1,
+        "unit_price_coincidence": 1,
+        "missing_history_date": 1,
+        "held_loss": 1,
+        "held_gain": 1,
+        "invalid_range": 1,
+        "compound_current_and_future": 1
+      },
+      "live_calls": 12,
+      "http_200": 12,
+      "quality_measured_rows": 12,
+      "unmeasured_rows": 0,
+      "first_response_accepted": 12,
+      "first_response_acceptance_rate": 1.0,
+      "repair_attempts": 0,
+      "repair_successes": 0,
+      "repair_success_rate": null,
+      "repair_valid_answer_regressions": 0,
+      "prevented_answer_regressions": 0,
+      "final_evidence_consistent": 12,
+      "final_actions": {
+        "HOLD": 11,
+        "BUY": 1
+      },
+      "accepted_actions": {
+        "HOLD": 11,
+        "BUY": 1
+      },
+      "execution_gate_tested_rows": 12,
+      "invalid_proposals_admitted": 0,
+      "orders_submitted": 0,
+      "error_kinds": {},
+      "limitation": "Evidence consistency and safety checks are separate. Repeated variants are not independent financial scenarios. HOLD frequency is reported; acceptance is not investment merit. Missing measurements are not zero.",
+      "artifact_hashes": {
+        "01.json": "e299981e85b56d0bd559559fc244df3da6af4f0a45c7c4dcf4d73342b95a7c72",
+        "02.json": "ee9f862cebeddbcfad28cf453f640f031641c963755f41f20d263b45ae42dae0",
+        "03.json": "fdf32fd2d1bc2635470cee4bc07e3f0f8af7c907610ffc4f53afa32039d0d767",
+        "04.json": "e9e799946485e0fed94db00692aa761f4571a07d32a359bf2603f3fe4924375f",
+        "05.json": "96e09f52210ed7a6a379e0db0dd8ecd792cc66fd1697a8c3ed96471fbb3dfa7f",
+        "06.json": "59c034b85d96dd752dd05a48fb345deefd33bcb5c9db924df6193964f528b774",
+        "07.json": "1f84c3cdb850be5bbc79291e4a683b9a6008b5b645a8d39a25e645c95a3758fd",
+        "08.json": "ae20aa45fac4cd130d03379f3f1ec3f0ad53e6525ffffb238a29ca23dbf65cae",
+        "09.json": "f16a2a08a15edee10273f6af9b58fbf0d1963772debbe7a304d235248ee1e14a",
+        "10.json": "402a61d5f56c207bbc26e9d694aaf6303d0740acfb845d2ab0de594aa4f6c68d",
+        "11.json": "101752f999c17b28a47225f0cb5a9bf20b5cb2ab4615e639e6bfdce0fb36c489",
+        "12.json": "8be1c1324459db57ff8e833a964518e237b7a57d3faaad001f244c159e54dd62"
+      },
+      "base_source_families": [
+        "conditional_entry",
+        "headroom",
+        "held_deterioration",
+        "missing_history"
+      ]
+    },
+    "edge-contract-case03-replay-release": {
+      "rows": 1,
+      "modes": {
+        "offline_replay": 1
+      },
+      "completed": 1,
+      "scenario_families": {
+        "headroom": 1
+      },
+      "live_calls": 0,
+      "http_200": 0,
+      "quality_measured_rows": 1,
+      "unmeasured_rows": 0,
+      "first_response_accepted": 0,
+      "first_response_acceptance_rate": 0.0,
+      "repair_attempts": 1,
+      "repair_successes": 1,
+      "repair_success_rate": 1.0,
+      "repair_valid_answer_regressions": 0,
+      "prevented_answer_regressions": 1,
+      "final_evidence_consistent": 1,
+      "final_actions": {
+        "HOLD": 1
+      },
+      "accepted_actions": {
+        "HOLD": 1
+      },
+      "execution_gate_tested_rows": 1,
+      "invalid_proposals_admitted": 0,
+      "orders_submitted": 0,
+      "error_kinds": {},
+      "limitation": "Evidence consistency and safety checks are separate. Repeated variants are not independent financial scenarios. HOLD frequency is reported; acceptance is not investment merit. Missing measurements are not zero.",
+      "artifact_hashes": {
+        "03.json": "3c294a574f42c87513e17a8553c04f01e23fc060f4b09cd47d1ba947afb4900e"
+      },
+      "base_source_families": [
+        "headroom"
+      ]
+    },
+    "edge-contract-case03-live-repair-release": {
+      "rows": 1,
+      "modes": {
+        "saved_initial": 1
+      },
+      "completed": 1,
+      "scenario_families": {
+        "headroom": 1
+      },
+      "live_calls": 1,
+      "http_200": 1,
+      "quality_measured_rows": 1,
+      "unmeasured_rows": 0,
+      "first_response_accepted": 0,
+      "first_response_acceptance_rate": 0.0,
+      "repair_attempts": 1,
+      "repair_successes": 0,
+      "repair_success_rate": 0.0,
+      "repair_valid_answer_regressions": 3,
+      "prevented_answer_regressions": 0,
+      "final_evidence_consistent": 0,
+      "final_actions": {
+        "BUY": 1
+      },
+      "accepted_actions": {},
+      "execution_gate_tested_rows": 1,
+      "invalid_proposals_admitted": 0,
+      "orders_submitted": 0,
+      "error_kinds": {
+        "size_exceeds_capacity": 2
+      },
+      "limitation": "Evidence consistency and safety checks are separate. Repeated variants are not independent financial scenarios. HOLD frequency is reported; acceptance is not investment merit. Missing measurements are not zero.",
+      "artifact_hashes": {
+        "03.json": "545bf637208bf00623a34772e203a753d8430ad09836735f8ffcf074963a84ac"
+      },
+      "base_source_families": [
+        "headroom"
+      ]
+    },
+    "edge-contract-original-release-replay": {
+      "rows": 12,
+      "modes": {
+        "offline_replay": 12
+      },
+      "completed": 12,
+      "scenario_families": {
+        "headroom": 3,
+        "missing_history": 3,
+        "held_deterioration": 3,
+        "conditional_entry": 3
+      },
+      "live_calls": 0,
+      "http_200": 0,
+      "quality_measured_rows": 12,
+      "unmeasured_rows": 0,
+      "first_response_accepted": 12,
+      "first_response_acceptance_rate": 1.0,
+      "repair_attempts": 0,
+      "repair_successes": 0,
+      "repair_success_rate": null,
+      "repair_valid_answer_regressions": 0,
+      "prevented_answer_regressions": 0,
+      "final_evidence_consistent": 12,
+      "final_actions": {
+        "HOLD": 12
+      },
+      "accepted_actions": {
+        "HOLD": 12
+      },
+      "execution_gate_tested_rows": 12,
+      "invalid_proposals_admitted": 0,
+      "orders_submitted": 0,
+      "error_kinds": {},
+      "limitation": "Evidence consistency and safety checks are separate. Repeated variants are not independent financial scenarios. HOLD frequency is reported; acceptance is not investment merit. Missing measurements are not zero.",
+      "artifact_hashes": {
+        "01.json": "fda2576bcf651fdbfa96dd7746ba9675fa4c4a4f40735304922a9c8553f3986d",
+        "02.json": "97ad913c781044ba433c04fabdceffc6cf42f0014f41a07b9fb381414d943466",
+        "03.json": "30b02876f7d4a0181ca8370d93a331a272a546bb6f41863dfd512519a3f2478f",
+        "04.json": "e5764a5b273b32eccd7e7fefbb77d0f7b0beff3cc05727e22f0b69410ecb7d45",
+        "05.json": "1a96885dc5d1f4d2de95085ec9f257f9f71081ea7bcaf72e533c4bd0a4e4135a",
+        "06.json": "26b34f0b01d7f097316104e82ecbb688a2b97d73b22a088008aecc6174a72337",
+        "07.json": "701658c5271b11b60e828a5bd2e2a13af33669fb976dd1e5ae0a6955df4ddabb",
+        "08.json": "ce39fe79fca0664e641adb607f179438c711be7d5a86a4864da0974e68afecd1",
+        "09.json": "9e1f740456aacc5d134b36333d875aa23c0e0e85b9e908dc464eb1d49c128def",
+        "10.json": "b5a3df8c31b163135ff726b322b0ec246fe5fab3d61a69bd1559c5425d9e1a6c",
+        "11.json": "a945a9044f28a5d15fa10ebf20606ea80effb5d6e89342db344e49eecb090766",
+        "12.json": "f82ebe1fdd286d34e6b62ab52e475dd90827145e6dbed69c698ea33f3c63156d"
+      },
+      "base_source_families": [
+        "conditional_entry",
+        "headroom",
+        "held_deterioration",
+        "missing_history"
+      ]
+    },
+    "edge-contract-edges-release-replay": {
+      "rows": 12,
+      "modes": {
+        "offline_replay": 12
+      },
+      "completed": 12,
+      "scenario_families": {
+        "cash_limited": 1,
+        "reserved_concentration": 1,
+        "zero_headroom": 1,
+        "missing_reservations": 1,
+        "per_order_limit": 1,
+        "compound_reversed": 1,
+        "unit_price_coincidence": 1,
+        "missing_history_date": 1,
+        "held_loss": 1,
+        "held_gain": 1,
+        "invalid_range": 1,
+        "compound_current_and_future": 1
+      },
+      "live_calls": 0,
+      "http_200": 0,
+      "quality_measured_rows": 12,
+      "unmeasured_rows": 0,
+      "first_response_accepted": 12,
+      "first_response_acceptance_rate": 1.0,
+      "repair_attempts": 0,
+      "repair_successes": 0,
+      "repair_success_rate": null,
+      "repair_valid_answer_regressions": 0,
+      "prevented_answer_regressions": 0,
+      "final_evidence_consistent": 12,
+      "final_actions": {
+        "HOLD": 11,
+        "BUY": 1
+      },
+      "accepted_actions": {
+        "HOLD": 11,
+        "BUY": 1
+      },
+      "execution_gate_tested_rows": 12,
+      "invalid_proposals_admitted": 0,
+      "orders_submitted": 0,
+      "error_kinds": {},
+      "limitation": "Evidence consistency and safety checks are separate. Repeated variants are not independent financial scenarios. HOLD frequency is reported; acceptance is not investment merit. Missing measurements are not zero.",
+      "artifact_hashes": {
+        "01.json": "512c363bff10a9574bf70bd068a990acedfdf303c9da6b38a35d64c2db690d97",
+        "02.json": "d1df6d3b8e7769076c647acda5597059dea08cbf1b997912e8ed407920458060",
+        "03.json": "03454fe517149c0ce6e51d39f4bbe5155b41f7052fd7824aaea4b478bb63b123",
+        "04.json": "abeaeff85deb5356c27a7451c90224de0a76bae9607702655eaa50feeaffaad6",
+        "05.json": "801e4e9783e23899fb94dc23133bd3f98a369c740ccfb89f0c4fddb9edce1dad",
+        "06.json": "9a843fbb7d51cbea790180f0d0046f730bc4c99a9253cd876775788f0bfc1ac9",
+        "07.json": "3fb6712d10bb1965c3456e961420b6fc89bb7a7662d691217679dc129bfd1d0d",
+        "08.json": "f785ab21f26b349fe7376bf9e72b0b857e6f0dc330f52aac5d27b057270f896a",
+        "09.json": "bb6b70873cdc706e4d694eb490edc4c9d51d068fd88c0709fedf8cc226fa33c3",
+        "10.json": "bab5ca39e36ebc5627dad7eee357ef35fb9aa7a38c07a072ea27c8b7b948ca54",
+        "11.json": "90a6d5ca6b1db2c0fa7ddb4c352302ba80ae2d34f3ff8159b832626d1c949fd1",
+        "12.json": "5014b57d9c225fbea1c75f80eaf3ffb70b9b36fbc3edb2c4d34182cbe98f668a"
+      },
+      "base_source_families": [
+        "conditional_entry",
+        "headroom",
+        "held_deterioration",
+        "missing_history"
+      ]
+    }
+  },
+  "limitations": [
+    "Fresh cohorts preceded the final repair-preservation extension; all 24 raw first responses were replayed on release source.",
+    "One fresh saved-initial repair returned repetitive, incomplete JSON and remained blocked. Requested maxTokens was 8192; reported provider usage was zero, so token exhaustion is not established.",
+    "New scenarios are synthetic perturbations of four source families, not independently sourced market cases.",
+    "No test submitted orders. Execution checks are distinct from evidence acceptance and investment merit.",
+    "Raw prompts, responses, and portfolio data are retained locally and are not included in the committed summary."
+  ]
+}

@@ -35,8 +35,9 @@ async def test_financial_live_benchmark(index,live_http):
     variant=os.getenv('FINANCIAL_BENCH_VARIANT','candidate')
     assert variant in ('baseline','candidate')
     source_brief=corpus['shared']+'\n'+original['facts']
-    if FAMILY=='holdout':
-        holdouts=json.loads((ROOT/'tests/benchmarks/fixtures/financial_reasoning_holdout_v1.json').read_text())['cases']
+    if FAMILY in ('holdout', 'edges'):
+        name = 'financial_reasoning_edges_v1.json' if FAMILY == 'edges' else 'financial_reasoning_holdout_v1.json'
+        holdouts=json.loads((ROOT/'tests/benchmarks/fixtures'/name).read_text())['cases']
         evidence=deepcopy(holdouts[index-1])
         plan=next(p for p in manifest['plan'] if p['case']==evidence['base_case'] and p['arm']=='current')
         source_brief=('Synthetic EVLT source observations. Rows are metric, value, unit, as_of, source, period. '
@@ -50,7 +51,12 @@ async def test_financial_live_benchmark(index,live_http):
     target=out/f'{index:02}.json'
     assert not target.exists(),'Preserve every attempt; choose a fresh cohort name'
     mode=os.getenv('FINANCIAL_BENCH_MODE','fresh')
-    assert not (FAMILY=='holdout' and mode=='frozen')
+    seeded = os.getenv('FINANCIAL_BENCH_SEEDED_INITIAL_COHORT')
+    if seeded:
+        assert FAMILY == 'original' and mode == 'fresh' and not os.getenv('FINANCIAL_BENCH_REPLAY_COHORT')
+        assert '/' not in seeded and '..' not in seeded
+        mode = 'saved_initial'
+    assert not (FAMILY in ('holdout', 'edges') and mode=='frozen')
     cid='bench-financial-'+uuid.uuid4().hex[:12]
     desk=SharedDesk(ticker='EVLT',cycle_id=cid)
     desk.cycle_metadata={'decision_contract_version':1,'financial_evidence_version':1 if variant=='candidate' else 0,'held':evidence['held'],
@@ -62,16 +68,21 @@ async def test_financial_live_benchmark(index,live_http):
         desk.cycle_metadata['memory_context']=task.split('## Past Cycle Memory\n',1)[1].split('## DECISION CONTRACT',1)[0]
     module=SimpleNamespace(AGENT_NAME='v3_board_of_directors',ARTIFACT_TYPE='final_decision',
                            TOOL_WHITELIST=[],SYSTEM_PROMPT=plan['body']['systemPrompt'])
-    record={'index':index,'case':evidence['id'],'arm':plan['arm'],'mode':'offline_replay' if os.getenv('FINANCIAL_BENCH_REPLAY_COHORT') else mode,'family':FAMILY,'variant':variant,'cycle_id':cid,
+    record={'index':index,'case':evidence['id'],'arm':plan['arm'],'scenario_family':evidence.get('scenario_family', evidence.get('base_case', evidence['id'])),'mode':'offline_replay' if os.getenv('FINANCIAL_BENCH_REPLAY_COHORT') else mode,'family':FAMILY,'variant':variant,'cycle_id':cid,
             'started_at':time.time(),'endpoint':ENDPOINT,'calls':[],'evidence':evidence,
             'replay_cohort':os.getenv('FINANCIAL_BENCH_REPLAY_COHORT'),
             'source_hashes':{p:hashlib.sha256((ROOT/p).read_bytes()).hexdigest() for p in
-                ('app/v3/agent_runner.py','app/v3/financial_evidence.py','app/v3/financial_claims.py','app/v3/financial_reasoning.py','tests/unit/test_financial_live_benchmark.py')},
+                ('app/v3/agent_runner.py','app/v3/financial_evidence.py','app/v3/financial_claims.py','app/v3/financial_reasoning.py','app/v3/financial_repair.py','app/v3/financial_metrics.py','app/trading/order_capacity.py','tests/unit/test_financial_live_benchmark.py')},
             'limits':'At most two endpoint calls (initial plus shared repair); upstream may make additional recovery attempts, recorded separately. Tools disabled, no orders; persistence mocked. Proxy retains request/session logs.',
             'ablation':{k:os.getenv(k) for k in ('FINANCIAL_BENCH_THINKING','FINANCIAL_BENCH_OUTPUT_TOKENS','FINANCIAL_BENCH_HTTP_TIMEOUT','FINANCIAL_BENCH_PHASE_TIMEOUT')},
             'comparison':'Synthetic frozen cases and original persona/method arms. Typed source evidence and financial contract are added. Expected answers/checks excluded. Acceptance alone is not reasoning quality.'}
     async def model(**kwargs):
         assert kwargs['enable_tools'] is False
+        if mode == 'saved_initial' and not record['calls']:
+            saved = json.loads((out.parent/seeded/f'{index:02}.json').read_text())
+            response = saved['calls'][0]['response']
+            record['calls'].append({'kind':'saved_initial','source_cohort':seeded,'response':response})
+            return {'response':response,'tokens_used':0,'loops_used':1,'stop_reason':'completed'}
         if mode=='frozen' and not record['calls']:
             frozen=json.loads(next(SOURCE.glob(f'{index:02}-*.json')).read_text())
             record['calls'].append({'kind':'frozen_initial','response':frozen['response']})
@@ -110,6 +121,19 @@ async def test_financial_live_benchmark(index,live_http):
          patch.object(data_trace.mongo_store,'find_docs',return_value=[]):
         outcome=await run_v3_agent(desk,module,cycle_id=cid,bot_id='test',timeout_seconds=float(os.getenv('FINANCIAL_BENCH_PHASE_TIMEOUT','240')),
             custom_instructions='Synthetic frozen evidence assessment. No tools or orders. Return the complete final_decision JSON and research_answers for every supplied question. Do not aim for a specified action.'+(' Follow the financial evidence contract.' if variant=='candidate' else ''))
+    from app.v3.financial_claims import execution_errors
+    from app.v3.orchestrator import _build_v1_compatible_result
+    from app.v3.financial_metrics import quality_metrics
+    final_audit = desk_status(desk)
+    final_artifact = desk.final_decision or {}
+    final_result = _build_v1_compatible_result(desk)
+    gate_errors = execution_errors(final_result)
+    record['quality'] = quality_metrics(desk.cycle_metadata.get('financial_attempts', {}).get('final_decision', []),
+                                       final_artifact, evidence, final_audit)
+    record['attempts'] = desk.cycle_metadata.get('financial_attempts', {}).get('final_decision', [])
+    record['execution_gate'] = {'tested': True, 'allowed': not gate_errors, 'errors': gate_errors,
+                              'invalid_proposal_admitted': final_audit['status'] != 'consistent' and not gate_errors,
+                              'orders_submitted': 0}
     record.update(telemetry=desk.agent_telemetry,outcome=outcome.value,artifact=desk.final_decision,audit=desk_status(desk),elapsed_s=time.time()-record['started_at'])
     target.write_text(json.dumps(record,indent=2,default=str))
     print(json.dumps({'index':index,'outcome':record['outcome'],'audit':record['audit']['status'],'calls':len(record['calls'])}),flush=True)

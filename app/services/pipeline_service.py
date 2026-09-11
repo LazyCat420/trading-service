@@ -2712,6 +2712,9 @@ class PipelineService:
                                 "errors": list(contract.get("errors") or []) + execution_errors}
                     from app.v3.financial_claims import execution_errors as financial_execution_errors
                     financial_errors = financial_execution_errors(result)
+                    if result.get('financial_evidence_version') == 1:
+                        result['financial_execution_validation'] = {'checked': True, 'blocked': bool(financial_errors),
+                            'errors': financial_errors}
                     if financial_errors:
                         policy_action = 'HOLD_POLICY_BLOCKED_FINANCIAL_EVIDENCE'
                         result['policy_action'] = policy_action
@@ -2790,28 +2793,41 @@ class PipelineService:
                                     "[PipelineService] %s: health sizing check failed (ignored): %s",
                                     ticker_name, health_err,
                                 )
-                            result["trade_attempted"] = True
-                            effective_size_pct = float(size_pct) if isinstance(size_pct, (int, float)) else 0.0
-                            logger.info(
-                                "[PipelineService] %s: sizing %s → %.1f%% of equity (cash-capped)",
-                                ticker_name,
-                                "from agent decision" if isinstance(agent_size_pct, (int, float)) and agent_size_pct > 0 else "via confidence fallback",
-                                effective_size_pct * 100,
-                            )
-                            _est = result.get("estimate") or {}
-                            trade_res = await buy(
-                                bot_id=active_bot_id, ticker=ticker_name, size_pct=effective_size_pct, cycle_id=cycle_id,
-                                stop_loss_price=_est.get("stop_loss"),
-                                take_profit_price=_est.get("take_profit"),
-                                exit_style=_est.get("exit_style"),
-                            )
-                            if isinstance(trade_res, dict) and trade_res.get("error"):
-                                result["no_trade_reason"] = resolve_no_trade_reason(trade_res)
-                                logger.warning("[PipelineService] %s: BUY not executed: %s", ticker_name, trade_res["error"])
-                                emit_trade(ticker_name, "BUY", trade_res, False, result["no_trade_reason"])
+                            if result.get('financial_evidence_version') == 1 and (
+                                    not isinstance(agent_size_pct, (int, float)) or
+                                    abs(float(size_pct or 0) * 100 - agent_size_pct) > 0.000001):
+                                result['no_trade_reason'] = 'CAPACITY_REVALIDATION_FAILED'
+                                result['sizing_reconsideration_required'] = True
+                                policy_action = 'HOLD_POLICY_BLOCKED_CAPACITY'
+                                result['policy_action'] = policy_action
                             else:
-                                result["trade_executed"] = True
-                                emit_trade(ticker_name, "BUY", trade_res, True)
+                                result["trade_attempted"] = True
+                                effective_size_pct = float(size_pct) if isinstance(size_pct, (int, float)) else 0.0
+                                logger.info(
+                                    "[PipelineService] %s: sizing %s → %.1f%% of equity (cash-capped)",
+                                    ticker_name,
+                                    "from agent decision" if isinstance(agent_size_pct, (int, float)) and agent_size_pct > 0 else "via confidence fallback",
+                                    effective_size_pct * 100,
+                                )
+                                _est = result.get("estimate") or {}
+                                trade_res = await buy(
+                                    bot_id=active_bot_id, ticker=ticker_name, size_pct=effective_size_pct, cycle_id=cycle_id,
+                                    stop_loss_price=_est.get("stop_loss"),
+                                    take_profit_price=_est.get("take_profit"),
+                                    exit_style=_est.get("exit_style"),
+                                    strict_capacity=result.get("financial_evidence_version") == 1,
+                                )
+                                if isinstance(trade_res, dict) and trade_res.get("error"):
+                                    if trade_res.get('reason') == 'CAPACITY_REVALIDATION_FAILED':
+                                        policy_action = 'HOLD_POLICY_BLOCKED_CAPACITY'
+                                        result['policy_action'] = policy_action
+                                        result['sizing_reconsideration_required'] = True
+                                    result["no_trade_reason"] = resolve_no_trade_reason(trade_res)
+                                    logger.warning("[PipelineService] %s: BUY not executed: %s", ticker_name, trade_res["error"])
+                                    emit_trade(ticker_name, "BUY", trade_res, False, result["no_trade_reason"])
+                                else:
+                                    result["trade_executed"] = True
+                                    emit_trade(ticker_name, "BUY", trade_res, True)
                     elif action == "SELL":
                         # Pre-attempt position check: a SELL on an unheld
                         # ticker is a guaranteed refusal at the paper trader
@@ -2926,6 +2942,11 @@ class PipelineService:
 
                 if trade_failed:
                     result["trade_failed"] = True
+                if result.get('financial_execution_validation'):
+                    check = result['financial_execution_validation']
+                    check['order_attempted'] = bool(result.get('trade_attempted'))
+                    check['order_executed'] = bool(result.get('trade_executed'))
+                    check['invalid_proposal_admitted'] = check['blocked'] and check['order_attempted']
 
                 # Re-save when trade handling mutated the result: no_trade_reason
                 # and the trade flags are set AFTER the first save, and
@@ -2938,6 +2959,7 @@ class PipelineService:
                     or result.get("trade_attempted")
                     or result.get("trade_executed")
                     or trade_failed
+                    or result.get("financial_execution_validation")
                 ):
                     save_analysis_result(
                         ticker_name, cycle_id, result,

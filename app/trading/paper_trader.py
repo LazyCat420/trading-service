@@ -415,6 +415,7 @@ async def buy(
     stop_loss_price: float | None = None,
     take_profit_price: float | None = None,
     exit_style: str | None = None,
+    strict_capacity: bool = False,
 ) -> dict:
     """
     Execute a paper BUY.
@@ -525,6 +526,8 @@ async def buy(
 
     for pticker, pqty in positions:
         pprice, _ = _get_current_price(pticker)
+        if strict_capacity and (pprice is None or pprice <= 0):
+            return {'error': 'Current portfolio valuation incomplete; re-analysis required.'}
         val = pqty * (pprice or 0.0)
         portfolio_value += val
         if pticker == ticker:
@@ -539,6 +542,18 @@ async def buy(
     if dd_error:
         return dd_error
 
+    if strict_capacity:
+        try:
+            from app.trading.order_capacity import pending_capacity, strict_capacity_error
+            capacity_error = strict_capacity_error(equity=portfolio_value, cash=cash,
+                held_value=existing_ticker_value, requested_fraction=size_pct,
+                concentration_fraction=get_param('MAX_CONCENTRATION_PCT'),
+                order_fraction=get_param('MAX_POSITION_SIZE_PCT'),
+                reservations=pending_capacity(bot_id, ticker))
+        except Exception:
+            capacity_error = 'Current pending-order capacity unavailable; re-analysis required.'
+        if capacity_error:
+            return {'error': capacity_error, 'reason': 'CAPACITY_REVALIDATION_FAILED'}
     amount = resolve_buy_amount(portfolio_value, cash, size_pct)
     if amount == cash and cash < portfolio_value * min(size_pct, 1.0):
         logger.info(

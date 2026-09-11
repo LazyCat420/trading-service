@@ -1094,6 +1094,13 @@ async def run_v3_agent(
             ))
 
         memory_context = desk.cycle_metadata.get("memory_context", "")
+        if memory_context and financial_record is not None:
+            from app.services.memory.retriever import financial_memory_brief
+            memory_context, memory_ids = financial_memory_brief(
+                desk.cycle_metadata.get('memory_records') or [], desk.ticker,
+                financial_record.get('as_of'))
+            desk.cycle_metadata['financial_memory_delivery'] = {'source_ids': memory_ids,
+                'unverified_text_excluded': not bool(memory_context)}
         if memory_context:
             dynamic_sections.append((5, f"## Past Cycle Memory\n{memory_context}"))
 
@@ -1313,8 +1320,9 @@ async def run_v3_agent(
             record_delivery(cycle_id=cycle_id, ticker=desk.ticker, role=agent_name,
                 system=system_prompt, user=user_prompt, skill_text=_skill_prefix,
                 skill_version=active_skill_version(agent_name),
-                memory_ids=(desk.cycle_metadata.get("memory_source_ids") or [])
-                    if desk.cycle_metadata.get("memory_context", "") in delivered_text else [])
+                memory_ids=((desk.cycle_metadata.get('financial_memory_delivery') or {}).get('source_ids', [])
+                    if financial_record is not None else (desk.cycle_metadata.get('memory_source_ids') or []))
+                    if memory_context and memory_context in delivered_text else [])
         except Exception as exc:
             logger.error("[V3Runner] learning delivery receipt failed: %s", exc)
 
@@ -1402,6 +1410,10 @@ async def run_v3_agent(
                    tokens=token_usage, loops=loops_used, attempt=attempt_no)
         artifact = _parse_artifact(final_text, artifact_type, agent_name)
         financial_render_errors = []
+        if financial_record is not None:
+            from app.v3.financial_metrics import assess_attempt
+            financial_attempts = desk.cycle_metadata.setdefault('financial_attempts', {}).setdefault(artifact_type, [])
+            financial_attempts.append(assess_attempt(artifact, financial_record, artifact_type))
         if financial_record is not None:
             from app.v3.financial_reasoning import render_reasoning_artifact
             artifact, financial_render_errors = render_reasoning_artifact(artifact, financial_record)
@@ -1616,7 +1628,12 @@ async def run_v3_agent(
                 artifact = _parse_artifact(repair_text, artifact_type, agent_name)
                 if financial_record is not None:
                     from app.v3.financial_reasoning import render_reasoning_artifact
-                    artifact, _ = render_reasoning_artifact(artifact, financial_record)
+                    from app.v3.financial_repair import merge_repair
+                    artifact, merge_errors = merge_repair(fragment if isinstance(fragment, dict) else {}, artifact, financial_record)
+                    artifact, render_errors = render_reasoning_artifact(artifact, financial_record)
+                    financial_attempts.append(assess_attempt(artifact, financial_record, artifact_type, merge_errors + render_errors))
+                    if merge_errors or render_errors:
+                        artifact = None
                 repaired = artifact is not None
                 if artifact is not None:
                     logger.info(
@@ -1944,14 +1961,20 @@ async def run_v3_agent(
                                    data={"errors":contract_failures,"prompt":repair_prompt,
                                          "response":correction.get("response", "")})
                         candidate = _parse_artifact(correction.get("response", ""), artifact_type, agent_name)
+                        timing_merge_errors = []
                         if financial_record is not None:
+                            from app.v3.financial_repair import merge_repair
                             from app.v3.financial_reasoning import render_reasoning_artifact
-                            candidate, _ = render_reasoning_artifact(candidate, financial_record)
+                            candidate, timing_merge_errors = merge_repair(original_artifact, candidate, financial_record)
+                            candidate, render_errors = render_reasoning_artifact(candidate, financial_record)
+                            timing_merge_errors += render_errors
+                            financial_attempts.append(assess_attempt(candidate, financial_record, artifact_type, timing_merge_errors))
                         token_usage += correction.get("tokens_used", 0)
                         elapsed_ms = int((time.monotonic() - t_start) * 1000)
                         from app.v3.decision_contract import correction_errors
                         correction_failures = correction_errors(original_artifact, candidate,
                             board=board_source, evidence_sources=evidence_sources(desk))
+                        correction_failures += timing_merge_errors
                         repaired = not correction_failures
                         if repaired:
                             artifact = candidate
@@ -2011,10 +2034,13 @@ async def run_v3_agent(
                         token_usage += correction.get('tokens_used', 0)
                         elapsed_ms = int((time.monotonic() - t_start) * 1000)
                         candidate = _parse_artifact(correction.get('response', ''), artifact_type, agent_name)
-                        if financial_record is not None:
-                            from app.v3.financial_reasoning import render_reasoning_artifact
-                            candidate, _ = render_reasoning_artifact(candidate, financial_record)
+                        from app.v3.financial_repair import merge_repair
+                        candidate, merge_errors = merge_repair(original_financial_artifact, candidate, financial_record)
+                        from app.v3.financial_reasoning import render_reasoning_artifact
+                        candidate, render_errors = render_reasoning_artifact(candidate, financial_record)
+                        financial_attempts.append(assess_attempt(candidate, financial_record, artifact_type, merge_errors + render_errors))
                         candidate_errors = validate_artifact(artifact_type, deepcopy(candidate)) if isinstance(candidate, dict) else ['Not a decision object.']
+                        candidate_errors += merge_errors + render_errors
                         if not candidate_errors:
                             candidate = _coerce_artifact(artifact_type, candidate, desk=desk)
                             if artifact_type == 'final_decision':
@@ -2040,11 +2066,14 @@ async def run_v3_agent(
                         logger.warning('[V3Runner] financial correction failed: %s', type(exc).__name__)
                         trace_data(cycle_id, desk.ticker, agent_name, 'financial.correction_failed',
                                    data={'error':type(exc).__name__, 'initial_audit':first_financial_audit})
+            from app.v3.financial_metrics import quality_metrics
+            metrics = quality_metrics(financial_attempts, artifact, financial_record, financial_audit)
+            desk.cycle_metadata.setdefault('financial_quality_metrics', {})[artifact_type] = metrics
             artifact['_financial_audit'] = financial_audit
             desk.cycle_metadata.setdefault('financial_validation', {})[artifact_type] = financial_audit
             trace_data(cycle_id, desk.ticker, agent_name, 'financial.validation',
                        data={'original':original_financial_artifact,'initial_audit':first_financial_audit,
-                             'final':artifact,'audit':financial_audit})
+                             'final':artifact,'audit':financial_audit,'metrics':metrics})
             # Preserve unresolved authored output for review. The final policy
             # gate and executor both revalidate it and refuse order authority.
 

@@ -496,6 +496,7 @@ async def run_v3_pipeline(
         try:
             from app.services.memory.retriever import MemoryRetriever
             retrieval_results = await asyncio.to_thread(MemoryRetriever.retrieve, ticker=ticker)
+            desk.cycle_metadata["memory_records"] = retrieval_results
             brief_text = ""
             if retrieval_results:
                 memory_brief = MemoryRetriever.build_memory_brief(retrieval_results)
@@ -3747,6 +3748,8 @@ def _build_v1_compatible_result(
         "decision_contract": decision_contract,
         "financial_evidence_version": desk.cycle_metadata.get('financial_evidence_version', 0),
         "financial_evidence_record": desk.cycle_metadata.get('financial_evidence_record'),
+        "financial_quality_metrics": desk.cycle_metadata.get('financial_quality_metrics', {}),
+        "financial_attempts": desk.cycle_metadata.get('financial_attempts', {}),
         "financial_decision": _merged if desk.cycle_metadata.get('financial_evidence_version') == 1 else None,
         "resolution_condition": _merged.get("resolution_condition"),
         "decision_producer": _merged.get("decision_producer"),

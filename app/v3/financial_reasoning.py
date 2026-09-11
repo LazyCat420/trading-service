@@ -10,8 +10,9 @@ import json
 from app.v3.financial_evidence import calculated_facts, number
 
 
-def reasoning_catalog(record):
-    facts = calculated_facts(record)
+def reasoning_catalog(record, decision=None):
+    plan = decision if decision and any(decision.get(k) is not None for k in ('stop_loss', 'take_profit')) else None
+    facts = calculated_facts(record, plan)
     steps = {}
 
     def add(key, ids, statement):
@@ -66,17 +67,18 @@ def reasoning_catalog(record):
             "The forward growth-adjusted multiple uses the supplied next-year earnings growth."
             if available("calc_forward_peg") else
             "The required earnings-growth observation is unavailable, so forward PEG is unresolved.")
-    for scenario in ("current", "conditional"):
-        key = f"calc_proposed_{scenario}_reward_risk"
-        if key not in facts:
-            continue
-        value = number(facts[key]["value"])
-        context = "at the current reference price" if scenario == "current" else "at the hypothetical future entry"
-        text = (f"Reward/risk {context} is unknown." if value is None else
-                f"Prospective gain exceeds defined downside {context}." if value > 1 else
-                f"Defined downside exceeds prospective gain {context}." if value < 1 else
-                f"Prospective gain and defined downside balance {context}.")
-        add(f"{scenario}_reward_risk", [key], text)
+    for prefix in ("proposed", "plan"):
+        for scenario in ("current", "conditional"):
+            key = f"calc_{prefix}_{scenario}_reward_risk"
+            if key not in facts:
+                continue
+            value = number(facts[key]["value"])
+            context = "at the current reference price" if scenario == "current" else "at the hypothetical future entry"
+            text = (f"Reward/risk {context} is unknown." if value is None else
+                    f"Prospective gain exceeds defined downside {context}." if value > 1 else
+                    f"Defined downside exceeds prospective gain {context}." if value < 1 else
+                    f"Prospective gain and defined downside balance {context}.")
+            add(("" if prefix == "proposed" else "plan_") + f"{scenario}_reward_risk", [key], text)
     for key, label in (("volume_five_session_trend", "dated volume trend"),
                        ("sma_200", "long moving average"),
                        ("debt_to_equity_prior", "prior leverage observation")):
@@ -129,8 +131,8 @@ def render_reasoning_artifact(artifact, record):
         return artifact, []
     result = deepcopy(artifact)
     errors = []
-    catalog = reasoning_catalog(record)
-    facts = calculated_facts(record)
+    catalog = reasoning_catalog(record, artifact)
+    facts = calculated_facts(record, artifact)
     selected = []
 
     def selection_help(field):
@@ -196,7 +198,12 @@ def render_reasoning_artifact(artifact, record):
         q = questions[answer["item_id"]]
         steps = select(answer.get("step_ids"), "research_answers." + answer["item_id"])
         ids = list(dict.fromkeys(f for step in steps for f in step["fact_ids"]))
-        requirements = _question_requirements(q["question"])
+        from app.v3.financial_evidence import question_components
+        components = next(row['components'] for row in question_components(record) if row['item_id'] == q['id'])
+        requirements = [set(c['fact_ids_any_of']) for c in components]
+        missing = [c['id'] for c in components if not set(ids) & set(c['fact_ids_any_of'])]
+        if missing:
+            errors.append(f"research_answers.{q['id']}: missing required components: " + ', '.join(missing))
         supported = bool(requirements) and all(set(ids) & group for group in requirements)
         known = bool(ids) and all(facts[i]["status"] == "known" and _supports_question_date(facts[i], q["question"]) for i in ids)
         statements = list(dict.fromkeys(step["statement"] for step in steps))

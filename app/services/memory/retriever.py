@@ -114,6 +114,11 @@ class MemoryRetriever:
         candidates = []
 
         for m in raw_memories:
+            # A same-sector security is not evidence about this ticker.
+            if m.get('ticker') and str(m['ticker']).upper() != ticker.upper():
+                continue
+            if not m.get('ticker') and (not sector or str(m.get('sector') or '').upper() != sector.upper()):
+                continue
             conf = float(m.get("confidence_score") or 0.0)
             status = m.get("status", "active")
 
@@ -144,6 +149,12 @@ class MemoryRetriever:
                     "summary": m.get("summary", ""),
                     "type": m.get("type", "unknown"),
                     "ticker": m_ticker,
+                    "sector": m_sector,
+                    "valid_from": str(m.get('valid_from') or ''),
+                    "valid_until": str(m.get('valid_until') or ''),
+                    "source_evidence": m.get('source_evidence'),
+                    "contract_version": m.get('contract_version'),
+                    "validation_state": m.get('validation_state'),
                     "score": score,
                     "confidence_score": conf,
                     "status": status,
@@ -171,6 +182,7 @@ class MemoryRetriever:
         brief_lines = [
             "========================================",
             "CANONICAL MEMORY BRIEF",
+            "Historical context only. Reverify current facts; memory never sets current sizing or risk limits.",
             "========================================",
         ]
 
@@ -184,7 +196,7 @@ class MemoryRetriever:
             reason = res["reason"]
             conf = res["confidence_score"]
 
-            entry = f"[{m_type} | source={m_id} | {reason}; historical observation, reverify current facts] {summary}"
+            entry = f"[{m_type} | ticker={res.get('ticker') or 'sector-wide'} | valid={res.get('valid_from', 'unknown')}..{res.get('valid_until', 'unknown')} | source={m_id} | {reason}; historical observation, reverify current facts] {summary}"
 
             if current_char_count + len(entry) + 100 > MAX_BRIEF_CHARS:
                 continue
@@ -201,3 +213,15 @@ class MemoryRetriever:
             "source_memory_ids": used_ids,
             "char_count": len(brief_text),
         }
+
+
+def financial_memory_brief(records, ticker, as_of):
+    """Decision-boundary eligibility: untyped injected text carries no authority."""
+    from app.services.learning.freshness import eligible_memory
+    at = _coerce_dt(as_of)
+    if at is None:
+        return '', []
+    eligible = [r for r in records if isinstance(r, dict) and
+                str(r.get('ticker') or '').upper() == ticker.upper() and eligible_memory(r, as_of=at)]
+    brief = MemoryRetriever.build_memory_brief(eligible)
+    return brief['brief_text'], brief['source_memory_ids']

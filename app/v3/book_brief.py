@@ -50,6 +50,7 @@ def build_book_brief(ticker: str, bot_id: str = "", *, snapshot_sink: dict | Non
     if not positions:
         if snapshot_sink is not None:
             snapshot_sink.update(equity=cash, exposure_pct=0, valuation_complete=True)
+            _capture_reservations(snapshot_sink, resolve_bot_id(bot_id), ticker)
         return (
             "## PORTFOLIO BOOK BRIEF (code-computed)\n"
             f"- Book is ALL CASH (${cash:,.0f}). A new position carries no "
@@ -81,6 +82,7 @@ def build_book_brief(ticker: str, bot_id: str = "", *, snapshot_sink: dict | Non
         snapshot_sink.update(equity=equity,
             exposure_pct=sum(mv for t, mv, _ in rows if t == ticker) / equity * 100 if equity > 0 else None,
             valuation_complete=valuation_complete and equity > 0)
+        _capture_reservations(snapshot_sink, resolve_bot_id(bot_id), ticker)
 
     lines = [
         "## PORTFOLIO BOOK BRIEF (code-computed — the whole book, not just this ticker)",
@@ -169,3 +171,18 @@ def build_book_brief(ticker: str, bot_id: str = "", *, snapshot_sink: dict | Non
         logger.debug("[BookBrief] correlation failed (non-fatal): %s", e)
 
     return "\n".join(lines)
+
+
+def _capture_reservations(snapshot, bot_id, ticker):
+    from app.trading.order_capacity import pending_capacity
+    try:
+        pending = pending_capacity(bot_id, ticker)
+        equity = snapshot.get('equity')
+        if not snapshot.get('valuation_complete') or not equity or equity <= 0:
+            return
+        snapshot['reservations'] = {'complete': True, 'ticker': ticker,
+            'as_of': snapshot['as_of'], 'source': 'paper_orders_snapshot:'+bot_id,
+            'pending_exposure_pct': pending['ticker_reserved'] / equity * 100,
+            'cash_reserved': pending['cash_reserved']}
+    except Exception:
+        snapshot['reservations'] = {'complete': False, 'ticker': ticker}
