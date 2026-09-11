@@ -1,0 +1,49 @@
+{
+  "recorded_at": "2026-09-11T07:38:07.667588+00:00",
+  "status": "offline_validated_live_authorization_pending",
+  "runtime_commit": "fb216b2b",
+  "full_suite_commit": "866c3309",
+  "full_suite": {
+    "passed": 7205,
+    "skipped": 114,
+    "warnings": 236,
+    "elapsed_seconds": 531
+  },
+  "latest_financial_focused": {
+    "passed": 65
+  },
+  "direct_dispatch_suite": {
+    "passed": 6,
+    "note": "Includes one added actual-dispatch test not in the earlier full-suite collection."
+  },
+  "offline_controls": {
+    "correct_accepted": 12,
+    "correct_total": 12,
+    "corruptions_caught": 129,
+    "corruptions_total": 129
+  },
+  "live_model_calls": 0,
+  "deployed": false,
+  "authorization_block": "Automatic approval review rejected the synthetic EVLT live benchmark request twice. Explicit user authorization for the exact endpoint and payload has been requested; no answer yet.",
+  "endpoint_requested": "http://10.0.0.16:5591/prism-proxy/agent?stream=false",
+  "source_sha256": {
+    "app/v3/financial_evidence.py": "f0b6b2041d30daf95b5d589eb5a8de595dd3bc15cbdc1aa222e87c132c4261ab",
+    "app/v3/financial_claims.py": "4ae840f342cc51985dbe592c3aefacd681d87c2bb4c132cdf52202f5f5699e98",
+    "app/v3/agent_runner.py": "23fad174f561f8ab30e5e510c2d25fa65ffa9416c84a4b19db61cd05939cd17a",
+    "app/v3/orchestrator.py": "9a5669ab21e723615950ac44f5dff90b7801f0461aa21f2819537f1accabcdfb",
+    "app/v3/book_brief.py": "aff3d5e0317eb31cd593570074486c98cf7984a4b309076d6edb25f450e63a00",
+    "app/quant/fundamental_block.py": "0e68b73d20f188deae92eb05f69a413dcc14a2fa55a184145bde2079910ad34b",
+    "app/quant/technical_baseline.py": "9a7055cd158558ab895c49f66ff198e0a116784c2272aaf0bbb4e9899684a9cf",
+    "app/quant/valuation_block.py": "98288f602ae35b7478c1223b5ffc1a83723cc0c5c0c3b9755de7e03d4c633298",
+    "app/services/pipeline_service.py": "d162abda7edab4846292ccac772b948baf2e916afb7dce7d77406f0bfa2560c2",
+    "tests/unit/test_financial_runner.py": "b5834d3ff824f0c23d071a47d8454cbd659a5848551191d11321556f4fdf48f6",
+    "tests/unit/test_financial_live_benchmark.py": "8cce45af86c3962fe04408e4439ce7aa7a896e59f2167a7664029f8f94da37e4"
+  },
+  "log_sha256": {
+    "/tmp/financial-full-unit-r1.log": "7d0bf0cd61dc77e6459053808b58f8b65c58b3783659b9cf9572944917ef041b",
+    "/tmp/financial-full-unit-final.log": "8cfe736a94849da43b2f033e8aa4524a7adafc2ed634b50fe4450391e4b4be85",
+    "/tmp/financial-full-unit-release.log": "33f9cce5e0bdbf359d296a3079650f61155f6167f0db616ab75daa27ad009ceb",
+    "/tmp/financial-final-focused.log": "3e3121e5b24bb9ec2d693199648868ce6afe7549cf8f7181db0c16bbf0bc2b19",
+    "/tmp/financial-dispatch-path-tests.log": "97f551173fe5c8bdc8da87dc87921f5da16486ffb5066ccedaf54d923eacc2f8"
+  }
+}

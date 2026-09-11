@@ -99,3 +99,38 @@ def test_versioned_missing_record_is_not_a_legacy_decision():
     desk.cycle_metadata.pop('financial_evidence_record')
     assert desk_status(desk)['status']=='unresolved'
     assert execution_errors({'financial_evidence_version':1,'action':'BUY'})
+
+
+@pytest.mark.asyncio
+async def test_real_pipeline_dispatch_accepts_a_correct_control_and_blocks_a_forged_pass():
+    from app.services.pipeline_service import PipelineService
+    from app.v3.orchestrator import _build_v1_compatible_result
+    desk,_,good=fixture()
+    good.update(action='BUY',entry_mode='enter_now',position_size_pct=.5,confidence=90)
+    desk.final_decision=good
+    result=_build_v1_compatible_result(desk)
+    result['policy_action']='EXECUTE_BUY'
+    assert execution_errors(result)==[]
+    with patch('app.services.pipeline_service.run_v3_pipeline',new_callable=AsyncMock) as pipeline, \
+         patch('app.services.result_saver.save_analysis_result'), \
+         patch('app.services.pipeline_state.PipelineStateDB.append_events'), \
+         patch('app.services.pipeline_state.PipelineStateDB.save_state'), \
+         patch('app.services.llm_preflight.llm_can_answer',new_callable=AsyncMock,return_value=(True,'mocked')), \
+         patch('app.services.llm_preflight.tool_calls_are_parsed',new_callable=AsyncMock,return_value=(True,'mocked')), \
+         patch('app.trading.paper_trader.buy',new_callable=AsyncMock) as buy, \
+         patch('app.trading.paper_trader.sell',new_callable=AsyncMock) as sell:
+        pipeline.return_value=deepcopy(result)
+        await PipelineService._run_all_v3('test-financial-dispatch-good',['EVLT'])
+        pipeline.assert_awaited_once()
+        buy.assert_called_once()
+        sell.assert_not_called()
+        buy.reset_mock();pipeline.reset_mock()
+        bad=deepcopy(result)
+        bad['financial_decision']['financial_claims'][0]['value']=2.5
+        bad['financial_decision']['_financial_audit']={'status':'consistent'}
+        pipeline.return_value=bad
+        await PipelineService._run_all_v3('test-financial-dispatch-bad',['EVLT'])
+        pipeline.assert_awaited_once()
+        buy.assert_not_called()
+        sell.assert_not_called()
+        assert bad['no_trade_reason']=='HOLD_POLICY_BLOCKED_FINANCIAL_EVIDENCE'

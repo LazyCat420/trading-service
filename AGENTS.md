@@ -247,3 +247,15 @@ said it was gathering could never arrive. Do not reintroduce a numeric cap here.
 ## 11. Decision and research contracts
 
 See [the September 7 contract notes](docs/harness-contracts-2026-09-07.md) for versioned entry intent, Board attribution, Delta escalation, prompt delivery receipts, and queued research leases/outbox delivery. These contracts are enforced by the runner and executor, not prompt advice alone.
+
+## 16. Financial evidence contract
+
+New Board invocations enable the financial evidence contract and carry it into
+synthesis. Captured source snapshots, code calculations, typed claim checks,
+and one bounded reconsideration are described in
+[the financial reasoning report](docs/benchmarks/financial-reasoning-2026-09-11.md).
+Financial correction shares the existing schema/timing correction allowance;
+it does not add another retry. Unresolved outputs remain reviewable, but policy
+and order dispatch independently refuse financial order authority. A checked
+claim means consistency with supplied evidence, not investment merit. See the
+report for live benchmark and deployment status before claiming release.

@@ -1,0 +1,2770 @@
+{
+  "interpretation": "Offline deterministic controls, authored from supplied facts. These are not live model successes, not a causal reasoning-improvement result, and not investment-performance evidence.",
+  "baseline": [
+    {
+      "index": 1,
+      "case": "headroom",
+      "old_arithmetic_checked": 0,
+      "factual_errors": [
+        "Claims close is one-third through 95\u2013115; correct location is 25%."
+      ],
+      "fully_complete": false,
+      "response_sha256": "9e3ddeba8c577d9ad1eb5f1b47f900342745bd0d6dc05fea8aeb8734a0da1c73"
+    },
+    {
+      "index": 2,
+      "case": "headroom",
+      "old_arithmetic_checked": 0,
+      "factual_errors": [],
+      "fully_complete": false,
+      "response_sha256": "246226806ee9057e164330fc0beadbfe5ce9a0ea00027abba9cbdf4fe30557fc"
+    },
+    {
+      "index": 3,
+      "case": "headroom",
+      "old_arithmetic_checked": 0,
+      "factual_errors": [],
+      "fully_complete": false,
+      "response_sha256": "8431310484feb3dc3b02a01b57f86c0a59bb53cb2bfb847b6fb13425e08e1e7a"
+    },
+    {
+      "index": 4,
+      "case": "missing_history",
+      "old_arithmetic_checked": 0,
+      "factual_errors": [
+        "Changes the requested August 17 volume lookback to September 3."
+      ],
+      "fully_complete": false,
+      "response_sha256": "601a864b07f01c170f0516c1611edfcf005fb4f8f2998aa574cc7e7686db132a"
+    },
+    {
+      "index": 5,
+      "case": "missing_history",
+      "old_arithmetic_checked": 0,
+      "factual_errors": [
+        "Reports RSI as 14 percent rather than supplied 46.",
+        "Compares operating margin 14% against gross margin 38% and says it exceeds it.",
+        "Misstates company/sector ROIC in the reasoning."
+      ],
+      "fully_complete": false,
+      "response_sha256": "3a7dce40946c9095b7ba70a3b6aca0cc2d3a2d272090e9d48f290640bce22540"
+    },
+    {
+      "index": 6,
+      "case": "missing_history",
+      "old_arithmetic_checked": 0,
+      "factual_errors": [],
+      "fully_complete": false,
+      "response_sha256": "c44c9036e5bf8b38ba3261b1f44a2125457eb28dfc039cdfc1f52362ca9fc685"
+    },
+    {
+      "index": 7,
+      "case": "held_deterioration",
+      "old_arithmetic_checked": 0,
+      "factual_errors": [
+        "Calls gross margin 30% operating margin; current operating margin is -2%.",
+        "Says price 100 is below support 95."
+      ],
+      "fully_complete": false,
+      "response_sha256": "77fbdd9302d1be14302fc51d118f16018a6f026b74680d8b82a5b12e3b4a794e"
+    },
+    {
+      "index": 8,
+      "case": "held_deterioration",
+      "old_arithmetic_checked": 0,
+      "factual_errors": [
+        "Loses negative sign on operating margin (-2% becomes +2%).",
+        "Confuses gross margin history with operating margin.",
+        "Says stock is below support despite close 100 above support 95."
+      ],
+      "fully_complete": false,
+      "response_sha256": "961b2e1fa545ebb3d69a06680b4b0c6d0f2e3972c58b0c067079d330076ad15c"
+    },
+    {
+      "index": 9,
+      "case": "held_deterioration",
+      "old_arithmetic_checked": 0,
+      "factual_errors": [
+        "Answers current operating margin as 28% instead of -2%.",
+        "Invents older debt/equity 2.0 and confuses gross/operating margins."
+      ],
+      "fully_complete": false,
+      "response_sha256": "cc9dd7ba5f7681a24636e9a12be8fb5ec7a1f6cdabc93d02aec9defa9a6d66f1"
+    },
+    {
+      "index": 10,
+      "case": "conditional_entry",
+      "old_arithmetic_checked": 0,
+      "factual_errors": [
+        "Claims three guidance beats; evidence only says guidance ranges were met.",
+        "Says cash 25000 is within a 5000 single-name cap; cash is not exposure."
+      ],
+      "fully_complete": false,
+      "response_sha256": "b24c9f41c2c0d7baee1471bef7fdc6338e412bb991a6e9ec43cc913cfc3d1c67"
+    },
+    {
+      "index": 11,
+      "case": "conditional_entry",
+      "old_arithmetic_checked": 0,
+      "factual_errors": [
+        "Hypothetical reward/risk is 3 instead of 6.",
+        "Sentence conflates the current and proposed entry reward/risk thresholds."
+      ],
+      "fully_complete": false,
+      "response_sha256": "dec8684477bf30ef93025f5e3759b7ec4e146ea6dbdc9624b98ee7e023920d84"
+    },
+    {
+      "index": 12,
+      "case": "conditional_entry",
+      "old_arithmetic_checked": 0,
+      "factual_errors": [
+        "Present reward/risk 1.5 should be 0.75; hypothetical 3.5 should be 6.",
+        "Claims guidance beats instead of met ranges.",
+        "Treats cash as within a single-name exposure cap."
+      ],
+      "fully_complete": false,
+      "response_sha256": "959674de3842725eb005e10e9b621f6d877e61147b7ee0563abc7a8e937c5fa9"
+    }
+  ],
+  "controls": [
+    {
+      "case": "headroom",
+      "artifact": {
+        "action": "HOLD",
+        "confidence": 72,
+        "position_size_pct": 0,
+        "entry_mode": "watch_only",
+        "trigger_purpose": "none",
+        "dynamic_trigger": null,
+        "reasoning": "The assessment uses the supplied observations and their limitations [calc_forward_peg][calc_headroom_pct][calc_headroom_usd][calc_proposal_fits][calc_proposed_current_reward_risk][calc_range_position_pct][debt_to_equity_prior][gross_margin_pct][guidance_record][operating_margin_pct][roic_pct][rsi_14][sector_roic_pct].",
+        "financial_claims": [
+          {
+            "fact_id": "calc_forward_peg",
+            "metric": "calc_forward_peg",
+            "value": 1.25,
+            "unit": "ratio",
+            "as_of": "2026-09-03T20:00:00Z",
+            "source": "calculation:calc_forward_peg"
+          },
+          {
+            "fact_id": "calc_headroom_pct",
+            "metric": "calc_headroom_pct",
+            "value": 0.6,
+            "unit": "percentage_points",
+            "as_of": "2026-09-03T20:00:00Z",
+            "source": "calculation:calc_headroom_pct"
+          },
+          {
+            "fact_id": "calc_headroom_usd",
+            "metric": "calc_headroom_usd",
+            "value": 600.0,
+            "unit": "USD",
+            "as_of": "2026-09-03T20:00:00Z",
+            "source": "calculation:calc_headroom_usd"
+          },
+          {
+            "fact_id": "calc_proposal_fits",
+            "metric": "calc_proposal_fits",
+            "value": false,
+            "unit": "boolean",
+            "as_of": "2026-09-03T20:00:00Z",
+            "source": "calculation:calc_proposal_fits"
+          },
+          {
+            "fact_id": "calc_proposed_current_reward_risk",
+            "metric": "calc_proposed_current_reward_risk",
+            "value": 3.0,
+            "unit": "ratio",
+            "as_of": "2026-09-03T20:00:00Z",
+            "source": "calculation:calc_proposed_current_reward_risk"
+          },
+          {
+            "fact_id": "calc_range_position_pct",
+            "metric": "calc_range_position_pct",
+            "value": 25.0,
+            "unit": "percent",
+            "as_of": "2026-09-03T20:00:00Z",
+            "source": "calculation:calc_range_position_pct"
+          },
+          {
+            "fact_id": "debt_to_equity_prior",
+            "metric": "debt_to_equity_prior",
+            "value": null,
+            "unit": "ratio",
+            "as_of": null,
+            "source": "missing:EVLT:None"
+          },
+          {
+            "fact_id": "gross_margin_pct",
+            "metric": "gross_margin_pct",
+            "value": 42,
+            "unit": "percent",
+            "as_of": "2026-08-20",
+            "source": "filing:EVLT:2026-08-20"
+          },
+          {
+            "fact_id": "guidance_record",
+            "metric": "guidance_record",
+            "value": "met",
+            "unit": "category",
+            "as_of": "2026-08-20",
+            "source": "filing:EVLT:2026-08-20"
+          },
+          {
+            "fact_id": "operating_margin_pct",
+            "metric": "operating_margin_pct",
+            "value": 14,
+            "unit": "percent",
+            "as_of": "2026-09-03",
+            "source": "filing:EVLT:2026-09-03"
+          },
+          {
+            "fact_id": "roic_pct",
+            "metric": "roic_pct",
+            "value": 14,
+            "unit": "percent",
+            "as_of": "2026-08-20",
+            "source": "filing:EVLT:2026-08-20"
+          },
+          {
+            "fact_id": "rsi_14",
+            "metric": "rsi_14",
+            "value": 46,
+            "unit": "RSI_points",
+            "as_of": "2026-09-03",
+            "source": "market:EVLT:2026-09-03"
+          },
+          {
+            "fact_id": "sector_roic_pct",
+            "metric": "sector_roic_pct",
+            "value": 10,
+            "unit": "percent",
+            "as_of": "2026-08-20",
+            "source": "sector:sector:2026-08-20"
+          }
+        ],
+        "research_answers": [
+          {
+            "item_id": "q-headroom",
+            "question": "How much additional EVLT exposure can fit under the total 5 percent single-name limit, and does the proposed 2.5 percent purchase fit?",
+            "status": "answered",
+            "answer": "The proposal does not fit the remaining concentration capacity.",
+            "fact_ids": [
+              "calc_headroom_pct",
+              "calc_headroom_usd",
+              "calc_proposal_fits"
+            ]
+          },
+          {
+            "item_id": "q-peg",
+            "question": "Using the supplied EPS growth, what is forward PEG?",
+            "status": "answered",
+            "answer": "The growth-adjusted multiple uses the supplied earnings growth.",
+            "fact_ids": [
+              "calc_forward_peg"
+            ]
+          },
+          {
+            "item_id": "q-range",
+            "question": "What are the reward/risk ratio and the close's position within the support-resistance range?",
+            "status": "answered",
+            "answer": "The ratio and range location follow the supplied price levels.",
+            "fact_ids": [
+              "calc_proposed_current_reward_risk",
+              "calc_range_position_pct"
+            ]
+          }
+        ]
+      },
+      "audit": {
+        "version": 1,
+        "status": "consistent",
+        "record_sha256": "01b5283ffebdd1c4a081adf856ec774eb50493bd90a4d81da5232eafcab5325d",
+        "checked_claims": 13,
+        "checked_fact_ids": [
+          "calc_forward_peg",
+          "calc_headroom_pct",
+          "calc_headroom_usd",
+          "calc_proposal_fits",
+          "calc_proposed_current_reward_risk",
+          "calc_range_position_pct",
+          "debt_to_equity_prior",
+          "gross_margin_pct",
+          "guidance_record",
+          "operating_margin_pct",
+          "roic_pct",
+          "rsi_14",
+          "sector_roic_pct"
+        ],
+        "questions_required": 3,
+        "questions_returned": 3,
+        "errors": [],
+        "scope": "typed_source_facts_calculations_and_question_coverage",
+        "limitations": "Consistency with supplied evidence; not source truth, complete semantic entailment, or investment merit."
+      }
+    },
+    {
+      "case": "missing_history",
+      "artifact": {
+        "action": "HOLD",
+        "confidence": 72,
+        "position_size_pct": 0,
+        "entry_mode": "watch_only",
+        "trigger_purpose": "none",
+        "dynamic_trigger": null,
+        "reasoning": "The assessment uses the supplied observations and their limitations [calc_forward_peg][debt_to_equity_prior][gross_margin_pct][guidance_record][operating_margin_pct][roic_pct][rsi_14][sector_roic_pct][sma_200][volume_five_session_trend].",
+        "financial_claims": [
+          {
+            "fact_id": "calc_forward_peg",
+            "metric": "calc_forward_peg",
+            "value": null,
+            "unit": "ratio",
+            "as_of": "2026-09-03T20:00:00Z",
+            "source": "calculation:calc_forward_peg"
+          },
+          {
+            "fact_id": "debt_to_equity_prior",
+            "metric": "debt_to_equity_prior",
+            "value": null,
+            "unit": "ratio",
+            "as_of": null,
+            "source": "missing:EVLT:None"
+          },
+          {
+            "fact_id": "gross_margin_pct",
+            "metric": "gross_margin_pct",
+            "value": 42,
+            "unit": "percent",
+            "as_of": "2026-08-20",
+            "source": "filing:EVLT:2026-08-20"
+          },
+          {
+            "fact_id": "guidance_record",
+            "metric": "guidance_record",
+            "value": "met",
+            "unit": "category",
+            "as_of": "2026-08-20",
+            "source": "filing:EVLT:2026-08-20"
+          },
+          {
+            "fact_id": "operating_margin_pct",
+            "metric": "operating_margin_pct",
+            "value": 14,
+            "unit": "percent",
+            "as_of": "2026-09-03",
+            "source": "filing:EVLT:2026-09-03"
+          },
+          {
+            "fact_id": "roic_pct",
+            "metric": "roic_pct",
+            "value": 14,
+            "unit": "percent",
+            "as_of": "2026-08-20",
+            "source": "filing:EVLT:2026-08-20"
+          },
+          {
+            "fact_id": "rsi_14",
+            "metric": "rsi_14",
+            "value": 46,
+            "unit": "RSI_points",
+            "as_of": "2026-09-03",
+            "source": "market:EVLT:2026-09-03"
+          },
+          {
+            "fact_id": "sector_roic_pct",
+            "metric": "sector_roic_pct",
+            "value": 10,
+            "unit": "percent",
+            "as_of": "2026-08-20",
+            "source": "sector:sector:2026-08-20"
+          },
+          {
+            "fact_id": "sma_200",
+            "metric": "sma_200",
+            "value": null,
+            "unit": "USD",
+            "as_of": "2026-09-03",
+            "source": "market:EVLT:2026-09-03"
+          },
+          {
+            "fact_id": "volume_five_session_trend",
+            "metric": "volume_five_session_trend",
+            "value": null,
+            "unit": "category",
+            "as_of": "2026-08-17",
+            "source": "missing:EVLT:2026-08-17"
+          }
+        ],
+        "research_answers": [
+          {
+            "item_id": "q-history",
+            "question": "As of August 17, 2026, was volume declining across its preceding five trading sessions?",
+            "status": "unresolved",
+            "answer": "The requested historical observations are absent.",
+            "fact_ids": [
+              "volume_five_session_trend"
+            ]
+          },
+          {
+            "item_id": "q-peg",
+            "question": "Can PEG be computed from the supplied evidence?",
+            "status": "unresolved",
+            "answer": "The required earnings-growth observation is unavailable.",
+            "fact_ids": [
+              "calc_forward_peg"
+            ]
+          },
+          {
+            "item_id": "q-sma",
+            "question": "Is a 200-session moving average established by these 14 supplied closes?",
+            "status": "unresolved",
+            "answer": "The supplied observations do not establish the requested long moving average.",
+            "fact_ids": [
+              "sma_200"
+            ]
+          }
+        ]
+      },
+      "audit": {
+        "version": 1,
+        "status": "consistent",
+        "record_sha256": "4e6ced47abb2a9eb513763300bdad1d8a763d5485ea523023622f99b77a59689",
+        "checked_claims": 10,
+        "checked_fact_ids": [
+          "calc_forward_peg",
+          "debt_to_equity_prior",
+          "gross_margin_pct",
+          "guidance_record",
+          "operating_margin_pct",
+          "roic_pct",
+          "rsi_14",
+          "sector_roic_pct",
+          "sma_200",
+          "volume_five_session_trend"
+        ],
+        "questions_required": 3,
+        "questions_returned": 3,
+        "errors": [],
+        "scope": "typed_source_facts_calculations_and_question_coverage",
+        "limitations": "Consistency with supplied evidence; not source truth, complete semantic entailment, or investment merit."
+      }
+    },
+    {
+      "case": "held_deterioration",
+      "artifact": {
+        "action": "SELL",
+        "confidence": 72,
+        "position_size_pct": 0,
+        "entry_mode": "enter_now",
+        "trigger_purpose": "none",
+        "dynamic_trigger": null,
+        "reasoning": "The assessment uses the supplied observations and their limitations [calc_holding_return_pct][debt_to_equity_prior][free_cash_flow][gross_margin_pct][guidance_record][operating_margin_pct][roic_pct][rsi_14][sector_roic_pct][underlying_filing_count].",
+        "financial_claims": [
+          {
+            "fact_id": "calc_holding_return_pct",
+            "metric": "calc_holding_return_pct",
+            "value": -16.666666666666668,
+            "unit": "percent",
+            "as_of": "2026-09-03T20:00:00Z",
+            "source": "calculation:calc_holding_return_pct"
+          },
+          {
+            "fact_id": "debt_to_equity_prior",
+            "metric": "debt_to_equity_prior",
+            "value": null,
+            "unit": "ratio",
+            "as_of": null,
+            "source": "missing:EVLT:None"
+          },
+          {
+            "fact_id": "free_cash_flow",
+            "metric": "free_cash_flow",
+            "value": -40000000,
+            "unit": "USD",
+            "as_of": "2026-09-03",
+            "source": "filing:EVLT:2026-09-03"
+          },
+          {
+            "fact_id": "gross_margin_pct",
+            "metric": "gross_margin_pct",
+            "value": 30,
+            "unit": "percent",
+            "as_of": "2026-09-03",
+            "source": "filing:EVLT:2026-09-03"
+          },
+          {
+            "fact_id": "guidance_record",
+            "metric": "guidance_record",
+            "value": "met",
+            "unit": "category",
+            "as_of": "2026-08-20",
+            "source": "filing:EVLT:2026-08-20"
+          },
+          {
+            "fact_id": "operating_margin_pct",
+            "metric": "operating_margin_pct",
+            "value": -2,
+            "unit": "percent",
+            "as_of": "2026-09-03",
+            "source": "filing:EVLT:2026-09-03"
+          },
+          {
+            "fact_id": "roic_pct",
+            "metric": "roic_pct",
+            "value": 14,
+            "unit": "percent",
+            "as_of": "2026-08-20",
+            "source": "filing:EVLT:2026-08-20"
+          },
+          {
+            "fact_id": "rsi_14",
+            "metric": "rsi_14",
+            "value": 38,
+            "unit": "RSI_points",
+            "as_of": "2026-09-03",
+            "source": "market:EVLT:2026-09-03"
+          },
+          {
+            "fact_id": "sector_roic_pct",
+            "metric": "sector_roic_pct",
+            "value": 10,
+            "unit": "percent",
+            "as_of": "2026-08-20",
+            "source": "sector:sector:2026-08-20"
+          },
+          {
+            "fact_id": "underlying_filing_count",
+            "metric": "underlying_filing_count",
+            "value": 1,
+            "unit": "count",
+            "as_of": "2026-09-03",
+            "source": "filing:EVLT:2026-09-03"
+          }
+        ],
+        "research_answers": [
+          {
+            "item_id": "q-current",
+            "question": "Which free cash flow and operating margin figures are current at the decision date?",
+            "status": "answered",
+            "answer": "The current filing reports negative cash flow and operating margin.",
+            "fact_ids": [
+              "free_cash_flow",
+              "operating_margin_pct"
+            ]
+          },
+          {
+            "item_id": "q-loss",
+            "question": "What is the holding's unrealized percentage return from cost 120 to price 100?",
+            "status": "answered",
+            "answer": "The holding return uses purchase cost as its denominator.",
+            "fact_ids": [
+              "calc_holding_return_pct"
+            ]
+          },
+          {
+            "item_id": "q-independent",
+            "question": "Do the two reports repeating the same September filing provide two independent sources?",
+            "status": "answered",
+            "answer": "These reports repeat the same underlying filing.",
+            "fact_ids": [
+              "underlying_filing_count"
+            ]
+          }
+        ]
+      },
+      "audit": {
+        "version": 1,
+        "status": "consistent",
+        "record_sha256": "12df7df83622afeb439dca61aeb04f5600f27fcdf55d8496446b50e16beae625",
+        "checked_claims": 10,
+        "checked_fact_ids": [
+          "calc_holding_return_pct",
+          "debt_to_equity_prior",
+          "free_cash_flow",
+          "gross_margin_pct",
+          "guidance_record",
+          "operating_margin_pct",
+          "roic_pct",
+          "rsi_14",
+          "sector_roic_pct",
+          "underlying_filing_count"
+        ],
+        "questions_required": 3,
+        "questions_returned": 3,
+        "errors": [],
+        "scope": "typed_source_facts_calculations_and_question_coverage",
+        "limitations": "Consistency with supplied evidence; not source truth, complete semantic entailment, or investment merit."
+      }
+    },
+    {
+      "case": "conditional_entry",
+      "artifact": {
+        "action": "HOLD",
+        "confidence": 72,
+        "position_size_pct": 0,
+        "entry_mode": "watch_only",
+        "trigger_purpose": "none",
+        "dynamic_trigger": null,
+        "reasoning": "The assessment uses the supplied observations and their limitations [calc_proposed_conditional_reward_risk][calc_proposed_current_reward_risk][debt_to_equity_prior][gross_margin_pct][guidance_record][operating_margin_pct][roic_pct][rsi_14][sector_roic_pct][support].",
+        "financial_claims": [
+          {
+            "fact_id": "calc_proposed_conditional_reward_risk",
+            "metric": "calc_proposed_conditional_reward_risk",
+            "value": 6.0,
+            "unit": "ratio",
+            "as_of": "2026-09-03T20:00:00Z",
+            "source": "calculation:calc_proposed_conditional_reward_risk"
+          },
+          {
+            "fact_id": "calc_proposed_current_reward_risk",
+            "metric": "calc_proposed_current_reward_risk",
+            "value": 0.75,
+            "unit": "ratio",
+            "as_of": "2026-09-03T20:00:00Z",
+            "source": "calculation:calc_proposed_current_reward_risk"
+          },
+          {
+            "fact_id": "debt_to_equity_prior",
+            "metric": "debt_to_equity_prior",
+            "value": null,
+            "unit": "ratio",
+            "as_of": null,
+            "source": "missing:EVLT:None"
+          },
+          {
+            "fact_id": "gross_margin_pct",
+            "metric": "gross_margin_pct",
+            "value": 42,
+            "unit": "percent",
+            "as_of": "2026-08-20",
+            "source": "filing:EVLT:2026-08-20"
+          },
+          {
+            "fact_id": "guidance_record",
+            "metric": "guidance_record",
+            "value": "met",
+            "unit": "category",
+            "as_of": "2026-08-20",
+            "source": "filing:EVLT:2026-08-20"
+          },
+          {
+            "fact_id": "operating_margin_pct",
+            "metric": "operating_margin_pct",
+            "value": 14,
+            "unit": "percent",
+            "as_of": "2026-09-03",
+            "source": "filing:EVLT:2026-09-03"
+          },
+          {
+            "fact_id": "roic_pct",
+            "metric": "roic_pct",
+            "value": 14,
+            "unit": "percent",
+            "as_of": "2026-08-20",
+            "source": "filing:EVLT:2026-08-20"
+          },
+          {
+            "fact_id": "rsi_14",
+            "metric": "rsi_14",
+            "value": 72,
+            "unit": "RSI_points",
+            "as_of": "2026-09-03",
+            "source": "market:EVLT:2026-09-03"
+          },
+          {
+            "fact_id": "sector_roic_pct",
+            "metric": "sector_roic_pct",
+            "value": 10,
+            "unit": "percent",
+            "as_of": "2026-08-20",
+            "source": "sector:sector:2026-08-20"
+          },
+          {
+            "fact_id": "support",
+            "metric": "support",
+            "value": 95,
+            "unit": "USD",
+            "as_of": "2026-09-03",
+            "source": "market:EVLT:2026-09-03"
+          }
+        ],
+        "research_answers": [
+          {
+            "item_id": "q-now",
+            "question": "What is reward/risk at current price 115, stop 95 and target 130?",
+            "status": "answered",
+            "answer": "The current reference price determines the present ratio.",
+            "fact_ids": [
+              "calc_proposed_current_reward_risk"
+            ]
+          },
+          {
+            "item_id": "q-wait",
+            "question": "What would reward/risk be at the proposed future entry price 100 with the same stop and target?",
+            "status": "answered",
+            "answer": "The alternative ratio is contingent on the proposed future entry.",
+            "fact_ids": [
+              "calc_proposed_conditional_reward_risk"
+            ]
+          },
+          {
+            "item_id": "q-units",
+            "question": "Can support price 95 be used as RSI threshold 95 on this evidence?",
+            "status": "answered",
+            "answer": "Price and oscillator readings use different units and cannot be substituted.",
+            "fact_ids": [
+              "support",
+              "rsi_14"
+            ]
+          }
+        ]
+      },
+      "audit": {
+        "version": 1,
+        "status": "consistent",
+        "record_sha256": "0e2ab5e0e8be45cf622a550872fa28940d00efc9911faa0dddce65de4add4dcc",
+        "checked_claims": 10,
+        "checked_fact_ids": [
+          "calc_proposed_conditional_reward_risk",
+          "calc_proposed_current_reward_risk",
+          "debt_to_equity_prior",
+          "gross_margin_pct",
+          "guidance_record",
+          "operating_margin_pct",
+          "roic_pct",
+          "rsi_14",
+          "sector_roic_pct",
+          "support"
+        ],
+        "questions_required": 3,
+        "questions_returned": 3,
+        "errors": [],
+        "scope": "typed_source_facts_calculations_and_question_coverage",
+        "limitations": "Consistency with supplied evidence; not source truth, complete semantic entailment, or investment merit."
+      }
+    },
+    {
+      "case": "headroom_a",
+      "artifact": {
+        "action": "HOLD",
+        "confidence": 72,
+        "position_size_pct": 0,
+        "entry_mode": "watch_only",
+        "trigger_purpose": "none",
+        "dynamic_trigger": null,
+        "reasoning": "The assessment uses the supplied observations and their limitations [calc_forward_peg][calc_headroom_pct][calc_headroom_usd][calc_proposal_fits][calc_proposed_current_reward_risk][calc_range_position_pct][debt_to_equity_prior][gross_margin_pct][guidance_record][operating_margin_pct][roic_pct][rsi_14][sector_roic_pct].",
+        "financial_claims": [
+          {
+            "fact_id": "calc_forward_peg",
+            "metric": "calc_forward_peg",
+            "value": 2.25,
+            "unit": "ratio",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_forward_peg"
+          },
+          {
+            "fact_id": "calc_headroom_pct",
+            "metric": "calc_headroom_pct",
+            "value": 0.5,
+            "unit": "percentage_points",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_headroom_pct"
+          },
+          {
+            "fact_id": "calc_headroom_usd",
+            "metric": "calc_headroom_usd",
+            "value": 1250.0,
+            "unit": "USD",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_headroom_usd"
+          },
+          {
+            "fact_id": "calc_proposal_fits",
+            "metric": "calc_proposal_fits",
+            "value": false,
+            "unit": "boolean",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_proposal_fits"
+          },
+          {
+            "fact_id": "calc_proposed_current_reward_risk",
+            "metric": "calc_proposed_current_reward_risk",
+            "value": 2.8333333333333335,
+            "unit": "ratio",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_proposed_current_reward_risk"
+          },
+          {
+            "fact_id": "calc_range_position_pct",
+            "metric": "calc_range_position_pct",
+            "value": 26.08695652173913,
+            "unit": "percent",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_range_position_pct"
+          },
+          {
+            "fact_id": "debt_to_equity_prior",
+            "metric": "debt_to_equity_prior",
+            "value": null,
+            "unit": "ratio",
+            "as_of": null,
+            "source": "missing:EVLT:None"
+          },
+          {
+            "fact_id": "gross_margin_pct",
+            "metric": "gross_margin_pct",
+            "value": 42,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "guidance_record",
+            "metric": "guidance_record",
+            "value": "met",
+            "unit": "category",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "operating_margin_pct",
+            "metric": "operating_margin_pct",
+            "value": 14,
+            "unit": "percent",
+            "as_of": "2026-10-03",
+            "source": "filing:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "roic_pct",
+            "metric": "roic_pct",
+            "value": 14,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "rsi_14",
+            "metric": "rsi_14",
+            "value": 46,
+            "unit": "RSI_points",
+            "as_of": "2026-10-03",
+            "source": "market:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "sector_roic_pct",
+            "metric": "sector_roic_pct",
+            "value": 10,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "sector:sector:2026-09-20"
+          }
+        ],
+        "research_answers": [
+          {
+            "item_id": "q-headroom",
+            "question": "How much additional EVLT exposure can fit under the total 7 percent single-name limit, and does the proposed 0.8 percent purchase fit?",
+            "status": "answered",
+            "answer": "The proposal does not fit the remaining concentration capacity.",
+            "fact_ids": [
+              "calc_headroom_pct",
+              "calc_headroom_usd",
+              "calc_proposal_fits"
+            ]
+          },
+          {
+            "item_id": "q-peg",
+            "question": "Using the supplied EPS growth, what is forward PEG?",
+            "status": "answered",
+            "answer": "The growth-adjusted multiple uses the supplied earnings growth.",
+            "fact_ids": [
+              "calc_forward_peg"
+            ]
+          },
+          {
+            "item_id": "q-range",
+            "question": "What are the reward/risk ratio and the close's position within the support-resistance range?",
+            "status": "answered",
+            "answer": "The ratio and range location follow the supplied price levels.",
+            "fact_ids": [
+              "calc_proposed_current_reward_risk",
+              "calc_range_position_pct"
+            ]
+          }
+        ]
+      },
+      "audit": {
+        "version": 1,
+        "status": "consistent",
+        "record_sha256": "3b7e658bcffc2f3348cf9a8d24f5b4f70c39ce4d06ef774bf203573cec08f5d1",
+        "checked_claims": 13,
+        "checked_fact_ids": [
+          "calc_forward_peg",
+          "calc_headroom_pct",
+          "calc_headroom_usd",
+          "calc_proposal_fits",
+          "calc_proposed_current_reward_risk",
+          "calc_range_position_pct",
+          "debt_to_equity_prior",
+          "gross_margin_pct",
+          "guidance_record",
+          "operating_margin_pct",
+          "roic_pct",
+          "rsi_14",
+          "sector_roic_pct"
+        ],
+        "questions_required": 3,
+        "questions_returned": 3,
+        "errors": [],
+        "scope": "typed_source_facts_calculations_and_question_coverage",
+        "limitations": "Consistency with supplied evidence; not source truth, complete semantic entailment, or investment merit."
+      }
+    },
+    {
+      "case": "headroom_b",
+      "artifact": {
+        "action": "HOLD",
+        "confidence": 72,
+        "position_size_pct": 0,
+        "entry_mode": "watch_only",
+        "trigger_purpose": "none",
+        "dynamic_trigger": null,
+        "reasoning": "The assessment uses the supplied observations and their limitations [calc_forward_peg][calc_headroom_pct][calc_headroom_usd][calc_proposal_fits][calc_proposed_current_reward_risk][calc_range_position_pct][debt_to_equity_prior][gross_margin_pct][guidance_record][operating_margin_pct][roic_pct][rsi_14][sector_roic_pct].",
+        "financial_claims": [
+          {
+            "fact_id": "calc_forward_peg",
+            "metric": "calc_forward_peg",
+            "value": 2.0,
+            "unit": "ratio",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_forward_peg"
+          },
+          {
+            "fact_id": "calc_headroom_pct",
+            "metric": "calc_headroom_pct",
+            "value": 0.45,
+            "unit": "percentage_points",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_headroom_pct"
+          },
+          {
+            "fact_id": "calc_headroom_usd",
+            "metric": "calc_headroom_usd",
+            "value": 360.0,
+            "unit": "USD",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_headroom_usd"
+          },
+          {
+            "fact_id": "calc_proposal_fits",
+            "metric": "calc_proposal_fits",
+            "value": false,
+            "unit": "boolean",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_proposal_fits"
+          },
+          {
+            "fact_id": "calc_proposed_current_reward_risk",
+            "metric": "calc_proposed_current_reward_risk",
+            "value": 2.0,
+            "unit": "ratio",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_proposed_current_reward_risk"
+          },
+          {
+            "fact_id": "calc_range_position_pct",
+            "metric": "calc_range_position_pct",
+            "value": 33.333333333333336,
+            "unit": "percent",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_range_position_pct"
+          },
+          {
+            "fact_id": "debt_to_equity_prior",
+            "metric": "debt_to_equity_prior",
+            "value": null,
+            "unit": "ratio",
+            "as_of": null,
+            "source": "missing:EVLT:None"
+          },
+          {
+            "fact_id": "gross_margin_pct",
+            "metric": "gross_margin_pct",
+            "value": 42,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "guidance_record",
+            "metric": "guidance_record",
+            "value": "met",
+            "unit": "category",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "operating_margin_pct",
+            "metric": "operating_margin_pct",
+            "value": 14,
+            "unit": "percent",
+            "as_of": "2026-10-03",
+            "source": "filing:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "roic_pct",
+            "metric": "roic_pct",
+            "value": 14,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "rsi_14",
+            "metric": "rsi_14",
+            "value": 46,
+            "unit": "RSI_points",
+            "as_of": "2026-10-03",
+            "source": "market:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "sector_roic_pct",
+            "metric": "sector_roic_pct",
+            "value": 10,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "sector:sector:2026-09-20"
+          }
+        ],
+        "research_answers": [
+          {
+            "item_id": "q-headroom",
+            "question": "How much additional EVLT exposure can fit under the total 3.5 percent single-name limit, and does the proposed 0.6 percent purchase fit?",
+            "status": "answered",
+            "answer": "The proposal does not fit the remaining concentration capacity.",
+            "fact_ids": [
+              "calc_headroom_pct",
+              "calc_headroom_usd",
+              "calc_proposal_fits"
+            ]
+          },
+          {
+            "item_id": "q-peg",
+            "question": "Using the supplied EPS growth, what is forward PEG?",
+            "status": "answered",
+            "answer": "The growth-adjusted multiple uses the supplied earnings growth.",
+            "fact_ids": [
+              "calc_forward_peg"
+            ]
+          },
+          {
+            "item_id": "q-range",
+            "question": "What are the reward/risk ratio and the close's position within the support-resistance range?",
+            "status": "answered",
+            "answer": "The ratio and range location follow the supplied price levels.",
+            "fact_ids": [
+              "calc_proposed_current_reward_risk",
+              "calc_range_position_pct"
+            ]
+          }
+        ]
+      },
+      "audit": {
+        "version": 1,
+        "status": "consistent",
+        "record_sha256": "7c4ffc6a1570c6f50ae6545584f7977f1b718af7b3fb41a786b64fd7fc178faf",
+        "checked_claims": 13,
+        "checked_fact_ids": [
+          "calc_forward_peg",
+          "calc_headroom_pct",
+          "calc_headroom_usd",
+          "calc_proposal_fits",
+          "calc_proposed_current_reward_risk",
+          "calc_range_position_pct",
+          "debt_to_equity_prior",
+          "gross_margin_pct",
+          "guidance_record",
+          "operating_margin_pct",
+          "roic_pct",
+          "rsi_14",
+          "sector_roic_pct"
+        ],
+        "questions_required": 3,
+        "questions_returned": 3,
+        "errors": [],
+        "scope": "typed_source_facts_calculations_and_question_coverage",
+        "limitations": "Consistency with supplied evidence; not source truth, complete semantic entailment, or investment merit."
+      }
+    },
+    {
+      "case": "missing_a",
+      "artifact": {
+        "action": "HOLD",
+        "confidence": 72,
+        "position_size_pct": 0,
+        "entry_mode": "watch_only",
+        "trigger_purpose": "none",
+        "dynamic_trigger": null,
+        "reasoning": "The assessment uses the supplied observations and their limitations [calc_forward_peg][debt_to_equity_prior][gross_margin_pct][guidance_record][operating_margin_pct][roic_pct][rsi_14][sector_roic_pct][sma_200][volume_five_session_trend].",
+        "financial_claims": [
+          {
+            "fact_id": "calc_forward_peg",
+            "metric": "calc_forward_peg",
+            "value": null,
+            "unit": "ratio",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_forward_peg"
+          },
+          {
+            "fact_id": "debt_to_equity_prior",
+            "metric": "debt_to_equity_prior",
+            "value": null,
+            "unit": "ratio",
+            "as_of": null,
+            "source": "missing:EVLT:None"
+          },
+          {
+            "fact_id": "gross_margin_pct",
+            "metric": "gross_margin_pct",
+            "value": 42,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "guidance_record",
+            "metric": "guidance_record",
+            "value": "met",
+            "unit": "category",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "operating_margin_pct",
+            "metric": "operating_margin_pct",
+            "value": 8,
+            "unit": "percent",
+            "as_of": "2026-10-03",
+            "source": "filing:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "roic_pct",
+            "metric": "roic_pct",
+            "value": 11,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "rsi_14",
+            "metric": "rsi_14",
+            "value": 53,
+            "unit": "RSI_points",
+            "as_of": "2026-10-03",
+            "source": "market:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "sector_roic_pct",
+            "metric": "sector_roic_pct",
+            "value": 9,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "sector:sector:2026-09-20"
+          },
+          {
+            "fact_id": "sma_200",
+            "metric": "sma_200",
+            "value": null,
+            "unit": "USD",
+            "as_of": "2026-10-03",
+            "source": "market:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "volume_five_session_trend",
+            "metric": "volume_five_session_trend",
+            "value": null,
+            "unit": "category",
+            "as_of": "2026-09-17",
+            "source": "missing:EVLT:2026-09-17"
+          }
+        ],
+        "research_answers": [
+          {
+            "item_id": "q-history",
+            "question": "As of September 17, 2026, was volume declining across its preceding five trading sessions?",
+            "status": "unresolved",
+            "answer": "The requested historical observations are absent.",
+            "fact_ids": [
+              "volume_five_session_trend"
+            ]
+          },
+          {
+            "item_id": "q-peg",
+            "question": "Can PEG be computed from the supplied evidence?",
+            "status": "unresolved",
+            "answer": "The required earnings-growth observation is unavailable.",
+            "fact_ids": [
+              "calc_forward_peg"
+            ]
+          },
+          {
+            "item_id": "q-sma",
+            "question": "Is a 200-session moving average established by these 14 supplied closes?",
+            "status": "unresolved",
+            "answer": "The supplied observations do not establish the requested long moving average.",
+            "fact_ids": [
+              "sma_200"
+            ]
+          }
+        ]
+      },
+      "audit": {
+        "version": 1,
+        "status": "consistent",
+        "record_sha256": "c334e60a6484f3dae84ee6cab22f33027aa88a10cf0a3cc0d45cf14089af4087",
+        "checked_claims": 10,
+        "checked_fact_ids": [
+          "calc_forward_peg",
+          "debt_to_equity_prior",
+          "gross_margin_pct",
+          "guidance_record",
+          "operating_margin_pct",
+          "roic_pct",
+          "rsi_14",
+          "sector_roic_pct",
+          "sma_200",
+          "volume_five_session_trend"
+        ],
+        "questions_required": 3,
+        "questions_returned": 3,
+        "errors": [],
+        "scope": "typed_source_facts_calculations_and_question_coverage",
+        "limitations": "Consistency with supplied evidence; not source truth, complete semantic entailment, or investment merit."
+      }
+    },
+    {
+      "case": "missing_b",
+      "artifact": {
+        "action": "HOLD",
+        "confidence": 72,
+        "position_size_pct": 0,
+        "entry_mode": "watch_only",
+        "trigger_purpose": "none",
+        "dynamic_trigger": null,
+        "reasoning": "The assessment uses the supplied observations and their limitations [calc_forward_peg][debt_to_equity_prior][gross_margin_pct][guidance_record][operating_margin_pct][roic_pct][rsi_14][sector_roic_pct][sma_200][volume_five_session_trend].",
+        "financial_claims": [
+          {
+            "fact_id": "calc_forward_peg",
+            "metric": "calc_forward_peg",
+            "value": null,
+            "unit": "ratio",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_forward_peg"
+          },
+          {
+            "fact_id": "debt_to_equity_prior",
+            "metric": "debt_to_equity_prior",
+            "value": null,
+            "unit": "ratio",
+            "as_of": null,
+            "source": "missing:EVLT:None"
+          },
+          {
+            "fact_id": "gross_margin_pct",
+            "metric": "gross_margin_pct",
+            "value": 42,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "guidance_record",
+            "metric": "guidance_record",
+            "value": "met",
+            "unit": "category",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "operating_margin_pct",
+            "metric": "operating_margin_pct",
+            "value": 6,
+            "unit": "percent",
+            "as_of": "2026-10-03",
+            "source": "filing:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "roic_pct",
+            "metric": "roic_pct",
+            "value": 9,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "rsi_14",
+            "metric": "rsi_14",
+            "value": 41,
+            "unit": "RSI_points",
+            "as_of": "2026-10-03",
+            "source": "market:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "sector_roic_pct",
+            "metric": "sector_roic_pct",
+            "value": 12,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "sector:sector:2026-09-20"
+          },
+          {
+            "fact_id": "sma_200",
+            "metric": "sma_200",
+            "value": null,
+            "unit": "USD",
+            "as_of": "2026-10-03",
+            "source": "market:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "volume_five_session_trend",
+            "metric": "volume_five_session_trend",
+            "value": null,
+            "unit": "category",
+            "as_of": "2026-09-17",
+            "source": "missing:EVLT:2026-09-17"
+          }
+        ],
+        "research_answers": [
+          {
+            "item_id": "q-history",
+            "question": "As of September 17, 2026, was volume declining across its preceding five trading sessions?",
+            "status": "unresolved",
+            "answer": "The requested historical observations are absent.",
+            "fact_ids": [
+              "volume_five_session_trend"
+            ]
+          },
+          {
+            "item_id": "q-peg",
+            "question": "Can PEG be computed from the supplied evidence?",
+            "status": "unresolved",
+            "answer": "The required earnings-growth observation is unavailable.",
+            "fact_ids": [
+              "calc_forward_peg"
+            ]
+          },
+          {
+            "item_id": "q-sma",
+            "question": "Is a 200-session moving average established by these 14 supplied closes?",
+            "status": "unresolved",
+            "answer": "The supplied observations do not establish the requested long moving average.",
+            "fact_ids": [
+              "sma_200"
+            ]
+          }
+        ]
+      },
+      "audit": {
+        "version": 1,
+        "status": "consistent",
+        "record_sha256": "725aba9b2ffb47c1bd4e73fee8f316db94029efc59d645afac6418189cbb1303",
+        "checked_claims": 10,
+        "checked_fact_ids": [
+          "calc_forward_peg",
+          "debt_to_equity_prior",
+          "gross_margin_pct",
+          "guidance_record",
+          "operating_margin_pct",
+          "roic_pct",
+          "rsi_14",
+          "sector_roic_pct",
+          "sma_200",
+          "volume_five_session_trend"
+        ],
+        "questions_required": 3,
+        "questions_returned": 3,
+        "errors": [],
+        "scope": "typed_source_facts_calculations_and_question_coverage",
+        "limitations": "Consistency with supplied evidence; not source truth, complete semantic entailment, or investment merit."
+      }
+    },
+    {
+      "case": "held_a",
+      "artifact": {
+        "action": "SELL",
+        "confidence": 72,
+        "position_size_pct": 0,
+        "entry_mode": "enter_now",
+        "trigger_purpose": "none",
+        "dynamic_trigger": null,
+        "reasoning": "The assessment uses the supplied observations and their limitations [calc_holding_return_pct][debt_to_equity_prior][free_cash_flow][gross_margin_pct][guidance_record][operating_margin_pct][roic_pct][rsi_14][sector_roic_pct][underlying_filing_count].",
+        "financial_claims": [
+          {
+            "fact_id": "calc_holding_return_pct",
+            "metric": "calc_holding_return_pct",
+            "value": -26.25,
+            "unit": "percent",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_holding_return_pct"
+          },
+          {
+            "fact_id": "debt_to_equity_prior",
+            "metric": "debt_to_equity_prior",
+            "value": null,
+            "unit": "ratio",
+            "as_of": null,
+            "source": "missing:EVLT:None"
+          },
+          {
+            "fact_id": "free_cash_flow",
+            "metric": "free_cash_flow",
+            "value": -65000000,
+            "unit": "USD",
+            "as_of": "2026-10-03",
+            "source": "filing:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "gross_margin_pct",
+            "metric": "gross_margin_pct",
+            "value": 24,
+            "unit": "percent",
+            "as_of": "2026-10-03",
+            "source": "filing:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "guidance_record",
+            "metric": "guidance_record",
+            "value": "met",
+            "unit": "category",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "operating_margin_pct",
+            "metric": "operating_margin_pct",
+            "value": -4.5,
+            "unit": "percent",
+            "as_of": "2026-10-03",
+            "source": "filing:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "roic_pct",
+            "metric": "roic_pct",
+            "value": 14,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "rsi_14",
+            "metric": "rsi_14",
+            "value": 38,
+            "unit": "RSI_points",
+            "as_of": "2026-10-03",
+            "source": "market:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "sector_roic_pct",
+            "metric": "sector_roic_pct",
+            "value": 10,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "sector:sector:2026-09-20"
+          },
+          {
+            "fact_id": "underlying_filing_count",
+            "metric": "underlying_filing_count",
+            "value": 1,
+            "unit": "count",
+            "as_of": "2026-10-03",
+            "source": "filing:EVLT:2026-10-03"
+          }
+        ],
+        "research_answers": [
+          {
+            "item_id": "q-current",
+            "question": "Which free cash flow and operating margin figures are current at the decision date?",
+            "status": "answered",
+            "answer": "The current filing reports negative cash flow and operating margin.",
+            "fact_ids": [
+              "free_cash_flow",
+              "operating_margin_pct"
+            ]
+          },
+          {
+            "item_id": "q-loss",
+            "question": "What is the holding's unrealized percentage return from cost 80 to price 59?",
+            "status": "answered",
+            "answer": "The holding return uses purchase cost as its denominator.",
+            "fact_ids": [
+              "calc_holding_return_pct"
+            ]
+          },
+          {
+            "item_id": "q-independent",
+            "question": "Do the two reports repeating the same October filing provide two independent sources?",
+            "status": "answered",
+            "answer": "These reports repeat the same underlying filing.",
+            "fact_ids": [
+              "underlying_filing_count"
+            ]
+          }
+        ]
+      },
+      "audit": {
+        "version": 1,
+        "status": "consistent",
+        "record_sha256": "a86814bddbc001412251f7c2c5bf258ff190f9fcdab45a075ca1356f14fd1386",
+        "checked_claims": 10,
+        "checked_fact_ids": [
+          "calc_holding_return_pct",
+          "debt_to_equity_prior",
+          "free_cash_flow",
+          "gross_margin_pct",
+          "guidance_record",
+          "operating_margin_pct",
+          "roic_pct",
+          "rsi_14",
+          "sector_roic_pct",
+          "underlying_filing_count"
+        ],
+        "questions_required": 3,
+        "questions_returned": 3,
+        "errors": [],
+        "scope": "typed_source_facts_calculations_and_question_coverage",
+        "limitations": "Consistency with supplied evidence; not source truth, complete semantic entailment, or investment merit."
+      }
+    },
+    {
+      "case": "held_b",
+      "artifact": {
+        "action": "SELL",
+        "confidence": 72,
+        "position_size_pct": 0,
+        "entry_mode": "enter_now",
+        "trigger_purpose": "none",
+        "dynamic_trigger": null,
+        "reasoning": "The assessment uses the supplied observations and their limitations [calc_holding_return_pct][debt_to_equity_prior][free_cash_flow][gross_margin_pct][guidance_record][operating_margin_pct][roic_pct][rsi_14][sector_roic_pct][underlying_filing_count].",
+        "financial_claims": [
+          {
+            "fact_id": "calc_holding_return_pct",
+            "metric": "calc_holding_return_pct",
+            "value": 9.782608695652174,
+            "unit": "percent",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_holding_return_pct"
+          },
+          {
+            "fact_id": "debt_to_equity_prior",
+            "metric": "debt_to_equity_prior",
+            "value": null,
+            "unit": "ratio",
+            "as_of": null,
+            "source": "missing:EVLT:None"
+          },
+          {
+            "fact_id": "free_cash_flow",
+            "metric": "free_cash_flow",
+            "value": -12000000,
+            "unit": "USD",
+            "as_of": "2026-10-03",
+            "source": "filing:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "gross_margin_pct",
+            "metric": "gross_margin_pct",
+            "value": 28,
+            "unit": "percent",
+            "as_of": "2026-10-03",
+            "source": "filing:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "guidance_record",
+            "metric": "guidance_record",
+            "value": "met",
+            "unit": "category",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "operating_margin_pct",
+            "metric": "operating_margin_pct",
+            "value": -1.2,
+            "unit": "percent",
+            "as_of": "2026-10-03",
+            "source": "filing:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "roic_pct",
+            "metric": "roic_pct",
+            "value": 14,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "rsi_14",
+            "metric": "rsi_14",
+            "value": 38,
+            "unit": "RSI_points",
+            "as_of": "2026-10-03",
+            "source": "market:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "sector_roic_pct",
+            "metric": "sector_roic_pct",
+            "value": 10,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "sector:sector:2026-09-20"
+          },
+          {
+            "fact_id": "underlying_filing_count",
+            "metric": "underlying_filing_count",
+            "value": 1,
+            "unit": "count",
+            "as_of": "2026-10-03",
+            "source": "filing:EVLT:2026-10-03"
+          }
+        ],
+        "research_answers": [
+          {
+            "item_id": "q-current",
+            "question": "Which free cash flow and operating margin figures are current at the decision date?",
+            "status": "answered",
+            "answer": "The current filing reports negative cash flow and operating margin.",
+            "fact_ids": [
+              "free_cash_flow",
+              "operating_margin_pct"
+            ]
+          },
+          {
+            "item_id": "q-loss",
+            "question": "What is the holding's unrealized percentage return from cost 92 to price 101?",
+            "status": "answered",
+            "answer": "The holding return uses purchase cost as its denominator.",
+            "fact_ids": [
+              "calc_holding_return_pct"
+            ]
+          },
+          {
+            "item_id": "q-independent",
+            "question": "Do the two reports repeating the same October filing provide two independent sources?",
+            "status": "answered",
+            "answer": "These reports repeat the same underlying filing.",
+            "fact_ids": [
+              "underlying_filing_count"
+            ]
+          }
+        ]
+      },
+      "audit": {
+        "version": 1,
+        "status": "consistent",
+        "record_sha256": "c04991c9cad1d36868a1f3b6fe1684fd6b95e4d52f5f7594ed2ef3a23aac8e99",
+        "checked_claims": 10,
+        "checked_fact_ids": [
+          "calc_holding_return_pct",
+          "debt_to_equity_prior",
+          "free_cash_flow",
+          "gross_margin_pct",
+          "guidance_record",
+          "operating_margin_pct",
+          "roic_pct",
+          "rsi_14",
+          "sector_roic_pct",
+          "underlying_filing_count"
+        ],
+        "questions_required": 3,
+        "questions_returned": 3,
+        "errors": [],
+        "scope": "typed_source_facts_calculations_and_question_coverage",
+        "limitations": "Consistency with supplied evidence; not source truth, complete semantic entailment, or investment merit."
+      }
+    },
+    {
+      "case": "conditional_a",
+      "artifact": {
+        "action": "HOLD",
+        "confidence": 72,
+        "position_size_pct": 0,
+        "entry_mode": "watch_only",
+        "trigger_purpose": "none",
+        "dynamic_trigger": null,
+        "reasoning": "The assessment uses the supplied observations and their limitations [calc_proposed_conditional_reward_risk][calc_proposed_current_reward_risk][debt_to_equity_prior][gross_margin_pct][guidance_record][operating_margin_pct][roic_pct][rsi_14][sector_roic_pct][support].",
+        "financial_claims": [
+          {
+            "fact_id": "calc_proposed_conditional_reward_risk",
+            "metric": "calc_proposed_conditional_reward_risk",
+            "value": 3.6,
+            "unit": "ratio",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_proposed_conditional_reward_risk"
+          },
+          {
+            "fact_id": "calc_proposed_current_reward_risk",
+            "metric": "calc_proposed_current_reward_risk",
+            "value": 0.9166666666666666,
+            "unit": "ratio",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_proposed_current_reward_risk"
+          },
+          {
+            "fact_id": "debt_to_equity_prior",
+            "metric": "debt_to_equity_prior",
+            "value": null,
+            "unit": "ratio",
+            "as_of": null,
+            "source": "missing:EVLT:None"
+          },
+          {
+            "fact_id": "gross_margin_pct",
+            "metric": "gross_margin_pct",
+            "value": 42,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "guidance_record",
+            "metric": "guidance_record",
+            "value": "met",
+            "unit": "category",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "operating_margin_pct",
+            "metric": "operating_margin_pct",
+            "value": 14,
+            "unit": "percent",
+            "as_of": "2026-10-03",
+            "source": "filing:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "roic_pct",
+            "metric": "roic_pct",
+            "value": 14,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "rsi_14",
+            "metric": "rsi_14",
+            "value": 69,
+            "unit": "RSI_points",
+            "as_of": "2026-10-03",
+            "source": "market:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "sector_roic_pct",
+            "metric": "sector_roic_pct",
+            "value": 10,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "sector:sector:2026-09-20"
+          },
+          {
+            "fact_id": "support",
+            "metric": "support",
+            "value": 75,
+            "unit": "USD",
+            "as_of": "2026-10-03",
+            "source": "market:EVLT:2026-10-03"
+          }
+        ],
+        "research_answers": [
+          {
+            "item_id": "q-now",
+            "question": "What is reward/risk at current price 87, stop 75 and target 98?",
+            "status": "answered",
+            "answer": "The current reference price determines the present ratio.",
+            "fact_ids": [
+              "calc_proposed_current_reward_risk"
+            ]
+          },
+          {
+            "item_id": "q-wait",
+            "question": "What would reward/risk be at the proposed future entry price 80 with the same stop and target?",
+            "status": "answered",
+            "answer": "The alternative ratio is contingent on the proposed future entry.",
+            "fact_ids": [
+              "calc_proposed_conditional_reward_risk"
+            ]
+          },
+          {
+            "item_id": "q-units",
+            "question": "Can support price 75 be used as RSI threshold 75 on this evidence?",
+            "status": "answered",
+            "answer": "Price and oscillator readings use different units and cannot be substituted.",
+            "fact_ids": [
+              "support",
+              "rsi_14"
+            ]
+          }
+        ]
+      },
+      "audit": {
+        "version": 1,
+        "status": "consistent",
+        "record_sha256": "f25e08828a60091d4c6fa8767a769664454480b7ac1f4930dad67a8150e4cbff",
+        "checked_claims": 10,
+        "checked_fact_ids": [
+          "calc_proposed_conditional_reward_risk",
+          "calc_proposed_current_reward_risk",
+          "debt_to_equity_prior",
+          "gross_margin_pct",
+          "guidance_record",
+          "operating_margin_pct",
+          "roic_pct",
+          "rsi_14",
+          "sector_roic_pct",
+          "support"
+        ],
+        "questions_required": 3,
+        "questions_returned": 3,
+        "errors": [],
+        "scope": "typed_source_facts_calculations_and_question_coverage",
+        "limitations": "Consistency with supplied evidence; not source truth, complete semantic entailment, or investment merit."
+      }
+    },
+    {
+      "case": "conditional_b",
+      "artifact": {
+        "action": "HOLD",
+        "confidence": 72,
+        "position_size_pct": 0,
+        "entry_mode": "watch_only",
+        "trigger_purpose": "none",
+        "dynamic_trigger": null,
+        "reasoning": "The assessment uses the supplied observations and their limitations [calc_proposed_conditional_reward_risk][calc_proposed_current_reward_risk][debt_to_equity_prior][gross_margin_pct][guidance_record][operating_margin_pct][roic_pct][rsi_14][sector_roic_pct][support].",
+        "financial_claims": [
+          {
+            "fact_id": "calc_proposed_conditional_reward_risk",
+            "metric": "calc_proposed_conditional_reward_risk",
+            "value": 7.5,
+            "unit": "ratio",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_proposed_conditional_reward_risk"
+          },
+          {
+            "fact_id": "calc_proposed_current_reward_risk",
+            "metric": "calc_proposed_current_reward_risk",
+            "value": 1.8333333333333333,
+            "unit": "ratio",
+            "as_of": "2026-10-03T20:00:00Z",
+            "source": "calculation:calc_proposed_current_reward_risk"
+          },
+          {
+            "fact_id": "debt_to_equity_prior",
+            "metric": "debt_to_equity_prior",
+            "value": null,
+            "unit": "ratio",
+            "as_of": null,
+            "source": "missing:EVLT:None"
+          },
+          {
+            "fact_id": "gross_margin_pct",
+            "metric": "gross_margin_pct",
+            "value": 42,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "guidance_record",
+            "metric": "guidance_record",
+            "value": "met",
+            "unit": "category",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "operating_margin_pct",
+            "metric": "operating_margin_pct",
+            "value": 14,
+            "unit": "percent",
+            "as_of": "2026-10-03",
+            "source": "filing:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "roic_pct",
+            "metric": "roic_pct",
+            "value": 14,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "filing:EVLT:2026-09-20"
+          },
+          {
+            "fact_id": "rsi_14",
+            "metric": "rsi_14",
+            "value": 61,
+            "unit": "RSI_points",
+            "as_of": "2026-10-03",
+            "source": "market:EVLT:2026-10-03"
+          },
+          {
+            "fact_id": "sector_roic_pct",
+            "metric": "sector_roic_pct",
+            "value": 10,
+            "unit": "percent",
+            "as_of": "2026-09-20",
+            "source": "sector:sector:2026-09-20"
+          },
+          {
+            "fact_id": "support",
+            "metric": "support",
+            "value": 48,
+            "unit": "USD",
+            "as_of": "2026-10-03",
+            "source": "market:EVLT:2026-10-03"
+          }
+        ],
+        "research_answers": [
+          {
+            "item_id": "q-now",
+            "question": "What is reward/risk at current price 54, stop 48 and target 65?",
+            "status": "answered",
+            "answer": "The current reference price determines the present ratio.",
+            "fact_ids": [
+              "calc_proposed_current_reward_risk"
+            ]
+          },
+          {
+            "item_id": "q-wait",
+            "question": "What would reward/risk be at the proposed future entry price 50 with the same stop and target?",
+            "status": "answered",
+            "answer": "The alternative ratio is contingent on the proposed future entry.",
+            "fact_ids": [
+              "calc_proposed_conditional_reward_risk"
+            ]
+          },
+          {
+            "item_id": "q-units",
+            "question": "Can support price 48 be used as RSI threshold 48 on this evidence?",
+            "status": "answered",
+            "answer": "Price and oscillator readings use different units and cannot be substituted.",
+            "fact_ids": [
+              "support",
+              "rsi_14"
+            ]
+          }
+        ]
+      },
+      "audit": {
+        "version": 1,
+        "status": "consistent",
+        "record_sha256": "ff503cc2691405eafd485f4cda0f146249d177491a81c08a2abf8132418f3b55",
+        "checked_claims": 10,
+        "checked_fact_ids": [
+          "calc_proposed_conditional_reward_risk",
+          "calc_proposed_current_reward_risk",
+          "debt_to_equity_prior",
+          "gross_margin_pct",
+          "guidance_record",
+          "operating_margin_pct",
+          "roic_pct",
+          "rsi_14",
+          "sector_roic_pct",
+          "support"
+        ],
+        "questions_required": 3,
+        "questions_returned": 3,
+        "errors": [],
+        "scope": "typed_source_facts_calculations_and_question_coverage",
+        "limitations": "Consistency with supplied evidence; not source truth, complete semantic entailment, or investment merit."
+      }
+    }
+  ],
+  "mutations": [
+    {
+      "case": "headroom",
+      "fact_id": "calc_forward_peg",
+      "wrong_value": 2.25,
+      "caught": true
+    },
+    {
+      "case": "headroom",
+      "fact_id": "calc_headroom_pct",
+      "wrong_value": 1.6,
+      "caught": true
+    },
+    {
+      "case": "headroom",
+      "fact_id": "calc_headroom_usd",
+      "wrong_value": 601.0,
+      "caught": true
+    },
+    {
+      "case": "headroom",
+      "fact_id": "calc_proposal_fits",
+      "wrong_value": true,
+      "caught": true
+    },
+    {
+      "case": "headroom",
+      "fact_id": "calc_proposed_current_reward_risk",
+      "wrong_value": 4.0,
+      "caught": true
+    },
+    {
+      "case": "headroom",
+      "fact_id": "calc_range_position_pct",
+      "wrong_value": 26.0,
+      "caught": true
+    },
+    {
+      "case": "headroom",
+      "fact_id": "debt_to_equity_prior",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "headroom",
+      "fact_id": "gross_margin_pct",
+      "wrong_value": 43,
+      "caught": true
+    },
+    {
+      "case": "headroom",
+      "fact_id": "guidance_record",
+      "wrong_value": "invented",
+      "caught": true
+    },
+    {
+      "case": "headroom",
+      "fact_id": "operating_margin_pct",
+      "wrong_value": 15,
+      "caught": true
+    },
+    {
+      "case": "headroom",
+      "fact_id": "roic_pct",
+      "wrong_value": 15,
+      "caught": true
+    },
+    {
+      "case": "headroom",
+      "fact_id": "rsi_14",
+      "wrong_value": 47,
+      "caught": true
+    },
+    {
+      "case": "headroom",
+      "fact_id": "sector_roic_pct",
+      "wrong_value": 11,
+      "caught": true
+    },
+    {
+      "case": "missing_history",
+      "fact_id": "calc_forward_peg",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "missing_history",
+      "fact_id": "debt_to_equity_prior",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "missing_history",
+      "fact_id": "gross_margin_pct",
+      "wrong_value": 43,
+      "caught": true
+    },
+    {
+      "case": "missing_history",
+      "fact_id": "guidance_record",
+      "wrong_value": "invented",
+      "caught": true
+    },
+    {
+      "case": "missing_history",
+      "fact_id": "operating_margin_pct",
+      "wrong_value": 15,
+      "caught": true
+    },
+    {
+      "case": "missing_history",
+      "fact_id": "roic_pct",
+      "wrong_value": 15,
+      "caught": true
+    },
+    {
+      "case": "missing_history",
+      "fact_id": "rsi_14",
+      "wrong_value": 47,
+      "caught": true
+    },
+    {
+      "case": "missing_history",
+      "fact_id": "sector_roic_pct",
+      "wrong_value": 11,
+      "caught": true
+    },
+    {
+      "case": "missing_history",
+      "fact_id": "sma_200",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "missing_history",
+      "fact_id": "volume_five_session_trend",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "held_deterioration",
+      "fact_id": "calc_holding_return_pct",
+      "wrong_value": -15.666666666666668,
+      "caught": true
+    },
+    {
+      "case": "held_deterioration",
+      "fact_id": "debt_to_equity_prior",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "held_deterioration",
+      "fact_id": "free_cash_flow",
+      "wrong_value": -39999999,
+      "caught": true
+    },
+    {
+      "case": "held_deterioration",
+      "fact_id": "gross_margin_pct",
+      "wrong_value": 31,
+      "caught": true
+    },
+    {
+      "case": "held_deterioration",
+      "fact_id": "guidance_record",
+      "wrong_value": "invented",
+      "caught": true
+    },
+    {
+      "case": "held_deterioration",
+      "fact_id": "operating_margin_pct",
+      "wrong_value": -1,
+      "caught": true
+    },
+    {
+      "case": "held_deterioration",
+      "fact_id": "roic_pct",
+      "wrong_value": 15,
+      "caught": true
+    },
+    {
+      "case": "held_deterioration",
+      "fact_id": "rsi_14",
+      "wrong_value": 39,
+      "caught": true
+    },
+    {
+      "case": "held_deterioration",
+      "fact_id": "sector_roic_pct",
+      "wrong_value": 11,
+      "caught": true
+    },
+    {
+      "case": "held_deterioration",
+      "fact_id": "underlying_filing_count",
+      "wrong_value": 2,
+      "caught": true
+    },
+    {
+      "case": "conditional_entry",
+      "fact_id": "calc_proposed_conditional_reward_risk",
+      "wrong_value": 7.0,
+      "caught": true
+    },
+    {
+      "case": "conditional_entry",
+      "fact_id": "calc_proposed_current_reward_risk",
+      "wrong_value": 1.75,
+      "caught": true
+    },
+    {
+      "case": "conditional_entry",
+      "fact_id": "debt_to_equity_prior",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "conditional_entry",
+      "fact_id": "gross_margin_pct",
+      "wrong_value": 43,
+      "caught": true
+    },
+    {
+      "case": "conditional_entry",
+      "fact_id": "guidance_record",
+      "wrong_value": "invented",
+      "caught": true
+    },
+    {
+      "case": "conditional_entry",
+      "fact_id": "operating_margin_pct",
+      "wrong_value": 15,
+      "caught": true
+    },
+    {
+      "case": "conditional_entry",
+      "fact_id": "roic_pct",
+      "wrong_value": 15,
+      "caught": true
+    },
+    {
+      "case": "conditional_entry",
+      "fact_id": "rsi_14",
+      "wrong_value": 73,
+      "caught": true
+    },
+    {
+      "case": "conditional_entry",
+      "fact_id": "sector_roic_pct",
+      "wrong_value": 11,
+      "caught": true
+    },
+    {
+      "case": "conditional_entry",
+      "fact_id": "support",
+      "wrong_value": 96,
+      "caught": true
+    },
+    {
+      "case": "headroom_a",
+      "fact_id": "calc_forward_peg",
+      "wrong_value": 3.25,
+      "caught": true
+    },
+    {
+      "case": "headroom_a",
+      "fact_id": "calc_headroom_pct",
+      "wrong_value": 1.5,
+      "caught": true
+    },
+    {
+      "case": "headroom_a",
+      "fact_id": "calc_headroom_usd",
+      "wrong_value": 1251.0,
+      "caught": true
+    },
+    {
+      "case": "headroom_a",
+      "fact_id": "calc_proposal_fits",
+      "wrong_value": true,
+      "caught": true
+    },
+    {
+      "case": "headroom_a",
+      "fact_id": "calc_proposed_current_reward_risk",
+      "wrong_value": 3.8333333333333335,
+      "caught": true
+    },
+    {
+      "case": "headroom_a",
+      "fact_id": "calc_range_position_pct",
+      "wrong_value": 27.08695652173913,
+      "caught": true
+    },
+    {
+      "case": "headroom_a",
+      "fact_id": "debt_to_equity_prior",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "headroom_a",
+      "fact_id": "gross_margin_pct",
+      "wrong_value": 43,
+      "caught": true
+    },
+    {
+      "case": "headroom_a",
+      "fact_id": "guidance_record",
+      "wrong_value": "invented",
+      "caught": true
+    },
+    {
+      "case": "headroom_a",
+      "fact_id": "operating_margin_pct",
+      "wrong_value": 15,
+      "caught": true
+    },
+    {
+      "case": "headroom_a",
+      "fact_id": "roic_pct",
+      "wrong_value": 15,
+      "caught": true
+    },
+    {
+      "case": "headroom_a",
+      "fact_id": "rsi_14",
+      "wrong_value": 47,
+      "caught": true
+    },
+    {
+      "case": "headroom_a",
+      "fact_id": "sector_roic_pct",
+      "wrong_value": 11,
+      "caught": true
+    },
+    {
+      "case": "headroom_b",
+      "fact_id": "calc_forward_peg",
+      "wrong_value": 3.0,
+      "caught": true
+    },
+    {
+      "case": "headroom_b",
+      "fact_id": "calc_headroom_pct",
+      "wrong_value": 1.45,
+      "caught": true
+    },
+    {
+      "case": "headroom_b",
+      "fact_id": "calc_headroom_usd",
+      "wrong_value": 361.0,
+      "caught": true
+    },
+    {
+      "case": "headroom_b",
+      "fact_id": "calc_proposal_fits",
+      "wrong_value": true,
+      "caught": true
+    },
+    {
+      "case": "headroom_b",
+      "fact_id": "calc_proposed_current_reward_risk",
+      "wrong_value": 3.0,
+      "caught": true
+    },
+    {
+      "case": "headroom_b",
+      "fact_id": "calc_range_position_pct",
+      "wrong_value": 34.333333333333336,
+      "caught": true
+    },
+    {
+      "case": "headroom_b",
+      "fact_id": "debt_to_equity_prior",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "headroom_b",
+      "fact_id": "gross_margin_pct",
+      "wrong_value": 43,
+      "caught": true
+    },
+    {
+      "case": "headroom_b",
+      "fact_id": "guidance_record",
+      "wrong_value": "invented",
+      "caught": true
+    },
+    {
+      "case": "headroom_b",
+      "fact_id": "operating_margin_pct",
+      "wrong_value": 15,
+      "caught": true
+    },
+    {
+      "case": "headroom_b",
+      "fact_id": "roic_pct",
+      "wrong_value": 15,
+      "caught": true
+    },
+    {
+      "case": "headroom_b",
+      "fact_id": "rsi_14",
+      "wrong_value": 47,
+      "caught": true
+    },
+    {
+      "case": "headroom_b",
+      "fact_id": "sector_roic_pct",
+      "wrong_value": 11,
+      "caught": true
+    },
+    {
+      "case": "missing_a",
+      "fact_id": "calc_forward_peg",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "missing_a",
+      "fact_id": "debt_to_equity_prior",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "missing_a",
+      "fact_id": "gross_margin_pct",
+      "wrong_value": 43,
+      "caught": true
+    },
+    {
+      "case": "missing_a",
+      "fact_id": "guidance_record",
+      "wrong_value": "invented",
+      "caught": true
+    },
+    {
+      "case": "missing_a",
+      "fact_id": "operating_margin_pct",
+      "wrong_value": 9,
+      "caught": true
+    },
+    {
+      "case": "missing_a",
+      "fact_id": "roic_pct",
+      "wrong_value": 12,
+      "caught": true
+    },
+    {
+      "case": "missing_a",
+      "fact_id": "rsi_14",
+      "wrong_value": 54,
+      "caught": true
+    },
+    {
+      "case": "missing_a",
+      "fact_id": "sector_roic_pct",
+      "wrong_value": 10,
+      "caught": true
+    },
+    {
+      "case": "missing_a",
+      "fact_id": "sma_200",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "missing_a",
+      "fact_id": "volume_five_session_trend",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "missing_b",
+      "fact_id": "calc_forward_peg",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "missing_b",
+      "fact_id": "debt_to_equity_prior",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "missing_b",
+      "fact_id": "gross_margin_pct",
+      "wrong_value": 43,
+      "caught": true
+    },
+    {
+      "case": "missing_b",
+      "fact_id": "guidance_record",
+      "wrong_value": "invented",
+      "caught": true
+    },
+    {
+      "case": "missing_b",
+      "fact_id": "operating_margin_pct",
+      "wrong_value": 7,
+      "caught": true
+    },
+    {
+      "case": "missing_b",
+      "fact_id": "roic_pct",
+      "wrong_value": 10,
+      "caught": true
+    },
+    {
+      "case": "missing_b",
+      "fact_id": "rsi_14",
+      "wrong_value": 42,
+      "caught": true
+    },
+    {
+      "case": "missing_b",
+      "fact_id": "sector_roic_pct",
+      "wrong_value": 13,
+      "caught": true
+    },
+    {
+      "case": "missing_b",
+      "fact_id": "sma_200",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "missing_b",
+      "fact_id": "volume_five_session_trend",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "held_a",
+      "fact_id": "calc_holding_return_pct",
+      "wrong_value": -25.25,
+      "caught": true
+    },
+    {
+      "case": "held_a",
+      "fact_id": "debt_to_equity_prior",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "held_a",
+      "fact_id": "free_cash_flow",
+      "wrong_value": -64999999,
+      "caught": true
+    },
+    {
+      "case": "held_a",
+      "fact_id": "gross_margin_pct",
+      "wrong_value": 25,
+      "caught": true
+    },
+    {
+      "case": "held_a",
+      "fact_id": "guidance_record",
+      "wrong_value": "invented",
+      "caught": true
+    },
+    {
+      "case": "held_a",
+      "fact_id": "operating_margin_pct",
+      "wrong_value": -3.5,
+      "caught": true
+    },
+    {
+      "case": "held_a",
+      "fact_id": "roic_pct",
+      "wrong_value": 15,
+      "caught": true
+    },
+    {
+      "case": "held_a",
+      "fact_id": "rsi_14",
+      "wrong_value": 39,
+      "caught": true
+    },
+    {
+      "case": "held_a",
+      "fact_id": "sector_roic_pct",
+      "wrong_value": 11,
+      "caught": true
+    },
+    {
+      "case": "held_a",
+      "fact_id": "underlying_filing_count",
+      "wrong_value": 2,
+      "caught": true
+    },
+    {
+      "case": "held_b",
+      "fact_id": "calc_holding_return_pct",
+      "wrong_value": 10.782608695652174,
+      "caught": true
+    },
+    {
+      "case": "held_b",
+      "fact_id": "debt_to_equity_prior",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "held_b",
+      "fact_id": "free_cash_flow",
+      "wrong_value": -11999999,
+      "caught": true
+    },
+    {
+      "case": "held_b",
+      "fact_id": "gross_margin_pct",
+      "wrong_value": 29,
+      "caught": true
+    },
+    {
+      "case": "held_b",
+      "fact_id": "guidance_record",
+      "wrong_value": "invented",
+      "caught": true
+    },
+    {
+      "case": "held_b",
+      "fact_id": "operating_margin_pct",
+      "wrong_value": -0.19999999999999996,
+      "caught": true
+    },
+    {
+      "case": "held_b",
+      "fact_id": "roic_pct",
+      "wrong_value": 15,
+      "caught": true
+    },
+    {
+      "case": "held_b",
+      "fact_id": "rsi_14",
+      "wrong_value": 39,
+      "caught": true
+    },
+    {
+      "case": "held_b",
+      "fact_id": "sector_roic_pct",
+      "wrong_value": 11,
+      "caught": true
+    },
+    {
+      "case": "held_b",
+      "fact_id": "underlying_filing_count",
+      "wrong_value": 2,
+      "caught": true
+    },
+    {
+      "case": "conditional_a",
+      "fact_id": "calc_proposed_conditional_reward_risk",
+      "wrong_value": 4.6,
+      "caught": true
+    },
+    {
+      "case": "conditional_a",
+      "fact_id": "calc_proposed_current_reward_risk",
+      "wrong_value": 1.9166666666666665,
+      "caught": true
+    },
+    {
+      "case": "conditional_a",
+      "fact_id": "debt_to_equity_prior",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "conditional_a",
+      "fact_id": "gross_margin_pct",
+      "wrong_value": 43,
+      "caught": true
+    },
+    {
+      "case": "conditional_a",
+      "fact_id": "guidance_record",
+      "wrong_value": "invented",
+      "caught": true
+    },
+    {
+      "case": "conditional_a",
+      "fact_id": "operating_margin_pct",
+      "wrong_value": 15,
+      "caught": true
+    },
+    {
+      "case": "conditional_a",
+      "fact_id": "roic_pct",
+      "wrong_value": 15,
+      "caught": true
+    },
+    {
+      "case": "conditional_a",
+      "fact_id": "rsi_14",
+      "wrong_value": 70,
+      "caught": true
+    },
+    {
+      "case": "conditional_a",
+      "fact_id": "sector_roic_pct",
+      "wrong_value": 11,
+      "caught": true
+    },
+    {
+      "case": "conditional_a",
+      "fact_id": "support",
+      "wrong_value": 76,
+      "caught": true
+    },
+    {
+      "case": "conditional_b",
+      "fact_id": "calc_proposed_conditional_reward_risk",
+      "wrong_value": 8.5,
+      "caught": true
+    },
+    {
+      "case": "conditional_b",
+      "fact_id": "calc_proposed_current_reward_risk",
+      "wrong_value": 2.833333333333333,
+      "caught": true
+    },
+    {
+      "case": "conditional_b",
+      "fact_id": "debt_to_equity_prior",
+      "wrong_value": 999,
+      "caught": true
+    },
+    {
+      "case": "conditional_b",
+      "fact_id": "gross_margin_pct",
+      "wrong_value": 43,
+      "caught": true
+    },
+    {
+      "case": "conditional_b",
+      "fact_id": "guidance_record",
+      "wrong_value": "invented",
+      "caught": true
+    },
+    {
+      "case": "conditional_b",
+      "fact_id": "operating_margin_pct",
+      "wrong_value": 15,
+      "caught": true
+    },
+    {
+      "case": "conditional_b",
+      "fact_id": "roic_pct",
+      "wrong_value": 15,
+      "caught": true
+    },
+    {
+      "case": "conditional_b",
+      "fact_id": "rsi_14",
+      "wrong_value": 62,
+      "caught": true
+    },
+    {
+      "case": "conditional_b",
+      "fact_id": "sector_roic_pct",
+      "wrong_value": 11,
+      "caught": true
+    },
+    {
+      "case": "conditional_b",
+      "fact_id": "support",
+      "wrong_value": 49,
+      "caught": true
+    }
+  ],
+  "summary": {
+    "original_responses": 12,
+    "original_expression_checks": 0,
+    "original_responses_with_reviewed_factual_errors": 9,
+    "original_fully_complete": 0,
+    "correct_controls": 12,
+    "correct_controls_accepted": 12,
+    "corruptions": 129,
+    "corruptions_caught": 129
+  },
+  "source_hashes": {
+    "app/v3/financial_evidence.py": "f0b6b2041d30daf95b5d589eb5a8de595dd3bc15cbdc1aa222e87c132c4261ab",
+    "app/v3/financial_claims.py": "4ae840f342cc51985dbe592c3aefacd681d87c2bb4c132cdf52202f5f5699e98",
+    "scripts/benchmark_financial_controls.py": "c17fdcfb64e96140c233fae780d85762ee9199b756667662a72a30db16ab4517"
+  }
+}

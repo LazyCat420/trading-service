@@ -1,0 +1,2390 @@
+{
+  "version": 1,
+  "provenance": "Eight source-only variants frozen before any live candidate response. Values, dates, profitability, units and missing evidence vary; no expected answers in this file.",
+  "cases": [
+    {
+      "id": "headroom_a",
+      "ticker": "EVLT",
+      "as_of": "2026-10-03T20:00:00Z",
+      "held": true,
+      "facts": [
+        {
+          "id": "close",
+          "metric": "close",
+          "value": 87,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "support",
+          "metric": "support",
+          "value": 81,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "resistance",
+          "metric": "resistance",
+          "value": 104,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "rsi_14",
+          "metric": "rsi_14",
+          "value": 46,
+          "unit": "RSI_points",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "atr_14",
+          "metric": "atr_14",
+          "value": 2,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "sma_200",
+          "metric": "sma_200",
+          "value": 94,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "sma_50",
+          "metric": "sma_50",
+          "value": 98,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "operating_margin_pct",
+          "metric": "operating_margin_pct",
+          "value": 14,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "gross_margin_pct",
+          "metric": "gross_margin_pct",
+          "value": 42,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "debt_to_equity",
+          "metric": "debt_to_equity",
+          "value": 0.4,
+          "unit": "ratio",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "debt_to_equity_prior",
+          "metric": "debt_to_equity_prior",
+          "value": null,
+          "unit": "ratio",
+          "as_of": null,
+          "period": "historical",
+          "entity": "EVLT",
+          "source": "missing:EVLT:None",
+          "status": "unknown",
+          "reason": "No prior debt/equity measurement is supplied."
+        },
+        {
+          "id": "free_cash_flow",
+          "metric": "free_cash_flow",
+          "value": 120000000,
+          "unit": "USD",
+          "as_of": "2026-09-20",
+          "period": "annual",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "roic_pct",
+          "metric": "roic_pct",
+          "value": 14,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "sector_roic_pct",
+          "metric": "sector_roic_pct",
+          "value": 10,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "sector",
+          "source": "sector:sector:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "sector_gross_margin_pct",
+          "metric": "sector_gross_margin_pct",
+          "value": 38,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "sector",
+          "source": "sector:sector:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "guidance_record",
+          "metric": "guidance_record",
+          "value": "met",
+          "unit": "category",
+          "as_of": "2026-09-20",
+          "period": "last_three_annual_ranges",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "equity",
+          "metric": "equity",
+          "value": 250000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "cash",
+          "metric": "cash",
+          "value": 25000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "exposure_pct",
+          "metric": "exposure_pct",
+          "value": 6.35,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "single_name_limit_pct",
+          "metric": "single_name_limit_pct",
+          "value": 7,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "policy:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "pending_exposure_pct",
+          "metric": "pending_exposure_pct",
+          "value": 0.15,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "proposed_purchase_pct",
+          "metric": "proposed_purchase_pct",
+          "value": 0.8,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "proposal:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "forward_pe",
+          "metric": "forward_pe",
+          "value": 27,
+          "unit": "ratio",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "revenue_growth_pct",
+          "metric": "revenue_growth_pct",
+          "value": 10,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "eps_growth_next_year_pct",
+          "metric": "eps_growth_next_year_pct",
+          "value": 12,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "next_fiscal_year",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "proposed_stop",
+          "metric": "proposed_stop",
+          "value": 81,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "proposed",
+          "entity": "EVLT",
+          "source": "proposal:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "proposed_target",
+          "metric": "proposed_target",
+          "value": 104,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "proposed",
+          "entity": "EVLT",
+          "source": "proposal:EVLT:2026-10-03",
+          "status": "known"
+        }
+      ],
+      "questions": [
+        {
+          "id": "q-headroom",
+          "question": "How much additional EVLT exposure can fit under the total 7 percent single-name limit, and does the proposed 0.8 percent purchase fit?"
+        },
+        {
+          "id": "q-peg",
+          "question": "Using the supplied EPS growth, what is forward PEG?"
+        },
+        {
+          "id": "q-range",
+          "question": "What are the reward/risk ratio and the close's position within the support-resistance range?"
+        }
+      ],
+      "base_case": "headroom",
+      "version": 1
+    },
+    {
+      "id": "headroom_b",
+      "ticker": "EVLT",
+      "as_of": "2026-10-03T20:00:00Z",
+      "held": true,
+      "facts": [
+        {
+          "id": "close",
+          "metric": "close",
+          "value": 67,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "support",
+          "metric": "support",
+          "value": 61,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "resistance",
+          "metric": "resistance",
+          "value": 79,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "rsi_14",
+          "metric": "rsi_14",
+          "value": 46,
+          "unit": "RSI_points",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "atr_14",
+          "metric": "atr_14",
+          "value": 2,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "sma_200",
+          "metric": "sma_200",
+          "value": 94,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "sma_50",
+          "metric": "sma_50",
+          "value": 98,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "operating_margin_pct",
+          "metric": "operating_margin_pct",
+          "value": 14,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "gross_margin_pct",
+          "metric": "gross_margin_pct",
+          "value": 42,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "debt_to_equity",
+          "metric": "debt_to_equity",
+          "value": 0.4,
+          "unit": "ratio",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "debt_to_equity_prior",
+          "metric": "debt_to_equity_prior",
+          "value": null,
+          "unit": "ratio",
+          "as_of": null,
+          "period": "historical",
+          "entity": "EVLT",
+          "source": "missing:EVLT:None",
+          "status": "unknown",
+          "reason": "No prior debt/equity measurement is supplied."
+        },
+        {
+          "id": "free_cash_flow",
+          "metric": "free_cash_flow",
+          "value": 120000000,
+          "unit": "USD",
+          "as_of": "2026-09-20",
+          "period": "annual",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "roic_pct",
+          "metric": "roic_pct",
+          "value": 14,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "sector_roic_pct",
+          "metric": "sector_roic_pct",
+          "value": 10,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "sector",
+          "source": "sector:sector:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "sector_gross_margin_pct",
+          "metric": "sector_gross_margin_pct",
+          "value": 38,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "sector",
+          "source": "sector:sector:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "guidance_record",
+          "metric": "guidance_record",
+          "value": "met",
+          "unit": "category",
+          "as_of": "2026-09-20",
+          "period": "last_three_annual_ranges",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "equity",
+          "metric": "equity",
+          "value": 80000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "cash",
+          "metric": "cash",
+          "value": 25000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "exposure_pct",
+          "metric": "exposure_pct",
+          "value": 2.7,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "single_name_limit_pct",
+          "metric": "single_name_limit_pct",
+          "value": 3.5,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "policy:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "pending_exposure_pct",
+          "metric": "pending_exposure_pct",
+          "value": 0.35,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "proposed_purchase_pct",
+          "metric": "proposed_purchase_pct",
+          "value": 0.6,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "proposal:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "forward_pe",
+          "metric": "forward_pe",
+          "value": 18,
+          "unit": "ratio",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "revenue_growth_pct",
+          "metric": "revenue_growth_pct",
+          "value": 10,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "eps_growth_next_year_pct",
+          "metric": "eps_growth_next_year_pct",
+          "value": 9,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "next_fiscal_year",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "proposed_stop",
+          "metric": "proposed_stop",
+          "value": 61,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "proposed",
+          "entity": "EVLT",
+          "source": "proposal:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "proposed_target",
+          "metric": "proposed_target",
+          "value": 79,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "proposed",
+          "entity": "EVLT",
+          "source": "proposal:EVLT:2026-10-03",
+          "status": "known"
+        }
+      ],
+      "questions": [
+        {
+          "id": "q-headroom",
+          "question": "How much additional EVLT exposure can fit under the total 3.5 percent single-name limit, and does the proposed 0.6 percent purchase fit?"
+        },
+        {
+          "id": "q-peg",
+          "question": "Using the supplied EPS growth, what is forward PEG?"
+        },
+        {
+          "id": "q-range",
+          "question": "What are the reward/risk ratio and the close's position within the support-resistance range?"
+        }
+      ],
+      "base_case": "headroom",
+      "version": 1
+    },
+    {
+      "id": "missing_a",
+      "ticker": "EVLT",
+      "as_of": "2026-10-03T20:00:00Z",
+      "held": false,
+      "facts": [
+        {
+          "id": "close",
+          "metric": "close",
+          "value": 73,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "support",
+          "metric": "support",
+          "value": 68,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "resistance",
+          "metric": "resistance",
+          "value": 86,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "rsi_14",
+          "metric": "rsi_14",
+          "value": 53,
+          "unit": "RSI_points",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "atr_14",
+          "metric": "atr_14",
+          "value": 2,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "sma_200",
+          "metric": "sma_200",
+          "value": null,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "unknown",
+          "reason": "Only fourteen closes; no two-hundred-session series."
+        },
+        {
+          "id": "operating_margin_pct",
+          "metric": "operating_margin_pct",
+          "value": 8,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "gross_margin_pct",
+          "metric": "gross_margin_pct",
+          "value": 42,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "debt_to_equity",
+          "metric": "debt_to_equity",
+          "value": 0.4,
+          "unit": "ratio",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "debt_to_equity_prior",
+          "metric": "debt_to_equity_prior",
+          "value": null,
+          "unit": "ratio",
+          "as_of": null,
+          "period": "historical",
+          "entity": "EVLT",
+          "source": "missing:EVLT:None",
+          "status": "unknown",
+          "reason": "No prior debt/equity measurement is supplied."
+        },
+        {
+          "id": "free_cash_flow",
+          "metric": "free_cash_flow",
+          "value": 120000000,
+          "unit": "USD",
+          "as_of": "2026-09-20",
+          "period": "annual",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "roic_pct",
+          "metric": "roic_pct",
+          "value": 11,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "sector_roic_pct",
+          "metric": "sector_roic_pct",
+          "value": 9,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "sector",
+          "source": "sector:sector:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "sector_gross_margin_pct",
+          "metric": "sector_gross_margin_pct",
+          "value": 38,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "sector",
+          "source": "sector:sector:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "guidance_record",
+          "metric": "guidance_record",
+          "value": "met",
+          "unit": "category",
+          "as_of": "2026-09-20",
+          "period": "last_three_annual_ranges",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "equity",
+          "metric": "equity",
+          "value": 100000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "cash",
+          "metric": "cash",
+          "value": 25000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "exposure_pct",
+          "metric": "exposure_pct",
+          "value": 0,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "single_name_limit_pct",
+          "metric": "single_name_limit_pct",
+          "value": 5,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "policy:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "forward_pe",
+          "metric": "forward_pe",
+          "value": 20,
+          "unit": "ratio",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "revenue_growth_pct",
+          "metric": "revenue_growth_pct",
+          "value": 10,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "eps_growth_next_year_pct",
+          "metric": "eps_growth_next_year_pct",
+          "value": null,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "next_fiscal_year",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "unknown",
+          "reason": "EPS growth is not supplied; revenue growth is a different metric."
+        },
+        {
+          "id": "volume_five_session_trend",
+          "metric": "volume_five_session_trend",
+          "value": null,
+          "unit": "category",
+          "as_of": "2026-09-17",
+          "period": "preceding_five_sessions",
+          "entity": "EVLT",
+          "source": "missing:EVLT:2026-09-17",
+          "status": "unknown",
+          "reason": "No August volume observations are available."
+        }
+      ],
+      "questions": [
+        {
+          "id": "q-history",
+          "question": "As of September 17, 2026, was volume declining across its preceding five trading sessions?"
+        },
+        {
+          "id": "q-peg",
+          "question": "Can PEG be computed from the supplied evidence?"
+        },
+        {
+          "id": "q-sma",
+          "question": "Is a 200-session moving average established by these 14 supplied closes?"
+        }
+      ],
+      "base_case": "missing_history",
+      "version": 1
+    },
+    {
+      "id": "missing_b",
+      "ticker": "EVLT",
+      "as_of": "2026-10-03T20:00:00Z",
+      "held": false,
+      "facts": [
+        {
+          "id": "close",
+          "metric": "close",
+          "value": 142,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "support",
+          "metric": "support",
+          "value": 131,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "resistance",
+          "metric": "resistance",
+          "value": 164,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "rsi_14",
+          "metric": "rsi_14",
+          "value": 41,
+          "unit": "RSI_points",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "atr_14",
+          "metric": "atr_14",
+          "value": 2,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "sma_200",
+          "metric": "sma_200",
+          "value": null,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "unknown",
+          "reason": "Only fourteen closes; no two-hundred-session series."
+        },
+        {
+          "id": "operating_margin_pct",
+          "metric": "operating_margin_pct",
+          "value": 6,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "gross_margin_pct",
+          "metric": "gross_margin_pct",
+          "value": 42,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "debt_to_equity",
+          "metric": "debt_to_equity",
+          "value": 0.4,
+          "unit": "ratio",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "debt_to_equity_prior",
+          "metric": "debt_to_equity_prior",
+          "value": null,
+          "unit": "ratio",
+          "as_of": null,
+          "period": "historical",
+          "entity": "EVLT",
+          "source": "missing:EVLT:None",
+          "status": "unknown",
+          "reason": "No prior debt/equity measurement is supplied."
+        },
+        {
+          "id": "free_cash_flow",
+          "metric": "free_cash_flow",
+          "value": 120000000,
+          "unit": "USD",
+          "as_of": "2026-09-20",
+          "period": "annual",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "roic_pct",
+          "metric": "roic_pct",
+          "value": 9,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "sector_roic_pct",
+          "metric": "sector_roic_pct",
+          "value": 12,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "sector",
+          "source": "sector:sector:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "sector_gross_margin_pct",
+          "metric": "sector_gross_margin_pct",
+          "value": 38,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "sector",
+          "source": "sector:sector:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "guidance_record",
+          "metric": "guidance_record",
+          "value": "met",
+          "unit": "category",
+          "as_of": "2026-09-20",
+          "period": "last_three_annual_ranges",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "equity",
+          "metric": "equity",
+          "value": 100000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "cash",
+          "metric": "cash",
+          "value": 25000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "exposure_pct",
+          "metric": "exposure_pct",
+          "value": 0,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "single_name_limit_pct",
+          "metric": "single_name_limit_pct",
+          "value": 5,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "policy:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "forward_pe",
+          "metric": "forward_pe",
+          "value": 20,
+          "unit": "ratio",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "revenue_growth_pct",
+          "metric": "revenue_growth_pct",
+          "value": 10,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "eps_growth_next_year_pct",
+          "metric": "eps_growth_next_year_pct",
+          "value": null,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "next_fiscal_year",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "unknown",
+          "reason": "EPS growth is not supplied; revenue growth is a different metric."
+        },
+        {
+          "id": "volume_five_session_trend",
+          "metric": "volume_five_session_trend",
+          "value": null,
+          "unit": "category",
+          "as_of": "2026-09-17",
+          "period": "preceding_five_sessions",
+          "entity": "EVLT",
+          "source": "missing:EVLT:2026-09-17",
+          "status": "unknown",
+          "reason": "No August volume observations are available."
+        }
+      ],
+      "questions": [
+        {
+          "id": "q-history",
+          "question": "As of September 17, 2026, was volume declining across its preceding five trading sessions?"
+        },
+        {
+          "id": "q-peg",
+          "question": "Can PEG be computed from the supplied evidence?"
+        },
+        {
+          "id": "q-sma",
+          "question": "Is a 200-session moving average established by these 14 supplied closes?"
+        }
+      ],
+      "base_case": "missing_history",
+      "version": 1
+    },
+    {
+      "id": "held_a",
+      "ticker": "EVLT",
+      "as_of": "2026-10-03T20:00:00Z",
+      "held": true,
+      "facts": [
+        {
+          "id": "close",
+          "metric": "close",
+          "value": 59,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "support",
+          "metric": "support",
+          "value": 55,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "resistance",
+          "metric": "resistance",
+          "value": 72,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "rsi_14",
+          "metric": "rsi_14",
+          "value": 38,
+          "unit": "RSI_points",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "atr_14",
+          "metric": "atr_14",
+          "value": 4,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "sma_200",
+          "metric": "sma_200",
+          "value": 115,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "sma_50",
+          "metric": "sma_50",
+          "value": 110,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "operating_margin_pct",
+          "metric": "operating_margin_pct",
+          "value": -4.5,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "gross_margin_pct",
+          "metric": "gross_margin_pct",
+          "value": 24,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "debt_to_equity",
+          "metric": "debt_to_equity",
+          "value": 3.1,
+          "unit": "ratio",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "debt_to_equity_prior",
+          "metric": "debt_to_equity_prior",
+          "value": null,
+          "unit": "ratio",
+          "as_of": null,
+          "period": "historical",
+          "entity": "EVLT",
+          "source": "missing:EVLT:None",
+          "status": "unknown",
+          "reason": "No prior debt/equity measurement is supplied."
+        },
+        {
+          "id": "free_cash_flow",
+          "metric": "free_cash_flow",
+          "value": -65000000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "annual",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "roic_pct",
+          "metric": "roic_pct",
+          "value": 14,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "sector_roic_pct",
+          "metric": "sector_roic_pct",
+          "value": 10,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "sector",
+          "source": "sector:sector:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "sector_gross_margin_pct",
+          "metric": "sector_gross_margin_pct",
+          "value": 38,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "sector",
+          "source": "sector:sector:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "guidance_record",
+          "metric": "guidance_record",
+          "value": "met",
+          "unit": "category",
+          "as_of": "2026-09-20",
+          "period": "last_three_annual_ranges",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "equity",
+          "metric": "equity",
+          "value": 100000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "cash",
+          "metric": "cash",
+          "value": 25000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "exposure_pct",
+          "metric": "exposure_pct",
+          "value": 9,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "single_name_limit_pct",
+          "metric": "single_name_limit_pct",
+          "value": 6,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "policy:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "average_cost",
+          "metric": "average_cost",
+          "value": 80,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "underlying_filing_count",
+          "metric": "underlying_filing_count",
+          "value": 1,
+          "unit": "count",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "prior_gross_margin_pct",
+          "metric": "prior_gross_margin_pct",
+          "value": 39,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "historical",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        }
+      ],
+      "questions": [
+        {
+          "id": "q-current",
+          "question": "Which free cash flow and operating margin figures are current at the decision date?"
+        },
+        {
+          "id": "q-loss",
+          "question": "What is the holding's unrealized percentage return from cost 80 to price 59?"
+        },
+        {
+          "id": "q-independent",
+          "question": "Do the two reports repeating the same October filing provide two independent sources?"
+        }
+      ],
+      "base_case": "held_deterioration",
+      "version": 1
+    },
+    {
+      "id": "held_b",
+      "ticker": "EVLT",
+      "as_of": "2026-10-03T20:00:00Z",
+      "held": true,
+      "facts": [
+        {
+          "id": "close",
+          "metric": "close",
+          "value": 101,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "support",
+          "metric": "support",
+          "value": 96,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "resistance",
+          "metric": "resistance",
+          "value": 114,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "rsi_14",
+          "metric": "rsi_14",
+          "value": 38,
+          "unit": "RSI_points",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "atr_14",
+          "metric": "atr_14",
+          "value": 4,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "sma_200",
+          "metric": "sma_200",
+          "value": 115,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "sma_50",
+          "metric": "sma_50",
+          "value": 110,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "operating_margin_pct",
+          "metric": "operating_margin_pct",
+          "value": -1.2,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "gross_margin_pct",
+          "metric": "gross_margin_pct",
+          "value": 28,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "debt_to_equity",
+          "metric": "debt_to_equity",
+          "value": 2.1,
+          "unit": "ratio",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "debt_to_equity_prior",
+          "metric": "debt_to_equity_prior",
+          "value": null,
+          "unit": "ratio",
+          "as_of": null,
+          "period": "historical",
+          "entity": "EVLT",
+          "source": "missing:EVLT:None",
+          "status": "unknown",
+          "reason": "No prior debt/equity measurement is supplied."
+        },
+        {
+          "id": "free_cash_flow",
+          "metric": "free_cash_flow",
+          "value": -12000000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "annual",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "roic_pct",
+          "metric": "roic_pct",
+          "value": 14,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "sector_roic_pct",
+          "metric": "sector_roic_pct",
+          "value": 10,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "sector",
+          "source": "sector:sector:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "sector_gross_margin_pct",
+          "metric": "sector_gross_margin_pct",
+          "value": 38,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "sector",
+          "source": "sector:sector:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "guidance_record",
+          "metric": "guidance_record",
+          "value": "met",
+          "unit": "category",
+          "as_of": "2026-09-20",
+          "period": "last_three_annual_ranges",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "equity",
+          "metric": "equity",
+          "value": 100000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "cash",
+          "metric": "cash",
+          "value": 25000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "exposure_pct",
+          "metric": "exposure_pct",
+          "value": 8.2,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "single_name_limit_pct",
+          "metric": "single_name_limit_pct",
+          "value": 5,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "policy:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "average_cost",
+          "metric": "average_cost",
+          "value": 92,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "underlying_filing_count",
+          "metric": "underlying_filing_count",
+          "value": 1,
+          "unit": "count",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "prior_gross_margin_pct",
+          "metric": "prior_gross_margin_pct",
+          "value": 35,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "historical",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        }
+      ],
+      "questions": [
+        {
+          "id": "q-current",
+          "question": "Which free cash flow and operating margin figures are current at the decision date?"
+        },
+        {
+          "id": "q-loss",
+          "question": "What is the holding's unrealized percentage return from cost 92 to price 101?"
+        },
+        {
+          "id": "q-independent",
+          "question": "Do the two reports repeating the same October filing provide two independent sources?"
+        }
+      ],
+      "base_case": "held_deterioration",
+      "version": 1
+    },
+    {
+      "id": "conditional_a",
+      "ticker": "EVLT",
+      "as_of": "2026-10-03T20:00:00Z",
+      "held": false,
+      "facts": [
+        {
+          "id": "close",
+          "metric": "close",
+          "value": 87,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "support",
+          "metric": "support",
+          "value": 75,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "resistance",
+          "metric": "resistance",
+          "value": 115,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "rsi_14",
+          "metric": "rsi_14",
+          "value": 69,
+          "unit": "RSI_points",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "atr_14",
+          "metric": "atr_14",
+          "value": 3,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "sma_200",
+          "metric": "sma_200",
+          "value": 94,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "sma_50",
+          "metric": "sma_50",
+          "value": 98,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "operating_margin_pct",
+          "metric": "operating_margin_pct",
+          "value": 14,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "gross_margin_pct",
+          "metric": "gross_margin_pct",
+          "value": 42,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "debt_to_equity",
+          "metric": "debt_to_equity",
+          "value": 0.4,
+          "unit": "ratio",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "debt_to_equity_prior",
+          "metric": "debt_to_equity_prior",
+          "value": null,
+          "unit": "ratio",
+          "as_of": null,
+          "period": "historical",
+          "entity": "EVLT",
+          "source": "missing:EVLT:None",
+          "status": "unknown",
+          "reason": "No prior debt/equity measurement is supplied."
+        },
+        {
+          "id": "free_cash_flow",
+          "metric": "free_cash_flow",
+          "value": 120000000,
+          "unit": "USD",
+          "as_of": "2026-09-20",
+          "period": "annual",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "roic_pct",
+          "metric": "roic_pct",
+          "value": 14,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "sector_roic_pct",
+          "metric": "sector_roic_pct",
+          "value": 10,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "sector",
+          "source": "sector:sector:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "sector_gross_margin_pct",
+          "metric": "sector_gross_margin_pct",
+          "value": 38,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "sector",
+          "source": "sector:sector:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "guidance_record",
+          "metric": "guidance_record",
+          "value": "met",
+          "unit": "category",
+          "as_of": "2026-09-20",
+          "period": "last_three_annual_ranges",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "equity",
+          "metric": "equity",
+          "value": 100000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "cash",
+          "metric": "cash",
+          "value": 25000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "exposure_pct",
+          "metric": "exposure_pct",
+          "value": 0,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "single_name_limit_pct",
+          "metric": "single_name_limit_pct",
+          "value": 5,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "policy:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "forward_pe",
+          "metric": "forward_pe",
+          "value": 20,
+          "unit": "ratio",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "revenue_growth_pct",
+          "metric": "revenue_growth_pct",
+          "value": 10,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "eps_growth_next_year_pct",
+          "metric": "eps_growth_next_year_pct",
+          "value": 16,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "next_fiscal_year",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "proposed_stop",
+          "metric": "proposed_stop",
+          "value": 75,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "proposed",
+          "entity": "EVLT",
+          "source": "proposal:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "proposed_target",
+          "metric": "proposed_target",
+          "value": 98,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "proposed",
+          "entity": "EVLT",
+          "source": "proposal:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "proposed_entry",
+          "metric": "proposed_entry",
+          "value": 80,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "hypothetical",
+          "entity": "EVLT",
+          "source": "proposal:EVLT:2026-10-03",
+          "status": "known"
+        }
+      ],
+      "questions": [
+        {
+          "id": "q-now",
+          "question": "What is reward/risk at current price 87, stop 75 and target 98?"
+        },
+        {
+          "id": "q-wait",
+          "question": "What would reward/risk be at the proposed future entry price 80 with the same stop and target?"
+        },
+        {
+          "id": "q-units",
+          "question": "Can support price 75 be used as RSI threshold 75 on this evidence?"
+        }
+      ],
+      "base_case": "conditional_entry",
+      "version": 1
+    },
+    {
+      "id": "conditional_b",
+      "ticker": "EVLT",
+      "as_of": "2026-10-03T20:00:00Z",
+      "held": false,
+      "facts": [
+        {
+          "id": "close",
+          "metric": "close",
+          "value": 54,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "support",
+          "metric": "support",
+          "value": 48,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "resistance",
+          "metric": "resistance",
+          "value": 115,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "rsi_14",
+          "metric": "rsi_14",
+          "value": 61,
+          "unit": "RSI_points",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "atr_14",
+          "metric": "atr_14",
+          "value": 3,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "sma_200",
+          "metric": "sma_200",
+          "value": 94,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "sma_50",
+          "metric": "sma_50",
+          "value": 98,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "market:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "operating_margin_pct",
+          "metric": "operating_margin_pct",
+          "value": 14,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "gross_margin_pct",
+          "metric": "gross_margin_pct",
+          "value": 42,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "debt_to_equity",
+          "metric": "debt_to_equity",
+          "value": 0.4,
+          "unit": "ratio",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "debt_to_equity_prior",
+          "metric": "debt_to_equity_prior",
+          "value": null,
+          "unit": "ratio",
+          "as_of": null,
+          "period": "historical",
+          "entity": "EVLT",
+          "source": "missing:EVLT:None",
+          "status": "unknown",
+          "reason": "No prior debt/equity measurement is supplied."
+        },
+        {
+          "id": "free_cash_flow",
+          "metric": "free_cash_flow",
+          "value": 120000000,
+          "unit": "USD",
+          "as_of": "2026-09-20",
+          "period": "annual",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "roic_pct",
+          "metric": "roic_pct",
+          "value": 14,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "sector_roic_pct",
+          "metric": "sector_roic_pct",
+          "value": 10,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "sector",
+          "source": "sector:sector:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "sector_gross_margin_pct",
+          "metric": "sector_gross_margin_pct",
+          "value": 38,
+          "unit": "percent",
+          "as_of": "2026-09-20",
+          "period": "current",
+          "entity": "sector",
+          "source": "sector:sector:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "guidance_record",
+          "metric": "guidance_record",
+          "value": "met",
+          "unit": "category",
+          "as_of": "2026-09-20",
+          "period": "last_three_annual_ranges",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-09-20",
+          "status": "known"
+        },
+        {
+          "id": "equity",
+          "metric": "equity",
+          "value": 100000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "cash",
+          "metric": "cash",
+          "value": 25000,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "exposure_pct",
+          "metric": "exposure_pct",
+          "value": 0,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "portfolio:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "single_name_limit_pct",
+          "metric": "single_name_limit_pct",
+          "value": 5,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "policy:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "forward_pe",
+          "metric": "forward_pe",
+          "value": 20,
+          "unit": "ratio",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "revenue_growth_pct",
+          "metric": "revenue_growth_pct",
+          "value": 10,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "current",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "eps_growth_next_year_pct",
+          "metric": "eps_growth_next_year_pct",
+          "value": 16,
+          "unit": "percent",
+          "as_of": "2026-10-03",
+          "period": "next_fiscal_year",
+          "entity": "EVLT",
+          "source": "filing:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "proposed_stop",
+          "metric": "proposed_stop",
+          "value": 48,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "proposed",
+          "entity": "EVLT",
+          "source": "proposal:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "proposed_target",
+          "metric": "proposed_target",
+          "value": 65,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "proposed",
+          "entity": "EVLT",
+          "source": "proposal:EVLT:2026-10-03",
+          "status": "known"
+        },
+        {
+          "id": "proposed_entry",
+          "metric": "proposed_entry",
+          "value": 50,
+          "unit": "USD",
+          "as_of": "2026-10-03",
+          "period": "hypothetical",
+          "entity": "EVLT",
+          "source": "proposal:EVLT:2026-10-03",
+          "status": "known"
+        }
+      ],
+      "questions": [
+        {
+          "id": "q-now",
+          "question": "What is reward/risk at current price 54, stop 48 and target 65?"
+        },
+        {
+          "id": "q-wait",
+          "question": "What would reward/risk be at the proposed future entry price 50 with the same stop and target?"
+        },
+        {
+          "id": "q-units",
+          "question": "Can support price 48 be used as RSI threshold 48 on this evidence?"
+        }
+      ],
+      "base_case": "conditional_entry",
+      "version": 1
+    }
+  ]
+}
