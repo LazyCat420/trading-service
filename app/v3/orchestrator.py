@@ -2445,7 +2445,9 @@ async def _persist_trade_verdict(
             **board_dec,
             "action": board_dec.get("action", "HOLD"),
             "confidence": board_dec.get("confidence", 50),
-            "reasoning": str(board_dec.get("reasoning", "")) + " [Synthesizer unavailable; persisted from Board of Directors verdict]",
+            # Preserve verified/model-authored reasoning verbatim. Operational
+            # provenance must not alter the financial artifact being audited.
+            "fallback_note": "Synthesizer unavailable; persisted from Board of Directors verdict",
             "signal_weights": {"quant": 0.25, "fundamental": 0.25, "debate": 0.25, "board": 0.25},
             "signal_assessments": {
                 "board": "Board fallback",

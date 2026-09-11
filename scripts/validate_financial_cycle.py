@@ -270,6 +270,7 @@ async def run(args, receipt):
             receipt['financial_checks'] = checks
             receipt['passed'] = (receipt['final_state'].get('status') == 'done' and len(checks) == 1
                 and checks[0]['audit']['status'] == 'consistent' and checks[0]['reasoning_version'] == 2
+                and checks[0]['financial_evidence_version'] == 1 and not checks[0]['execution_errors']
                 and receipt['order_attempts'] == 0 and receipt['orders_in_staging'] == 0
                 and not receipt['production_write_attempts'])
     finally:

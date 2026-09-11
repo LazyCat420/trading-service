@@ -45,7 +45,7 @@ def read_only_store():
 
 
 def source_hashes():
-    paths = ('app/v3/financial_evidence.py', 'app/v3/financial_reasoning.py',
+    paths = ('app/v3/orchestrator.py', 'app/v3/financial_evidence.py', 'app/v3/financial_reasoning.py',
              'app/v3/financial_claims.py', 'app/v3/agent_runner.py',
              'app/quant/technical_baseline.py',
              'scripts/test_live_financial_record.py')

@@ -219,7 +219,8 @@ async def test_persist_trade_verdict_falls_back_to_board():
     saved = saved_rows[0]
     assert saved["action"] == "HOLD"
     assert saved["confidence"] == 55
-    assert "Board of Directors" in saved["reasoning"]
+    assert saved["reasoning"] == desk.final_decision["reasoning"]
+    assert "Board of Directors" in saved["fallback_note"]
     assert saved["signal_weights"] == {"quant": 0.25, "fundamental": 0.25, "debate": 0.25, "board": 0.25}
     assert saved["decision_provenance"] == "board_fallback"
     assert desk.trade_decision is not None
@@ -227,3 +228,40 @@ async def test_persist_trade_verdict_falls_back_to_board():
 
 
 
+
+@pytest.mark.asyncio
+async def test_board_fallback_preserves_verified_financial_rendering():
+    from copy import deepcopy
+    import json
+    from pathlib import Path
+    from app.v3.orchestrator import _persist_trade_verdict, _build_v1_compatible_result
+    from app.v3.shared_desk import SharedDesk
+    from app.v3.financial_reasoning import render_reasoning_artifact
+    from app.v3.financial_claims import audit_decision, execution_errors
+
+    cases = json.loads((Path(__file__).resolve().parents[1] / 'benchmarks/fixtures/financial_reasoning_v1.json').read_text())['cases']
+    record = deepcopy(next(case for case in cases if case['id'] == 'headroom'))
+    record['questions'] = []
+    board, errors = render_reasoning_artifact({
+        'financial_reasoning_version': 2, 'action': 'HOLD', 'confidence': 72,
+        'position_size_pct': 0, 'entry_mode': 'watch_only', 'trigger_purpose': 'none',
+        'dynamic_trigger': None, 'resolution_condition': None,
+        'reasoning_steps': ['headroom', 'proposal_fit'], 'research_answers': [],
+    }, record)
+    assert not errors
+    original = deepcopy(board)
+    desk = SharedDesk(ticker='EVLT', cycle_id='test-financial-fallback')
+    desk.cycle_metadata = {'decision_contract_version': 1, 'financial_evidence_version': 1,
+                           'financial_evidence_record': record}
+    desk.final_decision = board
+    saved = []
+    with patch('app.services.trade_result_saver.save_trade_result', side_effect=lambda tk, cid, dec: saved.append(deepcopy(dec))), \
+         patch('app.db.mongo_store.find_docs', return_value=[]), \
+         patch('app.services.rlm_audit.log_rlm_audit_trail'), \
+         patch('app.trading.strategy_tracker.record_strategy'):
+        await _persist_trade_verdict(desk, None, cycle_id=desk.cycle_id, bot_id='test', ticker='EVLT', regime='NORMAL')
+    assert len(saved) == 1
+    for key in ('action', 'confidence', 'position_size_pct', 'reasoning', 'reasoning_steps', 'research_answers', 'financial_claims'):
+        assert saved[0][key] == original[key]
+    assert audit_decision(saved[0], record)['status'] == 'consistent'
+    assert execution_errors(_build_v1_compatible_result(desk)) == []

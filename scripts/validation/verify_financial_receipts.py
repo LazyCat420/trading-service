@@ -13,33 +13,45 @@ from scripts.test_live_financial_record import source_hashes
 
 
 def verify(row):
-    artifact, record = row['artifact'], row['evidence']
-    raw = _parse_artifact(row['calls'][-1]['response'], 'final_decision', 'v3_board_of_directors')
-    preserved = all(raw.get(key) == artifact.get(key) for key in
-                    ('action', 'confidence', 'position_size_pct', 'reasoning_steps'))
+    artifact, record = row.get('artifact'), row['evidence']
     def answers(value):
         value = value.get('research_answers', [])
         if isinstance(value, dict):
             return {key: answer if isinstance(answer, list) else answer.get('step_ids') for key, answer in value.items()}
         return {answer['item_id']: answer.get('step_ids') for answer in value}
-    preserved &= answers(raw) == answers(artifact)
+    def same_authored_fields(raw):
+        return (isinstance(raw, dict) and isinstance(artifact, dict)
+                and all(raw.get(key) == artifact.get(key) for key in
+                        ('action', 'confidence', 'position_size_pct', 'reasoning_steps'))
+                and answers(raw) == answers(artifact))
+    parsed = [_parse_artifact(call.get('response') or '', 'final_decision', 'v3_board_of_directors')
+              for call in row['calls']]
+    preserved = any(same_authored_fields(raw) for raw in parsed) if artifact else None
+    audit = audit_decision(artifact, record) if artifact else {'status': 'unresolved'}
     result = {'financial_evidence_version': 1, 'financial_evidence_record': record,
-              'financial_decision': artifact, 'action': artifact['action'],
-              'estimate': {key: artifact.get(key) for key in
+              'financial_decision': artifact, 'action': (artifact or {}).get('action', 'HOLD'),
+              'estimate': {key: (artifact or {}).get(key) for key in
                            ('position_size_pct', 'stop_loss', 'take_profit', 'dynamic_trigger', 'entry_mode', 'trigger_purpose')}}
     baseline_errors = execution_errors(result)
     forged = deepcopy(result)
-    forged['financial_decision']['financial_claims'][0]['value'] = 'tampered'
     forged['financial_audit'] = {'status': 'consistent', 'errors': []}
-    altered_claim_blocked = bool(execution_errors(forged))
+    claims = (forged.get('financial_decision') or {}).get('financial_claims') or []
+    if claims:
+        claims[0]['value'] = 'tampered'
+    tampered_or_unresolved_blocked = bool(execution_errors(forged))
     changed_action = deepcopy(result)
-    changed_action['action'] = 'BUY' if artifact['action'] != 'BUY' else 'SELL'
+    changed_action['action'] = 'BUY' if result['action'] != 'BUY' else 'SELL'
     changed_action_blocked = bool(execution_errors(changed_action))
+    accepted = audit['status'] == 'consistent'
+    if accepted:
+        preserved = bool(parsed) and same_authored_fields(parsed[-1])
+    expected_boundary = not baseline_errors if accepted else bool(baseline_errors)
     return {'index': row['index'], 'case': row['case'], 'authored_fields_preserved': preserved,
-            'current_audit': audit_decision(artifact, record)['status'],
-            'execution_errors': baseline_errors, 'tampered_claim_blocked': altered_claim_blocked,
+            'current_audit': audit['status'], 'execution_errors': baseline_errors,
+            'tampered_or_unresolved_blocked_despite_forged_pass': tampered_or_unresolved_blocked,
             'changed_order_action_blocked': changed_action_blocked,
-            'passed': preserved and not baseline_errors and altered_claim_blocked and changed_action_blocked}
+            'passed': (preserved is not False and expected_boundary and tampered_or_unresolved_blocked
+                       and changed_action_blocked and audit['status'] == row['audit']['status'])}
 
 
 def main():
