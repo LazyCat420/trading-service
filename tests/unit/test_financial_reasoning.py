@@ -108,3 +108,34 @@ def test_comparison_step_and_single_source_id_have_distinct_meanings():
     rendered,errors=render_reasoning_artifact(raw,case)
     assert not errors
     assert [c['fact_id'] for c in rendered['financial_claims']]==['sector_roic_pct']
+
+
+@pytest.mark.parametrize('case',[c for c in CASES if 'base_case' not in c],ids=lambda c:c['id'])
+def test_repeated_known_references_are_idempotent_without_changing_authored_selections(case):
+    raw=selection(case)
+    raw['reasoning_steps']*=2
+    for answer in raw['research_answers']:
+        answer['step_ids']*=2
+    before=deepcopy(raw)
+    rendered,errors=render_reasoning_artifact(raw,case)
+    assert not errors
+    assert raw==before and rendered['reasoning_steps']==before['reasoning_steps']
+    assert rendered['action']==raw['action'] and rendered['confidence']==raw['confidence']
+    claims=rendered['financial_claims']
+    assert len({c['fact_id'] for c in claims})==len(claims)
+    if case['id']=='held_deterioration':
+        answer=rendered['research_answers'][-1]
+        assert answer['answer'].count('do not provide independent corroboration')==1
+        assert answer['fact_ids']==['underlying_filing_count']
+        assert next(c['value'] for c in claims if c['fact_id']=='underlying_filing_count')==1
+    assert audit_decision(rendered,case)['status']=='consistent'
+    rendered['financial_claims'][0]['value']=999
+    assert audit_decision(rendered,case)['status']=='unresolved'
+
+
+def test_repeated_references_do_not_hide_an_unknown_selection():
+    case=CASES[0];raw=selection(case)
+    raw['reasoning_steps']=['headroom','headroom','invented_relationship']
+    _,errors=render_reasoning_artifact(raw,case)
+    assert any('invented_relationship' in error for error in errors)
+    assert audit_decision(raw,case)['status']=='unresolved'

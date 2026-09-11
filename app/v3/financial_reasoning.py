@@ -141,9 +141,9 @@ def render_reasoning_artifact(artifact, record):
         if unknown:
             errors.append(f"{field}: unknown step IDs {json.dumps(unknown)}; select only IDs from the supplied catalog.")
             return []
-        if len(ids) != len(set(ids)):
-            errors.append(f"{field}: do not repeat steps.")
-        chosen = [catalog[i] for i in ids]
+        # Repeating the same source reference does not add evidence or weight.
+        # Preserve authored selection lists, but render each chosen step once.
+        chosen = [catalog[i] for i in dict.fromkeys(ids)]
         selected.extend(f for step in chosen for f in step["fact_ids"])
         return chosen
 

@@ -226,3 +226,19 @@ async def test_unknown_structured_selections_receive_precise_bounded_repair(repa
     else:
         assert outcome==PhaseOutcome.AGENT_ERROR
         assert desk.final_decision is None
+
+
+@pytest.mark.asyncio
+async def test_financial_schema_repair_does_not_request_conflicting_authored_prose():
+    desk,module,_=fixture();module.TOOL_WHITELIST=[]
+    good={'financial_reasoning_version':2,'action':'HOLD','confidence':72,'position_size_pct':0,
+          'entry_mode':'watch_only','trigger_purpose':'none','dynamic_trigger':None,
+          'resolution_condition':None,'reasoning_steps':['headroom'],'research_answers':[]}
+    outcome,model=await run(desk,module,[{'research_answers':[]},good])
+    assert model.await_count==2
+    prompt=model.call_args_list[1].kwargs['user_prompt']
+    assert 'FINANCIAL EVIDENCE RECONSIDERATION' in prompt
+    assert 'Do not emit financial_claims or authored reasoning/answer prose.' in prompt
+    assert 'Required top-level decision keys: action, confidence, reasoning.' not in prompt
+    assert 'reviewing an investment decision' in model.call_args_list[1].kwargs['system_prompt']
+    assert desk_status(desk)['status']=='consistent'

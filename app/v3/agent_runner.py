@@ -1563,16 +1563,20 @@ async def run_v3_agent(
                     f"No markdown fences, no commentary. {_decision_shape}\n"
                 )
                 repair_system = system_prompt
-                if financial_render_errors and isinstance(fragment, dict):
-                    # The decision schema is incomplete because rendering failed.
-                    # Report the rejected selections, not a missing prose field
-                    # that the structured contract explicitly forbids authoring.
+                if financial_record is not None:
+                    # Every financial schema repair uses the structured contract,
+                    # including malformed legacy output with no rendered fields.
+                    # Never demand the authored prose this contract forbids.
                     from app.v3.financial_claims import correction_prompt
                     from app.v3.financial_evidence import correction_system_prompt
-                    repair_prompt = correction_prompt(user_prompt, fragment, {
-                        "errors": [{"kind": "structured_reasoning", "message": message}
-                                   for message in financial_render_errors],
-                    }, financial_record)
+                    repair_errors = [
+                        {"kind": "structured_reasoning", "message": message}
+                        for message in financial_render_errors
+                    ] or [{"kind": rule.name, "message": rule.directive}]
+                    repair_prompt = correction_prompt(
+                        user_prompt, fragment if isinstance(fragment, dict) else {},
+                        {"errors": repair_errors}, financial_record,
+                    )
                     repair_system = correction_system_prompt(artifact_type)
                 logger.info(
                     "[V3Runner] %s: repairing %s with %d recovered tool "
