@@ -1,0 +1,441 @@
+{
+  "supersedes": "board-memory-proxy-2026-09-11/review.json",
+  "reason": "The original reader discarded sibling research_answers when extracting final_decision. All 12 raw responses contain three answers. Review now considers both the answers and the decision rationale. Original evidence unchanged.",
+  "summary": {
+    "current": {
+      "attempts": 4,
+      "schema_valid": 4,
+      "entry_valid": 3,
+      "all_three_answers_present": 4,
+      "structurally_usable_without_identified_factual_error": 0
+    },
+    "no_method": {
+      "attempts": 4,
+      "schema_valid": 4,
+      "entry_valid": 2,
+      "all_three_answers_present": 4,
+      "structurally_usable_without_identified_factual_error": 0
+    },
+    "stale_memory": {
+      "attempts": 4,
+      "schema_valid": 3,
+      "entry_valid": 2,
+      "all_three_answers_present": 4,
+      "structurally_usable_without_identified_factual_error": 0
+    }
+  },
+  "rows": [
+    {
+      "file": "01-headroom-current.json",
+      "case": "headroom",
+      "arm": "current",
+      "response_sha256": "9e3ddeba8c577d9ad1eb5f1b47f900342745bd0d6dc05fea8aeb8734a0da1c73",
+      "research_answer_count": 3,
+      "research_answers": [
+        {
+          "id": "q-headroom",
+          "answer": "The portfolio currently holds 4.4 percent exposure (44 shares at $100 = $4,400). The proposed incremental purchase of 2.5 percent of portfolio equity adds $2,500, bringing total exposure to 6.9 percent, which exceeds the 5 percent single-name limit. The purchase does not fit under the limit without reducing the existing position or the incremental size.",
+          "as_of": "2026-09-03"
+        },
+        {
+          "id": "q-peg",
+          "answer": "Forward PEG = Forward P/E / Next-year EPS growth = 20 / 16 = 1.25.",
+          "as_of": "2026-09-03"
+        },
+        {
+          "id": "q-range",
+          "answer": "Reward/Risk ratio = (Resistance - Close) / (Close - Support) = (115 - 100) / (100 - 95) = 15 / 5 = 3.0. Close is 5 points above support and 15 points below resistance, placing it one-third of the way from support toward resistance.",
+          "as_of": "2026-09-03"
+        }
+      ],
+      "schema_valid": true,
+      "entry_valid": true,
+      "factual_errors": [
+        "Claims close is one-third through 95\u2013115; correct location is 25%."
+      ],
+      "correct_observations": [
+        "Correct 0.6 percentage-point headroom, PEG 1.25 and reward/risk 3."
+      ],
+      "structural_errors": [],
+      "notes": "All requested answers are present. Prior claims of missing arrays or omitted independence/units answers are withdrawn. Presence does not imply correctness."
+    },
+    {
+      "file": "02-headroom-no_method.json",
+      "case": "headroom",
+      "arm": "no_method",
+      "response_sha256": "246226806ee9057e164330fc0beadbfe5ce9a0ea00027abba9cbdf4fe30557fc",
+      "research_answer_count": 3,
+      "research_answers": [
+        {
+          "question_id": "q-headroom",
+          "answer": "The portfolio has 4.4 percent exposure from 44 shares. The single-name limit is 5 percent, leaving 0.6 percent headroom. The proposed 2.5 percent purchase exceeds available headroom and does not fit under the limit."
+        },
+        {
+          "question_id": "q-peg",
+          "answer": "Forward PEG = Forward P/E / EPS growth = 20 / 16 = 1.25"
+        },
+        {
+          "question_id": "q-range",
+          "answer": "Reward/risk ratio = (115 - 100) / (100 - 95) = 15 / 5 = 3.0. Close is 2 percent above support (100 vs 95) and 18 percent below resistance (115 vs 100), positioned in the lower-third of the range."
+        }
+      ],
+      "schema_valid": true,
+      "entry_valid": true,
+      "factual_errors": [
+        "Answer says price 100 is 2% above support 95 and 18% below resistance 115; both supplied percentages are wrong."
+      ],
+      "correct_observations": [
+        "Correct headroom, PEG and reward/risk; lower third is compatible with 25%."
+      ],
+      "structural_errors": [],
+      "notes": "All requested answers are present. Prior claims of missing arrays or omitted independence/units answers are withdrawn. Presence does not imply correctness."
+    },
+    {
+      "file": "03-headroom-stale_memory.json",
+      "case": "headroom",
+      "arm": "stale_memory",
+      "response_sha256": "8431310484feb3dc3b02a01b57f86c0a59bb53cb2bfb847b6fb13425e08e1e7a",
+      "research_answer_count": 3,
+      "research_answers": [
+        {
+          "id": "q-headroom",
+          "answer": "The portfolio currently holds 44 shares of EVLT worth 4400, representing 4.4% of the 100000 portfolio equity. The single-name exposure limit is 5% of equity (5000). The proposed incremental purchase of 2.5% of portfolio equity equals 2500, which would bring total exposure to 6.9% (7500), exceeding the 5% limit. The maximum additional exposure that can fit under the limit is 600 (0.6% of equity), meaning the proposed 2.5% purchase does not fit under the current limit without reducing existing positions.",
+          "as_of": "2026-09-03"
+        },
+        {
+          "id": "q-peg",
+          "answer": "Forward PEG cannot be computed from the supplied data. Forward P/E is 20, and forward-year EPS growth is 16 percent. PEG = P/E / growth = 20 / 16 = 1.25. However, revenue growth of 10 percent is a different metric (revenue growth \u2260 EPS growth), and using revenue growth for PEG is not supported by the source data. The forward PEG based on EPS growth is 1.25; if revenue growth were used erroneously, the ratio would be 2.0, but that calculation is not valid here.",
+          "as_of": "2026-09-03"
+        },
+        {
+          "id": "q-range",
+          "answer": "The close at 100 is above the proposed stop/support of 95 and below the proposed resistance/target of 115, placing it 5 points above support and 15 points below resistance. The reward/risk ratio based on the 95\u2013115 range is 3:1 ( upside of 15 vs downside of 5). The close's position within the range is 20% from support and 75% from resistance, or equivalently 25% from resistance.",
+          "as_of": "2026-09-03"
+        }
+      ],
+      "schema_valid": true,
+      "entry_valid": true,
+      "factual_errors": [
+        "Answer equates 6.9% of 100000 with 7500; correct amount is 6900.",
+        "Range answer says 20% from support and contradicts itself about resistance; correct location is 25% from support.",
+        "PEG answer initially says unavailable despite supplied EPS growth and its own correct calculation."
+      ],
+      "correct_observations": [
+        "Correct headroom, PEG 1.25 and reward/risk 3; rejects oversized proposed purchase."
+      ],
+      "structural_errors": [],
+      "notes": "All requested answers are present. Prior claims of missing arrays or omitted independence/units answers are withdrawn. Presence does not imply correctness."
+    },
+    {
+      "file": "04-missing_history-stale_memory.json",
+      "case": "missing_history",
+      "arm": "stale_memory",
+      "response_sha256": "601a864b07f01c170f0516c1611edfcf005fb4f8f2998aa574cc7e7686db132a",
+      "research_answer_count": 3,
+      "research_answers": [
+        {
+          "id": "q-history",
+          "answer": "No. The supplied 14 daily closes end on 2026-09-03; the five sessions preceding that date are 2026-08-28, 2026-08-27, 2026-08-26, 2026-08-25, 2026-08-24. No volume observations are supplied for any of those dates, so the question cannot be resolved from the evidence.",
+          "as_of": "2026-09-03"
+        },
+        {
+          "id": "q-peg",
+          "answer": "No. PEG requires estimated EPS growth, which is not supplied. Revenue growth of 10 percent and forward P/E of 20 are available, but without EPS growth the ratio cannot be computed.",
+          "as_of": "2026-09-03"
+        },
+        {
+          "id": "q-sma",
+          "answer": "No. Only 14 daily closes are supplied; a 200-session moving average requires 200 closes. The prior unverified note claiming a 14-bar sample establishes SMA-200 is not evidence.",
+          "as_of": "2026-09-03"
+        }
+      ],
+      "schema_valid": true,
+      "entry_valid": false,
+      "factual_errors": [
+        "Changes the requested August 17 volume lookback to September 3."
+      ],
+      "correct_observations": [
+        "Does not invent numeric PEG or SMA-200; volume is unknown."
+      ],
+      "structural_errors": [
+        "HOLD requires entry_mode=watch_only"
+      ],
+      "notes": "All requested answers are present. Prior claims of missing arrays or omitted independence/units answers are withdrawn. Presence does not imply correctness."
+    },
+    {
+      "file": "05-missing_history-no_method.json",
+      "case": "missing_history",
+      "arm": "no_method",
+      "response_sha256": "3a7dce40946c9095b7ba70a3b6aca0cc2d3a2d272090e9d48f290640bce22540",
+      "research_answer_count": 3,
+      "research_answers": [
+        {
+          "id": "q-history",
+          "answer": "No. The only supplied volume observation is 2026-09-03: 1100000 shares. No August volume observations are available. A prior unverified note claims August volume declined for five sessions and that a 14-bar sample establishes SMA-200; neither claim is evidence."
+        },
+        {
+          "id": "q-peg",
+          "answer": "No. PEG requires EPS growth, which is not available in the supplied evidence. Forward P/E of 20 and revenue growth of 10 percent are insufficient to compute PEG."
+        },
+        {
+          "id": "q-sma",
+          "answer": "No. Only 14 daily closes are supplied; SMA-200 requires 200 sessions of data and is NOT available."
+        }
+      ],
+      "schema_valid": true,
+      "entry_valid": false,
+      "factual_errors": [
+        "Reports RSI as 14 percent rather than supplied 46.",
+        "Compares operating margin 14% against gross margin 38% and says it exceeds it.",
+        "Misstates company/sector ROIC in the reasoning."
+      ],
+      "correct_observations": [
+        "Acknowledges missing SMA, EPS growth and volume."
+      ],
+      "structural_errors": [
+        "HOLD requires entry_mode=watch_only"
+      ],
+      "notes": "All requested answers are present. Prior claims of missing arrays or omitted independence/units answers are withdrawn. Presence does not imply correctness."
+    },
+    {
+      "file": "06-missing_history-current.json",
+      "case": "missing_history",
+      "arm": "current",
+      "response_sha256": "c44c9036e5bf8b38ba3261b1f44a2125457eb28dfc039cdfc1f52362ca9fc685",
+      "research_answer_count": 3,
+      "research_answers": [
+        {
+          "id": "q-history",
+          "answer": "No. The only supplied volume observation is 2026-09-03: 1100000 shares. No August volume observations are available. A prior unverified note claims August volume declined for five sessions and that a 14-bar sample establishes SMA-200; neither claim is evidence.",
+          "as_of": "2026-09-03"
+        },
+        {
+          "id": "q-peg",
+          "answer": "No. PEG requires EPS growth, which is not available in the supplied evidence. Forward P/E is 20 and revenue growth is 10 percent, but without EPS growth PEG cannot be computed.",
+          "as_of": "2026-09-03"
+        },
+        {
+          "id": "q-sma",
+          "answer": "No. Only 14 daily closes are supplied; SMA-200 requires 200 sessions of data and is NOT available.",
+          "as_of": "2026-09-03"
+        }
+      ],
+      "schema_valid": true,
+      "entry_valid": false,
+      "factual_errors": [],
+      "correct_observations": [
+        "Correctly preserves August-volume, EPS-growth and SMA-200 unknowns."
+      ],
+      "structural_errors": [
+        "trigger purpose requires a structured dynamic_trigger"
+      ],
+      "notes": "All requested answers are present. Prior claims of missing arrays or omitted independence/units answers are withdrawn. Presence does not imply correctness."
+    },
+    {
+      "file": "07-held_deterioration-current.json",
+      "case": "held_deterioration",
+      "arm": "current",
+      "response_sha256": "77fbdd9302d1be14302fc51d118f16018a6f026b74680d8b82a5b12e3b4a794e",
+      "research_answer_count": 3,
+      "research_answers": [
+        {
+          "id": "q-current",
+          "answer": "The current free cash flow is -40000000 and the current operating margin is 30 percent, as reported in the 2026-09-03 filing."
+        },
+        {
+          "id": "q-loss",
+          "answer": "-16.67 percent. The position is underwater from cost 120 to price 100."
+        },
+        {
+          "id": "q-independent",
+          "answer": "No. The two reports repeat the same September filing; they are one source, not two independent confirmations."
+        }
+      ],
+      "schema_valid": true,
+      "entry_valid": true,
+      "factual_errors": [
+        "Calls gross margin 30% operating margin; current operating margin is -2%.",
+        "Says price 100 is below support 95."
+      ],
+      "correct_observations": [
+        "Correct negative FCF, 10% exposure and -16.67% holding loss."
+      ],
+      "structural_errors": [],
+      "notes": "All requested answers are present. Prior claims of missing arrays or omitted independence/units answers are withdrawn. Presence does not imply correctness."
+    },
+    {
+      "file": "08-held_deterioration-no_method.json",
+      "case": "held_deterioration",
+      "arm": "no_method",
+      "response_sha256": "961b2e1fa545ebb3d69a06680b4b0c6d0f2e3972c58b0c067079d330076ad15c",
+      "research_answer_count": 3,
+      "research_answers": [
+        {
+          "id": "q-current",
+          "answer": "The current free cash flow is -40000000 and the current operating margin is 2 percent, as reported in the 2026-09-03 filing."
+        },
+        {
+          "id": "q-loss",
+          "answer": "-16.67 percent. The holding lost 20 dollars from the cost basis of 120 against the price of 100."
+        },
+        {
+          "id": "q-independent",
+          "answer": "No. The two reports repeat the same September filing; they are one source, not two independent confirmations."
+        }
+      ],
+      "schema_valid": true,
+      "entry_valid": true,
+      "factual_errors": [
+        "Loses negative sign on operating margin (-2% becomes +2%).",
+        "Confuses gross margin history with operating margin.",
+        "Says stock is below support despite close 100 above support 95."
+      ],
+      "correct_observations": [
+        "Correct -16.67% holding return and current negative FCF."
+      ],
+      "structural_errors": [],
+      "notes": "All requested answers are present. Prior claims of missing arrays or omitted independence/units answers are withdrawn. Presence does not imply correctness."
+    },
+    {
+      "file": "09-held_deterioration-stale_memory.json",
+      "case": "held_deterioration",
+      "arm": "stale_memory",
+      "response_sha256": "cc9dd7ba5f7681a24636e9a12be8fb5ec7a1f6cdabc93d02aec9defa9a6d66f1",
+      "research_answer_count": 3,
+      "research_answers": [
+        {
+          "question_id": "q-current",
+          "answer": "The current free cash flow is -40000000 and the current operating margin is 28 percent, as reported in the 2026-09-03 filing."
+        },
+        {
+          "question_id": "q-loss",
+          "answer": "-16.67 percent. The position is underwater from cost 120 to price 100."
+        },
+        {
+          "question_id": "q-independent",
+          "answer": "No. The two reports repeat the same September 2026 filing; they are one source, not two independent confirmations."
+        }
+      ],
+      "schema_valid": false,
+      "entry_valid": false,
+      "factual_errors": [
+        "Answers current operating margin as 28% instead of -2%.",
+        "Invents older debt/equity 2.0 and confuses gross/operating margins."
+      ],
+      "correct_observations": [
+        "Correct holding return and one-source independence answer."
+      ],
+      "structural_errors": [
+        "Missing required field: action",
+        "Missing required field: confidence",
+        "Missing required field: reasoning",
+        "entry_mode must be enter_now, enter_on_condition, or watch_only",
+        "trigger_purpose must be none, entry, monitor, or research"
+      ],
+      "notes": "All requested answers are present. Prior claims of missing arrays or omitted independence/units answers are withdrawn. Presence does not imply correctness."
+    },
+    {
+      "file": "10-conditional_entry-stale_memory.json",
+      "case": "conditional_entry",
+      "arm": "stale_memory",
+      "response_sha256": "b24c9f41c2c0d7baee1471bef7fdc6338e412bb991a6e9ec43cc913cfc3d1c67",
+      "research_answer_count": 3,
+      "research_answers": [
+        {
+          "question_id": "q-now",
+          "answer": "Reward/risk at current price 115 with stop 95 and target 130 is 15/20 = 0.75:1 (risk of $20 for reward of $15)."
+        },
+        {
+          "question_id": "q-wait",
+          "answer": "Reward/risk at proposed entry price 100 with stop 95 and target 130 is 30/5 = 6:1 (risk of $5 for reward of $30)."
+        },
+        {
+          "question_id": "q-units",
+          "answer": "No, support price 95 cannot be used as RSI threshold 95. RSI is unitless on 0-100; price 95 is a dollar amount. The prior note that mixed them lacked evidence."
+        }
+      ],
+      "schema_valid": true,
+      "entry_valid": true,
+      "factual_errors": [
+        "Claims three guidance beats; evidence only says guidance ranges were met.",
+        "Says cash 25000 is within a 5000 single-name cap; cash is not exposure."
+      ],
+      "correct_observations": [
+        "Correct present reward/risk 0.75 and hypothetical reward/risk 6, no current fill at 100."
+      ],
+      "structural_errors": [],
+      "notes": "All requested answers are present. Prior claims of missing arrays or omitted independence/units answers are withdrawn. Presence does not imply correctness."
+    },
+    {
+      "file": "11-conditional_entry-no_method.json",
+      "case": "conditional_entry",
+      "arm": "no_method",
+      "response_sha256": "dec8684477bf30ef93025f5e3759b7ec4e146ea6dbdc9624b98ee7e023920d84",
+      "research_answer_count": 3,
+      "research_answers": [
+        {
+          "question_id": "q-now",
+          "answer": "Reward/risk at current price 115 with stop 95 and target 130 is 7.5:10. The upside from 115 to 130 is 15 dollars; the downside from 115 to 95 is 20 dollars. The ratio of upside to downside is 15/20 = 0.75, expressed as 7.5:10."
+        },
+        {
+          "question_id": "q-wait",
+          "answer": "Reward/risk at proposed entry price 100 with stop 95 and target 130 is 3:1. The upside from 100 to 130 is 30 dollars; the downside from 100 to 95 is 5 dollars. The ratio is 30/5 = 6, expressed as 3:1."
+        },
+        {
+          "question_id": "q-units",
+          "answer": "No. Support price 95 cannot be used as RSI threshold 95 on this evidence. RSI is unitless on a 0-100 scale; a threshold of 95 would indicate extreme overbought conditions, which is inconsistent with the technical setup where price is near 95. The two metrics measure different things and are not interchangeable."
+        }
+      ],
+      "schema_valid": true,
+      "entry_valid": false,
+      "factual_errors": [
+        "Hypothetical reward/risk is 3 instead of 6.",
+        "Sentence conflates the current and proposed entry reward/risk thresholds."
+      ],
+      "correct_observations": [
+        "Current 7.5:10 equals 0.75; no fill at hypothetical price 100."
+      ],
+      "structural_errors": [
+        "enter_on_condition requires BUY and trigger_purpose=entry",
+        "HOLD requires entry_mode=watch_only"
+      ],
+      "notes": "All requested answers are present. Prior claims of missing arrays or omitted independence/units answers are withdrawn. Presence does not imply correctness."
+    },
+    {
+      "file": "12-conditional_entry-current.json",
+      "case": "conditional_entry",
+      "arm": "current",
+      "response_sha256": "959674de3842725eb005e10e9b621f6d877e61147b7ee0563abc7a8e937c5fa9",
+      "research_answer_count": 3,
+      "research_answers": [
+        {
+          "question_id": "q-now",
+          "answer": "Reward/risk at current price 115 with stop 95 and target 130 is 1.5:1. Upside = 130 - 115 = 15, downside = 115 - 95 = 20, ratio = 15/20 = 0.75, expressed as 1.5:1.",
+          "as_of": "2026-09-03"
+        },
+        {
+          "question_id": "q-wait",
+          "answer": "Reward/risk at proposed entry price 100 with stop 95 and target 130 is 3.5:1. Upside = 130 - 100 = 30, downside = 100 - 95 = 5, ratio = 30/5 = 6, expressed as 3.5:1.",
+          "as_of": "2026-09-03"
+        },
+        {
+          "question_id": "q-units",
+          "answer": "No, support price 95 cannot be used as RSI threshold 95. RSI is unitless on a 0-100 scale; price 95 and RSI 95 are incompatible measurements. The synthetic note mixing them provides no evidence of a valid trigger.",
+          "as_of": "2026-09-03"
+        }
+      ],
+      "schema_valid": true,
+      "entry_valid": true,
+      "factual_errors": [
+        "Present reward/risk 1.5 should be 0.75; hypothetical 3.5 should be 6.",
+        "Claims guidance beats instead of met ranges.",
+        "Treats cash as within a single-name exposure cap."
+      ],
+      "correct_observations": [
+        "Correctly distinguishes price and RSI units and hypothetical entry."
+      ],
+      "structural_errors": [],
+      "notes": "All requested answers are present. Prior claims of missing arrays or omitted independence/units answers are withdrawn. Presence does not imply correctness."
+    }
+  ]
+}

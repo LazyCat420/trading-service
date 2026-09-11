@@ -1,0 +1,56 @@
+{
+  "case": "missing_history",
+  "arm": "baseline",
+  "cycle_id": "bench-memory-proxy-468f99009ffa",
+  "source_index": 4,
+  "http_status": 200,
+  "response": "{\n    \"research_answers\": [\n        {\n            \"question_id\": \"q-history\",\n            \"answer\": \"No. The supplied 14 daily closes end on 2026-09-03; no August 2026 session closes are provided. The prior unverified note about five-session declining volume is not evidence.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"question_id\": \"q-peg\",\n            \"answer\": \"No. PEG requires EPS growth, which is not supplied. Revenue growth of 10 percent and forward P/E of 20 are available, but EPS is absent, so PEG cannot be computed from the evidence.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"question_id\": \"q-sma\",\n            \"answer\": \"No. Only 14 closes are supplied; a 200-session moving average cannot be established from 14 data points.\",\n            \"as_of\": \"2026-09-03\"\n        }\n    ],\n    \"final_decision\": {\n        \"action\": \"HOLD\",\n        \"confidence\": 72,\n        \"reasoning\": \"EVLT shows current profitability with ROIC 14 percent vs sector 10 percent, forward P/E 20, revenue growth 10 percent, and gross margin 40-42 percent vs sector 38 percent. Debt/equity 0.4 is moderate. No position is held; cash 25000 against 5 percent max single-name exposure (5000). The only unresolved technical question is the SMA-200, which cannot be established from 14 closes. Volume trend over five sessions is unknown. PEG cannot be computed. With no earnings event for seven sessions and a constructive fundamental setup, HOLD is appropriate until technical confirmation or a catalyst emerges.\",\n        \"position_size_pct\": 0,\n        \"stop_loss\": null,\n        \"take_profit\": null,\n        \"exit_style\": null,\n        \"entry_mode\": \"enter_now\",\n        \"trigger_purpose\": \"none\",\n        \"resolution_condition\": null,\n        \"dynamic_trigger\": null,\n        \"mispricing_basis\": \"Current fundamentals (ROIC, margins, leverage) are supportive; technical confirmation (SMA-200, volume trend) is unresolved.\",\n        \"edge_type\": \"fundamental\",\n        \"bear_verdict_response\": {\n            \"decisive_claim\": null,\n            \"claim_type\": null,\n            \"overrode_bear\": false\n        },\n        \"confidence_floor\": 0,\n        \"conviction_vector\": {\n            \"data_quality\": 70,\n            \"consensus_strength\": 65,\n            \"regime_alignment\": 80,\n            \"risk_adjusted\": 75\n        },\n        \"overrides_veto\": false,\n        \"override_justification\": \"\",\n        \"persona_used\": \"jane_street\",\n        \"regime\": \"CONTRADICTORY\"\n    }\n}",
+  "usage": {
+    "inputTokens": 3956,
+    "outputTokens": 678,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 3956
+  },
+  "model": "nemotron35",
+  "conversation_id": "47e8b160-cb14-40f5-953d-49c932b576a7",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 72,
+    "reasoning": "EVLT shows current profitability with ROIC 14 percent vs sector 10 percent, forward P/E 20, revenue growth 10 percent, and gross margin 40-42 percent vs sector 38 percent. Debt/equity 0.4 is moderate. No position is held; cash 25000 against 5 percent max single-name exposure (5000). The only unresolved technical question is the SMA-200, which cannot be established from 14 closes. Volume trend over five sessions is unknown. PEG cannot be computed. With no earnings event for seven sessions and a constructive fundamental setup, HOLD is appropriate until technical confirmation or a catalyst emerges.",
+    "position_size_pct": 0,
+    "stop_loss": null,
+    "take_profit": null,
+    "exit_style": null,
+    "entry_mode": "enter_now",
+    "trigger_purpose": "none",
+    "resolution_condition": null,
+    "dynamic_trigger": null,
+    "mispricing_basis": "Current fundamentals (ROIC, margins, leverage) are supportive; technical confirmation (SMA-200, volume trend) is unresolved.",
+    "edge_type": "fundamental",
+    "bear_verdict_response": {
+      "decisive_claim": null,
+      "claim_type": null,
+      "overrode_bear": false
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 70,
+      "consensus_strength": 65,
+      "regime_alignment": 80,
+      "risk_adjusted": 75
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY"
+  },
+  "schema_errors": [],
+  "entry_errors": [
+    "HOLD requires entry_mode=watch_only"
+  ],
+  "elapsed_s": 11.89891702100067
+}

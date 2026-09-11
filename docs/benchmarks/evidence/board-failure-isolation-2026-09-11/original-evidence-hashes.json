@@ -1,0 +1,20 @@
+{
+  "01-headroom-current.json": "eec5d55db7daa803a6a7500ec74ca63b86d7a534b8b534ec7f209cb5acad49b1",
+  "02-headroom-no_method.json": "6e64138b91b54fe3bdb2034f2bd0053fd3c4fdd7a06aaf258240e2b6de39743b",
+  "03-headroom-stale_memory.json": "981175e7a2a3663153c87f6496c06ad6453ff70ce59a0e6b8ff07a32ff78f44d",
+  "04-missing_history-stale_memory.json": "de47ab224562a3fe67ceab1a4d60653e83aa3175922a6e766343cbbe622a5c21",
+  "05-missing_history-no_method.json": "49143b3aab94bbddd4941be5de50579092ef5a9c39e236306677e12f4f065d46",
+  "06-missing_history-current.json": "066bed8d818dcdb1c3911e4698f9524e81125baf3657c6217add836da50338ae",
+  "07-held_deterioration-current.json": "3d1c2a2d2fbaaeadbaddc5d6ca814bfccd06afb44cce1e542c02cf352b701daa",
+  "08-held_deterioration-no_method.json": "af2c8f1f6a0cfed82399b6344f24da575485b68848fb2f90fc4e3959facac35f",
+  "09-held_deterioration-stale_memory.json": "70980df6c670b26b655dc78db3a59e18c3e8f52a13196c18a702637fe93289e1",
+  "10-conditional_entry-stale_memory.json": "935c409433eccdcc06520b2c090ed1235a243179e1a312f225cb47ce5ce0621f",
+  "11-conditional_entry-no_method.json": "8eba48180bb09b4b8cf94bc9b104193365531fe4e1b5e5f0134ea33db593c9de",
+  "12-conditional_entry-current.json": "9eade3083426e6c0cef669071850ff333c9bd36f7ed754e106ac7871a4d9152f",
+  "arithmetic-guard-coverage.json": "3c83ad8bf4de1acfce5e455390b35477522f305468e9a961eb055e5956b2f6fc",
+  "delivery-canary.json": "683efdf00edbea46d0c9d1bd53ce58f43540bd89edb4f8b2a847e60b826335d1",
+  "manifest.json": "8efb4a9eb7243f3773ded6a84d2377c0cd1f44ea49bf4a4412ac5f4df5b463d1",
+  "review.json": "88ce894f9d6ac702056fe9e5fde2bf2103d2c7fe8ac0739e53d69f71696d8201",
+  "reviewer.py": "801131cbe52b9a76c7830c5bc6c8992c694c557665cf5b32d418db43cbc3bde6",
+  "runner.py": "568bcce8e6006659742076c2e7d80706c7c7ca85877e388efe973dcd9769d2e9"
+}

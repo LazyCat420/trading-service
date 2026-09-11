@@ -1,0 +1,168 @@
+{
+  "cohorts": {
+    "live-repairs": {
+      "attempts": 5,
+      "http_200": 5,
+      "accepted": 0,
+      "outcomes": [
+        {
+          "source_index": 4,
+          "outcome": "AGENT_ERROR",
+          "repair_errors": null
+        },
+        {
+          "source_index": 5,
+          "outcome": "AGENT_ERROR",
+          "repair_errors": null
+        },
+        {
+          "source_index": 6,
+          "outcome": "AGENT_ERROR",
+          "repair_errors": null
+        },
+        {
+          "source_index": 9,
+          "outcome": "AGENT_ERROR",
+          "repair_errors": null
+        },
+        {
+          "source_index": 11,
+          "outcome": "AGENT_ERROR",
+          "repair_errors": null
+        }
+      ]
+    },
+    "live-repairs-after-parser": {
+      "attempts": 5,
+      "http_200": 5,
+      "accepted": 0,
+      "outcomes": [
+        {
+          "source_index": 4,
+          "outcome": "AGENT_ERROR",
+          "repair_errors": {
+            "final_decision": [
+              "HOLD requires entry_mode=watch_only",
+              "HOLD requires entry_mode=watch_only"
+            ]
+          }
+        },
+        {
+          "source_index": 5,
+          "outcome": "AGENT_ERROR",
+          "repair_errors": {
+            "final_decision": [
+              "HOLD requires entry_mode=watch_only",
+              "HOLD requires entry_mode=watch_only"
+            ]
+          }
+        },
+        {
+          "source_index": 6,
+          "outcome": "AGENT_ERROR",
+          "repair_errors": {
+            "final_decision": [
+              "trigger purpose requires a structured dynamic_trigger",
+              "trigger purpose requires a structured dynamic_trigger"
+            ]
+          }
+        },
+        {
+          "source_index": 9,
+          "outcome": "AGENT_ERROR",
+          "repair_errors": null
+        },
+        {
+          "source_index": 11,
+          "outcome": "AGENT_ERROR",
+          "repair_errors": {
+            "final_decision": [
+              "enter_on_condition requires BUY and trigger_purpose=entry",
+              "HOLD requires entry_mode=watch_only",
+              "enter_on_condition requires BUY and trigger_purpose=entry",
+              "HOLD requires entry_mode=watch_only"
+            ]
+          }
+        }
+      ]
+    },
+    "live-repairs-explicit-correction": {
+      "attempts": 5,
+      "http_200": 5,
+      "accepted": 3,
+      "outcomes": [
+        {
+          "source_index": 4,
+          "outcome": "SUCCESS",
+          "repair_errors": {}
+        },
+        {
+          "source_index": 5,
+          "outcome": "SUCCESS",
+          "repair_errors": {}
+        },
+        {
+          "source_index": 6,
+          "outcome": "AGENT_ERROR",
+          "repair_errors": {
+            "final_decision": [
+              "trigger purpose requires a structured dynamic_trigger",
+              "trigger purpose requires a structured dynamic_trigger"
+            ]
+          }
+        },
+        {
+          "source_index": 9,
+          "outcome": "AGENT_ERROR",
+          "repair_errors": null
+        },
+        {
+          "source_index": 11,
+          "outcome": "SUCCESS",
+          "repair_errors": {}
+        }
+      ]
+    },
+    "live-repairs-final": {
+      "attempts": 5,
+      "http_200": 5,
+      "accepted": 4,
+      "outcomes": [
+        {
+          "source_index": 4,
+          "outcome": "SUCCESS",
+          "repair_errors": {}
+        },
+        {
+          "source_index": 5,
+          "outcome": "AGENT_ERROR",
+          "repair_errors": {
+            "final_decision": [
+              "HOLD requires entry_mode=watch_only",
+              "correction changed resolution_condition"
+            ]
+          }
+        },
+        {
+          "source_index": 6,
+          "outcome": "SUCCESS",
+          "repair_errors": {}
+        },
+        {
+          "source_index": 9,
+          "outcome": "SUCCESS",
+          "repair_errors": {}
+        },
+        {
+          "source_index": 11,
+          "outcome": "SUCCESS",
+          "repair_errors": {}
+        }
+      ]
+    }
+  },
+  "limitations": "Each cohort is one attempt per selected original failure, same provider/model and frozen first response, with successive local harness versions. No general success-rate claim. Schema success can retain wrong factual claims. Blocked-network-preflight contains five zero-provider-call fixture failures, excluded from model counts.",
+  "models": [
+    "nemotron35"
+  ]
+}

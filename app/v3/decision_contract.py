@@ -181,7 +181,8 @@ def correction_errors(original: dict, candidate: Any, **kwargs) -> list[str]:
     if not isinstance(candidate, dict):
         return ['correction did not produce a JSON object']
     protected = ('action', 'confidence', 'reasoning', 'position_size_pct',
-                 'stop_loss', 'take_profit', 'signal_weights', 'override_evidence')
+                 'stop_loss', 'take_profit', 'signal_weights', 'override_evidence',
+                 'research_answers', 'resolution_condition')
     errors = [f'correction changed {key}' for key in protected
               if candidate.get(key) != original.get(key)]
     return errors + contract_errors(candidate, **kwargs)

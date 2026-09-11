@@ -1,0 +1,58 @@
+{
+  "case": "missing_history",
+  "arm": "clarified",
+  "cycle_id": "bench-memory-proxy-468f99009ffa",
+  "source_index": 4,
+  "http_status": 200,
+  "response": "{\n    \"action\": \"HOLD\",\n    \"confidence\": 65,\n    \"reasoning\": \"EVLT trades at 100 with RSI-14 46 and ATR-14 of 2 dollars. Volume decline over the prior five sessions (q-history) is unverified \u2014 only one daily close is supplied, insufficient to confirm a five-session trend. PEG cannot be computed because EPS growth is unavailable (q-peg). A 200-session SMA is not established by only 14 supplied closes (q-sma). The company shows current profitability (ROIC 14% vs sector 10%, operating margin 14%, gross margin 40-42%) and reasonable valuation (forward P/E 20, revenue growth 10%, debt/equity 0.4), but the unresolved technical and computational gaps keep the thesis uncertain. No position is held; cash is 25000 of 100000 equity, well within the 5% single-name cap. The evidence supports a constructive fundamental setup but the technical and computational uncertainties prevent a decisive action. HOLD with watch_only is appropriate until the open questions are resolved.\",\n    \"entry_mode\": \"watch_only\",\n    \"trigger_purpose\": \"none\",\n    \"dynamic_trigger\": null,\n    \"resolution_condition\": {\n        \"open_question\": \"Volume decline over preceding five sessions and PEG computation and SMA-200 establishment\",\n        \"resolving_fact\": \"Confirmed volume trend over five sessions, EPS growth available for PEG, and 200-session SMA confirmed by sufficient daily closes\"\n    },\n    \"research_answers\": [\n        {\n            \"id\": \"q-history\",\n            \"answer\": \"Unverified \u2014 only one daily close is supplied; insufficient evidence to confirm volume declined across five preceding sessions as of August 17, 2026.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"id\": \"q-peg\",\n            \"answer\": \"Cannot be computed \u2014 EPS growth is not available from the supplied evidence; only revenue growth (10 percent) and forward P/E (20) are known.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"id\": \"q-sma\",\n            \"answer\": \"No \u2014 only 14 daily closes are supplied, which is insufficient to establish a 200-session moving average.\",\n            \"as_of\": \"2026-09-03\"\n        }\n    ],\n    \"conviction_vector\": {\n        \"data_quality\": 65,\n        \"consensus_strength\": 55,\n        \"regime_alignment\": 70,\n        \"risk_adjusted\": 60\n    }\n}",
+  "usage": {
+    "inputTokens": 4137,
+    "outputTokens": 607,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 4137
+  },
+  "model": "nemotron35",
+  "conversation_id": "04750619-d2cc-4958-a513-9e8bf856a1a9",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 65,
+    "reasoning": "EVLT trades at 100 with RSI-14 46 and ATR-14 of 2 dollars. Volume decline over the prior five sessions (q-history) is unverified \u2014 only one daily close is supplied, insufficient to confirm a five-session trend. PEG cannot be computed because EPS growth is unavailable (q-peg). A 200-session SMA is not established by only 14 supplied closes (q-sma). The company shows current profitability (ROIC 14% vs sector 10%, operating margin 14%, gross margin 40-42%) and reasonable valuation (forward P/E 20, revenue growth 10%, debt/equity 0.4), but the unresolved technical and computational gaps keep the thesis uncertain. No position is held; cash is 25000 of 100000 equity, well within the 5% single-name cap. The evidence supports a constructive fundamental setup but the technical and computational uncertainties prevent a decisive action. HOLD with watch_only is appropriate until the open questions are resolved.",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "none",
+    "dynamic_trigger": null,
+    "resolution_condition": {
+      "open_question": "Volume decline over preceding five sessions and PEG computation and SMA-200 establishment",
+      "resolving_fact": "Confirmed volume trend over five sessions, EPS growth available for PEG, and 200-session SMA confirmed by sufficient daily closes"
+    },
+    "research_answers": [
+      {
+        "id": "q-history",
+        "answer": "Unverified \u2014 only one daily close is supplied; insufficient evidence to confirm volume declined across five preceding sessions as of August 17, 2026.",
+        "as_of": "2026-09-03"
+      },
+      {
+        "id": "q-peg",
+        "answer": "Cannot be computed \u2014 EPS growth is not available from the supplied evidence; only revenue growth (10 percent) and forward P/E (20) are known.",
+        "as_of": "2026-09-03"
+      },
+      {
+        "id": "q-sma",
+        "answer": "No \u2014 only 14 daily closes are supplied, which is insufficient to establish a 200-session moving average.",
+        "as_of": "2026-09-03"
+      }
+    ],
+    "conviction_vector": {
+      "data_quality": 65,
+      "consensus_strength": 55,
+      "regime_alignment": 70,
+      "risk_adjusted": 60
+    }
+  },
+  "schema_errors": [],
+  "entry_errors": [],
+  "elapsed_s": 11.358165451001696
+}

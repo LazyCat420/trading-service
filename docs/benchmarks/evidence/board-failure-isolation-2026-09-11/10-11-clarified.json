@@ -1,0 +1,67 @@
+{
+  "case": "conditional_entry",
+  "arm": "clarified",
+  "cycle_id": "bench-memory-proxy-31fedf12f809",
+  "source_index": 11,
+  "http_status": 200,
+  "response": "{\n    \"action\": \"HOLD\",\n    \"confidence\": 65,\n    \"reasoning\": \"At current price 115 with stop 95 and target 130, the reward/risk is 1.5:1 (15/20). The stock is extended above SMA-50 (98) and SMA-200 (94) with RSI-14 at 72 (overbought). The proposed entry at 100 would improve reward/risk to 6:1 (30/5), but the present entry at 115 is extended relative to technical support. The fundamental outlook is positive (ROIC 14% vs sector 10%, growing EPS, stable cash flow), but the structural contradiction between positive fundamentals and extended technicals, combined with overbought RSI, supports a HOLD until price retraces or a trigger condition is met. Support price 95 cannot serve as an RSI threshold 95 \u2014 these are different measurement scales, and no evidence supports mapping price levels to RSI values.\",\n    \"entry_mode\": \"watch_only\",\n    \"trigger_purpose\": \"none\",\n    \"dynamic_trigger\": null,\n    \"resolution_condition\": {\n        \"open_question\": \"When will EVLT price retrace to approach the risk/reward favorable entry zone?\",\n        \"resolving_fact\": \"EVLT trading price relative to SMA-50 and RSI-14 level\"\n    },\n    \"research_answers\": [\n        {\n            \"question_id\": \"q-now\",\n            \"answer\": \"Reward/risk at current price 115, stop 95, target 130 is 1.5:1 (expected gain $15, expected loss $20).\"\n        },\n        {\n            \"question_id\": \"q-wait\",\n            \"answer\": \"At proposed entry price 100 with stop 95 and target 130, reward/risk would be 6:1 (expected gain $30, expected loss $5).\"\n        },\n        {\n            \"question_id\": \"q-units\",\n            \"answer\": \"No, support price 95 cannot be used as RSI threshold 95. RSI is a unitless momentum oscillator on 0-100; price and RSI are distinct scales with no evidence supporting a mapping between them.\"\n        }\n    ],\n    \"mispricing_basis\": \"Extended entry above key moving averages with overbought RSI contradicts positive fundamental outlook.\",\n    \"edge_type\": \"technical\",\n    \"bear_verdict_response\": {\n        \"decisive_claim\": \"present entry is extended above SMA-50 and SMA-200 with RSI-14 at 72\",\n        \"claim_type\": \"size_or_timing\",\n        \"overrode_bear\": false\n    },\n    \"confidence_floor\": 0,\n    \"conviction_vector\": {\n        \"data_quality\": 70,\n        \"consensus_strength\": 55,\n        \"regime_alignment\": 65,\n        \"risk_adjusted\": 60\n    },\n    \"overrides_veto\": false,\n    \"override_justification\": \"\",\n    \"persona_used\": \"jane_street\",\n    \"regime\": \"CONTRADICTORY\"\n}",
+  "usage": {
+    "inputTokens": 3974,
+    "outputTokens": 729,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 3974
+  },
+  "model": "nemotron35",
+  "conversation_id": "5b7a0330-c201-4223-afbe-ddbbce80275a",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 65,
+    "reasoning": "At current price 115 with stop 95 and target 130, the reward/risk is 1.5:1 (15/20). The stock is extended above SMA-50 (98) and SMA-200 (94) with RSI-14 at 72 (overbought). The proposed entry at 100 would improve reward/risk to 6:1 (30/5), but the present entry at 115 is extended relative to technical support. The fundamental outlook is positive (ROIC 14% vs sector 10%, growing EPS, stable cash flow), but the structural contradiction between positive fundamentals and extended technicals, combined with overbought RSI, supports a HOLD until price retraces or a trigger condition is met. Support price 95 cannot serve as an RSI threshold 95 \u2014 these are different measurement scales, and no evidence supports mapping price levels to RSI values.",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "none",
+    "dynamic_trigger": null,
+    "resolution_condition": {
+      "open_question": "When will EVLT price retrace to approach the risk/reward favorable entry zone?",
+      "resolving_fact": "EVLT trading price relative to SMA-50 and RSI-14 level"
+    },
+    "research_answers": [
+      {
+        "question_id": "q-now",
+        "answer": "Reward/risk at current price 115, stop 95, target 130 is 1.5:1 (expected gain $15, expected loss $20)."
+      },
+      {
+        "question_id": "q-wait",
+        "answer": "At proposed entry price 100 with stop 95 and target 130, reward/risk would be 6:1 (expected gain $30, expected loss $5)."
+      },
+      {
+        "question_id": "q-units",
+        "answer": "No, support price 95 cannot be used as RSI threshold 95. RSI is a unitless momentum oscillator on 0-100; price and RSI are distinct scales with no evidence supporting a mapping between them."
+      }
+    ],
+    "mispricing_basis": "Extended entry above key moving averages with overbought RSI contradicts positive fundamental outlook.",
+    "edge_type": "technical",
+    "bear_verdict_response": {
+      "decisive_claim": "present entry is extended above SMA-50 and SMA-200 with RSI-14 at 72",
+      "claim_type": "size_or_timing",
+      "overrode_bear": false
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 70,
+      "consensus_strength": 55,
+      "regime_alignment": 65,
+      "risk_adjusted": 60
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY"
+  },
+  "schema_errors": [],
+  "entry_errors": [],
+  "elapsed_s": 11.593054870998458
+}

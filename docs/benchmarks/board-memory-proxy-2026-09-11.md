@@ -12,17 +12,19 @@ Twelve serial attempts reused the four cases from `decision_quality_v1.json`: he
 
 This is a separately labeled NAS-proxy cohort. It changes model and transport from the earlier GLM replay and does not replace that result. Tools are disabled, so it isolates prompt/memory behavior rather than production calculator use or full-cycle reliability. It tests reviewed guidance and stale-memory exposure, not whether newly generated learning has improved performance. No learning proposals were promoted.
 
-| Arm | Attempts | Minimum schema valid | Entry contract valid | Usable with no identified material factual error | Fully answers required work |
+Correction from the subsequent [failure investigation](board-failure-isolation-2026-09-11.md): the original reader discarded sibling research answers while extracting nested decisions. All 12 raw responses contain all three requested answers. The original review is retained as historical evidence; its missing-answer conclusions are withdrawn. The corrected review also finds additional numerical errors in those answers.
+
+| Arm | Attempts | Minimum schema valid | Entry contract valid | All three answers present | Structurally usable without identified factual errors |
 |---|---:|---:|---:|---:|---:|
-| Current guidance | 4 | 4 | 3 | 0 | 0 |
-| Guidance omitted | 4 | 4 | 2 | 1 | 0 |
-| Stale-memory exposure | 4 | 3 | 2 | 1 | 0 |
+| Current guidance | 4 | 4 | 3 | 4 | 0 |
+| Guidance omitted | 4 | 4 | 2 | 4 | 0 |
+| Stale-memory exposure | 4 | 3 | 2 | 4 | 0 |
 
 All 12 calls reported Nemotron, and retained provider snapshots contain the exact requested system and user text. Thus missing prompt delivery does not explain these observed errors.
 
-Examples: current guidance called the 95–115 range position of price 100 one-third instead of 25%; confused gross margin 30% with current operating margin -2%; and gave reward/risk 1.5 and 3.5 where the supplied prices imply 0.75 and 6. The no-method arm also confused financial fields and used an incompatible HOLD entry mode. The stale-memory arm produced one artifact with answers/rationale but no decision fields. Eleven of twelve omitted the requested research_answers array; some answers appeared only partly in the rationale. A correct HOLD or SELL label does not compensate for false supporting claims.
+Examples: current guidance called the 95–115 range position of price 100 one-third instead of 25%; confused gross margin 30% with current operating margin -2%; and gave reward/risk 1.5 and 3.5 where the supplied prices imply 0.75 and 6. The no-method arm also confused financial fields and used an incompatible HOLD entry mode. The stale-memory arm produced one artifact with answers/rationale but no decision fields. All twelve supplied research_answers; eleven placed the array beside a nested final_decision. The production parser originally rejected that envelope, while this benchmark extracted its decision and accidentally discarded its answers. A correct HOLD or SELL label does not compensate for false supporting claims.
 
-This small sample provides no demonstrated learning-quality improvement. Four cases are the independent units; one unblinded reviewer performed the factual review. Source evidence, exact outputs, hashes, per-artifact correct observations, errors and omissions are in [the retained cohort](evidence/board-memory-proxy-2026-09-11/review.json). A normal paper cycle separately checks the deployed tool and contract-repair paths.
+This small sample provides no demonstrated learning-quality improvement. Four cases are the independent units; one unblinded reviewer performed the factual review. Source evidence, exact outputs, hashes, per-artifact correct observations, errors and omissions are in [the corrected review](evidence/board-failure-isolation-2026-09-11/original-review-corrected.json). A normal paper cycle separately checks the deployed tool and contract-repair paths.
 
 Reported usage was present for all 12 attempts: 46548 input tokens and 9859 output tokens. Summed request duration was 153.83 seconds. Shared hardware and different output lengths preclude a speed comparison.
 

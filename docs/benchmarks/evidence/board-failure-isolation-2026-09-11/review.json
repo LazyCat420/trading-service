@@ -1,0 +1,122 @@
+{
+  "scope": "Selected original failures; one paired repeat each. Structural counts are not decision-quality scores. Manual review against immutable source corpus.",
+  "summary": {
+    "baseline": {
+      "attempts": 5,
+      "schema_and_entry_pass": 1,
+      "research_answers_present": 2
+    },
+    "clarified": {
+      "attempts": 5,
+      "schema_and_entry_pass": 5,
+      "research_answers_present": 5
+    }
+  },
+  "rows": [
+    {
+      "file": "01-4-baseline.json",
+      "source_index": 4,
+      "arm": "baseline",
+      "schema_and_entry_pass": false,
+      "research_answers_present": false,
+      "manual_findings": [
+        "Missing requested research_answers; repeats HOLD/enter_now mismatch."
+      ]
+    },
+    {
+      "file": "02-4-clarified.json",
+      "source_index": 4,
+      "arm": "clarified",
+      "schema_and_entry_pass": true,
+      "research_answers_present": true,
+      "manual_findings": [
+        "All three requested answers present, but states only one daily close although corpus supplies 14 closes; only volume has one observation.",
+        "Incorrectly compares cash availability with the single-name cap."
+      ]
+    },
+    {
+      "file": "03-5-clarified.json",
+      "source_index": 5,
+      "arm": "clarified",
+      "schema_and_entry_pass": true,
+      "research_answers_present": true,
+      "manual_findings": [
+        "All three requested answers present; unknown volume, PEG and SMA-200 handled explicitly."
+      ]
+    },
+    {
+      "file": "04-5-baseline.json",
+      "source_index": 5,
+      "arm": "baseline",
+      "schema_and_entry_pass": true,
+      "research_answers_present": false,
+      "manual_findings": [
+        "Missing requested research_answers; output contract passes on rerun."
+      ]
+    },
+    {
+      "file": "05-6-baseline.json",
+      "source_index": 6,
+      "arm": "baseline",
+      "schema_and_entry_pass": false,
+      "research_answers_present": true,
+      "manual_findings": [
+        "All three answers present; research purpose still lacks numeric trigger."
+      ]
+    },
+    {
+      "file": "06-6-clarified.json",
+      "source_index": 6,
+      "arm": "clarified",
+      "schema_and_entry_pass": true,
+      "research_answers_present": true,
+      "manual_findings": [
+        "All three answers present; calls 14% operating margin above sector norms although supplied peer margins are 13% and 15%, and no sector operating margin is given."
+      ]
+    },
+    {
+      "file": "07-9-clarified.json",
+      "source_index": 9,
+      "arm": "clarified",
+      "schema_and_entry_pass": true,
+      "research_answers_present": true,
+      "manual_findings": [
+        "Current operating margin incorrectly 30% instead of -2%; 30% is gross margin.",
+        "Invents prior debt/equity ~1.0; fabricates 35% recovery target.",
+        "HOLD acknowledges 10% exposure above 5% cap but offers no reduction."
+      ]
+    },
+    {
+      "file": "08-9-baseline.json",
+      "source_index": 9,
+      "arm": "baseline",
+      "schema_and_entry_pass": false,
+      "research_answers_present": true,
+      "manual_findings": [
+        "Current operating margin incorrectly 30% instead of -2%; substitutes rationale for required reasoning."
+      ]
+    },
+    {
+      "file": "09-11-baseline.json",
+      "source_index": 11,
+      "arm": "baseline",
+      "schema_and_entry_pass": false,
+      "research_answers_present": false,
+      "manual_findings": [
+        "Current and conditional reward/risk correct in prose (0.75 and 6), but missing research_answers.",
+        "Changes management met guidance into guidance beats."
+      ]
+    },
+    {
+      "file": "10-11-clarified.json",
+      "source_index": 11,
+      "arm": "clarified",
+      "schema_and_entry_pass": true,
+      "research_answers_present": true,
+      "manual_findings": [
+        "Current reward/risk incorrectly 1.5 despite writing 15/20; correct value is 0.75.",
+        "Conditional reward/risk and price/RSI distinction correct."
+      ]
+    }
+  ]
+}

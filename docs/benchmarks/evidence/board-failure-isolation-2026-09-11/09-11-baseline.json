@@ -1,0 +1,62 @@
+{
+  "case": "conditional_entry",
+  "arm": "baseline",
+  "cycle_id": "bench-memory-proxy-31fedf12f809",
+  "source_index": 11,
+  "http_status": 200,
+  "response": "{\n    \"research_answers\": [\n        {\n            \"question_id\": \"q-now\",\n            \"answer\": \"Reward/risk at current price 115 with stop 95 and target 130 is 15/20 = 0.75:1 (upside $15, downside $20).\"\n        },\n        {\n            \"question_id\": \"q-wait\",\n            \"answer\": \"Reward/risk at proposed entry price 100 with stop 95 and target 130 is 30/5 = 6:1 (upside $30, downside $5).\"\n        },\n        {\n            \"question_id\": \"q-units\",\n            \"answer\": \"No, support price 95 cannot be used as RSI threshold 95. RSI is unitless on 0-100 scale; price 95 and RSI 95 are incompatible measurements. The prior note mixing them lacks evidence.\"\n        }\n    ],\n    \"final_decision\": {\n        \"action\": \"HOLD\",\n        \"confidence\": 65,\n        \"reasoning\": \"The fundamental outlook is positive: revenue $1B, FCF $120M, cash $300M, debt $200M, ROIC 14% vs sector 10%, operating margin 14%, three consecutive guidance beats, sector gross margin 38% vs 40/41/42. However, the present entry is extended: price 115 vs SMA-50 98 and SMA-200 94, RSI-14 overbought at 72, and the stop 95 is 17.4% below current price with only 0.75:1 reward/risk. The proposed entry at 100 offers 6:1 reward/risk but requires a trigger. RSI threshold 95 is invalid as RSI is unitless. No position is held; cash 25000 is available. The contradiction between extended current entry and attractive future entry at 100 with valid risk/reward is the structural mispricing. The trade is not executable at current levels without overpaying for risk; waiting for the 100 trigger is the calibrated response.\",\n        \"position_size_pct\": 0,\n        \"stop_loss\": 95.0,\n        \"take_profit\": 130.0,\n        \"exit_style\": \"hard_stop\",\n        \"entry_mode\": \"watch_only\",\n        \"trigger_purpose\": \"entry\",\n        \"dynamic_trigger\": {\n            \"type\": \"price_below\",\n            \"value\": 100\n        },\n        \"resolution_condition\": {\n            \"open_question\": \"Can price reach 100 on next downward move?\",\n            \"resolving_fact\": \"EVLT trading price relative to 100 level\"\n        },\n        \"mispricing_basis\": \"Extended entry at 115 offers poor 0.75:1 reward/risk; valid 6:1 reward/risk available at 100 but RSI threshold 95 is incompatible; structural contradiction between current overbought levels and future attractive entry.\",\n        \"edge_type\": \"structural\",\n        \"bear_verdict_response\": {\n            \"decisive_claim\": \"present entry is extended with poor reward/risk\",\n            \"claim_type\": \"size_or_timing\",\n            \"overrode_bear\": false\n        },\n        \"confidence_floor\": 0,\n        \"conviction_vector\": {\n            \"data_quality\": 70,\n            \"consensus_strength\": 55,\n            \"regime_alignment\": 75,\n            \"risk_adjusted\": 65\n        },\n        \"overrides_veto\": false,\n        \"override_justification\": \"\",\n        \"persona_used\": \"jane_street\",\n        \"regime\": \"CONTRADICTORY\"\n    }\n}",
+  "usage": {
+    "inputTokens": 3793,
+    "outputTokens": 871,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 3793
+  },
+  "model": "nemotron35",
+  "conversation_id": "f94ff777-f229-463c-8793-ac498d286280",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 65,
+    "reasoning": "The fundamental outlook is positive: revenue $1B, FCF $120M, cash $300M, debt $200M, ROIC 14% vs sector 10%, operating margin 14%, three consecutive guidance beats, sector gross margin 38% vs 40/41/42. However, the present entry is extended: price 115 vs SMA-50 98 and SMA-200 94, RSI-14 overbought at 72, and the stop 95 is 17.4% below current price with only 0.75:1 reward/risk. The proposed entry at 100 offers 6:1 reward/risk but requires a trigger. RSI threshold 95 is invalid as RSI is unitless. No position is held; cash 25000 is available. The contradiction between extended current entry and attractive future entry at 100 with valid risk/reward is the structural mispricing. The trade is not executable at current levels without overpaying for risk; waiting for the 100 trigger is the calibrated response.",
+    "position_size_pct": 0,
+    "stop_loss": 95.0,
+    "take_profit": 130.0,
+    "exit_style": "hard_stop",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "entry",
+    "dynamic_trigger": {
+      "type": "price_below",
+      "value": 100
+    },
+    "resolution_condition": {
+      "open_question": "Can price reach 100 on next downward move?",
+      "resolving_fact": "EVLT trading price relative to 100 level"
+    },
+    "mispricing_basis": "Extended entry at 115 offers poor 0.75:1 reward/risk; valid 6:1 reward/risk available at 100 but RSI threshold 95 is incompatible; structural contradiction between current overbought levels and future attractive entry.",
+    "edge_type": "structural",
+    "bear_verdict_response": {
+      "decisive_claim": "present entry is extended with poor reward/risk",
+      "claim_type": "size_or_timing",
+      "overrode_bear": false
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 70,
+      "consensus_strength": 55,
+      "regime_alignment": 75,
+      "risk_adjusted": 65
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY"
+  },
+  "schema_errors": [],
+  "entry_errors": [
+    "trigger_purpose=entry requires enter_on_condition"
+  ],
+  "elapsed_s": 14.179248207001365
+}

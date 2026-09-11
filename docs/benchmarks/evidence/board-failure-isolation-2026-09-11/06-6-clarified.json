@@ -1,0 +1,58 @@
+{
+  "case": "missing_history",
+  "arm": "clarified",
+  "cycle_id": "bench-memory-proxy-4d1b493c9be4",
+  "source_index": 6,
+  "http_status": 200,
+  "response": "{\n    \"action\": \"HOLD\",\n    \"confidence\": 68,\n    \"reasoning\": \"EVLT trades at a forward P/E of 20x with 10% revenue growth and 14% operating margin, which is modestly above sector norms (peer forward P/E 22-24x, sector operating margin 13-15%). The company's ROIC of 14% exceeds the sector 10%, and gross margins of 40-42% are above the sector 38%. However, the technical setup is unresolved: only 14 daily closes are available, SMA-200 cannot be established, and the August volume decline claim is unverified. The bear argument that volume deterioration signals unresolved technical risk is partially credible but not decisively proven. The fundamental thesis remains intact with positive ROIC spread and margin expansion, but the unresolved technical confirmation and unverified volume trend create sufficient uncertainty to warrant a HOLD with watch_only. The position is not open, so this is a fresh allocation decision.\",\n    \"entry_mode\": \"watch_only\",\n    \"trigger_purpose\": \"none\",\n    \"dynamic_trigger\": null,\n    \"resolution_condition\": {\n        \"open_question\": \"Was volume declining across the preceding five trading sessions as of August 17, 2026?\",\n        \"resolving_fact\": \"Daily volume observations for the five sessions preceding August 17, 2026\"\n    },\n    \"research_answers\": [\n        {\n            \"question_id\": \"q-history\",\n            \"answer\": \"Cannot be determined. Only 14 daily closes are supplied, and no August volume observations are available. The prior unverified note claiming five-session volume decline and SMA-200 establishment is not evidence.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"question_id\": \"q-peg\",\n            \"answer\": \"No. PEG requires EPS growth, which is not available in the supplied evidence. Forward P/E of 20x and revenue growth of 10% are known, but without EPS growth the PEG ratio cannot be computed.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"question_id\": \"q-sma\",\n            \"answer\": \"No. A 200-session moving average requires 200 daily closes; only 14 are supplied. SMA-200 is not established by these closes.\",\n            \"as_of\": \"2026-09-03\"\n        }\n    ],\n    \"conviction_vector\": {\n        \"data_quality\": 70,\n        \"consensus_strength\": 55,\n        \"regime_alignment\": 80,\n        \"risk_adjusted\": 65\n    }\n}",
+  "usage": {
+    "inputTokens": 4028,
+    "outputTokens": 610,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 4028
+  },
+  "model": "nemotron35",
+  "conversation_id": "a55a7d5b-723e-4432-9960-81dad8db852a",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 68,
+    "reasoning": "EVLT trades at a forward P/E of 20x with 10% revenue growth and 14% operating margin, which is modestly above sector norms (peer forward P/E 22-24x, sector operating margin 13-15%). The company's ROIC of 14% exceeds the sector 10%, and gross margins of 40-42% are above the sector 38%. However, the technical setup is unresolved: only 14 daily closes are available, SMA-200 cannot be established, and the August volume decline claim is unverified. The bear argument that volume deterioration signals unresolved technical risk is partially credible but not decisively proven. The fundamental thesis remains intact with positive ROIC spread and margin expansion, but the unresolved technical confirmation and unverified volume trend create sufficient uncertainty to warrant a HOLD with watch_only. The position is not open, so this is a fresh allocation decision.",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "none",
+    "dynamic_trigger": null,
+    "resolution_condition": {
+      "open_question": "Was volume declining across the preceding five trading sessions as of August 17, 2026?",
+      "resolving_fact": "Daily volume observations for the five sessions preceding August 17, 2026"
+    },
+    "research_answers": [
+      {
+        "question_id": "q-history",
+        "answer": "Cannot be determined. Only 14 daily closes are supplied, and no August volume observations are available. The prior unverified note claiming five-session volume decline and SMA-200 establishment is not evidence.",
+        "as_of": "2026-09-03"
+      },
+      {
+        "question_id": "q-peg",
+        "answer": "No. PEG requires EPS growth, which is not available in the supplied evidence. Forward P/E of 20x and revenue growth of 10% are known, but without EPS growth the PEG ratio cannot be computed.",
+        "as_of": "2026-09-03"
+      },
+      {
+        "question_id": "q-sma",
+        "answer": "No. A 200-session moving average requires 200 daily closes; only 14 are supplied. SMA-200 is not established by these closes.",
+        "as_of": "2026-09-03"
+      }
+    ],
+    "conviction_vector": {
+      "data_quality": 70,
+      "consensus_strength": 55,
+      "regime_alignment": 80,
+      "risk_adjusted": 65
+    }
+  },
+  "schema_errors": [],
+  "entry_errors": [],
+  "elapsed_s": 10.95780328100227
+}

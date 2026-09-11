@@ -1,0 +1,70 @@
+{
+  "case": "held_deterioration",
+  "arm": "baseline",
+  "cycle_id": "bench-memory-proxy-ffe1480b6f81",
+  "source_index": 9,
+  "http_status": 200,
+  "response": "{\n    \"research_answers\": [\n        {\n            \"id\": \"q-current\",\n            \"answer\": \"The current free cash flow is -40000000 and the current operating margin is 30 percent, as reported in the 2026-09-03 filing.\"\n        },\n        {\n            \"id\": \"q-loss\",\n            \"answer\": \"-16.67 percent. The position is underwater from cost 120 to price 100.\"\n        },\n        {\n            \"id\": \"q-independent\",\n            \"answer\": \"No. The two reports repeat the same September 2026 filing; they are one source, not two independent confirmations.\"\n        }\n    ],\n    \"rationale\": \"The 2026-09-03 filing introduces material deterioration: operating margin fell from 42 percent to 30 percent, free cash flow turned negative at -40 million, and debt/equity rose to 2.5. Revenue growth is not reported, and no new catalyst offsets the decline. The stock closed at 100 versus an average cost of 120, giving a -16.67 percent unrealized loss. The two repeating September reports are a single source, so there is no independent duplication. The sector gross margin is 38 percent, and the company's ROIC of 14 percent exceeds the sector 10 percent, but the margin compression and negative cash flow are the dominant current signals. The position is 10 percent of equity, exceeding the 5 percent maximum single-name exposure limit, which is a risk flag. No earnings event occurs in the next seven sessions. The contradiction between the prior strong profitability (gross margins 40/41/42 percent, ROIC 14 percent vs sector 10 percent) and the new filing's 30 percent margin and -40 million FCF creates a structural mispricing scenario. However, the portfolio already holds the name with a 10 percent exposure, and the thesis that opened the position is now broken by the margin collapse and negative free cash flow. The appropriate action is to reduce exposure given the broken thesis and the concentration limit breach, not to add or maintain the full position.\",\n    \"action\": \"SELL\",\n    \"confidence\": 82,\n    \"position_size_pct\": 0,\n    \"stop_loss\": null,\n    \"take_profit\": null,\n    \"exit_style\": \"hard_stop\",\n    \"entry_mode\": \"enter_now\",\n    \"trigger_purpose\": \"none\",\n    \"resolution_condition\": null,\n    \"dynamic_trigger\": null,\n    \"mispricing_basis\": \"Operating margin compression from 42 percent to 30 percent and free cash flow deterioration from 120 million to -40 million as of 2026-09-03, creating a structural mispricing relative to prior profitability and sector peers.\",\n    \"edge_type\": \"structural\",\n    \"bear_verdict_response\": {\"decisive_claim\": \"the 2026-09-03 filing's operating margin decline to 30 percent and free cash flow turn to -40 million\", \"claim_type\": \"size_or_timing\", \"overrode_bear\": false},\n    \"confidence_floor\": 0,\n    \"conviction_vector\": {\"data_quality\": 80, \"consensus_strength\": 55, \"regime_alignment\": 85, \"risk_adjusted\": 65},\n    \"overrides_veto\": false,\n    \"override_justification\": \"\",\n    \"persona_used\": \"jane_street\",\n    \"regime\": \"CONTRADICTORY\"\n}",
+  "usage": {
+    "inputTokens": 3998,
+    "outputTokens": 809,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 3998
+  },
+  "model": "nemotron35",
+  "conversation_id": "1357d8b8-6aba-4ad7-b8ec-b73f601960df",
+  "artifact": {
+    "research_answers": [
+      {
+        "id": "q-current",
+        "answer": "The current free cash flow is -40000000 and the current operating margin is 30 percent, as reported in the 2026-09-03 filing."
+      },
+      {
+        "id": "q-loss",
+        "answer": "-16.67 percent. The position is underwater from cost 120 to price 100."
+      },
+      {
+        "id": "q-independent",
+        "answer": "No. The two reports repeat the same September 2026 filing; they are one source, not two independent confirmations."
+      }
+    ],
+    "rationale": "The 2026-09-03 filing introduces material deterioration: operating margin fell from 42 percent to 30 percent, free cash flow turned negative at -40 million, and debt/equity rose to 2.5. Revenue growth is not reported, and no new catalyst offsets the decline. The stock closed at 100 versus an average cost of 120, giving a -16.67 percent unrealized loss. The two repeating September reports are a single source, so there is no independent duplication. The sector gross margin is 38 percent, and the company's ROIC of 14 percent exceeds the sector 10 percent, but the margin compression and negative cash flow are the dominant current signals. The position is 10 percent of equity, exceeding the 5 percent maximum single-name exposure limit, which is a risk flag. No earnings event occurs in the next seven sessions. The contradiction between the prior strong profitability (gross margins 40/41/42 percent, ROIC 14 percent vs sector 10 percent) and the new filing's 30 percent margin and -40 million FCF creates a structural mispricing scenario. However, the portfolio already holds the name with a 10 percent exposure, and the thesis that opened the position is now broken by the margin collapse and negative free cash flow. The appropriate action is to reduce exposure given the broken thesis and the concentration limit breach, not to add or maintain the full position.",
+    "action": "SELL",
+    "confidence": 82,
+    "position_size_pct": 0,
+    "stop_loss": null,
+    "take_profit": null,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_now",
+    "trigger_purpose": "none",
+    "resolution_condition": null,
+    "dynamic_trigger": null,
+    "mispricing_basis": "Operating margin compression from 42 percent to 30 percent and free cash flow deterioration from 120 million to -40 million as of 2026-09-03, creating a structural mispricing relative to prior profitability and sector peers.",
+    "edge_type": "structural",
+    "bear_verdict_response": {
+      "decisive_claim": "the 2026-09-03 filing's operating margin decline to 30 percent and free cash flow turn to -40 million",
+      "claim_type": "size_or_timing",
+      "overrode_bear": false
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 80,
+      "consensus_strength": 55,
+      "regime_alignment": 85,
+      "risk_adjusted": 65
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY"
+  },
+  "schema_errors": [
+    "Missing required field: reasoning"
+  ],
+  "entry_errors": [],
+  "elapsed_s": 13.129794172000402
+}

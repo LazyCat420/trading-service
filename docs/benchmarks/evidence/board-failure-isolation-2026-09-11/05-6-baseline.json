@@ -1,0 +1,72 @@
+{
+  "case": "missing_history",
+  "arm": "baseline",
+  "cycle_id": "bench-memory-proxy-4d1b493c9be4",
+  "source_index": 6,
+  "http_status": 200,
+  "response": "{\n    \"research_answers\": [\n        {\n            \"id\": \"q-history\",\n            \"answer\": \"No, volume declining across five sessions is not established. Only one daily close's volume (2026-09-03: 1100000 shares) is supplied; no August volume observations are available. The prior unverified note about five-session decline and SMA-200 construction is explicitly not evidence.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"id\": \"q-peg\",\n            \"answer\": \"No, PEG cannot be computed. PEG requires EPS growth, which is not available in the supplied evidence. Forward P/E of 20 and revenue growth of 10 percent are insufficient without EPS growth.\",\n            \"as_of\": \"2026-09-03\"\n        },\n        {\n            \"id\": \"q-sma\",\n            \"answer\": \"No, a 200-session moving average is not established. Only 14 daily closes are supplied, which is insufficient to construct a 200-session SMA.\",\n            \"as_of\": \"2026-09-03\"\n        }\n    ],\n    \"action\": \"HOLD\",\n    \"confidence\": 65,\n    \"reasoning\": \"EVLT presents a mixed technical-fundamental profile. The company generates strong free cash flow ($120M on $1B revenue), healthy ROIC (14% vs sector 10%), and consistent management guidance execution, with gross margins expanding (40\u219241\u219242% vs sector 38%). However, critical technical data is unresolved: volume trend over five sessions is unconfirmed, PEG cannot be computed (EPS growth unavailable), and SMA-200 is not established with only 14 closes. The stock closes at 100 with RSI-14 at 46 (neutral) and ATR-14 of $2. Portfolio equity is $100K with 5% single-name cap ($5K max exposure); current cash $25K. No position is held. The unresolved technical questions and missing EPS growth data create genuine uncertainty, warranting HOLD with watch_only until resolution conditions are met.\",\n    \"position_size_pct\": 0,\n    \"stop_loss\": null,\n    \"take_profit\": null,\n    \"exit_style\": null,\n    \"entry_mode\": \"watch_only\",\n    \"trigger_purpose\": \"research\",\n    \"resolution_condition\": {\n        \"open_question\": \"When will sufficient technical data (full 200-session SMA, volume trend over five sessions, EPS growth) be available to resolve the current uncertainties?\",\n        \"resolving_fact\": \"Availability of complete 200-session SMA from daily closes, confirmed volume trend over five preceding sessions, and EPS growth figure to compute PEG\"\n    },\n    \"dynamic_trigger\": null,\n    \"mispricing_basis\": \"Strong free cash flow and ROIC versus sector, but unresolved technical data and missing EPS growth prevent confident valuation assessment.\",\n    \"edge_type\": \"fundamental\",\n    \"bear_verdict_response\": null,\n    \"confidence_floor\": 0,\n    \"conviction_vector\": {\n        \"data_quality\": 55,\n        \"consensus_strength\": 50,\n        \"regime_alignment\": 65,\n        \"risk_adjusted\": 60\n    },\n    \"overrides_veto\": false,\n    \"override_justification\": \"\",\n    \"persona_used\": \"jane_street\",\n    \"regime\": \"CONTRADICTORY\"\n}",
+  "usage": {
+    "inputTokens": 3847,
+    "outputTokens": 786,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 3847
+  },
+  "model": "nemotron35",
+  "conversation_id": "1dc9cc23-f09f-460a-b435-f217763a1a4f",
+  "artifact": {
+    "research_answers": [
+      {
+        "id": "q-history",
+        "answer": "No, volume declining across five sessions is not established. Only one daily close's volume (2026-09-03: 1100000 shares) is supplied; no August volume observations are available. The prior unverified note about five-session decline and SMA-200 construction is explicitly not evidence.",
+        "as_of": "2026-09-03"
+      },
+      {
+        "id": "q-peg",
+        "answer": "No, PEG cannot be computed. PEG requires EPS growth, which is not available in the supplied evidence. Forward P/E of 20 and revenue growth of 10 percent are insufficient without EPS growth.",
+        "as_of": "2026-09-03"
+      },
+      {
+        "id": "q-sma",
+        "answer": "No, a 200-session moving average is not established. Only 14 daily closes are supplied, which is insufficient to construct a 200-session SMA.",
+        "as_of": "2026-09-03"
+      }
+    ],
+    "action": "HOLD",
+    "confidence": 65,
+    "reasoning": "EVLT presents a mixed technical-fundamental profile. The company generates strong free cash flow ($120M on $1B revenue), healthy ROIC (14% vs sector 10%), and consistent management guidance execution, with gross margins expanding (40\u219241\u219242% vs sector 38%). However, critical technical data is unresolved: volume trend over five sessions is unconfirmed, PEG cannot be computed (EPS growth unavailable), and SMA-200 is not established with only 14 closes. The stock closes at 100 with RSI-14 at 46 (neutral) and ATR-14 of $2. Portfolio equity is $100K with 5% single-name cap ($5K max exposure); current cash $25K. No position is held. The unresolved technical questions and missing EPS growth data create genuine uncertainty, warranting HOLD with watch_only until resolution conditions are met.",
+    "position_size_pct": 0,
+    "stop_loss": null,
+    "take_profit": null,
+    "exit_style": null,
+    "entry_mode": "watch_only",
+    "trigger_purpose": "research",
+    "resolution_condition": {
+      "open_question": "When will sufficient technical data (full 200-session SMA, volume trend over five sessions, EPS growth) be available to resolve the current uncertainties?",
+      "resolving_fact": "Availability of complete 200-session SMA from daily closes, confirmed volume trend over five preceding sessions, and EPS growth figure to compute PEG"
+    },
+    "dynamic_trigger": null,
+    "mispricing_basis": "Strong free cash flow and ROIC versus sector, but unresolved technical data and missing EPS growth prevent confident valuation assessment.",
+    "edge_type": "fundamental",
+    "bear_verdict_response": null,
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 55,
+      "consensus_strength": 50,
+      "regime_alignment": 65,
+      "risk_adjusted": 60
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY"
+  },
+  "schema_errors": [],
+  "entry_errors": [
+    "trigger purpose requires a structured dynamic_trigger"
+  ],
+  "elapsed_s": 13.12014374499995
+}

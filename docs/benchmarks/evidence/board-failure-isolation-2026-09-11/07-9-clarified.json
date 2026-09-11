@@ -1,0 +1,71 @@
+{
+  "case": "held_deterioration",
+  "arm": "clarified",
+  "cycle_id": "bench-memory-proxy-ffe1480b6f81",
+  "source_index": 9,
+  "http_status": 200,
+  "response": "{\n    \"action\": \"HOLD\",\n    \"confidence\": 55,\n    \"reasoning\": \"The September 3 filing reveals severe deterioration: operating margin fell to 30 percent (from 40-42), debt/equity rose to 2.5 (from ~1.0), free cash flow turned negative at minus 40 million (from positive 120 million), and next-year EPS is negative. The stock is trading at 100, below the 115 resistance and near support at 95, with RSI-14 at 38. The two peer reports repeating the same September filing are a single source, not independent confirmations. The prior bullish note ignores the newer filing's deterioration. The holding has an unrealized loss of minus 16.7 percent from cost 120 to price 100, and exposure is 10 percent of equity, exceeding the 5 percent maximum single-name cap. No new catalyst offsets the deterioration. The contradiction between the strong historical profitability (gross margins 40-42 percent, ROIC 14 percent vs sector 10 percent) and the current filing's sharp decline creates uncertainty, but the current filing is the authoritative baseline. The bear argument \u2014 margin collapse, negative cash flow, elevated leverage \u2014 is decisive on the current state, while the bull argument rests on historical figures that are explicitly noted as older. The market price of 100 reflects the deteriorated fundamentals. Given the exposure limit breach and fundamental deterioration, the calibrated response is HOLD with watch_only to reassess when conditions improve, rather than adding to a position that exceeds concentration limits and faces structural headwinds.\",\n    \"entry_mode\": \"watch_only\",\n    \"trigger_purpose\": \"none\",\n    \"dynamic_trigger\": null,\n    \"resolution_condition\": {\"open_question\": \"When will operating margin and free cash flow recover to support a position re-entry?\", \"resolving_fact\": \"Sustained improvement in operating margin above 35 percent and free cash flow returning to positive territory, confirmed in a future filing\"},\n\n    \"research_answers\": [{\"question_id\": \"q-current\", \"answer\": \"Current operating margin is 30 percent; current free cash flow is minus 40000000. These figures come from the September 3, 2026 filing and replace the August baseline.\"}, {\"question_id\": \"q-loss\", \"answer\": \"The unrealized percentage return from cost 120 to price 100 is minus 16.7 percent.\"}, {\"question_id\": \"q-independent\", \"answer\": \"No. The two reports repeating the same September filing are one source, not two independent confirmations.\"}],\n\n    \"position_size_pct\": 0,\n    \"stop_loss\": null,\n    \"take_profit\": null,\n    \"exit_style\": \"hard_stop\",\n    \"entry_mode\": \"watch_only\",\n    \"trigger_purpose\": \"none\",\n    \"dynamic_trigger\": null,\n    \"mispricing_basis\": \"Current filing shows operating margin 30 percent, debt/equity 2.5, negative free cash flow minus 40 million, negative next-year EPS; historical margins were 40-42 percent with ROIC 14 percent versus sector 10 percent.\",\n    \"edge_type\": \"structural\",\n    \"bear_verdict_response\": {\"decisive_claim\": \"operating margin collapsed to 30 percent and free cash flow turned negative, exceeding the 5 percent single-name exposure limit\", \"claim_type\": \"size_or_timing\", \"overrode_bear\": false},\n    \"confidence_floor\": 0,\n    \"conviction_vector\": {\"data_quality\": 70, \"consensus_strength\": 40, \"regime_alignment\": 60, \"risk_adjusted\": 50},\n    \"overrides_veto\": false,\n    \"override_justification\": \"\",\n    \"persona_used\": \"jane_street\",\n    \"regime\": \"CONTRADICTORY\"\n}",
+  "usage": {
+    "inputTokens": 4179,
+    "outputTokens": 886,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "reasoningOutputTokens": 0,
+    "tokensPerSec": 0,
+    "requests": 1,
+    "totalInputTokens": 4179
+  },
+  "model": "nemotron35",
+  "conversation_id": "a3e8725b-d6d5-4918-b2fe-17414e2ac9db",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 55,
+    "reasoning": "The September 3 filing reveals severe deterioration: operating margin fell to 30 percent (from 40-42), debt/equity rose to 2.5 (from ~1.0), free cash flow turned negative at minus 40 million (from positive 120 million), and next-year EPS is negative. The stock is trading at 100, below the 115 resistance and near support at 95, with RSI-14 at 38. The two peer reports repeating the same September filing are a single source, not independent confirmations. The prior bullish note ignores the newer filing's deterioration. The holding has an unrealized loss of minus 16.7 percent from cost 120 to price 100, and exposure is 10 percent of equity, exceeding the 5 percent maximum single-name cap. No new catalyst offsets the deterioration. The contradiction between the strong historical profitability (gross margins 40-42 percent, ROIC 14 percent vs sector 10 percent) and the current filing's sharp decline creates uncertainty, but the current filing is the authoritative baseline. The bear argument \u2014 margin collapse, negative cash flow, elevated leverage \u2014 is decisive on the current state, while the bull argument rests on historical figures that are explicitly noted as older. The market price of 100 reflects the deteriorated fundamentals. Given the exposure limit breach and fundamental deterioration, the calibrated response is HOLD with watch_only to reassess when conditions improve, rather than adding to a position that exceeds concentration limits and faces structural headwinds.",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "none",
+    "dynamic_trigger": null,
+    "resolution_condition": {
+      "open_question": "When will operating margin and free cash flow recover to support a position re-entry?",
+      "resolving_fact": "Sustained improvement in operating margin above 35 percent and free cash flow returning to positive territory, confirmed in a future filing"
+    },
+    "research_answers": [
+      {
+        "question_id": "q-current",
+        "answer": "Current operating margin is 30 percent; current free cash flow is minus 40000000. These figures come from the September 3, 2026 filing and replace the August baseline."
+      },
+      {
+        "question_id": "q-loss",
+        "answer": "The unrealized percentage return from cost 120 to price 100 is minus 16.7 percent."
+      },
+      {
+        "question_id": "q-independent",
+        "answer": "No. The two reports repeating the same September filing are one source, not two independent confirmations."
+      }
+    ],
+    "position_size_pct": 0,
+    "stop_loss": null,
+    "take_profit": null,
+    "exit_style": "hard_stop",
+    "mispricing_basis": "Current filing shows operating margin 30 percent, debt/equity 2.5, negative free cash flow minus 40 million, negative next-year EPS; historical margins were 40-42 percent with ROIC 14 percent versus sector 10 percent.",
+    "edge_type": "structural",
+    "bear_verdict_response": {
+      "decisive_claim": "operating margin collapsed to 30 percent and free cash flow turned negative, exceeding the 5 percent single-name exposure limit",
+      "claim_type": "size_or_timing",
+      "overrode_bear": false
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 70,
+      "consensus_strength": 40,
+      "regime_alignment": 60,
+      "risk_adjusted": 50
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY"
+  },
+  "schema_errors": [],
+  "entry_errors": [],
+  "elapsed_s": 15.388810685999488
+}

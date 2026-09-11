@@ -109,6 +109,24 @@ def _unwrap_structured_output(
     `data` field alongside its own keys is left exactly as it was, so this can
     only ever recover a run that would otherwise have been thrown away.
     """
+    # A named Board envelope is also emitted in practice when research
+    # answers accompany the decision. Recover only this exact, unambiguous
+    # shape; never walk arbitrary nested objects or replace top-level fields.
+    if (artifact_type == "final_decision" and isinstance(parsed, dict)
+            and set(parsed) <= {"final_decision", "research_answers"}):
+        payload = parsed.get("final_decision")
+        required = ARTIFACT_SCHEMAS[artifact_type]["required"]
+        if isinstance(payload, dict) and all(key in payload for key in required):
+            answers = parsed.get("research_answers")
+            if "research_answers" not in parsed or (
+                isinstance(answers, list)
+                and ("research_answers" not in payload or payload["research_answers"] == answers)
+            ):
+                recovered = dict(payload)
+                if "research_answers" in parsed:
+                    recovered["research_answers"] = answers
+                return recovered
+
     for _ in range(2):  # `arguments` may wrap the envelope one extra level
         if not isinstance(parsed, dict) or not parsed:
             return parsed
@@ -1496,6 +1514,12 @@ async def run_v3_agent(
                         f"## PREVIOUS ATTEMPT ({rule.name})\n{_excerpt}\n\n"
                     )
 
+                _decision_shape = (
+                    "Required top-level decision keys: action, confidence, reasoning. "
+                    "Put the decision rationale in reasoning; a rationale key or research_answers "
+                    "array does not replace these required decision fields. "
+                    if artifact_type == "final_decision" else ""
+                )
                 repair_prompt = (
                     f"{user_prompt}\n\n"
                     f"{_findings}"
@@ -1505,7 +1529,7 @@ async def run_v3_agent(
                     f"now. Using the analysis you already performed, "
                     f"reply with ONLY the '{artifact_type}' JSON "
                     f"object. Start with '{{' and end with '}}'. "
-                    f"No markdown fences, no commentary.\n"
+                    f"No markdown fences, no commentary. {_decision_shape}\n"
                 )
                 logger.info(
                     "[V3Runner] %s: repairing %s with %d recovered tool "
@@ -1834,7 +1858,16 @@ async def run_v3_agent(
                         + "\nPreserve action, confidence, reasoning, position size, stop loss, "
                         "take profit and cited evidence exactly. Supply timing fields only "
                         "when supported by your stated decision. Do not invent a trigger, "
-                        "resolution question, source or observation. Return only the complete JSON."
+                        "resolution question, source or observation. "
+                        "Correct entry_mode, trigger_purpose and dynamic_trigger; copying their "
+                        "invalid previous values is not a correction. HOLD must use watch_only, "
+                        "even when waiting for price. Only BUY may use enter_on_condition, "
+                        "with trigger_purpose=entry. An unresolved research question without "
+                        "a supported numeric wake uses trigger_purpose=none and dynamic_trigger=null; "
+                        "keep the question in resolution_condition. Keep all other fields unchanged, "
+                        "including research_answers. A resolution_condition is a research question, "
+                        "not a numeric dynamic_trigger: keeping that question does not require "
+                        "trigger_purpose=research. Return only the complete JSON."
                     )
                     try:
                         correction = await asyncio.wait_for(_with_heartbeat(run_agent(
