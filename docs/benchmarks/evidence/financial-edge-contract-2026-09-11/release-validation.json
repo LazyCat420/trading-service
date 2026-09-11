@@ -1,6 +1,6 @@
 {
   "created_at": "2026-09-11T23:35:11.436211+00:00",
-  "status": "validated_awaiting_deployment",
+  "status": "deployed_verified",
   "runtime_source_hashes": {
     "app/v3/financial_evidence.py": "af6b2a7c8cdbef18b34a68496e1ef780e9b6cbe0f0f1f508d6638aa0e1dbe483",
     "app/v3/financial_claims.py": "c15291979083475371fa585e3a23c6c5acd9d5e552728f8b61c3d94169b2550f",
@@ -452,5 +452,7 @@
     "New scenarios are synthetic perturbations of four source families, not independently sourced market cases.",
     "No test submitted orders. Execution checks are distinct from evidence acceptance and investment merit.",
     "Raw prompts, responses, and portfolio data are retained locally and are not included in the committed summary."
-  ]
+  ],
+  "release_commit": "0bfdb438",
+  "nas_release_receipt": "nas-release.json"
 }

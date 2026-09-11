@@ -1,6 +1,6 @@
 # Financial decision edge cases: release and next-developer plan
 
-All six requested changes are implemented and validated. NAS deployment verification is pending and will be recorded below. The fresh audits accepted **24/24 first responses**. The user's exact previously blocked case 03 now passes by retaining its original validated reward/risk selection. A separate fresh repair of that saved initial response produced repetitive, incomplete JSON and correctly remained blocked. That remaining failure is the first follow-up for the next developer.
+All six requested changes are implemented and validated. Revision `0bfdb438` is deployed to the NAS, with healthy container/HTTP checks and all 12 tested runtime hashes verified. The fresh audits accepted **24/24 first responses**. The user's exact previously blocked case 03 now passes by retaining its original validated reward/risk selection. A separate fresh repair of that saved initial response produced repetitive, incomplete JSON and correctly remained blocked. That remaining failure is the first follow-up for the next developer.
 
 ## Scope and implementation
 
@@ -107,4 +107,6 @@ The live-cycle preflight must permit the restart. Verify actual image transfer, 
 
 ## Released revision and NAS verification
 
-Pending deployment. The validation receipt identifies the exact tested runtime file hashes.
+Runtime release: **`0bfdb438`** on `fix/learning-lifecycle-20260907`. Deploy-kit completed with exit 0: one service passed, zero failed. The NAS container restarted at `2026-09-11T23:47:29.980026952Z` and became healthy. Its HTTP health endpoint returned 200. All 12 changed runtime files matched the tested hashes; syntax/import and synthetic helper checks passed under deployed Python 3.11.16.
+
+See the [NAS release receipt](../benchmarks/evidence/financial-edge-contract-2026-09-11/nas-release.json). The subsequent documentation-only receipt commit does not change the deployed runtime revision. Deploy-kit also reported edge DNS reconciliation conflicts, with the Caddyfile unchanged; direct service availability passed. This warning is recorded rather than treated as a failed service deployment.

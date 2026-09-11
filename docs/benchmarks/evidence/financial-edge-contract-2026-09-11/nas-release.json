@@ -1,0 +1,52 @@
+{
+  "verified_at": "2026-09-11T23:49:10.336437+00:00",
+  "release_commit": "0bfdb438",
+  "deploy_command": "npm run deploy -- --only=trading-service --skip-pull",
+  "deploy_exit_code": 0,
+  "deploy_summary": {
+    "passed": 1,
+    "failed": 0,
+    "skipped": 19
+  },
+  "deploy_log_sha256": "506ee854fe79d20d07d041445b5e0d7e612c86be46d603e31a7724c4be57588a",
+  "container": {
+    "status": "running",
+    "started_at": "2026-09-11T23:47:29.980026952Z",
+    "health": "healthy",
+    "health_failing_streak": 0
+  },
+  "http_health": {
+    "url": "http://10.0.0.16:3031/health",
+    "status_code": 200,
+    "body": {
+      "status": "ok",
+      "service": "trading-service",
+      "version": "v3"
+    }
+  },
+  "runtime_verification": {
+    "git_sha": "0bfdb438",
+    "worker_name": "nas-prod",
+    "python": "3.11.16",
+    "source_hashes_match": true,
+    "runtime_source_hashes": {
+      "app/v3/financial_evidence.py": "af6b2a7c8cdbef18b34a68496e1ef780e9b6cbe0f0f1f508d6638aa0e1dbe483",
+      "app/v3/financial_claims.py": "c15291979083475371fa585e3a23c6c5acd9d5e552728f8b61c3d94169b2550f",
+      "app/v3/financial_reasoning.py": "38ec6be5e44577d26f4c440a19d71f626f537c4e366c9acf1915a297e0cb7422",
+      "app/v3/financial_repair.py": "450b7de4e331946d59095b425f02c9e1aa4cb5ddb448d76d94d5cbecb36a1ca0",
+      "app/v3/financial_metrics.py": "38d840ba9f11759144ad6e9cfbc4e726b8667e3123bb8604d2050be8af08d66f",
+      "app/v3/agent_runner.py": "c3f1a4f02d56006a1bad71dd0c9d21b27da0bcc1d0095e427a4ec3ea0998cd13",
+      "app/v3/orchestrator.py": "a0731881029800d1fc4d7c6b4da873a83aea5999c06a746c611d988c3ef679db",
+      "app/v3/book_brief.py": "10e68956577d84dee4c35ebe2e4654c3321841f0b68a88661da1f1b5b9e88065",
+      "app/services/memory/retriever.py": "bdbb6ea532713d7e11010a3dc5fddf34c1a07c2ef75a1000940210279094e300",
+      "app/services/pipeline_service.py": "d0a01100dd0f719acff36809c7e2f2989ecaf11b4c7bb30d9da60f2587f57133",
+      "app/trading/order_capacity.py": "364d11a841ce3bcb8981fbc51ac233772e6730dd8d131501079f10b4b7cd7649",
+      "app/trading/paper_trader.py": "f17813649c6dbcfb6a4cc517dc0d2278f85a1060bf93ac31dafcc34dc959dc32"
+    },
+    "module_smoke_passed": true
+  },
+  "warnings": [
+    "Deploy-kit reported edge DNS reconciliation conflicts; the affected service deployed successfully and its direct HTTP health endpoint passed. Caddyfile unchanged."
+  ],
+  "verification_scope": "Read-only source hashes, Python syntax/imports, synthetic pure financial helper checks, container health and HTTP availability. No benchmark orders submitted."
+}
