@@ -1,0 +1,35 @@
+{
+  "adapter": {
+    "status": 200
+  },
+  "trading": {
+    "status": 200
+  },
+  "client": {
+    "status": 200
+  },
+  "trace_api": {
+    "status": 200,
+    "events": 4,
+    "stages": [
+      "provider.payload",
+      "provider.payload",
+      "provider.payload",
+      "provider.payload"
+    ]
+  },
+  "snapshot": {
+    "status": 200,
+    "has_content": true
+  },
+  "scope_guard": {
+    "status": 404
+  },
+  "otlp_export": {
+    "status": 200,
+    "spans": 4
+  },
+  "client_trace_proxy": {
+    "status": 200
+  }
+}

@@ -154,3 +154,18 @@ The frozen audit above describes the pre-change deployment. The following change
 - **Interoperability:** the replay exports OTLP/HTTP JSON with W3C-sized IDs, parent links and measured start/end duration for paired spans. Point observations have zero duration. Snapshot bodies stay in Trading. No separate OpenTelemetry collector, Phoenix or Langfuse server is installed by this change.
 
 Validation: adapter 681 tests plus TypeScript typecheck; trading full unit run 7,075 passed with one outdated clock-test fixture, subsequently corrected and rerun with admission/scheduling regressions; 23 real Mongo learning/trace integration checks passed. Frontend production build passed. A muted Chromium check verified the Data Trace screen, pagination and two snapshot selections without page errors, using mocked API responses. The browser and its local server were closed afterward. Deployment verification and the pending live generation/cycle results must be recorded separately; these offline checks do not prove live model decision quality.
+
+
+## NAS deployment verification
+
+Completed September 10 at 17:08 PDT (September 11, 00:08 UTC). Targeted deploy-kit runs finished with adapter 1 passed / 0 failed, and trading service plus client 2 passed / 0 failed. Container inspection confirmed all three running and healthy:
+
+| Container | Running revision |
+|---|---|
+| trading-service | `9a246d24` |
+| trading-client | `67653c10` |
+| lazy-agent-service | `83bbd73` |
+
+Independent HTTP checks returned 200 for each service, the retained canary trace, its snapshot, the OTLP export and the client trace proxy. Four retained provider observations exported as four spans. A snapshot request under an unrelated cycle returned 404. This verifies deployed storage/read/export behavior, not successful model generation. Later commits only add audit documentation and do not change these runtime revisions.
+
+The live model-delivery rerun, normal paper-cycle validation and frozen learning benchmark remain pending explicit NAS-proxy validation approval. Automatic approval review rejected sending the Board prompt/test brief through that proxy; no further model calls were attempted while approval remained pending.
