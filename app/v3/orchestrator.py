@@ -2862,6 +2862,11 @@ def _apply_policy_gates(desk: SharedDesk) -> str:
     if contract["status"] == "invalid":
         return _record_gate(desk, "HOLD_POLICY_BLOCKED_DECISION_CONTRACT", errors=contract["errors"])
 
+    from app.v3.financial_claims import desk_status as financial_status
+    financial = financial_status(desk)
+    if financial['status'] == 'unresolved':
+        return _record_gate(desk, 'HOLD_POLICY_BLOCKED_FINANCIAL_EVIDENCE', errors=financial.get('errors', []))
+
     # NOT recorded as a guardrail firing, deliberately: a genuine no-signal HOLD
     # is a normal decision the desk is entitled to reach, not a safety gate
     # rewriting one. Counting it would swamp the table with routine outcomes and
@@ -3253,6 +3258,7 @@ async def _run_board_of_directors(
         get_persona_prompt, AGENT_NAME, ARTIFACT_TYPE, TOOL_WHITELIST,
     )
 
+    desk.cycle_metadata['financial_evidence_version'] = 1
     persona_prompt = get_persona_prompt(regime)
 
     bod_module = types.ModuleType("board_of_directors_module")
@@ -3737,6 +3743,9 @@ def _build_v1_compatible_result(
         "escalated": bool(_stages_completed(desk)) and "research" in _stages_completed(desk),
         "agent_results": _extract_agent_results(desk),
         "decision_contract": decision_contract,
+        "financial_evidence_version": desk.cycle_metadata.get('financial_evidence_version', 0),
+        "financial_evidence_record": desk.cycle_metadata.get('financial_evidence_record'),
+        "financial_decision": _merged if desk.cycle_metadata.get('financial_evidence_version') == 1 else None,
         "resolution_condition": _merged.get("resolution_condition"),
         "decision_producer": _merged.get("decision_producer"),
         "estimate": {

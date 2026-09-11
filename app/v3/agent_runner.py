@@ -679,6 +679,7 @@ async def run_v3_agent(
 
     agent_name = agent_module.AGENT_NAME
     artifact_type = agent_module.ARTIFACT_TYPE
+    financial_record = None
 
     # The only attempt identity this function can honestly report. The retry
     # itself lives in the orchestrator's circuit breaker
@@ -798,6 +799,18 @@ async def run_v3_agent(
         contract_block = decision_contract_prompt(desk, artifact_type)
         if contract_block:
             dynamic_sections.append((_KEEP, contract_block))
+
+        if (artifact_type in ('final_decision', 'trade_decision')
+                and desk.cycle_metadata.get('financial_evidence_version') == 1):
+            from app.v3.financial_evidence import build_record, evidence_prompt
+            financial_record = desk.cycle_metadata.get('financial_evidence_record')
+            if financial_record is None:
+                financial_record = build_record(desk)
+                desk.cycle_metadata['financial_evidence_record'] = financial_record
+            financial_context = evidence_prompt(financial_record)
+            desk.cycle_metadata['financial_evidence_context'] = financial_context
+            dynamic_sections.append((_KEEP, financial_context))
+            trace_data(cycle_id, desk.ticker, agent_name, 'financial.evidence', data=financial_record)
 
         from app.v3.arithmetic_audit import arithmetic_handoff, board_plan_math
         arithmetic_context = arithmetic_handoff(desk, include_debate=include_debate_context)
@@ -1926,6 +1939,67 @@ async def run_v3_agent(
             artifact["decision_contract_version"] = 1
         if artifact_type in ("final_decision", "trade_decision", "delta_report"):
             artifact["decision_producer"] = agent_name
+
+        if financial_record is not None:
+            from copy import deepcopy
+            from app.v3.financial_claims import audit_decision, correction_prompt
+            from app.v3.decision_contract import contract_errors, evidence_sources, effective_decision, unique_nonentry_timing_correction
+            financial_audit = audit_decision(artifact, financial_record)
+            first_financial_audit = deepcopy(financial_audit)
+            original_financial_artifact = deepcopy(artifact)
+            # Share the existing single correction allowance with schema and
+            # timing repair. A factual failure does not buy another retry.
+            if financial_audit['status'] != 'consistent' and repaired is None:
+                remaining = max(0.0, t_start + timeout_seconds - time.monotonic())
+                if remaining > 1:
+                    repaired = False
+                    repair_prompt = correction_prompt(user_prompt, artifact, financial_audit, financial_record)
+                    try:
+                        correction = await asyncio.wait_for(_with_heartbeat(run_agent(
+                            agent_name=agent_name, ticker=desk.ticker, cycle_id=cycle_id,
+                            bot_id=bot_id, system_prompt=system_prompt, user_prompt=repair_prompt,
+                            max_tokens=_safe_max_tokens(agent_name=agent_name,
+                                system_prompt=system_prompt, user_prompt=repair_prompt, tool_whitelist=None),
+                            enable_tools=False, model_override=model_override,
+                            prism_overrides=prism_overrides, cost_sink=_cost_sink,
+                            soft_deadline_s=remaining * 0.5,
+                            deadline_monotonic=t_start + timeout_seconds,
+                        ), cycle_id), timeout=remaining)
+                        token_usage += correction.get('tokens_used', 0)
+                        elapsed_ms = int((time.monotonic() - t_start) * 1000)
+                        candidate = _parse_artifact(correction.get('response', ''), artifact_type, agent_name)
+                        candidate_errors = validate_artifact(artifact_type, deepcopy(candidate)) if isinstance(candidate, dict) else ['Not a decision object.']
+                        if not candidate_errors:
+                            candidate = _coerce_artifact(artifact_type, candidate, desk=desk)
+                            if artifact_type == 'final_decision':
+                                candidate.update(unique_nonentry_timing_correction(candidate) or {})
+                            board_source = desk.final_decision if artifact_type == 'trade_decision' else None
+                            candidate_errors = contract_errors(candidate, board=board_source,
+                                evidence_sources=evidence_sources(desk))
+                            candidate = effective_decision(candidate, board_source)
+                            candidate_audit = audit_decision(candidate, financial_record)
+                            candidate_errors += [e['message'] for e in candidate_audit['errors']]
+                        trace_data(cycle_id, desk.ticker, agent_name, 'financial.correction',
+                                   data={'original':original_financial_artifact, 'initial_audit':first_financial_audit,
+                                         'prompt':repair_prompt, 'response':correction.get('response',''),
+                                         'candidate_errors':candidate_errors})
+                        if not candidate_errors:
+                            artifact = candidate
+                            artifact['decision_contract_version'] = 1
+                            artifact['decision_producer'] = agent_name
+                            financial_audit = candidate_audit
+                            repaired = True
+                    except Exception as exc:
+                        logger.warning('[V3Runner] financial correction failed: %s', type(exc).__name__)
+                        trace_data(cycle_id, desk.ticker, agent_name, 'financial.correction_failed',
+                                   data={'error':type(exc).__name__, 'initial_audit':first_financial_audit})
+            artifact['_financial_audit'] = financial_audit
+            desk.cycle_metadata.setdefault('financial_validation', {})[artifact_type] = financial_audit
+            trace_data(cycle_id, desk.ticker, agent_name, 'financial.validation',
+                       data={'original':original_financial_artifact,'initial_audit':first_financial_audit,
+                             'final':artifact,'audit':financial_audit})
+            # Preserve unresolved authored output for review. The final policy
+            # gate and executor both revalidate it and refuse order authority.
 
         from app.services.research_work import record_tool_receipts
         record_tool_receipts(artifact, result.get("tool_transcript") or [],

@@ -2710,6 +2710,13 @@ class PipelineService:
                             result["no_trade_reason"] = policy_action
                             result["decision_contract"] = {**contract, "status": "invalid",
                                 "errors": list(contract.get("errors") or []) + execution_errors}
+                    from app.v3.financial_claims import execution_errors as financial_execution_errors
+                    financial_errors = financial_execution_errors(result)
+                    if financial_errors:
+                        policy_action = 'HOLD_POLICY_BLOCKED_FINANCIAL_EVIDENCE'
+                        result['policy_action'] = policy_action
+                        result['no_trade_reason'] = policy_action
+                        result['financial_execution_errors'] = financial_errors
                     if action == "SELL" and policy_action == "HOLD_NO_POSITION":
                         # The gate resolved this SELL as unexecutable — the bot
                         # holds nothing to sell. Handle it uniformly with the

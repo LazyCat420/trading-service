@@ -62,6 +62,8 @@ def build_record(desk):
                          ('financial_fundamental_snapshot', FUND_FIELDS)):
         snapshot = meta.get(key) or {}
         for field, (metric, unit) in mapping.items():
+            if unit == 'USD':
+                unit = snapshot.get('currency') or meta.get('quote_currency') or 'quote_currency'
             provenance = (snapshot.get('field_as_of') or {}).get(field) or snapshot
             value = number(snapshot.get(field))
             # Match the existing fundamental briefing's documented vendor
@@ -77,7 +79,8 @@ def build_record(desk):
     for key, metric in (('fcf_ttm', 'free_cash_flow'), ('revenue_ttm', 'revenue_ttm'),
                         ('ebit_ttm', 'operating_income_ttm')):
         value = number(valuation.get(key))
-        facts.append(fact(metric, float(value) if value is not None else None, 'USD',
+        facts.append(fact(metric, float(value) if value is not None else None,
+                          valuation.get('currency') or 'reporting_currency',
                           as_of=valuation.get('ttm_as_of'),
                           source='financial_history:'+ticker+':'+str(valuation.get('ttm_as_of')),
                           entity=ticker, period='trailing_four_quarters',
@@ -85,7 +88,8 @@ def build_record(desk):
     position = meta.get('position') or {}
     if position.get('held') is True:
         value = number(position.get('avg_entry'))
-        facts.append(fact('average_cost', float(value) if value is not None else None, 'USD',
+        facts.append(fact('average_cost', float(value) if value is not None else None,
+                          (meta.get('financial_technical_snapshot') or {}).get('currency') or meta.get('quote_currency') or 'quote_currency',
                           as_of=meta.get('timestamp'), source='position_snapshot:'+ticker,
                           entity=ticker, period='holding_cost'))
     book = meta.get('financial_book_snapshot') or {}
@@ -121,16 +125,17 @@ def calculated_facts(record, decision=None):
     """Fixed formulas with dimensional checks. No eval and no inferred operands."""
     facts = {f['id']: deepcopy(f) for f in record.get('facts', [])}
     if decision:
+        price_unit = facts.get('close', {}).get('unit', 'quote_currency')
         for key, metric in (('stop_loss', 'plan_stop'), ('take_profit', 'plan_target')):
             value = number(decision.get(key))
-            facts[metric] = fact(metric, float(value) if value is not None else None, 'USD',
+            facts[metric] = fact(metric, float(value) if value is not None else None, price_unit,
                                  as_of=record.get('as_of'), source='decision_proposal',
                                  entity=record['ticker'], period='proposed')
         trigger = decision.get('dynamic_trigger')
         if isinstance(trigger, dict) and trigger.get('type') in ('price_below', 'price_above'):
             value = number(trigger.get('value'))
             facts['plan_entry'] = fact('plan_entry', float(value) if value is not None else None,
-                                      'USD', as_of=record.get('as_of'), source='decision_proposal',
+                                      price_unit, as_of=record.get('as_of'), source='decision_proposal',
                                       entity=record['ticker'], period='hypothetical')
 
     def calc(name, operands, units, unit, formula, fn, *, period='current', valid=None):
@@ -157,16 +162,20 @@ def calculated_facts(record, decision=None):
                       source_ids=sorted({s for f in inputs if f for s in f.get('source_ids', [f['source']])}))
         facts[name] = result
 
-    calc('calc_range_position_pct', ('close', 'support', 'resistance'), ('USD',)*3,
+    quote_unit = facts.get('close', {}).get('unit', 'quote_currency')
+    calc('calc_range_position_pct', ('close', 'support', 'resistance'), (quote_unit,)*3,
          'percent', '(close-support)/(resistance-support)*100', lambda p,s,r:(p-s)/(r-s)*100,
          valid=lambda p,s,r:r>s)
-    calc('calc_price_vs_support', ('close', 'support'), ('USD',)*2, 'category',
+    calc('calc_price_vs_support', ('close', 'support'), (quote_unit,)*2, 'category',
          'compare(close,support)', lambda p,s:'above' if p>s else 'below' if p<s else 'at')
-    calc('calc_holding_return_pct', ('close', 'average_cost'), ('USD',)*2, 'percent',
+    calc('calc_holding_return_pct', ('close', 'average_cost'), (quote_unit,)*2, 'percent',
          '(close-average_cost)/average_cost*100', lambda p,c:(p-c)/c*100, valid=lambda p,c:c>0 and p>=0)
     calc('calc_forward_peg', ('forward_pe', 'eps_growth_next_year_pct'), ('ratio','percent'),
          'ratio', 'forward_pe/eps_growth_next_year_pct', lambda pe,g:pe/g, valid=lambda pe,g:pe>0 and g>0,
          period='next_fiscal_year')
+    calc('calc_unreserved_headroom_pct', ('single_name_limit_pct','exposure_pct'),
+         ('percent',)*2, 'percentage_points', 'max(0,limit-exposure)',
+         lambda cap,held:max(Decimal(0),cap-held), valid=lambda cap,held:cap>=0 and held>=0)
     calc('calc_headroom_pct', ('single_name_limit_pct','exposure_pct','pending_exposure_pct'),
          ('percent',)*3, 'percentage_points', 'max(0,limit-exposure-pending)',
          lambda cap,held,pending:max(Decimal(0),cap-held-pending), valid=lambda cap,held,pending:cap>=0 and held>=0 and pending>=0)
@@ -180,7 +189,7 @@ def calculated_facts(record, decision=None):
         if prefix == 'plan' and not decision:
             continue
         for scenario, price in (('current','close'), ('conditional',entry)):
-            calc(f'calc_{prefix}_{scenario}_reward_risk', (price,stop,target), ('USD',)*3,
+            calc(f'calc_{prefix}_{scenario}_reward_risk', (price,stop,target), (quote_unit,)*3,
                  'ratio', '(target-entry)/(entry-stop)', lambda p,s,t:(t-p)/(p-s),
                  valid=lambda p,s,t:Decimal(0)<s<p<t,
                  period='hypothetical' if scenario=='conditional' else 'current_reference_price')
@@ -207,5 +216,8 @@ def evidence_prompt(record):
             'For every supplied question return research_answers with item_id, the exact question text, '
             'status (answered or unresolved), a qualitative answer, and fact_ids referring to financial_claims. '
             'An unresolved historical question must retain its original date and remain unresolved when the dated observations are absent. '
+            'For a comparison, optionally return financial_comparisons=[{"id":"comparison_name", '
+            '"left_id":"fact id", "right_id":"fact id", "relation":"above|below|equal"}] and cite [comparison_name]. '
+            'Compare like metrics; company operating margin is not sector gross margin. '
             'Include the ordinary complete decision JSON and timing contract fields as well.\n'
             + json.dumps(expanded, separators=(',', ':'), default=str))
