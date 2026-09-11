@@ -66,6 +66,10 @@ def write_agent_trace(
         # run_id MUST be the cycle id: eval_engine.process_pending_traces zips
         # the selected t.run_id into its 'cycle_id' slot and looks up
         # decision_outcomes by it (eval_scores keys on t.id, not run_id).
+        from app.v3.data_trace import record
+        record(cycle_id, ticker, agent_name, "tool.result",
+               data={"tool":tool_name,"arguments":tool_args,"result":tool_result},
+               failed=failed, latency_ms=latency_ms, model=model_name, provider=endpoint_name)
         run_id = cycle_id or "nocycle"
         step_key = f"{run_id}:{ticker or '?'}:{agent_name or '?'}"
 

@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from app.services.pipeline_state import PipelineStateDB
+from app.v3.data_trace import trace_cycle
 from app.db.mongo_store import handle_mongo_read_failure
 from app.services.parameter_store import get_param
 from app.v3.orchestrator import run_v3_pipeline
@@ -37,6 +38,8 @@ logger = logging.getLogger(__name__)
 def _trigger_source(kwargs: dict) -> str:
     if kwargs.get("watch_wake"):
         return "watch_desk"
+    if str(kwargs.get("trigger_type") or "").startswith("edge_case_"):
+        return "order_trigger"
     if kwargs.get("research_request"):
         return "research_governor"
     if kwargs.get("dynamic_selection_mode"):
@@ -59,6 +62,8 @@ def _trigger_payload(kwargs: dict, tickers) -> dict:
         # trigger that fired with no condition.
         "trigger_type": trigger.get("type") or kwargs.get("trigger_type") or None,
         "reason": (trigger.get("detail") or kwargs.get("research_reason") or None),
+        "origin": kwargs.get("origin") or {},
+        "admission": kwargs.get("research_admission") or {},
         "tickers": list(tickers or []),
         # ── The schedule that caused this run ──
         # A `once` schedule row is deactivated the moment it fires and is
@@ -78,6 +83,7 @@ def _trigger_detail(kwargs: dict, tickers) -> str:
     p = _trigger_payload(kwargs, tickers)
     labels = {
         "watch_desk": "Watch Desk trip",
+        "order_trigger": "Order condition",
         "research_governor": "Research Governor",
         "schedule": "Scheduled cycle",
         "manual": "Manual run",
@@ -835,6 +841,12 @@ class PipelineService:
         elif cls._cycle_task and not cls._cycle_task.done():
             return {"status": "deduplicated", "message": "Cycle task still running"}
 
+        from app.services.research_admission import admit
+        admission = admit(tickers, kwargs)
+        if not admission["allowed"]:
+            return {"status":"deferred", "message":admission["reason"], "admission":admission}
+        kwargs["research_admission"] = admission
+
         # Reset BOTH kill switches so requests can flow on the new cycle.
         #
         # There are two, on two different objects, and this reset used to clear
@@ -858,6 +870,9 @@ class PipelineService:
             logger.error("[PipelineService] Failed to reset VLLM kill switch: %s", e)
 
         cycle_id = kwargs.get("cycle_id") or f"cycle-v3-{int(time.time())}"
+        from app.v3.data_trace import record
+        record(cycle_id, "", "scheduler", "cycle.admission",
+               data=_trigger_payload(kwargs,tickers))
         max_tickers = kwargs.get("max_tickers")  # None → auto (gatekeeper default)
         agent_locale = kwargs.get("agent_locale") or "default"
         # Novelty locales (e.g. "caveman") are a style gag for analyze-only runs.
@@ -1017,6 +1032,7 @@ class PipelineService:
         return {"status": "starting", "cycle_id": cycle_id, "message": "V3 pipeline started"}
 
     @classmethod
+    @trace_cycle
     async def _run_all_v3(cls, cycle_id: str, tickers: list[str], max_tickers: int | None = None, agent_locale: str = "default", **kwargs):
         # Captured up-front so summaries can be written even when the cycle
         # fails or is cancelled before reaching the success path.
@@ -1123,6 +1139,8 @@ class PipelineService:
                 ):
                     summary["no_trade_reason"] = "hold_only"
                 log_manager.log_cycle_summary(cycle_id, summary)
+                from app.v3.data_trace import record, root_span
+                record(cycle_id,"","pipeline","cycle.end",data=summary,parent_span_id=root_span(cycle_id))
                 _persist_benchmarks(summary, results)
                 return summary
             except Exception as sum_err:
@@ -1394,6 +1412,9 @@ class PipelineService:
                 Office, so this is what sends an avatar there on a real fill.
                 """
                 payload = trade_res if isinstance(trade_res, dict) else {}
+                from app.v3.data_trace import record
+                record(cycle_id,ticker,"execution","execution.result",data=payload,
+                       side=side,executed=executed,reason=reason)
                 data = {
                     "kind": "trade_executed" if executed else "trade_rejected",
                     "ticker": ticker,

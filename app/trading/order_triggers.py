@@ -494,10 +494,22 @@ async def check_triggers(bot_id: str) -> list[dict]:
                 )
                 continue
 
-        current_price, _ = _get_current_price(ticker)
+        current_price, price_age_hours = _get_current_price(ticker)
         if current_price is None:
             continue
+        discretionary = trigger_type in ("dynamic", "buy_limit")
+        if discretionary:
+            from app.services.market_calendar import MarketCalendar
+            if (MarketCalendar.get_market_state() != "open" or
+                    price_age_hours is None or not math.isfinite(price_age_hours) or
+                    not 0 <= price_age_hours <= 0.25):
+                # Keep the condition armed. A cached close is not a new event.
+                mongo_store.update_docs('price_triggers', {'id':trigger_id}, {'$set':{
+                    'last_deferred_reason':'market_closed_or_price_not_fresh',
+                    'last_evaluated_at':now,'price_age_hours':price_age_hours}})
+                continue
 
+        metric_val = None
         triggered = False
 
         if trigger_type == "stop_loss":
@@ -571,6 +583,16 @@ async def check_triggers(bot_id: str) -> list[dict]:
                     analyze=True,
                     trade=True,
                     trigger_type=f"edge_case_{trigger_type}",
+                    research_reason=reason or f"{trigger_type} condition met",
+                    origin={"source":"order_trigger", "trigger_id":trigger_id,
+                            "trigger_type":trigger_type, "condition_type":dynamic_trigger_type,
+                            "condition_value":dynamic_trigger_value if trigger_type=="dynamic" else trigger_price,
+                            "observed_price":current_price,"price_age_hours":price_age_hours,
+                            "observed_metric":metric_val,"highest_price":highest_price,
+                            "evaluated_at":now.isoformat(),
+                            "price_observed_at":(now-timedelta(hours=price_age_hours)).isoformat() if price_age_hours is not None and math.isfinite(price_age_hours) and price_age_hours >= 0 else None,
+                            "bot_id":bot_id,
+                            "action_requested":action,"reason":reason},
                 )
 
                 # start_cycle REFUSES BY RETURN VALUE, not by raising: a busy
@@ -596,6 +618,9 @@ async def check_triggers(bot_id: str) -> list[dict]:
                         (res or {}).get("status"),
                         str((res or {}).get("message", ""))[:120],
                     )
+                    mongo_store.update_docs('price_triggers', {'id':trigger_id}, {'$set':{
+                        'last_deferred_reason':(res or {}).get("message") or (res or {}).get("status"),
+                        'last_admission':(res or {}).get("admission"), 'last_evaluated_at':now}})
                     continue
 
                 fired_tickers.add(ticker)

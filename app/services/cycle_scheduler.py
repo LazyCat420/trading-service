@@ -285,6 +285,16 @@ class SchedulerService:
         if not isinstance(reason_codes, list):
             reason_codes = []
 
+        from app.services.event_readiness import schedule_readiness
+        readiness = await schedule_readiness(tickers,reason_codes,s.get("review_intent"))
+        if not readiness["ready"]:
+            mongo_store.update_docs('cycle_schedules',{'id':schedule_id},{'$set':{
+                'last_status':'waiting_for_release','last_error':readiness['reason'],
+                'release_readiness':readiness,'updated_at':datetime.now(timezone.utc)}})
+            if s['schedule_type'] == 'once':
+                SchedulerService._rearm_date_schedule(s,minutes_from_now=20)
+            return
+
         # Dispatch cycle via system_commands table (picked up by cycle_main poller)
         payload = {
             "tickers": tickers,
@@ -313,7 +323,22 @@ class SchedulerService:
             "reason_codes": reason_codes,
             "review_intent": s.get("review_intent"),
             "urgency": s.get("urgency"),
+            "origin": {"source":"schedule", "schedule_id":schedule_id,
+                       "scheduled_for":str(s.get("run_at") or s.get("cron_expression") or ""),
+                       "requested_at":datetime.now(timezone.utc).isoformat(),
+                       "reason_codes":reason_codes,"review_intent":s.get("review_intent"),
+                       "release_readiness":readiness},
         }
+
+        from app.services.research_admission import admit
+        admission = admit(tickers,payload)
+        if not admission['allowed']:
+            mongo_store.update_docs('cycle_schedules',{'id':schedule_id},{'$set':{
+                'last_status':'deferred','last_error':admission['reason'],
+                'research_admission':admission,'updated_at':datetime.now(timezone.utc)}})
+            if s['schedule_type'] == 'once':
+                SchedulerService._rearm_date_schedule(s,minutes_from_now=20)
+            return
 
         logger.info(
             "[SCHEDULER] Execute schedule detail: schedule_id=%s, name=%s, tickers=%s, max_tickers=%s, discovered_tickers=%s, payload=%s",
@@ -470,6 +495,21 @@ class SchedulerService:
         return False
 
     @staticmethod
+    def rearm_deferred_command(payload: dict, result: dict):
+        """A queue admission race must not consume a one-shot review."""
+        schedule_id = payload.get("schedule_id")
+        if not schedule_id or result.get("status") != "deferred":
+            return
+        rows = mongo_store.find_docs('cycle_schedules', {'id':schedule_id}, limit=1)
+        if not rows or rows[0].get('schedule_type') != 'once':
+            return
+        schedule = rows[0]
+        mongo_store.update_docs('cycle_schedules', {'id':schedule_id}, {'$set':{
+            'last_status':'deferred', 'last_error':str(result.get('message') or 'Admission deferred'),
+            'research_admission':result.get('research_admission') or result}})
+        SchedulerService._rearm_date_schedule(schedule, minutes_from_now=20)
+
+    @staticmethod
     def _rearm_date_schedule(s: dict, minutes_from_now: int | None):
         """Re-register a spent DateTrigger schedule for a retry.
 
@@ -483,6 +523,19 @@ class SchedulerService:
                 run_time = MarketCalendar.get_next_window("next_open")
             else:
                 run_time = datetime.now(timezone.utc) + timedelta(minutes=minutes_from_now)
+            if SchedulerService._expire_if_past_ttl(s):
+                return
+            expiry = s.get("expiry_at")
+            if isinstance(expiry, str):
+                expiry = datetime.fromisoformat(expiry)
+            if expiry:
+                if expiry.tzinfo is None:
+                    expiry = expiry.replace(tzinfo=timezone.utc)
+                # Wake at expiry to retire the schedule without requesting research.
+                run_time = min(run_time, expiry)
+            mongo_store.update_docs('cycle_schedules', {'id':s['id']}, {'$set':{
+                'run_at':run_time, 'next_run_at':run_time, 'is_active':True,
+                'updated_at':datetime.now(timezone.utc)}})
             scheduler.add_job(
                 SchedulerService.execute_schedule,
                 trigger=DateTrigger(run_date=run_time),
@@ -1851,6 +1904,11 @@ class SchedulerService:
                 "analyze": True,
                 "trade": True,
                 "dynamic_selection_mode": True,
+                "research_reason":"Market-open review: rank current screener candidates and apply freshness and sector limits",
+                "reason_codes":["market_open"],
+                "origin":{"source":"schedule","schedule_id":"market_open",
+                          "requested_at":datetime.now(timezone.utc).isoformat(),
+                          "market_state":state},
             }
             cmd_id = enqueue_start_cycle(payload, prefix="sch-open")
             logger.info("[SCHEDULER] Market-open trading cycle enqueued (START_CYCLE %s).", cmd_id)

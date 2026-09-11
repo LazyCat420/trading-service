@@ -403,6 +403,16 @@ async def _gather_context(ticker: str, need_history: bool, need_news: bool) -> d
             out["price"] = float(t.fast_info["last_price"])
         except Exception:
             out["price"] = None
+        try:
+            from app.trading.price_observation import quote_observation
+            from zoneinfo import ZoneInfo
+            observed_now = datetime.now(timezone.utc)
+            observation = quote_observation(ticker,observed_now.astimezone(ZoneInfo('America/New_York')).date(),
+                                            out['price'],t.history_metadata,now=observed_now)
+            if observation:
+                out['price_observed_at'] = observation['price_as_of']
+        except Exception:
+            pass  # Unknown quote time is retained as unknown and cannot wake research.
         if need_history:
             try:
                 hist = t.history(period="2mo")
@@ -427,7 +437,8 @@ async def _gather_context(ticker: str, need_history: bool, need_news: bool) -> d
 
     if need_news:
         await _refresh_ticker_news(ticker)
-        ctx["news"] = _recent_news(ticker)   # list of (title, collected_at)
+        ctx["news_records"] = _recent_news(ticker, include_details=True)
+        ctx["news"] = [(r["title"],r["published_at"]) for r in ctx["news_records"]]
     return ctx
 
 
@@ -474,8 +485,8 @@ def _rsi(closes: list[float], period: int = 14) -> float | None:
     return round(100 - (100 / (1 + rs)), 1)
 
 
-def _recent_news(ticker: str, hours: int = 48) -> list[tuple]:
-    """Recent (title, collected_at) for the ticker from news_articles — cheap read.
+def _recent_news(ticker: str, hours: int = 48, *, include_details: bool = False) -> list:
+    """Recent (title, published_at) for the ticker from news_articles — cheap read.
     Returns [] if the table/rows are absent.
 
     A wake is a trade-enabled cycle, so only rows whose ticker was actually
@@ -521,13 +532,18 @@ def _recent_news(ticker: str, hours: int = 48) -> list[tuple]:
             "news_articles",
             {
                 "ticker": ticker,
-                "collected_at": {"$gte": datetime.now(timezone.utc) - timedelta(hours=int(hours))},
+                "published_at": {"$gte": datetime.now(timezone.utc) - timedelta(hours=int(hours))},
                 "ticker_attribution": {"$nin": ["query_fallback", "provider_unverified"]},
                 "quality_status": {"$ne": "discarded"},
+                "published_at_estimated": {"$ne": True},
             },
-            ["title", "collected_at"],
-            sort=[("collected_at", -1)], limit=40,
+            ["title", "published_at", "ticker_attribution", "id", "url"],
+            sort=[("published_at", -1)], limit=40,
         )
+        if include_details:
+            return [{"title":r[0],"published_at":r[1],"source":r[2] if len(r)>2 else "unknown",
+                     "source_id":r[3] if len(r)>3 else None,"source_url":r[4] if len(r)>4 else None}
+                    for r in rows if r[0]]
         return [(r[0], r[1]) for r in rows if r[0]]
     except Exception:
         return []
@@ -653,7 +669,8 @@ def _eval_trigger(trig: dict, ctx: dict, watch: dict, market_open: bool = True) 
                             ctx["ticker"], title[:90], kw,
                         )
                         break
-                    ctx["news_event"] = {"title": title, "observed_at": ca, "source": "news_store"}
+                    source = next((r for r in ctx.get("news_records",[]) if r["title"]==title and r["published_at"]==ca),{})
+                    ctx["news_event"] = {**source,"title":title,"observed_at":ca,"source":source.get("source") or "unknown"}
                     return True, f"{ctx['ticker']} material news: “{title[:120]}”", None
     elif typ == "staleness":
         # Fires when the watch has gone max_days without any fire (backstop).
@@ -852,7 +869,8 @@ async def evaluate_watches() -> dict:
         return {"status": "ok", "watches": 0, "fired": 0}
 
     wake_budget = int(_get_param("MAX_WATCH_WAKES_PER_DAY"))
-    budget_left = wake_budget - _wakes_today()
+    from app.services.research_admission import nonwatch_starts_today
+    budget_left = wake_budget - _wakes_today() - nonwatch_starts_today(now)
     fired_total = 0
     evaluated = 0
     deferred: list[str] = []
@@ -863,7 +881,7 @@ async def evaluate_watches() -> dict:
         from app.services.market_calendar import MarketCalendar
         market_open = MarketCalendar.get_market_state() == "open"
     except Exception:
-        market_open = True
+        market_open = False
 
     # Group by ticker so we fetch cheap data once per ticker.
     by_ticker: dict[str, list] = {}
@@ -1012,10 +1030,11 @@ async def _spend_wake_budget(
         elif mode == watch_allocator.MODE_ENFORCE:
             d = cand.get("decision")
             # A candidate the allocator could not score is NOT blocked. An
-            # assess() failure is an instrument fault, and letting a broken
-            # instrument silence the desk is a worse failure than a wake the
-            # allocator would have refused.
-            if d is not None and d.action != "ANALYZE_NOW":
+            # An unavailable admission decision cannot justify spending a
+            # research slot. Keep the watch armed for the next evaluation.
+            if d is None:
+                blocked = "allocator_unavailable"
+            elif d.action != "ANALYZE_NOW":
                 blocked = d.reason or "allocator_deferred"
 
         if blocked is None and fired == 0:
@@ -1076,6 +1095,10 @@ async def _enqueue_wake(watch: dict, trig: dict, detail: str) -> str | None:
             "watch_wake": True,
             "watch_trigger": {"type": trig["type"], "detail": detail},
             "research_reason": detail,
+            "origin": {"source":"watch_desk", "watch_id":watch.get("id"),
+                       "requested_at":datetime.now(timezone.utc).isoformat(),
+                       "condition":trig, "reason":detail,
+                       "decision_context":watch.get("decision_context")},
         }
         cmd_id = enqueue_start_cycle(payload, prefix="wd")
         logger.info("[WatchDesk] WAKE %s for %s — %s", cmd_id, ticker, detail)

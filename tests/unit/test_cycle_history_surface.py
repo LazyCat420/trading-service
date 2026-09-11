@@ -177,6 +177,7 @@ def test_trigger_payload_carries_the_tripwire():
         "source": "watch_desk",
         "trigger_type": "price_below",
         "reason": "TRMB fell to $54.00",
+        "origin": {}, "admission": {},
         "tickers": ["TRMB"],
         "schedule_id": None,
         "reason_codes": [],

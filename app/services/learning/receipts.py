@@ -53,6 +53,8 @@ def queue_artifact_receipt(result: dict, *, cycle_id: str, ticker: str, role: st
         'created_at': datetime.now(timezone.utc), 'delivery_state': 'pending',
     }
     mongo_store.upsert_doc('learning_artifact_receipts', {'id': key}, row, insert_only=True)
+    from app.v3.data_trace import record
+    record(cycle_id,ticker,role,'learning.validation',data=row)
     return key
 
 
@@ -67,6 +69,9 @@ def deliver_pending(limit: int = 50) -> dict:
             mongo_store.upsert_doc('learning_validation_receipts', {'id': row['id']}, payload, insert_only=True)
             mongo_store.update_docs('learning_artifact_receipts', {'id': row['id']}, {'$set': {
                 'delivery_state': 'delivered', 'delivered_at': datetime.now(timezone.utc)}})
+            from app.v3.data_trace import record
+            record(row.get('cycle_id'),row.get('ticker'),row.get('role'),
+                   'learning.validation_delivered',data=payload)
             result['delivered'] += 1
         except Exception as exc:
             result['failed'] += 1

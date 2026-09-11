@@ -212,13 +212,16 @@ async def poll_system_commands(shutdown: asyncio.Event):
                     # the requested cycle never ran and nothing recorded that.
                     cmd_status = "completed"
                     cmd_note = None
-                    if isinstance(result, dict) and result.get("status") in ("deduplicated", "error", "ignored"):
+                    if isinstance(result, dict) and result.get("status") in ("deduplicated", "error", "ignored", "deferred"):
                         cmd_status = "skipped"
                         cmd_note = str(result.get("message") or result.get("status"))[:300]
                         logger.warning(
                             "[cycle_backend] Command %s SKIPPED (not executed): %s",
                             job_id, cmd_note,
                         )
+                    if cmd_type == "START_CYCLE" and isinstance(result, dict) and result.get("status") == "deferred":
+                        from app.services.cycle_scheduler import SchedulerService
+                        SchedulerService.rearm_deferred_command(payload, result)
                     now_done = datetime.now(timezone.utc)
                     mongo_store.upsert_doc(
                         "v3_system_commands",

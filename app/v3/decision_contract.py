@@ -174,3 +174,14 @@ def status(desk) -> dict:
             'producer': decision.get('decision_producer') or decision.get('persona_used'),
             'decision_relation': decision.get('decision_relation') or 'origin',
             'changed_fields': [key for key in DECISION_FIELDS if decision.get(key, board.get(key)) != board.get(key)]}
+
+
+def correction_errors(original: dict, candidate: Any, **kwargs) -> list[str]:
+    """A contract correction cannot quietly make a different investment decision."""
+    if not isinstance(candidate, dict):
+        return ['correction did not produce a JSON object']
+    protected = ('action', 'confidence', 'reasoning', 'position_size_pct',
+                 'stop_loss', 'take_profit', 'signal_weights', 'override_evidence')
+    errors = [f'correction changed {key}' for key in protected
+              if candidate.get(key) != original.get(key)]
+    return errors + contract_errors(candidate, **kwargs)

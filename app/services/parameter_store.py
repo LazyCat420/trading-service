@@ -162,7 +162,7 @@ PARAMETER_REGISTRY: dict[str, ParamSpec] = {
     "MAX_WATCH_WAKES_PER_DAY": ParamSpec(
         default=6, min_value=2, max_value=12, direction=RISK_UP, kind="int",
         tier=TIER_BOARD,
-        description="Daily budget of watch-triggered wake cycles.",
+        description="Shared daily budget for automatic discretionary research from watches, order conditions, schedules and the research governor. Protective risk reviews are exempt.",
     ),
     # ── Research allocator (watch_triage / watch_policy / watch_planner) ──
     # Measured 2026-09-06: the wake budget of 6 was spent 6/6 on every one of

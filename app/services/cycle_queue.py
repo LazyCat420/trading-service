@@ -33,6 +33,8 @@ def enqueue_start_cycle(payload: dict, *, prefix: str) -> str:
     decided to start it.
     """
     cmd_id = f"{prefix}-{uuid.uuid4().hex[:8]}"
+    payload = {**payload, "origin": {**(payload.get("origin") or {}),
+               "command_id":cmd_id,"queued_at":datetime.now(timezone.utc).isoformat()}}
     mongo_store.insert_docs(COMMAND_COLLECTION, [{
         "id": cmd_id,
         "command_type": "START_CYCLE",

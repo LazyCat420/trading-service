@@ -1980,6 +1980,9 @@ async def run_v3_pipeline(
     _drop_implausible_levels(desk)
 
     policy_action = _apply_policy_gates(desk)
+    from app.v3.data_trace import record as trace_data
+    trace_data(desk.cycle_id, desk.ticker, "policy", "policy.result",
+               data={"decision":desk.trade_decision or desk.final_decision,"policy_action":policy_action})
 
     emit(
         "analyzing", f"v3_policy_{ticker}",
@@ -2372,6 +2375,9 @@ def _record_gate(desk: SharedDesk, label: str, **detail: Any) -> str:
     the one other site that needs it.
     """
     try:
+        from app.v3.data_trace import record
+        record(desk.cycle_id, desk.ticker, "policy", "policy.gate",
+               data={"decision":desk.trade_decision or desk.final_decision,"gate":label,"detail":detail})
         from app.v3.telemetry import record_guardrail_firing
 
         # triage_tier separates the two callers of _apply_policy_gates (the

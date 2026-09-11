@@ -362,6 +362,19 @@ def ensure_indexes(session: Optional[Any] = None) -> None:
     _try("decision_outcomes", "resolved_at")
     _try("decision_outcomes", "created_at")
     _try("decision_outcomes", [("cycle_id", pymongo.ASCENDING), ("ticker", pymongo.ASCENDING)])
+    _try("pipeline_trace_events", [("cycle_id", 1), ("ticker", 1), ("created_at", 1)])
+    _try("pipeline_trace_events", "created_at", expireAfterSeconds=30 * 86400)
+    # Content stays immutable; retention follows the newest referencing cycle.
+    try:
+        blobs = _coll("pipeline_trace_blobs")
+        blobs.update_many({"last_referenced_at": {"$exists": False}},
+                          [{"$set": {"last_referenced_at": "$created_at"}}])
+        for name, spec in blobs.index_information().items():
+            if spec.get("key") == [("created_at", 1)] and "expireAfterSeconds" in spec:
+                blobs.drop_index(name)
+    except Exception as exc:
+        logger.warning("Trace retention migration failed: %s", type(exc).__name__)
+    _try("pipeline_trace_blobs", "last_referenced_at", expireAfterSeconds=31 * 86400)
     _indexes_ready = True
 
 
@@ -452,7 +465,10 @@ def find_docs(collection: str, query: dict[str, Any], sort: Optional[list] = Non
         cur = cur.skip(skip)
     if limit:
         cur = cur.limit(limit)
-    return list(cur)
+    documents = list(cur)
+    from app.v3.data_trace import observe_store
+    observe_store(collection, 'read', query, documents)
+    return documents
 
 
 def aggregate(collection: str, pipeline: list[dict[str, Any]],
@@ -460,7 +476,10 @@ def aggregate(collection: str, pipeline: list[dict[str, Any]],
     """Run an aggregation pipeline (the Mongo replacement for SQL GROUP BY /
     DISTINCT ON readers)."""
     pipeline = date_fields.coerce_pipeline(collection, pipeline)
-    return list(_coll(collection).aggregate(pipeline, allowDiskUse=True, session=session))
+    documents = list(_coll(collection).aggregate(pipeline, allowDiskUse=True, session=session))
+    from app.v3.data_trace import observe_store
+    observe_store(collection, 'aggregate', pipeline, documents)
+    return documents
 
 
 def count_docs(collection: str, query: Optional[dict] = None) -> int:

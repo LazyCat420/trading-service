@@ -163,8 +163,8 @@ def evidence_from_trip(watch: dict, trig: dict, detail: str, value, ctx: dict | 
     """Turn the desk's existing (trigger, detail, value) trip into typed Evidence.
 
     `observed_at` is the WORLD's timestamp wherever one exists. For a news trip
-    that is the article's `collected_at`, recovered from the ctx the desk
-    already fetched; for a price trip the observation is now. Falling back to
+    that is the article's `published_at`, recovered from the ctx the desk
+    already fetched; for a price trip use the matched provider quote time. Falling back to
     `now` for a headline would make every article permanently fresh and the
     staleness gate a decoration.
     """
@@ -174,7 +174,8 @@ def evidence_from_trip(watch: dict, trig: dict, detail: str, value, ctx: dict | 
         if isinstance(event, dict):
             return Evidence(kind="news", text=event.get("title") or detail or "",
                             observed_at=ensure_aware(event.get("observed_at")),
-                            source=event.get("source") or "news_store", trigger_type=typ)
+                            source=event.get("source") or "unknown", trigger_type=typ,
+                            source_id=event.get("source_id"),source_url=event.get("source_url"))
         observed, source = None, "detected"
         # The desk's detail string embeds the headline in curly quotes. Prefer
         # the ctx row, which carries the real collection time.
@@ -191,7 +192,7 @@ def evidence_from_trip(watch: dict, trig: dict, detail: str, value, ctx: dict | 
     if typ == "staleness":
         return Evidence(kind="clock", text=detail or "", observed_at=now,
                         source="clock", value=value, trigger_type=typ)
-    return Evidence(kind="price", text=detail or "", observed_at=now,
+    return Evidence(kind="price", text=detail or "", observed_at=ensure_aware((ctx or {}).get("price_observed_at")),
                     source="price", value=value, trigger_type=typ)
 
 

@@ -319,4 +319,5 @@ class TestTheFrozenBaseline:
             assert v.reject_reason != wt.REJECT_OFF_THESIS, (
                 f"{t['ticker']}: a watch with no stored condition must not be "
                 f"screened against one")
-            assert v.components["legacy_schema_penalty"] < 0
+            assert v.reject_reason == "missing_resolution_condition"
+            assert not v.eligible

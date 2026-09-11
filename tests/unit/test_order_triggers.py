@@ -12,7 +12,7 @@ update was issued with, so a supersede that targeted the wrong bot or the wrong
 trigger_type would fail here instead of passing on a substring match.
 """
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
 from datetime import datetime, timezone
 
 from app.trading.order_triggers import (
@@ -194,8 +194,12 @@ async def test_check_triggers_stop_loss_fired(mock_get_current_price, mock_start
         collect=True,
         analyze=True,
         trade=True,
-        trigger_type="edge_case_stop_loss"
+        trigger_type="edge_case_stop_loss", research_reason="reason", origin=ANY
     )
+    origin = mock_start_cycle.call_args.kwargs["origin"]
+    assert origin["trigger_id"] == "trg1"
+    assert origin["observed_price"] == 95.0
+    assert origin["price_age_hours"] is None
 
 
 @pytest.mark.asyncio

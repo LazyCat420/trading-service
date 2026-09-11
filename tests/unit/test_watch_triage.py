@@ -118,12 +118,11 @@ class TestOffThesisScreening:
         v = wt.triage(_inp(watch=_watch(with_rc=False)))
         assert v.reject_reason != wt.REJECT_OFF_THESIS
 
-    def test_a_legacy_watch_pays_an_explicit_penalty_of_its_own(self):
-        """Its own component so a replay can re-score with it set to zero."""
+    def test_news_without_a_recorded_question_requires_qualification(self):
         legacy = wt.triage(_inp(watch=_watch(with_rc=False)))
-        modern = wt.triage(_inp())
-        assert legacy.components["legacy_schema_penalty"] < 0
-        assert modern.components["legacy_schema_penalty"] == 0
+        assert not legacy.eligible
+        assert legacy.reject_reason == "missing_resolution_condition"
+        assert "qualify" in legacy.detail["reason"]
 
     def test_price_evidence_is_not_text_screened(self):
         """A breached level needs no headline overlap — it IS the condition."""

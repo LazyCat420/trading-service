@@ -663,7 +663,7 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
                     published_at_estimated = True
             else:
                 published_at = datetime.datetime.now(datetime.UTC)
-                published_at_estimated = pub_val is not None
+                published_at_estimated = True
 
             # STRICT QUALITY GATE & BODY SCRAPING (fast timeout to avoid stalling feed)
             api_summary = summary

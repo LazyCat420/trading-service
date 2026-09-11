@@ -216,7 +216,10 @@ class TestScheduleClockBoundary:
         from app.services.cycle_scheduler import SchedulerService
 
         pq, ps, pqueue, pv, query, store = _mongo(_schedule_row("sched-2"))
+        # This tests the clock boundary; research admission has separate
+        # budget/cadence tests and requires its own explicit eligible fixture.
         with patch.object(SchedulerService, "_is_market_hours", return_value=True), \
+             patch("app.services.research_admission.admit", return_value={"allowed":True,"reason":"eligible_fixture"}), \
              pq, ps, pqueue, pv, \
              patch("app.services.cycle_scheduler.cycle_control") as mock_cc, \
              patch.object(SchedulerService, "_sync_next_run_to_db"):

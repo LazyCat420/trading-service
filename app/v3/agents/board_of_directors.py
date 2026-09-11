@@ -144,7 +144,7 @@ Your context may include "Previous Cycle's SharedDesk (Manila Envelope)".
 - If current market price, technical support (e.g. price above major SMAs), margin structure, or risk/reward are constructive, you MUST evaluate freshly on TODAY's setup. A repeated hold without substantive new deterioration is an evasion of decision-making.
 
 ## OUTPUT
-Reason in a `<thought_process>` block first, then ONLY the raw JSON — no markdown fences; start with { and end with }."""
+Return your concise decision rationale in the reasoning field, then ONLY the raw JSON — no markdown fences; start with { and end with }."""
 
 PERSONA_JIM_SIMONS = """You are Jim Simons making the FINAL decision for this ticker. Regime: HIGH_VOLATILITY — in panic, statistical patterns speak and narratives lag.
 
@@ -155,16 +155,19 @@ PERSONA_JIM_SIMONS = """You are Jim Simons making the FINAL decision for this ti
 4. Missing/estimated risk metrics = real uncertainty → lower conviction_vector.data_quality and shrink size. Size strictly to the risk you can quantify.
 """ + _BOARD_COMMON + """
 {
-    "action": "BUY|SELL|HOLD",
+    "action": "BUY",
     "confidence": 75,
     "reasoning": "Clear explanation citing Quant Report data",
     "position_size_pct": 2.5,
     "stop_loss": 145.50,
     "take_profit": 165.00,
-    "exit_style": "hard_stop|reanalyze_on_breach",
-    "dynamic_trigger": {"type": "sma_50_drop", "value": null},
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_now",
+    "trigger_purpose": "none",
+    "resolution_condition": null,
+    "dynamic_trigger": null,
     "signal_basis": {"equation": "Which statistical signal/equation drives this call", "backtest_expectation": "Expected edge based on the pattern's history"},
-    "bear_verdict_response": {"decisive_claim": "the specific bear claim that decides this action", "claim_type": "thesis_broken|size_or_timing|unproven", "overrode_bear": false},
+    "bear_verdict_response": {"decisive_claim": "the specific bear claim that decides this action", "claim_type": "size_or_timing", "overrode_bear": false},
     "confidence_floor": 0,
     "conviction_vector": {"data_quality": 75, "consensus_strength": 60, "regime_alignment": 85, "risk_adjusted": 70},
     "overrides_veto": false,
@@ -182,17 +185,20 @@ PERSONA_WARREN_BUFFETT = """You are Warren Buffett making the FINAL decision for
 4. DataGaps are weighed, not counted. A gap in a figure THIS thesis rests on lowers conviction and confidence; a gap in something it does not depend on is routine and changes nothing. They raise uncertainty, they don't force an action. If the thesis needs too many assumptions, lower conviction rather than forcing a decision.
 """ + _BOARD_COMMON + """
 {
-    "action": "BUY|SELL|HOLD",
+    "action": "BUY",
     "confidence": 80,
     "reasoning": "Clear explanation citing Fundamental Report data",
     "position_size_pct": 5.0,
     "stop_loss": 140.00,
     "take_profit": 200.00,
-    "exit_style": "hard_stop|reanalyze_on_breach",
-    "dynamic_trigger": {"type": "rsi_14_oversold", "value": null},
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_now",
+    "trigger_purpose": "none",
+    "resolution_condition": null,
+    "dynamic_trigger": null,
     "moat_assessment": "Competitive moat quality and durability",
     "intrinsic_value_estimate": "Your estimate of intrinsic value vs current price",
-    "bear_verdict_response": {"decisive_claim": "the specific bear claim that decides this action", "claim_type": "thesis_broken|size_or_timing|unproven", "overrode_bear": false},
+    "bear_verdict_response": {"decisive_claim": "the specific bear claim that decides this action", "claim_type": "size_or_timing", "overrode_bear": false},
     "confidence_floor": 0,
     "conviction_vector": {"data_quality": 75, "consensus_strength": 60, "regime_alignment": 85, "risk_adjusted": 70},
     "overrides_veto": false,
@@ -210,17 +216,20 @@ PERSONA_JANE_STREET = """You are a Jane Street quantitative trader making the FI
 4. Check that resolving the contradiction doesn't create unwanted portfolio concentration.
 """ + _BOARD_COMMON + """
 {
-    "action": "BUY|SELL|HOLD",
+    "action": "BUY",
     "confidence": 74,
     "reasoning": "Clear explanation of the mispricing or contradiction found",
     "position_size_pct": 3.0,
     "stop_loss": 148.00,
     "take_profit": 172.00,
-    "exit_style": "hard_stop|reanalyze_on_breach",
-    "dynamic_trigger": {"type": "trailing_drop", "value": 0.15},
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_now",
+    "trigger_purpose": "none",
+    "resolution_condition": null,
+    "dynamic_trigger": null,
     "mispricing_basis": "The specific contradiction/mispricing you are trading",
-    "edge_type": "informational|structural|behavioral",
-    "bear_verdict_response": {"decisive_claim": "the specific bear claim that decides this action", "claim_type": "thesis_broken|size_or_timing|unproven", "overrode_bear": false},
+    "edge_type": "structural",
+    "bear_verdict_response": {"decisive_claim": "the specific bear claim that decides this action", "claim_type": "size_or_timing", "overrode_bear": false},
     "confidence_floor": 0,
     "conviction_vector": {"data_quality": 75, "consensus_strength": 60, "regime_alignment": 85, "risk_adjusted": 70},
     "overrides_veto": false,

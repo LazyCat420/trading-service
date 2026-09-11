@@ -688,6 +688,7 @@ def get_ticker_detail(cycle_id: str, ticker: str):
 
         artifacts = {}
         artifact_keys = [
+            "valuation_report", "delta_report",
             "desk_note", "fundamental_report", "quant_report",
             "bull_argument", "bear_rebuttal", "bull_defense",
             "debate_judge", "regime_classification",
@@ -904,3 +905,57 @@ def get_cycle_events(
     except Exception as e:
         logger.exception("Error reading events for cycle %s", cycle_id)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{cycle_id}/trace")
+async def data_trace(cycle_id: str, ticker: str = "", limit: int = Query(500, ge=1, le=2000),
+                     offset: int = Query(0,ge=0,le=100000)):
+    query = {"cycle_id":cycle_id}
+    if ticker:
+        query["ticker"] = ticker
+    rows = mongo_store.find_docs("pipeline_trace_events",query,sort=[("created_at",1)],
+                                 limit=limit+1,skip=offset,projection={"_id":0})
+    origin = _cycle_triggers([cycle_id]).get(cycle_id)
+    selection = mongo_store.find_docs("pipeline_events", {
+        "cycle_id":cycle_id,"step":"GATEKEEPER_SELECTED"},
+        projection={"_id":0,"data":1,"created_at":1},limit=10)
+    allocations = []
+    command_id = ((origin or {}).get("origin") or {}).get("command_id")
+    if command_id:
+        picked = mongo_store.find_docs("watch_triage_log", {"cycle_id":command_id,"fired":True},
+            limit=1,projection={"_id":0})
+        if picked:
+            allocations = mongo_store.find_docs("watch_triage_log",
+                {"created_at":picked[0]["created_at"]},limit=200,projection={"_id":0})
+    return {"events":rows[:limit], "has_more":len(rows)>limit,
+            "coverage":"recorded" if rows else "unavailable", "retention_days":30,
+            "origin":origin,"selection":selection,"allocations":allocations}
+
+
+@router.get("/{cycle_id}/trace/blob/{digest}")
+async def trace_blob(cycle_id: str, digest: str):
+    # Bind lookup to the requested cycle; a content hash is not authorization.
+    events = mongo_store.find_docs("pipeline_trace_events",
+        {"cycle_id":cycle_id,"snapshot.hash":digest},limit=1)
+    if not events:
+        raise HTTPException(404,"Snapshot is not recorded for this cycle")
+    blobs = mongo_store.find_docs("pipeline_trace_blobs",{"_id":digest},limit=1,projection={"_id":0})
+    if not blobs:
+        raise HTTPException(404,"Snapshot expired or was not retained")
+    return blobs[0]
+
+
+@router.get("/{cycle_id}/trace/export")
+async def trace_export(cycle_id: str, ticker: str = ""):
+    from fastapi.responses import JSONResponse
+    from app.v3.data_trace import otlp_export
+    import re
+    query = {"cycle_id":cycle_id}
+    if ticker:
+        query["ticker"] = ticker
+    events = mongo_store.find_docs("pipeline_trace_events",query,sort=[("created_at",1)],
+                                  limit=10001,projection={"_id":0})
+    if len(events)>10000:
+        raise HTTPException(413,"Trace exceeds export bound; select a ticker scope")
+    name = re.sub(r'[^A-Za-z0-9_.-]', '_', cycle_id)[:160]
+    return JSONResponse(otlp_export(events),headers={"Content-Disposition":f'attachment; filename="{name}.otlp.json"'})

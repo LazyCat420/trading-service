@@ -76,6 +76,8 @@ class Evidence:
     kind: str                       # news | price | clock | calendar | position
     text: str = ""
     observed_at: datetime | None = None
+    source_id: str | None = None
+    source_url: str | None = None
     source: str = ""                # detected | provider | price | calendar | clock
     value: float | None = None
     trigger_type: str = ""
@@ -224,11 +226,11 @@ def _expected_information_gain(inp: TriageInputs) -> tuple[float, dict]:
     if inp.last_analysis_at is not None:
         hours = (inp.now - inp.last_analysis_at).total_seconds() / 3600.0
         detail["hours_since_analysis"] = round(hours, 1)
-        # Information accumulates roughly with elapsed time, saturating in a week.
-        score = max(0.0, min(1.0, hours / (24 * 7)))
+        # Elapsed time is cadence, not evidence that information changed.
+        score = 0.0
     else:
         detail["hours_since_analysis"] = None
-        score = 0.8        # never analysed under this watch — plenty to learn
+        score = 0.0
 
     ev = inp.evidence
     if ev.kind == "news" and ev.text:
@@ -241,7 +243,10 @@ def _expected_information_gain(inp: TriageInputs) -> tuple[float, dict]:
             # missing field costs anything, and it costs it once.
             detail["resolution_overlap_reason"] = "no_resolution_condition"
         elif overlap > 0:
-            score = min(1.0, score + 0.4)
+            score = 0.8 if ev.source == "detected" else 0.4
+    elif ev.kind == "price" and ev.observed_at is not None:
+        score = 0.6  # a newly observed, evaluated condition
+    detail["basis"] = "observed_condition_or_question_relevance"
     return max(0.0, min(1.0, score)), detail
 
 
@@ -376,14 +381,17 @@ def triage(inp: TriageInputs) -> TriageVerdict:
     if key in inp.seen_event_keys:
         return _reject(REJECT_DUPLICATE, {"event_key": key})
 
-    if ev.kind == "news" and ev.observed_at is None:
+    if ev.kind in ("news", "price") and ev.observed_at is None:
         return _reject("unknown_evidence_age", {"source": ev.source, "timestamp_known": False})
 
     if ev.observed_at is not None:
         age_h = (inp.now - ev.observed_at).total_seconds() / 3600.0
-        if age_h > inp.evidence_max_age_h:
+        max_age = 0.25 if ev.kind == "price" else inp.evidence_max_age_h
+        if age_h < 0:
+            return _reject("future_evidence_timestamp", {"age_hours":age_h})
+        if age_h > max_age:
             return _reject(REJECT_STALE_EVIDENCE,
-                           {"age_hours": round(age_h, 1), "max": inp.evidence_max_age_h})
+                           {"age_hours": round(age_h, 1), "max": max_age})
 
     if ev.trigger_type in _PRICE_TRIGGERS and not inp.market_open:
         return _reject(REJECT_MARKET_CLOSED, {"trigger_type": ev.trigger_type})
@@ -403,6 +411,10 @@ def triage(inp: TriageInputs) -> TriageVerdict:
     # ── Thesis relevance. Only screens what it CAN screen. ──
     rc = watch_schema.get_resolution_condition(inp.watch)
     overlap = _resolution_overlap(rc, ev.text) if ev.kind == "news" else None
+    if ev.kind == "news" and rc is None:
+        return _reject("missing_resolution_condition", {
+            "reason":"No recorded question connects this news to a decision; qualify the fact before full research",
+            "headline":(ev.text or "")[:200]})
     if ev.kind == "news" and overlap == 0:
         # A stored condition exists and this headline touches none of it. This
         # is the gate that refuses "Citigroup delays Fed rate cut forecast" for
@@ -424,6 +436,9 @@ def triage(inp: TriageInputs) -> TriageVerdict:
     legacy, d_legacy = _legacy_penalty(inp)
 
     components = {
+        # A stale-thesis maintenance review is explicit coverage work, not
+        # information gain. It can use an early slot but loses to real events.
+        "maintenance_coverage": 0.8 if ev.kind == "clock" and ev.trigger_type == "staleness" else 0.0,
         "materiality": round(mat, 4),
         "catalyst_urgency": round(cat, 4),
         "portfolio_risk": round(risk, 4),
@@ -444,7 +459,8 @@ def triage(inp: TriageInputs) -> TriageVerdict:
         "cost": d_cost, "legacy": d_legacy,
         "resolution_overlap": overlap,
         "evidence": {"kind": ev.kind, "trigger_type": ev.trigger_type,
-                     "source": ev.source, "text": (ev.text or "")[:300],
+                     "source": ev.source, "source_id":ev.source_id,"source_url":ev.source_url,
+                     "text": (ev.text or "")[:300],
                      "observed_at": ev.observed_at},
     }
 

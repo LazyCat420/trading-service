@@ -96,14 +96,15 @@ def _earnings_from_fundamentals(ticker: str, now: datetime) -> tuple[dict | None
     # finviz/yfinance give a DATE with no clock time; finnhub's bmo/amc hour is
     # not carried into `fundamentals`. So the day-part is unknown and
     # event_timing maps it to 16:15 ET (just after close) — deliberately the
-    # conservative choice: a post-close snipe is late for a bmo reporter but
-    # never analyses BEFORE the numbers exist, which is the one unrecoverable
-    # error. Confidence records that we guessed the hour, not the date.
+    # planning placeholder only. After-hours releases can occur later than
+    # 16:15 ET; this timestamp does NOT prove that results are available.
     at = earnings_event_to_run_at(ed.date().isoformat(), None) or ed
     return {
         "kind": "earnings",
         "at": at,
         "confidence": "date_known_hour_assumed",
+        "release_time_verified": False,
+        "requires_release_verification": True,
         "label": f"{ticker} earnings ({ed.date().isoformat()})",
         "source": str(src),
     }, "date_known_hour_assumed"

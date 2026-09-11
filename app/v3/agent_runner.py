@@ -597,7 +597,14 @@ def _scoped_to_the_agent(fn):
             ticker=getattr(desk, "ticker", None),
             phase=phase or agent_name,
         ):
-            return await fn(desk, agent_module, **kwargs)
+            from app.v3.data_trace import scope
+            with scope(kwargs.get("cycle_id") or "", desk.ticker, agent_name,
+                       phase=phase, attempt=2 if kwargs.get("is_retry") else 1):
+                outcome = await fn(desk, agent_module, **kwargs)
+                from app.v3.data_trace import record
+                record(kwargs.get("cycle_id") or "", desk.ticker, agent_name,
+                       "agent.outcome", outcome=getattr(outcome,"value",str(outcome)))
+                return outcome
 
     return _wrapper
 
@@ -731,7 +738,11 @@ async def run_v3_agent(
         from app.config import settings as _settings
         prompt_split = bool(getattr(_settings, "V3_PROMPT_SPLIT", True))
 
+        from app.v3.data_trace import record as trace_data
         desk_context = desk.get_compressed_context(include_debate=include_debate_context)
+        trace_data(cycle_id, desk.ticker, agent_name, "desk.compressed",
+                   data={"context":desk_context}, include_debate=include_debate_context,
+                   attempt=attempt_no)
 
         # Locale directive: constant per deployment config → system prompt
         # (identical across cycles for the same locale, still cacheable).
@@ -1300,6 +1311,12 @@ async def run_v3_agent(
         # path could not, because wait_for raises its own TimeoutError after
         # cancelling the run (ABT fundamental analyst, cycle-v3-1788660665:
         # 1,800,068 ms, 18 tool calls, row said tokens=0 loops=0).
+        from app.v3.data_trace import record as trace_data, current_span
+        if current_span():
+            user_prompt += "\n## Trace Parent: " + current_span() + "\n"
+        trace_data(cycle_id, desk.ticker, agent_name, "prompt.assembled",
+                   data={"system":system_prompt,"user":user_prompt,"tools":tool_whitelist},
+                   attempt=attempt_no)
         result = await asyncio.wait_for(
             _with_heartbeat(run_agent(
                 agent_name=agent_name,
@@ -1341,7 +1358,12 @@ async def run_v3_agent(
             )
 
         # Parse the artifact from the agent's output
+        trace_data(cycle_id, desk.ticker, agent_name, "model.output",
+                   data=final_text, model=model_used, provider=provider_used, stop_reason=stop_reason,
+                   tokens=token_usage, loops=loops_used, attempt=attempt_no)
         artifact = _parse_artifact(final_text, artifact_type, agent_name)
+        trace_data(cycle_id, desk.ticker, agent_name, "artifact.parsed",
+                   data=artifact, artifact_type=artifact_type, parse_success=artifact is not None)
 
         # A fragment is a PARSE failure wearing an artifact's clothes: valid
         # JSON, so the repair pass below never fired, and the run instead spent
@@ -1516,6 +1538,9 @@ async def run_v3_agent(
                     ), cycle_id),
                     timeout=timeout_seconds,
                 )
+                trace_data(cycle_id, desk.ticker, agent_name, "artifact.repair",
+                           data={"prompt":repair_prompt,"response":repair_result.get("response", "")},
+                           reason=rule.name)
                 repair_text = repair_result.get("response", "")
                 artifact = _parse_artifact(repair_text, artifact_type, agent_name)
                 repaired = artifact is not None
@@ -1786,7 +1811,9 @@ async def run_v3_agent(
         # the DB unvalidated — a null trigger value means the watch can NEVER
         # fire (order_triggers gates on `value is not None`).
         from app.v3.artifact_validators import validate_artifact as _coerce_artifact
+        trace_data(cycle_id, desk.ticker, agent_name, "artifact.before_normalization", data=artifact)
         artifact = _coerce_artifact(artifact_type, artifact, desk=desk)
+        trace_data(cycle_id, desk.ticker, agent_name, "artifact.normalized", data=artifact)
 
         if (desk.cycle_metadata.get("decision_contract_version") == 1
                 and artifact_type in ("final_decision", "trade_decision")):
@@ -1794,6 +1821,50 @@ async def run_v3_agent(
             board_source = desk.final_decision if artifact_type == "trade_decision" else None
             contract_failures = contract_errors(artifact, board=board_source,
                                                 evidence_sources=evidence_sources(desk))
+            if contract_failures and repaired is None:
+                # One tool-less correction inside the original deadline. Keep
+                # the actual decision and evidence; never synthesize defaults.
+                original_artifact = dict(artifact)
+                remaining = max(0.0, t_start + timeout_seconds - time.monotonic())
+                if remaining > 1:
+                    repair_prompt = (
+                        user_prompt + "\n\n## DECISION CONTRACT CORRECTION\n"
+                        + "Correct these validation errors: " + "; ".join(contract_failures)
+                        + "\nPrevious JSON: " + json.dumps(artifact, default=str)
+                        + "\nPreserve action, confidence, reasoning, position size, stop loss, "
+                        "take profit and cited evidence exactly. Supply timing fields only "
+                        "when supported by your stated decision. Do not invent a trigger, "
+                        "resolution question, source or observation. Return only the complete JSON."
+                    )
+                    try:
+                        correction = await asyncio.wait_for(_with_heartbeat(run_agent(
+                            agent_name=agent_name, ticker=desk.ticker, cycle_id=cycle_id,
+                            bot_id=bot_id, system_prompt=system_prompt, user_prompt=repair_prompt,
+                            max_tokens=_safe_max_tokens(agent_name=agent_name,
+                                system_prompt=system_prompt, user_prompt=repair_prompt, tool_whitelist=None),
+                            enable_tools=False, model_override=model_override,
+                            prism_overrides=prism_overrides, cost_sink=_cost_sink,
+                            soft_deadline_s=remaining * 0.5,
+                            deadline_monotonic=t_start + timeout_seconds,
+                        ), cycle_id), timeout=remaining)
+                        trace_data(cycle_id, desk.ticker, agent_name, "artifact.contract_correction",
+                                   data={"errors":contract_failures,"prompt":repair_prompt,
+                                         "response":correction.get("response", "")})
+                        candidate = _parse_artifact(correction.get("response", ""), artifact_type, agent_name)
+                        token_usage += correction.get("tokens_used", 0)
+                        elapsed_ms = int((time.monotonic() - t_start) * 1000)
+                        from app.v3.decision_contract import correction_errors
+                        correction_failures = correction_errors(original_artifact, candidate,
+                            board=board_source, evidence_sources=evidence_sources(desk))
+                        repaired = not correction_failures
+                        if repaired:
+                            artifact = candidate
+                            contract_failures = []
+                        else:
+                            contract_failures += correction_failures
+                    except Exception as exc:
+                        repaired = False
+                        logger.warning("[V3Runner] decision contract correction failed: %s", type(exc).__name__)
             if contract_failures:
                 desk.cycle_metadata.setdefault("decision_contract_repair_errors", {})[artifact_type] = contract_failures
                 logger.error("[V3Runner] %s: decision contract rejected: %s", agent_name, contract_failures)
@@ -1875,6 +1946,8 @@ async def run_v3_agent(
             artifact["decision_provenance"] = DecisionProvenance.BOARD_REASONED.value
 
         # Append to SharedDesk
+        trace_data(cycle_id, desk.ticker, agent_name, "artifact.accepted", data=artifact,
+                   artifact_type=artifact_type, repaired=repaired)
         desk.append_artifact(artifact_type, artifact)
 
         # Persist the quant analyst's technical overlays to the AI Analysis
@@ -2069,6 +2142,8 @@ async def run_v3_agent(
         if failure_patterns:
             artifact["_failure_patterns"] = failure_patterns
 
+        trace_data(cycle_id, desk.ticker, agent_name, "artifact.final", data=artifact,
+                   quality_score=quality_score, quality_flag=quality_flag)
         # Log success
         direction = artifact.get("thesis_direction", artifact.get("action", "?"))
         confidence = artifact.get("confidence", artifact.get("final_confidence", 0))
