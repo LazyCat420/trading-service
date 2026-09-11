@@ -133,13 +133,29 @@ def render_reasoning_artifact(artifact, record):
     facts = calculated_facts(record)
     selected = []
 
+    def selection_help(field):
+        # Guide a new model selection, without changing the rejected artifact.
+        hint = " Available step IDs: " + json.dumps(sorted(catalog)) + "."
+        if field.startswith("research_answers."):
+            from app.v3.financial_claims import _question_requirements
+            question_id = field.removeprefix("research_answers.")
+            question = next((q for q in record.get("questions", [])
+                             if q["id"] == question_id), None)
+            if question:
+                requirements = _question_requirements(question["question"])
+                candidates = [step for key, step in catalog.items()
+                              if not key.startswith("observation:") and requirements
+                              and any(set(step["fact_ids"]) & group for group in requirements)]
+                hint += " Relevant evidence candidates (select enough to cover every part): " + json.dumps(candidates) + "."
+        return hint
+
     def select(ids, field):
         if not isinstance(ids, list) or not ids:
-            errors.append(f"{field}: select nonempty step IDs from the supplied catalog.")
+            errors.append(f"{field}: select nonempty step IDs from the supplied catalog." + selection_help(field))
             return []
         unknown = [i for i in ids if not isinstance(i, str) or i not in catalog]
         if unknown:
-            errors.append(f"{field}: unknown step IDs {json.dumps(unknown)}; select only IDs from the supplied catalog.")
+            errors.append(f"{field}: unknown step IDs {json.dumps(unknown)}; select only IDs from the supplied catalog." + selection_help(field))
             return []
         # Repeating the same source reference does not add evidence or weight.
         # Preserve authored selection lists, but render each chosen step once.

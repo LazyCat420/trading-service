@@ -139,3 +139,29 @@ def test_repeated_references_do_not_hide_an_unknown_selection():
     _,errors=render_reasoning_artifact(raw,case)
     assert any('invented_relationship' in error for error in errors)
     assert audit_decision(raw,case)['status']=='unresolved'
+
+
+@pytest.mark.parametrize("bad_ids", [[], ["invented_price_rsi_relationship"], [None]])
+def test_selection_diagnostics_ground_the_failed_question_without_filling_it(bad_ids):
+    case = next(c for c in CASES if c["id"] == "conditional_entry")
+    raw = selection(case)
+    raw["research_answers"][-1]["step_ids"] = bad_ids
+    before = deepcopy(raw)
+    rendered, errors = render_reasoning_artifact(raw, case)
+    diagnostic = next(error for error in errors if "research_answers.q-units:" in error)
+    assert "Available step IDs:" in diagnostic
+    assert "Relevant evidence candidates" in diagnostic
+    assert '"id": "price_and_oscillator"' in diagnostic
+    assert "measure different quantities" in diagnostic
+    assert raw == rendered == before
+    assert audit_decision(raw, case)["status"] == "unresolved"
+
+
+def test_unknown_top_level_step_lists_actual_catalog_without_accepting_guess():
+    case = next(c for c in CASES if c["id"] == "held_deterioration")
+    raw = selection(case)
+    raw["reasoning_steps"] = ["held_deterioration"]
+    rendered, errors = render_reasoning_artifact(raw, case)
+    assert rendered == raw
+    assert any("Available step IDs: " + json.dumps(sorted(reasoning_catalog(case))) in error for error in errors)
+    assert audit_decision(raw, case)["status"] == "unresolved"

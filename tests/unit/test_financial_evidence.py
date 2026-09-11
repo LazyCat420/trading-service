@@ -96,3 +96,75 @@ def test_incomplete_portfolio_marks_do_not_become_verified_exposure(monkeypatch)
     assert sink['valuation_complete'] is False
     record=build_record(SimpleNamespace(ticker='EVLT',cycle_metadata={'financial_book_snapshot':sink}))
     assert next(f for f in record['facts'] if f['id']=='exposure_pct')['value'] is None
+
+
+@pytest.mark.parametrize('missing', [None, float('nan'), float('inf'), 'N/A'])
+def test_missing_vendor_fields_remain_unknown_and_catalog_is_renderable(missing):
+    from app.v3.financial_reasoning import reasoning_catalog, render_reasoning_artifact
+    from app.v3.financial_claims import audit_decision
+    metadata = {
+        'timestamp': '2026-09-11',
+        'financial_technical_snapshot': {'as_of': '2026-09-10', 'close': 100,
+            'support': missing, 'resistance': 110, 'sma_200': missing},
+        'financial_fundamental_snapshot': {'as_of': '2026-09-08',
+            'forward_pe': missing, 'pe_ratio': missing, 'debt_to_equity': missing},
+        'research_questions': [{'id': 'q-volume', 'question': 'What is the five-session volume trend?'},
+            {'id': 'q-peg', 'question': 'What is forward PEG?'},
+            {'id': 'q-sma', 'question': 'What is the 200-day moving average?'}],
+    }
+    record = build_record(SimpleNamespace(ticker='EVLT', cycle_metadata=metadata))
+    facts = calculated_facts(record)
+    for key in ('forward_pe', 'trailing_pe', 'debt_to_equity', 'calc_forward_peg',
+                'calc_range_position_pct', 'sma_200', 'volume_five_session_trend'):
+        assert facts[key]['status'] == 'unknown' and facts[key]['value'] is None
+    catalog = reasoning_catalog(record)
+    assert 'volume_five_session_trend' in catalog
+    raw = {'financial_reasoning_version': 2, 'action': 'HOLD', 'confidence': 60,
+           'position_size_pct': 0, 'entry_mode': 'watch_only', 'trigger_purpose': 'none',
+           'dynamic_trigger': None, 'resolution_condition': None,
+           'reasoning_steps': ['forward_peg'],
+           'research_answers': [{'item_id': q, 'step_ids': [step]} for q, step in
+               [('q-volume', 'volume_five_session_trend'), ('q-peg', 'forward_peg'), ('q-sma', 'sma_200')]]}
+    rendered, errors = render_reasoning_artifact(raw, record)
+    assert not errors
+    assert all(answer['status'] == 'unresolved' for answer in rendered['research_answers'])
+    assert audit_decision(rendered, record)['status'] == 'consistent'
+
+
+@pytest.mark.parametrize('fault', [None, 'missing_recent', 'missing_prior', 'short', 'duplicate_date'])
+def test_volume_window_retains_sessions_and_price_source_date(monkeypatch, fault):
+    from datetime import datetime, timedelta
+    from app.quant.technical_baseline import _fetch_price_and_volume
+    from app.db import mongo_store
+    rows = [{'date': datetime(2026, 9, 11) - timedelta(days=i), 'close': 100,
+             'volume': 200 if i < 5 else 100} for i in range(20)]
+    if fault == 'missing_recent': rows[2]['volume'] = None
+    if fault == 'missing_prior': rows[9]['volume'] = float('nan')
+    if fault == 'short': rows = rows[:10]
+    if fault == 'duplicate_date': rows[1]['date'] = rows[0]['date']
+    monkeypatch.setattr(mongo_store, 'find_docs', lambda *a, **k: deepcopy(rows))
+    from app.quant import returns
+    monkeypatch.setattr(returns, 'dominant_source_for', lambda ticker: 'test-vendor')
+    provenance = {}
+    close, trend = _fetch_price_and_volume('EVLT', snapshot_sink=provenance)
+    assert close == 100
+    record = build_record(SimpleNamespace(ticker='EVLT', cycle_metadata={
+        'financial_technical_snapshot': {'as_of': '2026-09-08', 'close': close,
+            'volume_trend': trend, 'field_as_of': provenance}}))
+    facts = {f['id']: f for f in record['facts']}
+    assert facts['close']['as_of'] == '2026-09-11 00:00:00'
+    assert 'price_history' in facts['close']['source']
+    assert facts['volume_five_session_trend']['status'] == ('known' if fault is None else 'unknown')
+    assert trend == ('INCREASING' if fault is None else None)
+
+
+
+def test_lower_average_volume_does_not_establish_decline_across_five_sessions():
+    provenance = {'as_of': '2026-09-11', 'session_dates': ['2026-09-11', '2026-09-10',
+        '2026-09-09', '2026-09-08', '2026-09-04'], 'session_volumes': [100, 80, 110, 90, 100]}
+    record = build_record(SimpleNamespace(ticker='EVLT', cycle_metadata={
+        'financial_technical_snapshot': {'volume_trend': 'DECREASING',
+            'field_as_of': {'volume_trend': provenance}}}))
+    trend = next(f for f in record['facts'] if f['id'] == 'volume_five_session_trend')
+    assert trend['value'] == 'MIXED'
+    assert trend['period'] == 'latest_five_sessions'

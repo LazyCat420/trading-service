@@ -496,7 +496,7 @@ KNOWN_UNPINNED_MONGO: dict[str, int] = {
     # 3 -> 2 on 2026-08-19: one of the three was a `distinct_values` over
     # tickers, which the scanner now recognises as vendor-immune by
     # construction (a duplicate vendor row cannot change a distinct set).
-    "app/quant/technical_baseline.py": 2,
+    "app/quant/technical_baseline.py": 1,
     "app/routers/market_router.py": 2,
     # 2 -> 1 on 2026-08-28: NOT a fix. BootService carried duplicate copies of
     # the FRED/market/SP500 startup tasks; they were consolidated into their

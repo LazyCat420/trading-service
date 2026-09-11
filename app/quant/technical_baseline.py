@@ -289,44 +289,43 @@ def _fetch_technicals(ticker: str) -> dict | None:
     }
 
 
-def _fetch_price_and_volume(ticker: str) -> tuple[float | None, str | None]:
+def _fetch_price_and_volume(ticker: str, *, snapshot_sink: dict | None = None) -> tuple[float | None, str | None]:
     """Latest close, and a volume trend read from the last 20 sessions."""
     from app.db import mongo_store
+    from app.quant.returns import _one_vendor
 
     docs = mongo_store.find_docs(
         "price_history",
-        {"ticker": ticker.upper()},
+        _one_vendor(ticker.upper(), {"ticker": ticker.upper()}),
         sort=[("date", -1)],
         limit=20,
     )
     if not docs:
         return None, None
 
-    try:
-        close = float(docs[0].get("close"))
-        if close != close:
-            close = None
-    except (TypeError, ValueError):
-        close = None
+    close = _finite(docs[0].get("close"))
+    if snapshot_sink is not None:
+        snapshot_sink['close'] = {'as_of': docs[0].get('date'), 'source': 'price_history:' + str(docs[0].get('source') or 'unspecified_vendor')}
 
-    volumes = []
-    for d in docs:
-        vol = d.get("volume")
-        try:
-            v = float(vol)
-        except (TypeError, ValueError):
-            continue
-        if v == v and v > 0:
-            volumes.append(v)
-
+    # Keep session positions intact. Filtering missing volumes would shift an
+    # older session into the latest-five window and mislabel a shorter baseline
+    # as the prior fifteen sessions.
+    volumes = [_finite(d.get('volume')) for d in docs]
+    dates = [str(d.get('date') or '')[:10] for d in docs]
     trend = None
-    if len(volumes) >= 10:
+    if (len(volumes) == 20 and len(set(dates)) == 20 and all(dates)
+            and all(v is not None and v > 0 for v in volumes)):
         recent = sum(volumes[:5]) / 5
-        baseline = sum(volumes[5:]) / len(volumes[5:])
-        if baseline > 0:
-            ratio = recent / baseline
-            trend = ("INCREASING" if ratio > 1.15
-                     else "DECREASING" if ratio < 0.85 else "STABLE")
+        baseline = sum(volumes[5:]) / 15
+        ratio = recent / baseline
+        trend = ("INCREASING" if ratio > 1.15
+                 else "DECREASING" if ratio < 0.85 else "STABLE")
+        if snapshot_sink is not None:
+            snapshot_sink['volume_trend'] = {
+                'as_of': docs[0].get('date'), 'source': 'price_history:' + str(docs[0].get('source') or 'unspecified_vendor'),
+                'session_dates': dates, 'session_volumes': volumes,
+                'recent_sessions': 5, 'baseline_sessions': 15,
+            }
     return close, trend
 
 
@@ -353,10 +352,12 @@ def compute_technical_baseline(ticker: str) -> dict:
             for k, v in tech.items()
         }
 
-        close, volume_trend = _fetch_price_and_volume(ticker)
+        price_provenance = {}
+        close, volume_trend = _fetch_price_and_volume(ticker, snapshot_sink=price_provenance)
         close = _finite(close)
 
-        baseline: dict = {"as_of": tech["date"], "source": "technicals table"}
+        baseline: dict = {"as_of": tech["date"], "source": "technicals table",
+                          "field_as_of": price_provenance}
         if tech.get("rsi_14") is not None:
             baseline["rsi"] = round(tech["rsi_14"], 2)
         if tech.get("atr_14") is not None:

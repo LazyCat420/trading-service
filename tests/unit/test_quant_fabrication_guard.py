@@ -135,7 +135,7 @@ class TestFailsafe:
             "bb_upper": None, "bb_mid": None, "bb_lower": None,
             "sma_50": None, "sma_200": None, "support": None, "resistance": None,
         })
-        monkeypatch.setattr(tb, "_fetch_price_and_volume", lambda t: (100.0, "STABLE"))
+        monkeypatch.setattr(tb, "_fetch_price_and_volume", lambda t, **kw: (100.0, "STABLE"))
         baseline = tb.compute_technical_baseline("MP")
         assert "rsi" not in baseline
         assert baseline["atr"] == 2.5
@@ -155,7 +155,7 @@ class TestBollingerOutsideTheBands:
             "bb_upper": 120.0, "bb_mid": 100.0, "bb_lower": 80.0,
             "sma_50": None, "sma_200": None, "support": None, "resistance": None,
         })
-        monkeypatch.setattr(tb, "_fetch_price_and_volume", lambda t: (close, None))
+        monkeypatch.setattr(tb, "_fetch_price_and_volume", lambda t, **kw: (close, None))
         b = tb.compute_technical_baseline("X")
         assert b["bollinger_position"] == expected
         assert b.get("bollinger_note") == note
@@ -198,7 +198,7 @@ class TestTheUnguardedFields:
             "bb_upper": None, "bb_lower": None, "sma_50": None,
             "sma_200": None, "support": None, "resistance": None,
         })
-        monkeypatch.setattr(tb, "_fetch_price_and_volume", lambda t: (100.0, None))
+        monkeypatch.setattr(tb, "_fetch_price_and_volume", lambda t, **kw: (100.0, None))
         # -30% then partial recovery: peak-to-trough is 30%.
         rets = np.concatenate([
             np.full(40, 0.0), np.full(1, -0.30), np.full(40, 0.001),

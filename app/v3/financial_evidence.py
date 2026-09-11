@@ -75,6 +75,24 @@ def build_record(desk):
             facts.append(fact(metric, float(value) if value is not None else None, unit,
                               as_of=provenance.get('as_of'), source=source, entity=ticker,
                               reason='Not present in the captured source snapshot.' if value is None else None))
+    technical = meta.get('financial_technical_snapshot') or {}
+    volume_source = (technical.get('field_as_of') or {}).get('volume_trend') or {}
+    dates = volume_source.get('session_dates') or []
+    volumes = [number(v) for v in volume_source.get('session_volumes', [])]
+    trend = None
+    if (len(dates) >= 5 and len(volumes) == len(dates) and len(set(dates)) == len(dates)
+            and all(v is not None and v > 0 for v in volumes[:5])):
+        # Source rows are newest first. A lower five-day average than the prior
+        # fifteen does NOT establish declining volume across those five days.
+        pairs = list(zip(volumes[:4], volumes[1:5]))
+        trend = ('DECLINING' if all(a < b for a, b in pairs) else
+                 'INCREASING' if all(a > b for a, b in pairs) else
+                 'FLAT' if all(a == b for a, b in pairs) else 'MIXED')
+    facts.append(fact('volume_five_session_trend', trend, 'category',
+                      as_of=volume_source.get('as_of'),
+                      source=str(volume_source.get('source') or 'price_history:unspecified_vendor')+':'+ticker+':'+str(volume_source.get('as_of')),
+                      entity=ticker, period='latest_five_sessions',
+                      reason=None if trend is not None else 'No complete dated five-session volume window.'))
     valuation = meta.get('financial_valuation_snapshot') or {}
     for key, metric in (('fcf_ttm', 'free_cash_flow'), ('revenue_ttm', 'revenue_ttm'),
                         ('ebit_ttm', 'operating_income_ttm')):
