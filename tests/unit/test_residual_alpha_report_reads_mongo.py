@@ -329,10 +329,17 @@ def test_adv_comes_from_the_dominant_vendor_not_a_blend_of_both(store):
         "be ABSENT so the caller charges the default spread")
 
 
-def test_the_adv_window_is_pushed_into_the_query(store):
+def test_the_adv_window_is_pushed_into_the_query(store, monkeypatch):
     """The 90-day bound must reach Mongo. A port that fetched every bar of
     every ticker and trimmed in Python answers correctly here — so this asserts
     the query, which is what keeps the read from scaling with 15.7M rows."""
+    # Keep the query clock on the same day as the fixture, even when a full
+    # suite crosses midnight between collection and this test's execution.
+    class FixtureDate(date):
+        @classmethod
+        def today(cls):
+            return _TODAY
+    monkeypatch.setattr(ra, "date", FixtureDate)
     ra.fetch_adv({"AAA"})
     pipelines = [p for p in store["price_history"] if isinstance(p, list)]
     adv_pipeline = pipelines[-1]
