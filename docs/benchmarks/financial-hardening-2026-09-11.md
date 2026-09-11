@@ -51,7 +51,7 @@ The staging transport's first attempt used an invented agent identifier and rece
 
 ## Release verification
 
-Validated runtime commit: `f55811cb`. Targeted NAS deployment and post-restart source/health verification are pending.
+Validated runtime commit: `f55811cb`. Released as `62254727` using `npm run deploy -- --only=trading-service --skip-pull`. Image transfer and container restart completed. The live-cycle guard allowed deployment with production at `done`. Direct post-restart verification found Docker running/healthy, HTTP 200 from `/health`, and all six runtime source hashes matching the tested files. Deploy-kit exited 0 with 1 service passed, 0 failed and 19 skipped. It also emitted a nonblocking edge-DNS reconciliation warning; the warning does not identify its cause, and this release does not claim that DNS reconciliation was fixed. Container started at `2026-09-11T22:25:33.898679502Z`; receipt: `evidence/financial-hardening-2026-09-11/nas-release-summary.json`.
 
 ## Evidence retention
 

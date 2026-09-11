@@ -1,0 +1,43 @@
+{
+  "verified_at": "2026-09-11T22:26:16.767725+00:00",
+  "runtime": {
+    "git_sha": "62254727",
+    "source_hashes": {
+      "app/v3/orchestrator.py": "d282f925c31c30398ebdd62cce70d51362bc18901bd36f3d4aca984adb8b9bb0",
+      "app/v3/agent_runner.py": "41c5401d1490adfdbac9bd42221600d3c6d0c533fbde9733d5d63a6ce99682f3",
+      "app/v3/financial_claims.py": "b9daaa272cceb7c07c82987a1cecaaaf58d4cec06053531c107bd3ed06230cb6",
+      "app/v3/financial_evidence.py": "bb9364621557ccb528ecb4f1ba7084cc92fe6b80a7e7e61efcfce1a96edc1fdc",
+      "app/v3/financial_reasoning.py": "4e9584416445eb8c237f319dd52c556d53da69a7048c9c04352e52d95c0add6f",
+      "app/quant/technical_baseline.py": "99c4d8fef8508826991a682821aa21ba0e2c7af358de9976c7889e390155ba6d"
+    }
+  },
+  "state": {
+    "status": "running",
+    "health": "healthy",
+    "started_at": "2026-09-11T22:25:33.898679502Z"
+  },
+  "health": {
+    "status_code": 200,
+    "body": {
+      "status": "ok",
+      "service": "trading-service",
+      "version": "v3"
+    }
+  },
+  "local_source_hashes": {
+    "app/v3/orchestrator.py": "d282f925c31c30398ebdd62cce70d51362bc18901bd36f3d4aca984adb8b9bb0",
+    "app/v3/agent_runner.py": "41c5401d1490adfdbac9bd42221600d3c6d0c533fbde9733d5d63a6ce99682f3",
+    "app/v3/financial_claims.py": "b9daaa272cceb7c07c82987a1cecaaaf58d4cec06053531c107bd3ed06230cb6",
+    "app/v3/financial_evidence.py": "bb9364621557ccb528ecb4f1ba7084cc92fe6b80a7e7e61efcfce1a96edc1fdc",
+    "app/v3/financial_reasoning.py": "4e9584416445eb8c237f319dd52c556d53da69a7048c9c04352e52d95c0add6f",
+    "app/quant/technical_baseline.py": "99c4d8fef8508826991a682821aa21ba0e2c7af358de9976c7889e390155ba6d"
+  },
+  "all_runtime_hashes_match": true,
+  "deploy_kit": {
+    "exit_code": 0,
+    "passed": 1,
+    "failed": 0,
+    "skipped": 19,
+    "warning": "Nonblocking edge DNS reconciliation warning; cause not established by deploy output."
+  }
+}
