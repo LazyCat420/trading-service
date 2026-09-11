@@ -25,3 +25,5 @@ Examples: current guidance called the 95–115 range position of price 100 one-t
 This small sample provides no demonstrated learning-quality improvement. Four cases are the independent units; one unblinded reviewer performed the factual review. Source evidence, exact outputs, hashes, per-artifact correct observations, errors and omissions are in [the retained cohort](evidence/board-memory-proxy-2026-09-11/review.json). A normal paper cycle separately checks the deployed tool and contract-repair paths.
 
 Reported usage was present for all 12 attempts: 46548 input tokens and 9859 output tokens. Summed request duration was 153.83 seconds. Shared hardware and different output lengths preclude a speed comparison.
+
+A post-run, read-only coverage check applied the existing explicit-operand arithmetic guard to copies of all 12 retained artifacts. It recognized zero checkable expressions and therefore flagged zero errors in each. This is lack of coverage, not verified arithmetic correctness; the manual errors above remain. The original responses are unchanged. See `arithmetic-guard-coverage.json`.

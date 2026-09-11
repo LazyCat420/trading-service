@@ -1,0 +1,146 @@
+[
+  {
+    "file": "01-headroom-current.json",
+    "audit": {
+      "version": 1,
+      "scope": "explicit_operand_arithmetic_only",
+      "checked": 0,
+      "errors": 0,
+      "scan_truncated": false,
+      "checks": [],
+      "checks_omitted": 0
+    }
+  },
+  {
+    "file": "02-headroom-no_method.json",
+    "audit": {
+      "version": 1,
+      "scope": "explicit_operand_arithmetic_only",
+      "checked": 0,
+      "errors": 0,
+      "scan_truncated": false,
+      "checks": [],
+      "checks_omitted": 0
+    }
+  },
+  {
+    "file": "03-headroom-stale_memory.json",
+    "audit": {
+      "version": 1,
+      "scope": "explicit_operand_arithmetic_only",
+      "checked": 0,
+      "errors": 0,
+      "scan_truncated": false,
+      "checks": [],
+      "checks_omitted": 0
+    }
+  },
+  {
+    "file": "04-missing_history-stale_memory.json",
+    "audit": {
+      "version": 1,
+      "scope": "explicit_operand_arithmetic_only",
+      "checked": 0,
+      "errors": 0,
+      "scan_truncated": false,
+      "checks": [],
+      "checks_omitted": 0
+    }
+  },
+  {
+    "file": "05-missing_history-no_method.json",
+    "audit": {
+      "version": 1,
+      "scope": "explicit_operand_arithmetic_only",
+      "checked": 0,
+      "errors": 0,
+      "scan_truncated": false,
+      "checks": [],
+      "checks_omitted": 0
+    }
+  },
+  {
+    "file": "06-missing_history-current.json",
+    "audit": {
+      "version": 1,
+      "scope": "explicit_operand_arithmetic_only",
+      "checked": 0,
+      "errors": 0,
+      "scan_truncated": false,
+      "checks": [],
+      "checks_omitted": 0
+    }
+  },
+  {
+    "file": "07-held_deterioration-current.json",
+    "audit": {
+      "version": 1,
+      "scope": "explicit_operand_arithmetic_only",
+      "checked": 0,
+      "errors": 0,
+      "scan_truncated": false,
+      "checks": [],
+      "checks_omitted": 0
+    }
+  },
+  {
+    "file": "08-held_deterioration-no_method.json",
+    "audit": {
+      "version": 1,
+      "scope": "explicit_operand_arithmetic_only",
+      "checked": 0,
+      "errors": 0,
+      "scan_truncated": false,
+      "checks": [],
+      "checks_omitted": 0
+    }
+  },
+  {
+    "file": "09-held_deterioration-stale_memory.json",
+    "audit": {
+      "version": 1,
+      "scope": "explicit_operand_arithmetic_only",
+      "checked": 0,
+      "errors": 0,
+      "scan_truncated": false,
+      "checks": [],
+      "checks_omitted": 0
+    }
+  },
+  {
+    "file": "10-conditional_entry-stale_memory.json",
+    "audit": {
+      "version": 1,
+      "scope": "explicit_operand_arithmetic_only",
+      "checked": 0,
+      "errors": 0,
+      "scan_truncated": false,
+      "checks": [],
+      "checks_omitted": 0
+    }
+  },
+  {
+    "file": "11-conditional_entry-no_method.json",
+    "audit": {
+      "version": 1,
+      "scope": "explicit_operand_arithmetic_only",
+      "checked": 0,
+      "errors": 0,
+      "scan_truncated": false,
+      "checks": [],
+      "checks_omitted": 0
+    }
+  },
+  {
+    "file": "12-conditional_entry-current.json",
+    "audit": {
+      "version": 1,
+      "scope": "explicit_operand_arithmetic_only",
+      "checked": 0,
+      "errors": 0,
+      "scan_truncated": false,
+      "checks": [],
+      "checks_omitted": 0
+    }
+  }
+]
