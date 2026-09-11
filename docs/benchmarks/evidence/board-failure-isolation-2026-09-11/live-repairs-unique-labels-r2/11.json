@@ -1,0 +1,80 @@
+{
+  "runner_sha256": "6ef5ca4325e3fe014cc2ae2cdc1473a4e80b640fe2b0b60d7aee48450d0c506b",
+  "source_index": 11,
+  "calls": [
+    {
+      "kind": "frozen_first_response"
+    }
+  ],
+  "interpretation": "Frozen first output replayed; subsequent repair uses actual production runner prompt and live model. Frozen evidence delivered as desk data_report. Persistence blocked by test fixtures and mocks. No tools or orders.",
+  "outcome": "SUCCESS",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 65,
+    "reasoning": "The fundamental outlook is positive: revenue of $1B, growing gross margins (40/41/42%), ROIC of 14% vs sector 10%, management delivering guidance, and low debt/equity of 0.4. Peers trade at forward P/E 22-24 vs EVLT's 20, with expected EPS growth of 16%. However, the present entry is extended. EVLT close is 115, well above the proposed entry of 100, and above key moving averages (SMA-50 98, SMA-200 94). RSI-14 is 72, indicating overbought conditions. The reward/risk at current price is 7.5:10, which is below the 1:1 threshold at the proposed entry price of 100 (3:1). The stock is overbought, above trend, and the contradiction between positive fundamentals and extended technicals resolves in favor of waiting. No position is held; cash is 25000. Maximum single-name exposure is 5% of equity, so position sizing is not constrained by the cap. The decision is HOLD with a dynamic trigger to re-enter on a technical pullback.",
+    "position_size_pct": 0,
+    "stop_loss": 95,
+    "take_profit": 130,
+    "entry_mode": "watch_only",
+    "trigger_purpose": "monitor",
+    "resolution_condition": {
+      "open_question": "When will EVLT pull back to or below the entry trigger price of 100?",
+      "resolving_fact": "EVLT price trading at or below 100"
+    },
+    "dynamic_trigger": {
+      "type": "price_below",
+      "value": 100.0
+    },
+    "mispricing_basis": "Extended entry above SMA-50 and SMA-200 with overbought RSI-14 of 72 contradicts positive fundamental outlook; mispricing is the technical extension relative to fundamentals.",
+    "edge_type": "structural",
+    "bear_verdict_response": {
+      "decisive_claim": "present entry is extended; RSI-14 72 indicates overbought; price above SMA-50 and SMA-200",
+      "claim_type": "size_or_timing",
+      "overrode_bear": false
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 75,
+      "consensus_strength": 60,
+      "regime_alignment": 85,
+      "risk_adjusted": 70
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY",
+    "research_answers": [
+      {
+        "question_id": "q-now",
+        "answer": "Reward/risk at current price 115 with stop 95 and target 130 is 7.5:10. The upside from 115 to 130 is 15 dollars; the downside from 115 to 95 is 20 dollars. The ratio of upside to downside is 15/20 = 0.75, expressed as 7.5:10."
+      },
+      {
+        "question_id": "q-wait",
+        "answer": "Reward/risk at proposed entry price 100 with stop 95 and target 130 is 3:1. The upside from 100 to 130 is 30 dollars; the downside from 100 to 95 is 5 dollars. The ratio is 30/5 = 6, expressed as 3:1."
+      },
+      {
+        "question_id": "q-units",
+        "answer": "No. Support price 95 cannot be used as RSI threshold 95 on this evidence. RSI is unitless on a 0-100 scale; a threshold of 95 would indicate extreme overbought conditions, which is inconsistent with the technical setup where price is near 95. The two metrics measure different things and are not interchangeable."
+      }
+    ],
+    "decision_contract_version": 1,
+    "decision_producer": "v3_board_of_directors",
+    "_research_tool_receipts": [],
+    "decision_provenance": "board_reasoned",
+    "_appended_at": "2026-09-11T04:51:31.404242+00:00",
+    "_artifact_type": "final_decision",
+    "_arithmetic_audit": {
+      "version": 1,
+      "scope": "explicit_operand_arithmetic_only",
+      "checked": 0,
+      "errors": 0,
+      "scan_truncated": false,
+      "checks": [],
+      "checks_omitted": 0
+    },
+    "_quality_score": 84,
+    "_quality_flag": "good",
+    "_evidence_status": "not_established"
+  },
+  "repair_errors": {}
+}

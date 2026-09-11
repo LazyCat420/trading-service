@@ -1,0 +1,295 @@
+{
+  "cohorts": [
+    {
+      "name": "live-repairs-timing-patch-r1",
+      "accepted": 3,
+      "model_calls": 5,
+      "rows": [
+        {
+          "source_index": 4,
+          "outcome": "SUCCESS",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 5,
+          "outcome": "AGENT_ERROR",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 6,
+          "outcome": "AGENT_ERROR",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 9,
+          "outcome": "SUCCESS",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 11,
+          "outcome": "SUCCESS",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        }
+      ]
+    },
+    {
+      "name": "live-repairs-timing-patch-r2",
+      "accepted": 3,
+      "model_calls": 5,
+      "rows": [
+        {
+          "source_index": 4,
+          "outcome": "SUCCESS",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 5,
+          "outcome": "AGENT_ERROR",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 6,
+          "outcome": "AGENT_ERROR",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 9,
+          "outcome": "SUCCESS",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 11,
+          "outcome": "SUCCESS",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        }
+      ]
+    },
+    {
+      "name": "live-repairs-labels-r1",
+      "accepted": 4,
+      "model_calls": 5,
+      "rows": [
+        {
+          "source_index": 4,
+          "outcome": "SUCCESS",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 5,
+          "outcome": "SUCCESS",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 6,
+          "outcome": "AGENT_ERROR",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 9,
+          "outcome": "SUCCESS",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 11,
+          "outcome": "SUCCESS",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        }
+      ]
+    },
+    {
+      "name": "live-repairs-labels-r2",
+      "accepted": 3,
+      "model_calls": 5,
+      "rows": [
+        {
+          "source_index": 4,
+          "outcome": "SUCCESS",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 5,
+          "outcome": "SUCCESS",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 6,
+          "outcome": "AGENT_ERROR",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 9,
+          "outcome": "AGENT_ERROR",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 11,
+          "outcome": "SUCCESS",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        }
+      ]
+    },
+    {
+      "name": "live-repairs-unique-labels-r1",
+      "accepted": 5,
+      "model_calls": 1,
+      "rows": [
+        {
+          "source_index": 4,
+          "outcome": "SUCCESS",
+          "model_calls": 0,
+          "http_statuses": [],
+          "changed_original_fields": [
+            "entry_mode"
+          ]
+        },
+        {
+          "source_index": 5,
+          "outcome": "SUCCESS",
+          "model_calls": 0,
+          "http_statuses": [],
+          "changed_original_fields": [
+            "entry_mode"
+          ]
+        },
+        {
+          "source_index": 6,
+          "outcome": "SUCCESS",
+          "model_calls": 0,
+          "http_statuses": [],
+          "changed_original_fields": [
+            "trigger_purpose"
+          ]
+        },
+        {
+          "source_index": 9,
+          "outcome": "SUCCESS",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 11,
+          "outcome": "SUCCESS",
+          "model_calls": 0,
+          "http_statuses": [],
+          "changed_original_fields": [
+            "entry_mode"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "live-repairs-unique-labels-r2",
+      "accepted": 5,
+      "model_calls": 1,
+      "rows": [
+        {
+          "source_index": 4,
+          "outcome": "SUCCESS",
+          "model_calls": 0,
+          "http_statuses": [],
+          "changed_original_fields": [
+            "entry_mode"
+          ]
+        },
+        {
+          "source_index": 5,
+          "outcome": "SUCCESS",
+          "model_calls": 0,
+          "http_statuses": [],
+          "changed_original_fields": [
+            "entry_mode"
+          ]
+        },
+        {
+          "source_index": 6,
+          "outcome": "SUCCESS",
+          "model_calls": 0,
+          "http_statuses": [],
+          "changed_original_fields": [
+            "trigger_purpose"
+          ]
+        },
+        {
+          "source_index": 9,
+          "outcome": "SUCCESS",
+          "model_calls": 1,
+          "http_statuses": [
+            200
+          ]
+        },
+        {
+          "source_index": 11,
+          "outcome": "SUCCESS",
+          "model_calls": 0,
+          "http_statuses": [],
+          "changed_original_fields": [
+            "entry_mode"
+          ]
+        }
+      ]
+    }
+  ],
+  "original_integrity": true
+}

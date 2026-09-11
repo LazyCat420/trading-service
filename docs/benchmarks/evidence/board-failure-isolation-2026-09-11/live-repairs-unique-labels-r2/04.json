@@ -1,0 +1,81 @@
+{
+  "runner_sha256": "6ef5ca4325e3fe014cc2ae2cdc1473a4e80b640fe2b0b60d7aee48450d0c506b",
+  "source_index": 4,
+  "calls": [
+    {
+      "kind": "frozen_first_response"
+    }
+  ],
+  "interpretation": "Frozen first output replayed; subsequent repair uses actual production runner prompt and live model. Frozen evidence delivered as desk data_report. Persistence blocked by test fixtures and mocks. No tools or orders.",
+  "outcome": "SUCCESS",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 65,
+    "reasoning": "EVLT trades at 100 with RSI-14 at 46 (neutral), ATR-14 of 2 dollars, and price between support 95 and resistance 115. The company generates 1 billion in revenue, 120 million free cash flow, 300 million cash, and 200 million debt (debt/equity 0.4). ROIC of 14 percent exceeds the sector 10 percent. Forward P/E of 20 and 10 percent revenue growth are supplied, but EPS growth is unavailable, so PEG cannot be computed. Volume data for the five sessions before 2026-09-03 is absent, and SMA-200 is not established with only 14 closes. No earnings event occurs in the next seven sessions. The unresolved technical questions (volume trend, SMA-200) and the inability to compute PEG introduce uncertainty. With no position held and cash of 25000, the conservative posture is HOLD pending resolution of those questions or a clearer technical signal.",
+    "position_size_pct": 0,
+    "stop_loss": null,
+    "take_profit": null,
+    "exit_style": "hard_stop",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "none",
+    "resolution_condition": {
+      "open_question": "Whether volume declined across the five sessions preceding 2026-09-03 and whether SMA-200 can be established",
+      "resolving_fact": "Supplied volume and close data for the required lookback period"
+    },
+    "dynamic_trigger": null,
+    "mispricing_basis": null,
+    "edge_type": "none",
+    "bear_verdict_response": {
+      "decisive_claim": null,
+      "claim_type": null,
+      "overrode_bear": false
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 60,
+      "consensus_strength": 50,
+      "regime_alignment": 70,
+      "risk_adjusted": 65
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY",
+    "research_answers": [
+      {
+        "id": "q-history",
+        "answer": "No. The supplied 14 daily closes end on 2026-09-03; the five sessions preceding that date are 2026-08-28, 2026-08-27, 2026-08-26, 2026-08-25, 2026-08-24. No volume observations are supplied for any of those dates, so the question cannot be resolved from the evidence.",
+        "as_of": "2026-09-03"
+      },
+      {
+        "id": "q-peg",
+        "answer": "No. PEG requires estimated EPS growth, which is not supplied. Revenue growth of 10 percent and forward P/E of 20 are available, but without EPS growth the ratio cannot be computed.",
+        "as_of": "2026-09-03"
+      },
+      {
+        "id": "q-sma",
+        "answer": "No. Only 14 daily closes are supplied; a 200-session moving average requires 200 closes. The prior unverified note claiming a 14-bar sample establishes SMA-200 is not evidence.",
+        "as_of": "2026-09-03"
+      }
+    ],
+    "decision_contract_version": 1,
+    "decision_producer": "v3_board_of_directors",
+    "_research_tool_receipts": [],
+    "decision_provenance": "board_reasoned",
+    "_appended_at": "2026-09-11T04:51:24.719893+00:00",
+    "_artifact_type": "final_decision",
+    "_arithmetic_audit": {
+      "version": 1,
+      "scope": "explicit_operand_arithmetic_only",
+      "checked": 0,
+      "errors": 0,
+      "scan_truncated": false,
+      "checks": [],
+      "checks_omitted": 0
+    },
+    "_quality_score": 82,
+    "_quality_flag": "good",
+    "_evidence_status": "not_established"
+  },
+  "repair_errors": {}
+}

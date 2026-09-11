@@ -1,0 +1,75 @@
+{
+  "runner_sha256": "6ef5ca4325e3fe014cc2ae2cdc1473a4e80b640fe2b0b60d7aee48450d0c506b",
+  "source_index": 5,
+  "calls": [
+    {
+      "kind": "frozen_first_response"
+    }
+  ],
+  "interpretation": "Frozen first output replayed; subsequent repair uses actual production runner prompt and live model. Frozen evidence delivered as desk data_report. Persistence blocked by test fixtures and mocks. No tools or orders.",
+  "outcome": "SUCCESS",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 72,
+    "reasoning": "EVLT presents a structurally sound but fully valued setup. Revenue of $1B, FCF of $120M, and cash of $300M against $200M debt yields a healthy balance sheet. Operating margin of 14 percent exceeds the sector 38 percent gross and 10 percent ROIC versus 10 percent sector, indicating durable profitability. Forward P/E of 20 with 10 percent revenue growth is fairly priced relative to peers trading 22-24 P/E with similar margins. The stock at $100 with 14 percent RSI and ATR of $2 sits near its 95-115 range, with no technical breakdown. However, the unresolved SMA-200 question, missing EPS growth, and the absence of volume trend data create genuine uncertainty. The bear case on volume/SMA remains unrefuted but unproven. The contradiction between strong fundamentals and missing technical confirmation warrants caution. With portfolio equity of $100K and a 5 percent single-name cap ($5K), a small speculative position is justifiable, but the unresolved technicals and missing EPS growth prevent a higher conviction call. HOLD is the calibrated response to a setup that is attractive but not yet fully confirmed.",
+    "position_size_pct": 1.5,
+    "stop_loss": 95.0,
+    "take_profit": 115.0,
+    "exit_style": "hard_stop",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "none",
+    "resolution_condition": null,
+    "dynamic_trigger": null,
+    "mispricing_basis": "Forward P/E of 20 is fair relative to peers at 22-24; no structural mispricing evident. The contradiction lies between robust fundamentals (ROIC 14% vs sector 10%, stable FCF, guidance track record) and missing technical confirmation (SMA-200 unestablished, volume trend unknown, EPS growth unavailable).",
+    "edge_type": "quality_at_fair_price",
+    "bear_verdict_response": {
+      "decisive_claim": "unresolved SMA-200 and missing volume/EPS data",
+      "claim_type": "size_or_timing",
+      "overrode_bear": true
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 70,
+      "consensus_strength": 55,
+      "regime_alignment": 80,
+      "risk_adjusted": 65
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY",
+    "research_answers": [
+      {
+        "id": "q-history",
+        "answer": "No. The only supplied volume observation is 2026-09-03: 1100000 shares. No August volume observations are available. A prior unverified note claims August volume declined for five sessions and that a 14-bar sample establishes SMA-200; neither claim is evidence."
+      },
+      {
+        "id": "q-peg",
+        "answer": "No. PEG requires EPS growth, which is not available in the supplied evidence. Forward P/E of 20 and revenue growth of 10 percent are insufficient to compute PEG."
+      },
+      {
+        "id": "q-sma",
+        "answer": "No. Only 14 daily closes are supplied; SMA-200 requires 200 sessions of data and is NOT available."
+      }
+    ],
+    "decision_contract_version": 1,
+    "decision_producer": "v3_board_of_directors",
+    "_research_tool_receipts": [],
+    "decision_provenance": "board_reasoned",
+    "_appended_at": "2026-09-11T04:51:24.738863+00:00",
+    "_artifact_type": "final_decision",
+    "_arithmetic_audit": {
+      "version": 1,
+      "scope": "explicit_operand_arithmetic_only",
+      "checked": 0,
+      "errors": 0,
+      "scan_truncated": false,
+      "checks": [],
+      "checks_omitted": 0
+    },
+    "_quality_score": 86,
+    "_quality_flag": "good",
+    "_evidence_status": "not_established"
+  },
+  "repair_errors": {}
+}

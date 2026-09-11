@@ -36,8 +36,7 @@ async def test_production_repairs_only_contract_fields(row):
          patch.object(data_trace.mongo_store,'update_docs'), patch.object(data_trace.mongo_store,'insert_docs'):
         outcome = await run_v3_agent(desk,module,cycle_id=desk.cycle_id,bot_id='test')
     assert outcome in (PhaseOutcome.SUCCESS, PhaseOutcome.DATA_GAP)
-    assert model.await_count == 2
-    assert model.call_args_list[1].kwargs['enable_tools'] is False
+    assert model.await_count == 1
     assert desk.final_decision['action'] == original['action']
     assert desk.final_decision['reasoning'] == original['reasoning']
     assert entry_errors(desk.final_decision) == []
@@ -104,7 +103,7 @@ def test_correction_cannot_drop_existing_research(field):
     assert f'correction changed {field}' in correction_errors(original,fixed)
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('index,expected', [(4,'SUCCESS'),(5,'AGENT_ERROR'),(6,'SUCCESS'),(9,'SUCCESS'),(11,'SUCCESS')])
+@pytest.mark.parametrize('index,expected', [(4,'SUCCESS'),(5,'SUCCESS'),(6,'SUCCESS'),(9,'SUCCESS'),(11,'SUCCESS')])
 async def test_retained_live_repairs_through_production_runner(index,expected):
     from app.v3.shared_desk import SharedDesk
     from app.v3.agent_runner import run_v3_agent
@@ -121,11 +120,8 @@ async def test_retained_live_repairs_through_production_runner(index,expected):
          patch.object(data_trace.mongo_store,'insert_docs'),patch.object(data_trace.mongo_store,'update_docs'):
         outcome=await run_v3_agent(desk,module,cycle_id=desk.cycle_id,bot_id='test')
     assert outcome.value==expected
-    assert model.await_count==2
-    if index==5:
-        assert not desk.final_decision
-        assert 'correction changed resolution_condition' in desk.cycle_metadata['decision_contract_repair_errors']['final_decision']
-    elif index!=9:
+    assert model.await_count==(2 if index==9 else 1)
+    if index!=9:
         raw=json.loads(row['response'])
         assert desk.final_decision['research_answers']==raw['research_answers']
         assert desk.final_decision['reasoning']==row['artifact']['reasoning']

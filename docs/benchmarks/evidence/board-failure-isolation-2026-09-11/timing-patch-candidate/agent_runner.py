@@ -1845,16 +1845,6 @@ async def run_v3_agent(
             board_source = desk.final_decision if artifact_type == "trade_decision" else None
             contract_failures = contract_errors(artifact, board=board_source,
                                                 evidence_sources=evidence_sources(desk))
-            if contract_failures and artifact_type == "final_decision":
-                from app.v3.decision_contract import unique_nonentry_timing_correction
-                timing_patch = unique_nonentry_timing_correction(artifact)
-                if timing_patch:
-                    before_timing = dict(artifact)
-                    artifact = {**artifact, **timing_patch}
-                    contract_failures = contract_errors(artifact)
-                    trace_data(cycle_id, desk.ticker, agent_name, "artifact.timing_normalized",
-                               data={"rule": "unique_minimal_nonentry_labels", "patch": timing_patch,
-                                     "original": before_timing, "normalized": artifact})
             if contract_failures and repaired is None:
                 # One tool-less correction inside the original deadline. Keep
                 # the actual decision and evidence; never synthesize defaults.
@@ -1879,12 +1869,35 @@ async def run_v3_agent(
                         "not a numeric dynamic_trigger: keeping that question does not require "
                         "trigger_purpose=research. Return only the complete JSON."
                     )
+                    repair_system_prompt = system_prompt
+                    if artifact_type == "final_decision":
+                        # Return only mutable fields: copying a whole financial
+                        # artifact invites accidental changes to saved evidence.
+                        repair_system_prompt = (
+                            "You repair the timing labels on an existing decision. "
+                            "The decision and its evidence are immutable. Do not make an investment "
+                            "recommendation, answer research questions, or regenerate the decision. "
+                            "Return only a JSON object with one key timing_patch. Its value is an "
+                            "object containing only entry_mode and trigger_purpose. "
+                            "HOLD requires entry_mode=watch_only; SELL requires enter_now. "
+                            "BUY with an unmet entry trigger uses enter_on_condition and purpose entry. "
+                            "If dynamic_trigger is null, trigger_purpose must be none. "
+                            "A resolution_condition question is separate from a numeric trigger. "
+                            "For HOLD with an existing monitor/research trigger, keep that purpose. "
+                            "Do not add, remove or modify dynamic_trigger or any other decision field."
+                        )
+                        repair_prompt = (
+                            "Validation errors: " + "; ".join(contract_failures)
+                            + "\nImmutable original decision:\n" + json.dumps(original_artifact, default=str)
+                            + "\nReturn only {\"timing_patch\":{\"entry_mode\":\"...\","
+                            "\"trigger_purpose\":\"...\"}} with valid labels for this existing decision."
+                        )
                     try:
                         correction = await asyncio.wait_for(_with_heartbeat(run_agent(
                             agent_name=agent_name, ticker=desk.ticker, cycle_id=cycle_id,
-                            bot_id=bot_id, system_prompt=system_prompt, user_prompt=repair_prompt,
+                            bot_id=bot_id, system_prompt=repair_system_prompt, user_prompt=repair_prompt,
                             max_tokens=_safe_max_tokens(agent_name=agent_name,
-                                system_prompt=system_prompt, user_prompt=repair_prompt, tool_whitelist=None),
+                                system_prompt=repair_system_prompt, user_prompt=repair_prompt, tool_whitelist=None),
                             enable_tools=False, model_override=model_override,
                             prism_overrides=prism_overrides, cost_sink=_cost_sink,
                             soft_deadline_s=remaining * 0.5,
@@ -1894,10 +1907,22 @@ async def run_v3_agent(
                                    data={"errors":contract_failures,"prompt":repair_prompt,
                                          "response":correction.get("response", "")})
                         candidate = _parse_artifact(correction.get("response", ""), artifact_type, agent_name)
+                        patch_errors = []
+                        if artifact_type == "final_decision" and isinstance(candidate, dict) and "timing_patch" in candidate:
+                            from app.v3.decision_contract import apply_timing_patch
+                            try:
+                                candidate = apply_timing_patch(original_artifact, candidate)
+                            except ValueError as exc:
+                                patch_errors.append(str(exc))
+                        # Older providers may still return a full decision.
+                        # Apply the same trigger immutability to that path.
+                        if (artifact_type == "final_decision" and isinstance(candidate, dict)
+                                and candidate.get("dynamic_trigger") != original_artifact.get("dynamic_trigger")):
+                            patch_errors.append("timing-label correction changed dynamic_trigger")
                         token_usage += correction.get("tokens_used", 0)
                         elapsed_ms = int((time.monotonic() - t_start) * 1000)
                         from app.v3.decision_contract import correction_errors
-                        correction_failures = correction_errors(original_artifact, candidate,
+                        correction_failures = patch_errors + correction_errors(original_artifact, candidate,
                             board=board_source, evidence_sources=evidence_sources(desk))
                         repaired = not correction_failures
                         if repaired:

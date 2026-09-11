@@ -1,0 +1,121 @@
+{
+  "runner_sha256": "f63798fc7fb0ed847b83f89881d180a5c8ca2481d74624924fd22d194e3ecefb",
+  "source_index": 4,
+  "calls": [
+    {
+      "kind": "frozen_first_response"
+    },
+    {
+      "kind": "live_toolless_repair",
+      "body": {
+        "project": "vllm-trading-bot",
+        "username": "lazycat",
+        "provider": "vllm",
+        "model": "nemotron35",
+        "agent": "CUSTOM_V3_BOARD_OF_DIRECTORS",
+        "conversationId": "6e3857f4-f2a7-4c58-a877-fd635e6e3e5a",
+        "createSession": true,
+        "systemPrompt": "You repair the timing labels on an existing decision. The decision and its evidence are immutable. Do not make an investment recommendation, answer research questions, or regenerate the decision. Return only a JSON object with one key timing_patch. Its value is an object containing only entry_mode and trigger_purpose. HOLD requires entry_mode=watch_only; SELL requires enter_now. BUY with an unmet entry trigger uses enter_on_condition and purpose entry. If dynamic_trigger is null, trigger_purpose must be none. A resolution_condition question is separate from a numeric trigger. For HOLD with an existing monitor/research trigger, keep that purpose. Do not add, remove or modify dynamic_trigger or any other decision field.",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Validation errors: HOLD requires entry_mode=watch_only\nImmutable original decision:\n{\"action\": \"HOLD\", \"confidence\": 65, \"reasoning\": \"EVLT trades at 100 with RSI-14 at 46 (neutral), ATR-14 of 2 dollars, and price between support 95 and resistance 115. The company generates 1 billion in revenue, 120 million free cash flow, 300 million cash, and 200 million debt (debt/equity 0.4). ROIC of 14 percent exceeds the sector 10 percent. Forward P/E of 20 and 10 percent revenue growth are supplied, but EPS growth is unavailable, so PEG cannot be computed. Volume data for the five sessions before 2026-09-03 is absent, and SMA-200 is not established with only 14 closes. No earnings event occurs in the next seven sessions. The unresolved technical questions (volume trend, SMA-200) and the inability to compute PEG introduce uncertainty. With no position held and cash of 25000, the conservative posture is HOLD pending resolution of those questions or a clearer technical signal.\", \"position_size_pct\": 0, \"stop_loss\": null, \"take_profit\": null, \"exit_style\": \"hard_stop\", \"entry_mode\": \"enter_now\", \"trigger_purpose\": \"none\", \"resolution_condition\": {\"open_question\": \"Whether volume declined across the five sessions preceding 2026-09-03 and whether SMA-200 can be established\", \"resolving_fact\": \"Supplied volume and close data for the required lookback period\"}, \"dynamic_trigger\": null, \"mispricing_basis\": null, \"edge_type\": \"none\", \"bear_verdict_response\": {\"decisive_claim\": null, \"claim_type\": null, \"overrode_bear\": false}, \"confidence_floor\": 0, \"conviction_vector\": {\"data_quality\": 60, \"consensus_strength\": 50, \"regime_alignment\": 70, \"risk_adjusted\": 65}, \"overrides_veto\": false, \"override_justification\": \"\", \"persona_used\": \"jane_street\", \"regime\": \"CONTRADICTORY\", \"research_answers\": [{\"id\": \"q-history\", \"answer\": \"No. The supplied 14 daily closes end on 2026-09-03; the five sessions preceding that date are 2026-08-28, 2026-08-27, 2026-08-26, 2026-08-25, 2026-08-24. No volume observations are supplied for any of those dates, so the question cannot be resolved from the evidence.\", \"as_of\": \"2026-09-03\"}, {\"id\": \"q-peg\", \"answer\": \"No. PEG requires estimated EPS growth, which is not supplied. Revenue growth of 10 percent and forward P/E of 20 are available, but without EPS growth the ratio cannot be computed.\", \"as_of\": \"2026-09-03\"}, {\"id\": \"q-sma\", \"answer\": \"No. Only 14 daily closes are supplied; a 200-session moving average requires 200 closes. The prior unverified note claiming a 14-bar sample establishes SMA-200 is not evidence.\", \"as_of\": \"2026-09-03\"}]}\nReturn only {\"timing_patch\":{\"entry_mode\":\"...\",\"trigger_purpose\":\"...\"}} with valid labels for this existing decision."
+          }
+        ],
+        "enabledTools": [],
+        "maxTokens": 8192,
+        "maxIterations": 1,
+        "temperature": 0,
+        "functionCallingEnabled": false,
+        "agenticLoopEnabled": false,
+        "thinkingEnabled": false,
+        "workspaceEnabled": false
+      },
+      "http_status": 200,
+      "response": "{\"timing_patch\":{\"entry_mode\":\"watch_only\",\"trigger_purpose\":\"none\"}}",
+      "usage": {
+        "inputTokens": 1139,
+        "outputTokens": 19,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "reasoningOutputTokens": 0,
+        "tokensPerSec": 0,
+        "requests": 1,
+        "totalInputTokens": 1139
+      },
+      "model": "nemotron35"
+    }
+  ],
+  "interpretation": "Frozen first output replayed; subsequent repair uses actual production runner prompt and live model. Frozen evidence delivered as desk data_report. Persistence blocked by test fixtures and mocks. No tools or orders.",
+  "outcome": "SUCCESS",
+  "artifact": {
+    "action": "HOLD",
+    "confidence": 65,
+    "reasoning": "EVLT trades at 100 with RSI-14 at 46 (neutral), ATR-14 of 2 dollars, and price between support 95 and resistance 115. The company generates 1 billion in revenue, 120 million free cash flow, 300 million cash, and 200 million debt (debt/equity 0.4). ROIC of 14 percent exceeds the sector 10 percent. Forward P/E of 20 and 10 percent revenue growth are supplied, but EPS growth is unavailable, so PEG cannot be computed. Volume data for the five sessions before 2026-09-03 is absent, and SMA-200 is not established with only 14 closes. No earnings event occurs in the next seven sessions. The unresolved technical questions (volume trend, SMA-200) and the inability to compute PEG introduce uncertainty. With no position held and cash of 25000, the conservative posture is HOLD pending resolution of those questions or a clearer technical signal.",
+    "position_size_pct": 0,
+    "stop_loss": null,
+    "take_profit": null,
+    "exit_style": "hard_stop",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "none",
+    "resolution_condition": {
+      "open_question": "Whether volume declined across the five sessions preceding 2026-09-03 and whether SMA-200 can be established",
+      "resolving_fact": "Supplied volume and close data for the required lookback period"
+    },
+    "dynamic_trigger": null,
+    "mispricing_basis": null,
+    "edge_type": "none",
+    "bear_verdict_response": {
+      "decisive_claim": null,
+      "claim_type": null,
+      "overrode_bear": false
+    },
+    "confidence_floor": 0,
+    "conviction_vector": {
+      "data_quality": 60,
+      "consensus_strength": 50,
+      "regime_alignment": 70,
+      "risk_adjusted": 65
+    },
+    "overrides_veto": false,
+    "override_justification": "",
+    "persona_used": "jane_street",
+    "regime": "CONTRADICTORY",
+    "research_answers": [
+      {
+        "id": "q-history",
+        "answer": "No. The supplied 14 daily closes end on 2026-09-03; the five sessions preceding that date are 2026-08-28, 2026-08-27, 2026-08-26, 2026-08-25, 2026-08-24. No volume observations are supplied for any of those dates, so the question cannot be resolved from the evidence.",
+        "as_of": "2026-09-03"
+      },
+      {
+        "id": "q-peg",
+        "answer": "No. PEG requires estimated EPS growth, which is not supplied. Revenue growth of 10 percent and forward P/E of 20 are available, but without EPS growth the ratio cannot be computed.",
+        "as_of": "2026-09-03"
+      },
+      {
+        "id": "q-sma",
+        "answer": "No. Only 14 daily closes are supplied; a 200-session moving average requires 200 closes. The prior unverified note claiming a 14-bar sample establishes SMA-200 is not evidence.",
+        "as_of": "2026-09-03"
+      }
+    ],
+    "decision_contract_version": 1,
+    "decision_producer": "v3_board_of_directors",
+    "_research_tool_receipts": [],
+    "decision_provenance": "board_reasoned",
+    "_appended_at": "2026-09-11T04:45:05.113327+00:00",
+    "_artifact_type": "final_decision",
+    "_arithmetic_audit": {
+      "version": 1,
+      "scope": "explicit_operand_arithmetic_only",
+      "checked": 0,
+      "errors": 0,
+      "scan_truncated": false,
+      "checks": [],
+      "checks_omitted": 0
+    },
+    "_quality_score": 82,
+    "_quality_flag": "good",
+    "_evidence_status": "not_established"
+  },
+  "repair_errors": {}
+}

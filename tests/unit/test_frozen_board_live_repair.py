@@ -51,6 +51,11 @@ async def test_live_repair(index, live_http):
         outcome=await run_v3_agent(desk,module,cycle_id=desk.cycle_id,bot_id='test')
     record.update(outcome=outcome.value,artifact=desk.final_decision,repair_errors=desk.cycle_metadata.get('decision_contract_repair_errors'))
     target.write_text(json.dumps(record,indent=2,default=str))
-    assert len(record['calls'])==2
-    assert record['calls'][1].get('http_status') == 200, 'Repair did not reach provider'
+    if len(record['calls'])==1:
+        assert desk.final_decision and index!=9
+        assert desk.final_decision['action']==frozen['artifact']['action']
+        assert desk.final_decision['reasoning']==frozen['artifact']['reasoning']
+    else:
+        assert len(record['calls'])==2
+        assert record['calls'][1].get('http_status') == 200, 'Repair did not reach provider'
     if desk.final_decision:assert entry_errors(desk.final_decision)==[]

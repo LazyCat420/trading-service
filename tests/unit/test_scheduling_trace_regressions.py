@@ -95,7 +95,7 @@ def test_trace_spans_and_immutable_snapshots_join_by_cycle():
     assert 'last_referenced_at' in blob.call_args.args[2]['$max']
 
 @pytest.mark.asyncio
-async def test_board_gets_one_tool_less_contract_correction_with_its_original_decision():
+async def test_board_normalizes_unique_hold_labels_without_regenerating_decision():
     from app.v3.shared_desk import SharedDesk, PhaseOutcome
     from app.v3.agent_runner import run_v3_agent
     from app.v3.agents import board_of_directors as board
@@ -111,17 +111,21 @@ async def test_board_gets_one_tool_less_contract_correction_with_its_original_de
     responses=[{'response':json.dumps(value),'tokens_used':80,'loops_used':1,'stop_reason':'completed'}
                for value in (original,fixed)]
     with patch('app.agents.base_agent.run_agent',new_callable=AsyncMock,side_effect=responses) as model, \
-         patch.object(data_trace.mongo_store,'update_docs'),patch.object(data_trace.mongo_store,'insert_docs'):
+         patch.object(data_trace.mongo_store,'update_docs'),patch.object(data_trace.mongo_store,'insert_docs'), \
+         patch('app.v3.agent_runner.trace_data') as trace:
         outcome=await run_v3_agent(desk,module,cycle_id=desk.cycle_id,bot_id='test')
     assert outcome in (PhaseOutcome.SUCCESS,PhaseOutcome.DATA_GAP)
-    assert model.await_count==2
-    correction=model.call_args_list[1].kwargs
-    assert correction['enable_tools'] is False
-    assert 'entry_mode must be' in correction['user_prompt']
-    assert original['reasoning'] in correction['user_prompt']
+    assert model.await_count==1
     assert desk.final_decision['action']=='HOLD'
     assert desk.final_decision['confidence']==63
     assert desk.final_decision['entry_mode']=='watch_only'
+
+    event=next(call for call in trace.call_args_list if call.args[3]=='artifact.timing_normalized')
+    payload=event.kwargs['data']
+    assert payload['rule']=='unique_minimal_nonentry_labels'
+    assert payload['original']['reasoning']==original['reasoning']
+    assert payload['normalized']['reasoning']==original['reasoning']
+    assert payload['patch']=={'entry_mode':'watch_only','trigger_purpose':'none'}
 
 
 def test_earnings_estimates_and_wrong_event_do_not_prove_release():

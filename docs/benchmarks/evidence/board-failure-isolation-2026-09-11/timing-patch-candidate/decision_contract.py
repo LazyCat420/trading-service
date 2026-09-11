@@ -188,24 +188,12 @@ def correction_errors(original: dict, candidate: Any, **kwargs) -> list[str]:
     return errors + contract_errors(candidate, **kwargs)
 
 
-def unique_nonentry_timing_correction(original: dict) -> dict | None:
-    """Resolve unambiguous HOLD/SELL labels without changing a decision.
-
-    Never select BUY timing, create/remove a trigger, or infer research facts.
-    Multiple equally small valid changes require model repair, not a guess.
-    """
-    if original.get('action') not in ('HOLD', 'SELL') or not entry_errors(original):
-        return None
-    candidates = []
-    for mode in sorted(ENTRY_MODES):
-        for purpose in sorted(TRIGGER_PURPOSES):
-            candidate = {**original, 'entry_mode': mode, 'trigger_purpose': purpose}
-            if not entry_errors(candidate):
-                changed = {key: candidate[key] for key in ('entry_mode', 'trigger_purpose')
-                           if candidate[key] != original.get(key)}
-                candidates.append(changed)
-    if not candidates:
-        return None
-    minimum = min(len(patch) for patch in candidates)
-    smallest = [patch for patch in candidates if len(patch) == minimum]
-    return smallest[0] if len(smallest) == 1 else None
+def apply_timing_patch(original: dict, response: Any) -> dict:
+    """Apply a Board timing-only repair without regenerating its evidence."""
+    from copy import deepcopy
+    if not isinstance(response, dict) or set(response) != {'timing_patch'}:
+        raise ValueError('timing repair must contain only timing_patch')
+    patch = response['timing_patch']
+    if not isinstance(patch, dict) or not patch or set(patch) - {'entry_mode', 'trigger_purpose'}:
+        raise ValueError('timing_patch may contain only entry_mode and trigger_purpose')
+    return {**deepcopy(original), **deepcopy(patch)}
