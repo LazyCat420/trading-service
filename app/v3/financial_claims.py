@@ -358,10 +358,19 @@ def audit_decision(decision, record):
 
 def correction_prompt(user_prompt, artifact, audit, record):
     proposal = {k:artifact[k] for k in ('action','confidence','position_size_pct','stop_loss','take_profit','entry_mode','trigger_purpose','dynamic_trigger') if k in artifact}
+    catalog_hint = ""
+    if record:
+        from app.v3.financial_reasoning import reasoning_catalog
+        catalog_ids = sorted(reasoning_catalog(record).keys())
+        catalog_hint = (
+            '\nSelect ONLY from these valid catalog step IDs:\n' + json.dumps(catalog_ids) +
+            "\nEvery question in research_answers MUST have a nonempty step_ids array. Never emit 'step_ids': []."
+        )
     return (user_prompt+'\n\n## FINANCIAL EVIDENCE RECONSIDERATION\n'
             'Your previous decision was rejected. Write a fresh complete decision using the source records. '
             'The prior proposal is provided only to let you reconsider its action and price plan:\n'+json.dumps(proposal,default=str)+
             '\nCorrect ALL of these evidence/coverage errors:\n'+json.dumps(audit['errors'])+
+            catalog_hint+
             '\nReconsider the investment conclusion from the supplied facts. You may change action, confidence, '
             'size or plan when the corrected facts justify it. Do not merely relabel the error as verified. '
             'Preserve the original questions and distinguish unknown history from current observations. '

@@ -218,6 +218,7 @@ async def test_unknown_structured_selections_receive_precise_bounded_repair(repa
     assert model.await_count==2
     prompt=model.call_args_list[1].kwargs['user_prompt']
     assert 'unknown step IDs' in prompt and 'invented_financial_step' in prompt
+    assert 'Select ONLY from these valid catalog step IDs' in prompt
     assert 'Required top-level decision keys: action, confidence, reasoning.' not in prompt
     assert 'reviewing an investment decision' in model.call_args_list[1].kwargs['system_prompt']
     if repair_valid:
@@ -242,3 +243,25 @@ async def test_financial_schema_repair_does_not_request_conflicting_authored_pro
     assert 'Required top-level decision keys: action, confidence, reasoning.' not in prompt
     assert 'reviewing an investment decision' in model.call_args_list[1].kwargs['system_prompt']
     assert desk_status(desk)['status']=='consistent'
+
+
+@pytest.mark.asyncio
+async def test_empty_research_answer_step_ids_receives_catalog_grounding_repair():
+    desk,module,_=fixture();module.TOOL_WHITELIST=[]
+    desk.cycle_metadata['financial_evidence_record']['questions'] = [{'id': 'q-headroom', 'question': 'What is the concentration headroom?'}]
+    bad = {'financial_reasoning_version': 2, 'action': 'HOLD', 'confidence': 72, 'position_size_pct': 0,
+           'entry_mode': 'watch_only', 'trigger_purpose': 'none', 'dynamic_trigger': None,
+           'resolution_condition': None, 'reasoning_steps': ['headroom'],
+           'research_answers': [{'item_id': 'q-headroom', 'step_ids': []}]}
+    good = {'financial_reasoning_version': 2, 'action': 'HOLD', 'confidence': 72, 'position_size_pct': 0,
+            'entry_mode': 'watch_only', 'trigger_purpose': 'none', 'dynamic_trigger': None,
+            'resolution_condition': None, 'reasoning_steps': ['headroom'],
+            'research_answers': [{'item_id': 'q-headroom', 'step_ids': ['headroom']}]}
+    outcome, model = await run(desk, module, [bad, good])
+    assert model.await_count == 2
+    prompt = model.call_args_list[1].kwargs['user_prompt']
+    assert 'select nonempty step IDs' in prompt
+    assert 'Select ONLY from these valid catalog step IDs' in prompt
+    assert 'headroom' in prompt
+    assert "Never emit 'step_ids': []" in prompt
+    assert desk_status(desk)['status'] == 'consistent'
