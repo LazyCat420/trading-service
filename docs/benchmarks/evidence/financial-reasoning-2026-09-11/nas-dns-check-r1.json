@@ -1,0 +1,10 @@
+{
+  "checked_at": "2026-09-11T18:40:59.867482+00:00",
+  "command": "npm run edge:dns:check",
+  "mode": "dry-run",
+  "exit_code": 1,
+  "result": "unavailable_missing_credentials",
+  "error": "Cloudflare credentials missing in environment or vault.",
+  "interpretation": "No specific bad DNS record was established. This check made no DNS changes. Direct NAS container, revision, source hashes and HTTP health were verified separately.",
+  "log_sha256": "09c471ebabc5d07b5a2ef2f57907e448398625d0d606722c65a1173c880eb4e9"
+}

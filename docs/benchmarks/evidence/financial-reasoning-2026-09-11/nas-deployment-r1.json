@@ -1,0 +1,40 @@
+{
+  "verified_at": "2026-09-11T18:39:01.205584+00:00",
+  "release_commit": "f5605166c55c06c7cce934de9473b18d8f7a9b40",
+  "tested_runtime_commit": "b374c5e9",
+  "deploy_command": "npm run deploy -- --only=trading-service --skip-pull",
+  "container": "trading-service",
+  "state": {
+    "status": "running",
+    "health": "healthy",
+    "started_at": "2026-09-11T18:37:35.622851726Z",
+    "image": "sha256:4a4386bbe8f858ec8140c91cad6fd379360ce7c850710c98165ed140db5edfd8",
+    "git_label": "f5605166"
+  },
+  "runtime": {
+    "git_sha": "f5605166",
+    "source_hashes": {
+      "app/v3/agent_runner.py": "41c5401d1490adfdbac9bd42221600d3c6d0c533fbde9733d5d63a6ce99682f3",
+      "app/v3/financial_evidence.py": "59ad421bf3242b7c7f340a75b421d0b1bbac0a3d30d3efbb6c2b9ffb0a40378f",
+      "app/v3/financial_claims.py": "b9e50f66d4988bdada284b24680284d8d3671eaf4b37c82cf8605a17df0247b4",
+      "app/v3/financial_reasoning.py": "5080d9c2070f4a0a8a700799aedd72f2edc51833396d6bba1af1e5367c2ec2f1"
+    }
+  },
+  "http": {
+    "url": "http://10.0.0.16:3031/health",
+    "status_code": 200,
+    "body": {
+      "status": "ok",
+      "service": "trading-service",
+      "version": "v3"
+    }
+  },
+  "checks": {
+    "running": true,
+    "docker_healthy": true,
+    "http_ok": true,
+    "release_revision": true,
+    "tested_source_hashes": true
+  },
+  "deploy_log_sha256": "07e2f52868f45516e138bbb656f231a83caff32370b5c798b2edbaf421b66852"
+}

@@ -1,8 +1,8 @@
-# Financial evidence validation: candidate and benchmark results
+# Financial evidence validation: benchmark and release
 
-**Validation is complete; NAS deployment is pending.** The final candidate passed 10 of 12 fresh cases, 11 of 12 saved-response repairs, and all eight variant repeats. Its first held-out run also passed all eight cases; matched baseline review found five responses with material factual errors and only two complete, consistent responses. The improvement is in code-calculated, code-rendered financial explanations and evidence coverage—not learned arithmetic or investment performance.
+**Validation and NAS deployment are complete.** The final candidate passed 10 of 12 fresh cases, 11 of 12 saved-response repairs, and all eight variant repeats. Its first held-out run also passed all eight cases; matched baseline review found five responses with material factual errors and only two complete, consistent responses. The improvement is in code-calculated, code-rendered financial explanations and evidence coverage—not learned arithmetic or investment performance.
 
-Automatic approval review initially rejected the revised run twice; neither command started. The user subsequently authorized the revised benchmark and follow-up validation. Fresh testing resumed. The candidate has not been deployed.
+Automatic approval review initially rejected the revised run twice; neither command started. The user subsequently authorized the revised benchmark and follow-up validation. Fresh testing resumed, and the validated release was deployed after all checks below completed.
 
 ## What the candidate does
 
@@ -112,7 +112,20 @@ The final 32-case execution check rejected all three unresolved outputs despite 
 
 The benchmark includes development pilots, two fresh twelve-response cohorts, saved-response repair, and matched baseline/candidate runs on eight variants frozen before live candidate testing. Every attempt is retained. Review considers delivered explanations, question completeness, selected evidence, action consistency and useful abstention separately from schema/transport status. First-response and corrected results are reported separately. Final repeat validation follows the two format fixes.
 
-Release criteria were met: no known factual/calculation error escaped final validation; accepted outputs supplied useful financial answers and explicit unknowns; unresolved errors failed the independent execution check. Remaining model instruction-following failures are reported above. Deployment is scoped to `trading-service` through deploy-kit, followed by NAS container-revision and HTTP-health verification. Deployment evidence will be recorded after that check.
+Release criteria were met: no known factual/calculation error escaped final validation; accepted outputs supplied useful financial answers and explicit unknowns; unresolved errors failed the independent execution check. Remaining model instruction-following failures are reported above. Only `trading-service` was deployed through deploy-kit. The container-revision and HTTP-health checks below passed.
+
+## NAS deployment
+
+Deployment completed through `npm run deploy -- --only=trading-service --skip-pull`: one service passed, zero failed, and nineteen were skipped. The image was transferred and the container restarted after deploy-kit confirmed the pipeline was idle.
+
+[Deployment verification](evidence/financial-reasoning-2026-09-11/nas-deployment-r1.json), captured at 18:39 UTC on September 11, confirms:
+
+- Running, Docker-healthy container `trading-service`, started at 18:37:35 UTC.
+- Release revision `f5605166`, including tested runtime commit `b374c5e9`.
+- All four deployed financial module hashes match the tested source files.
+- HTTP 200 with `status: ok` from `http://10.0.0.16:3031/health`.
+
+Deploy-kit reported a non-blocking DNS reconciliation warning. The [read-only diagnostic](evidence/financial-reasoning-2026-09-11/nas-dns-check-r1.json) found missing Cloudflare credentials, so it could not reconcile DNS; it did not establish a specific bad record. The diagnostic made no DNS changes, and the edge Caddyfile was unchanged. NAS service availability was verified independently.
 
 Reproduction from the `trading-service` directory:
 
