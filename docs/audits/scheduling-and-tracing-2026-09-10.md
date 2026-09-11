@@ -169,3 +169,7 @@ Completed September 10 at 17:08 PDT (September 11, 00:08 UTC). Targeted deploy-k
 Independent HTTP checks returned 200 for each service, the retained canary trace, its snapshot, the OTLP export and the client trace proxy. Four retained provider observations exported as four spans. A snapshot request under an unrelated cycle returned 404. This verifies deployed storage/read/export behavior, not successful model generation. Later commits only add audit documentation and do not change these runtime revisions.
 
 The live model-delivery rerun, normal paper-cycle validation and frozen learning benchmark remain pending explicit NAS-proxy validation approval. Automatic approval review rejected sending the Board prompt/test brief through that proxy; no further model calls were attempted while approval remained pending.
+
+## Subsequent approved live validation
+
+The user subsequently approved the specific Board instructions and test/paper-cycle context transmission to the NAS proxy. The delivery test, normal paper cycle, automatic audit and separately labeled frozen Nemotron method/memory cohort have now run. Full task delivery passed; the cycle completed with two recovered artifact failures; all 40 cycle tool traces were graded automatically. The frozen outputs still contain reasoning and entry-contract errors, so no learning-quality improvement is claimed. See [the complete validation report](../benchmarks/board-memory-proxy-2026-09-11.md). Earlier pending-approval statements above describe the state at that earlier capture.

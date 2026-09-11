@@ -1,0 +1,46 @@
+{
+  "backend": {
+    "status": 200,
+    "time_basis": "agent_traces.created_at",
+    "trace_count": 40,
+    "scored_count": 40,
+    "pending_count": 0,
+    "models": [
+      {
+        "model": "GLM-5.3-Flash-EXL3",
+        "provider": "vllm-2",
+        "attribution": "response_metadata",
+        "trace_count": 40,
+        "scored_count": 40,
+        "mean_score": 93.25,
+        "first_trace_at": "2026-09-11T02:16:41.327000+00:00",
+        "last_trace_at": "2026-09-11T02:43:36.640000+00:00",
+        "last_scored_at": "2026-09-11T02:45:52.013000+00:00",
+        "max_grading_delay_hours": 0.49
+      }
+    ],
+    "attempts": 12
+  },
+  "client": {
+    "status": 200,
+    "time_basis": "agent_traces.created_at",
+    "trace_count": 40,
+    "scored_count": 40,
+    "pending_count": 0,
+    "models": [
+      {
+        "model": "GLM-5.3-Flash-EXL3",
+        "provider": "vllm-2",
+        "attribution": "response_metadata",
+        "trace_count": 40,
+        "scored_count": 40,
+        "mean_score": 93.25,
+        "first_trace_at": "2026-09-11T02:16:41.327000+00:00",
+        "last_trace_at": "2026-09-11T02:43:36.640000+00:00",
+        "last_scored_at": "2026-09-11T02:45:52.013000+00:00",
+        "max_grading_delay_hours": 0.49
+      }
+    ],
+    "attempts": 12
+  }
+}
