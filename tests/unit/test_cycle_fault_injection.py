@@ -359,6 +359,18 @@ class _FakeStore:
     def upsert_doc(self, collection, key, doc, insert_only=False, session=None):
         self.upserts.append((collection, key, doc, insert_only))
 
+    def bulk_upsert(self, collection, docs, key_field="id", insert_only=False):
+        """Price bars write as ONE bulk_write since 2026-09-12.
+
+        Recorded into the same `upserts` list, one entry per submitted doc, so
+        the row-counting assertions keep counting rows rather than calls — the
+        batch size is an implementation detail, the bars persisted are not.
+        """
+        keys = [key_field] if isinstance(key_field, str) else list(key_field)
+        for d in docs:
+            self.upserts.append((collection, {k: d[k] for k in keys}, d, insert_only))
+        return len(docs)
+
     def distinct_values(self, collection, field, query=None):
         return list(self._distinct.get(collection, []))
 

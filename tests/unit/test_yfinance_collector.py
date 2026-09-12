@@ -49,6 +49,24 @@ class _Mongo:
             if c[0][0] == collection
         ]
 
+    def bulk_docs(self, collection, store=None):
+        """Docs submitted to `collection` via bulk_upsert.
+
+        Price bars write as ONE bulk_write rather than a round-trip per bar
+        (63x on 252 bars, measured 2026-09-12), so their assertions read the
+        batch. Returned as (key, doc) pairs so a test reads the same shape
+        `upserts()` gives: the key is rebuilt from the composite `key_field`.
+        """
+        store = store or self.yf_store
+        out = []
+        for c in store.bulk_upsert.call_args_list:
+            if c[0][0] != collection:
+                continue
+            keys = c.kwargs.get("key_field") or ()
+            for d in c[0][1]:
+                out.append(({k: d[k] for k in keys}, d))
+        return out
+
 
 @pytest.fixture
 def mongo():
@@ -100,7 +118,7 @@ async def test_collect_price_history_success(mock_ticker, mongo):
     count = await collect_price_history("AAPL")
 
     assert count == 2
-    writes = mongo.upserts("price_history")
+    writes = mongo.bulk_docs("price_history")
     assert len(writes) == 2
     assert [k["date"] for k, _ in writes] == [
         datetime.date(2023, 1, 1),
@@ -135,7 +153,7 @@ async def test_collect_price_history_salvages_frame_with_one_nan_bar(mock_ticker
 
     # The two complete bars are kept; only the incomplete one is dropped.
     assert count == 2
-    writes = mongo.upserts("price_history")
+    writes = mongo.bulk_docs("price_history")
     assert len(writes) == 2
     assert datetime.date(2023, 1, 3) not in [k["date"] for k, _ in writes]
 
@@ -167,7 +185,7 @@ async def test_collect_price_history_salvages_inconsistent_bar(mock_ticker, mong
 
     # The two consistent bars are kept; only the impossible one is dropped.
     assert count == 2
-    writes = mongo.upserts("price_history")
+    writes = mongo.bulk_docs("price_history")
     assert len(writes) == 2
     written_dates = [k["date"] for k, _ in writes]
     assert datetime.date(2023, 1, 2) not in written_dates

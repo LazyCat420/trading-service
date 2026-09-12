@@ -128,7 +128,12 @@ def narrow_yf_period(
     needed = incremental_days_back(
         ticker, source, requested_days, overlap_days=overlap_days, today=today
     )
+    # Never widen. `incremental_days_back` already caps at `requested_days`, so
+    # this is belt-and-braces — but it is the property callers depend on, and
+    # it should hold even if that cap is ever relaxed, so it is enforced here
+    # rather than assumed.
+    needed = min(needed, requested_days)
     for period, days in _YF_PERIODS:
         if days >= needed:
-            return period if days <= requested_days else requested_period
+            return period
     return requested_period

@@ -43,6 +43,19 @@ def _upserts(store, collection):
     ]
 
 
+def _bulk_docs(store, collection):
+    """Every doc submitted to `collection` through bulk_upsert, plus the key.
+
+    Price history moved from a round-trip per bar to one bulk_write (63x on
+    252 bars, measured 2026-09-12), so the write assertions read the batch.
+    Returns (key_field, insert_only, [docs]).
+    """
+    for c in store.bulk_upsert.call_args_list:
+        if c[0][0] == collection:
+            return c.kwargs.get("key_field"), c.kwargs.get("insert_only"), c[0][1]
+    return None, None, []
+
+
 @pytest.mark.asyncio
 @patch("app.collectors.fmp_collector._get_key", return_value="fake_key")
 @patch("app.collectors.fmp_collector.httpx.AsyncClient")
@@ -116,11 +129,17 @@ async def test_collect_price_history_success(mock_smart_client, mock_get_key, ms
     count = await collect_price_history("AAPL")
 
     assert count == 1
-    writes = _upserts(ms, "price_history")
-    assert len(writes) == 1
-    key, doc = writes[0]
-    # The upsert key is what makes a re-run idempotent per (ticker, date, source).
-    assert key == {"ticker": "AAPL", "date": today, "source": "fmp"}
+    key_field, insert_only, docs = _bulk_docs(ms, "price_history")
+    assert len(docs) == 1
+    # The composite key is what makes a re-run idempotent per (ticker, date,
+    # source); insert_only keeps an existing bar exactly as it was.
+    assert key_field == ("ticker", "date", "source")
+    assert insert_only is True
+    assert not _upserts(ms, "price_history"), "price bars must not go back to per-row upserts"
+    doc = docs[0]
+    assert doc["ticker"] == "AAPL"
+    assert doc["date"] == today
+    assert doc["source"] == "fmp"
     assert doc["open"] == 100.0
     assert doc["high"] == 105.0
     assert doc["low"] == 95.0

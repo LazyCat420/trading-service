@@ -114,16 +114,25 @@ def test_collect_price_history_salvages_rather_than_discards(monkeypatch, frame_
 
     inserted_rows = []
 
-    # Writes go through mongo_store.upsert_doc("price_history", key, doc,
-    # insert_only=True) — one call per bar. Capturing the docs keeps the
+    # Writes go through mongo_store.bulk_upsert("price_history", docs,
+    # key_field=(ticker, date, source), insert_only=True) — ONE call for the
+    # whole frame since 2026-09-12. Capturing the submitted docs keeps the
     # original check ("how many rows actually got written") intact.
     store = MagicMock()
 
-    def _upsert(collection, key, doc, **_kw):
+    def _bulk(collection, docs, **kw):
         assert collection == "price_history"
-        inserted_rows.append(doc)
+        assert kw.get("key_field") == ("ticker", "date", "source")
+        assert kw.get("insert_only") is True
+        inserted_rows.extend(docs)
+        return len(docs)
 
-    store.upsert_doc.side_effect = _upsert
+    store.bulk_upsert.side_effect = _bulk
+
+    def _no_per_row(*_a, **_kw):
+        raise AssertionError("price bars must not go back to per-row upserts")
+
+    store.upsert_doc.side_effect = _no_per_row
     monkeypatch.setattr(yc, "mongo_store", store)
 
     async def _noop_refresh(*_a, **_kw):

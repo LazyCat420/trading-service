@@ -90,9 +90,13 @@ async def collect_price_history(ticker: str, days_back: int = 365) -> int:
         except Exception:
             continue
 
-    count = mongo_store.bulk_upsert(
+    mongo_store.bulk_upsert(
         'price_history', docs, key_field=("ticker", "date", "source"), insert_only=True
     )
+    # Count the bars we submitted, exactly as the per-row loop did. Callers
+    # read 0 as "total outage", so this must not become the store's idea of
+    # how many rows were NEW — insert_only means a current series writes none.
+    count = len(docs)
 
     logger.info(f"[polygon] {ticker}: {count} price rows written")
     return count

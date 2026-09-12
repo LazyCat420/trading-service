@@ -100,13 +100,22 @@ async def test_event_loop_stays_responsive_during_insert(db_ctx):
             await asyncio.sleep(0.01)
             ticks += 1
 
-    def slow_upsert(collection, key, doc, **k):
+    def slow_bulk(collection, docs, **k):
         # Only the price_history writes are slow; the universe read must
-        # stay fast.
+        # stay fast. The bars go out as ONE bulk_write now, so the blocking
+        # call to offload is this one — sleeping per doc keeps the stall the
+        # same size as the old per-row loop, which is what the tick floor
+        # below is calibrated against.
         if collection == "price_history":
-            time.sleep(0.02)
+            time.sleep(0.02 * len(docs))
+        return len(docs)
 
-    db.upsert_doc.side_effect = slow_upsert
+    db.bulk_upsert.side_effect = slow_bulk
+
+    def _no_per_row(*_a, **_k):
+        raise AssertionError("price bars must not go back to per-row upserts")
+
+    db.upsert_doc.side_effect = _no_per_row
 
     with patch("app.data.sp500_price_collector.mongo_store", ctx), \
          patch("app.data.sp500_price_collector.yf.download",

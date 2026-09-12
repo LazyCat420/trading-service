@@ -271,6 +271,21 @@ def ensure_indexes(session: Optional[Any] = None) -> None:
     # same command into 0.01-0.04s. Declared here so a reseed/rebuild gets it
     # back — an index created only by hand dies with the next backfill.
     _try("price_history", [("date", pymongo.ASCENDING)], name="date_1")
+    # price_history natural key (ticker, date, source). It exists on the live
+    # store under the backfill's name only, so a reseed would drop the index
+    # every price WRITE depends on: the collectors upsert by this triple, and
+    # since 2026-09-12 they do it as one bulk_write of N UpdateOne filters —
+    # without the index that batch is N collection scans of 15.8M docs.
+    # Declared NON-unique deliberately. The data is clean (measured
+    # 2026-09-12: 0 duplicate (ticker,date,source) groups across all 15.79M
+    # rows), so a unique build would succeed — but `create_index` with the
+    # same key and different options is an error, not a modification, so
+    # making it unique means dropping and rebuilding the index on the live
+    # 15.8M-row collection. That is an offline migration, not a boot-time DDL.
+    _try("price_history",
+         [("ticker", pymongo.ASCENDING), ("date", pymongo.ASCENDING),
+          ("source", pymongo.ASCENDING)],
+         name="natural_key")
     _try("pipeline_events", "id", unique=True)
     _try("pipeline_events", [("cycle_id", pymongo.ASCENDING), ("timestamp", pymongo.ASCENDING)])
     # cycle_run_summaries: the Pipeline Replays list is `sort started_at -1,
