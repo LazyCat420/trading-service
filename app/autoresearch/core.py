@@ -202,9 +202,14 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
             # rejects — this block is persisted verbatim into the report row.
             return float(v) if isinstance(v, (int, float)) or hasattr(v, "__float__") else v
 
+        # cancelled_calls/unrecognised_calls travel with the counts they were
+        # removed from: total_calls is the SCORABLE population, so a stored
+        # 6/0 with no further context cannot be told apart from a cycle that
+        # only ever ran six agents.
         perf_metrics["llm_evidence"] = {
             k:llm_analysis.get(k) for k in (
-                "score_version", "total_calls", "failed_calls", "score_components", "tool_evidence")
+                "score_version", "total_calls", "failed_calls", "cancelled_calls",
+                "unrecognised_calls", "score_components", "tool_evidence")
         }
         perf_metrics["decision_cohort"] = {
             "score_version": decision_quality.get("score_version"),

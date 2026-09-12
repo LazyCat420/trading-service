@@ -149,3 +149,46 @@ def test_unreplayable_still_names_its_three_gates(mod):
     }
     for reason in mod.UNREPLAYABLE.values():
         assert reason.strip()
+
+
+# ── The confident zero that survived inside the fix's own file ────────
+#
+# The POWER summary still read `max((r.get('n_changed_action') or 0) for ...)`.
+# A REFUSED gate carries a `reason` and no `n_changed_action`, so that idiom
+# fed it into the max as a measured zero — the very "0 means never measured,
+# prints as never matters" confusion the rest of this file exists to prevent.
+
+def test_a_refused_gate_is_not_counted_as_having_changed_zero_decisions():
+    mod = _load()
+    results = {
+        "HOLD_POLICY_BLOCKED_STALE_PRICE_DATA": {
+            "reason": mod.NOT_ABLATABLE, "n_fired": 91},
+        "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE": {
+            "n_fired": 40, "n_changed_action": 7},
+    }
+    largest, refused = mod.largest_measured_change(results)
+    assert largest == 7
+    assert refused == 1
+
+
+def test_all_gates_refused_reports_nothing_measurable_not_zero():
+    mod = _load()
+    results = {
+        "HOLD_NO_PRICE_DATA": {"reason": "point-in-time", "n_fired": 12},
+        "DROPPED_IMPLAUSIBLE_LEVEL": {"reason": "point-in-time", "n_fired": 3},
+    }
+    largest, refused = mod.largest_measured_change(results)
+    assert largest is None, (
+        "no gate was measurable — printing 0 here is a confident zero, and "
+        "the operator reads it as 'no gate changed anything'")
+    assert refused == 2
+
+
+def test_a_genuine_zero_is_still_a_zero():
+    """The fix must not swallow a REAL measured zero as 'unmeasured'."""
+    mod = _load()
+    results = {"HOLD_POLICY_BLOCKED_LOW_CONFIDENCE": {
+        "n_fired": 40, "n_changed_action": 0}}
+    largest, refused = mod.largest_measured_change(results)
+    assert largest == 0
+    assert refused == 0

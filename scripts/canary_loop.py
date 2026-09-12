@@ -11,6 +11,7 @@ import time
 
 from app.db import mongo_query
 from app.services.cycle_queue import enqueue_start_cycle
+from app.v3.shared_desk import OutcomeClass, classify_outcome
 
 
 def trigger_canary():
@@ -98,12 +99,25 @@ def trigger_canary():
     regime_classification = desk_data.get("regime_classification")
     phase_outcomes = desk_data.get("phase_outcomes", {})
     
-    has_timeout_or_error = any(outcome in ("TIMED_OUT", "AGENT_ERROR") for outcome in phase_outcomes.values())
+    # `phase_outcomes` carries PhaseOutcome values PLUS the sentinel "REACHED"
+    # that SharedDesk.advance_phase writes for a phase that was entered but has
+    # not finished — so this reads the CLASS of each value and leaves anything
+    # outside the PhaseOutcome vocabulary alone rather than alarming on it.
+    outcome_classes = [classify_outcome(o) for o in phase_outcomes.values()]
+    has_timeout_or_error = OutcomeClass.FAILED in outcome_classes
+    # A phase the operator stopped (or a deploy's SIGTERM stopped) is not a
+    # healthy canary: it is a cycle with no verdict. Today the runner re-raises
+    # on cancel so this value never reaches a desk — the branch exists so that
+    # if the cancel path ever RETURNS an outcome instead, the canary reports
+    # "stopped" rather than grading a half-run desk SUCCESS.
+    was_cancelled = OutcomeClass.ABANDONED in outcome_classes
     has_critical_timeout = any(phase_outcomes.get(p) == "TIMED_OUT" for p in ["bull_argument", "bear_rebuttal", "board_of_directors"])
     
     status = "SUCCESS"
     if desk_phase == "ABORTED" or has_critical_timeout:
         status = "FAILED"
+    elif was_cancelled:
+        status = "CANCELLED"
     elif desk_phase == "PM_DONE" and confidence == 0:
         status = "DEGRADED"
     elif not (bull_argument and bear_rebuttal and regime_classification):

@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from app.db import mongo_query, mongo_store
+from app.v3.shared_desk import OutcomeClass, classify_outcome, outcomes_in
 
 
 _SUMMARY_PROJECTION = {
@@ -775,7 +776,12 @@ _SHORT_IDS = {
     "contradiction_shadow": "SHADOW",
 }
 
-_FAILED_OUTCOMES = ("AGENT_ERROR", "TIMED_OUT")
+#: Derived from the shared taxonomy rather than re-listed here. The private
+#: tuple this replaces was a denylist: CANCELLED was not in it, so an
+#: operator-stopped run fell into the `not in ("SUCCESS", *_FAILED_OUTCOMES)`
+#: other-bucket and drew as a degraded ⚠️ in indigo — the "unknown-ish" colour
+#: this file uses for a value it cannot name. A cancelled run now says so.
+_FAILED_OUTCOMES = outcomes_in(OutcomeClass.FAILED)
 
 
 def _assign_short_ids(agent_ids) -> dict[str, str]:
@@ -796,8 +802,11 @@ def _assign_short_ids(agent_ids) -> dict[str, str]:
 def _node_caption(rows: list[dict]) -> str:
     durations = sorted((r.get("elapsed_ms") or 0) for r in rows)
     median_ms = durations[len(durations) // 2] if durations else 0
-    failures = sum(1 for r in rows if r.get("outcome") in _FAILED_OUTCOMES)
-    degraded = sum(1 for r in rows if r.get("outcome") not in ("SUCCESS", *_FAILED_OUTCOMES))
+    classes = [classify_outcome(r.get("outcome")) for r in rows]
+    failures = sum(1 for c in classes if c is OutcomeClass.FAILED)
+    degraded = sum(1 for c in classes if c is OutcomeClass.DEGRADED)
+    cancelled = sum(1 for c in classes if c is OutcomeClass.ABANDONED)
+    unknown = sum(1 for c in classes if c is OutcomeClass.UNRECOGNISED)
     scores = sorted(s for r in rows if (s := r.get("quality_score", -1) or -1) >= 0)
 
     if len(rows) == 1:
@@ -805,10 +814,19 @@ def _node_caption(rows: list[dict]) -> str:
     else:
         timing = f"×{len(rows)} · med {median_ms / 1000:.1f}s"
 
+    # Ordered worst-first, and exhaustive over OutcomeClass: a real failure
+    # outranks a stop, a stop outranks a degrade, and a value nobody
+    # classified gets its own mark instead of borrowing one.
     if failures and len(rows) > 1:
         status = f"❌ {failures}/{len(rows)} failed"
     elif failures:
         status = "❌"
+    elif unknown:
+        status = "❓"
+    elif cancelled and len(rows) > 1:
+        status = f"🛑 {cancelled}/{len(rows)} stopped"
+    elif cancelled:
+        status = "🛑"
     elif degraded:
         status = "⚠️"
     else:
@@ -819,11 +837,20 @@ def _node_caption(rows: list[dict]) -> str:
 
 
 def _node_fill(rows: list[dict]) -> str:
-    if any(r.get("outcome") in _FAILED_OUTCOMES for r in rows):
+    classes = [classify_outcome(r.get("outcome")) for r in rows]
+    if OutcomeClass.FAILED in classes:
         return "#dc2626"
+    # A value nobody classified must look like a question, not like a run.
+    if OutcomeClass.UNRECOGNISED in classes:
+        return "#a21caf"
+    # Stopped from outside: slate, the neutral "no verdict" grey. It used to
+    # take the #6366f1 indigo below, which this file uses for "something
+    # non-SUCCESS I have no name for".
+    if OutcomeClass.ABANDONED in classes:
+        return "#64748b"
     if any(r.get("outcome") == "DATA_GAP" for r in rows):
         return "#d97706"
-    if any(r.get("outcome") != "SUCCESS" for r in rows):
+    if OutcomeClass.DEGRADED in classes:
         return "#6366f1"
     scores = [s for r in rows if (s := r.get("quality_score", -1) or -1) >= 0]
     if not scores:

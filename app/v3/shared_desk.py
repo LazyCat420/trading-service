@@ -89,14 +89,33 @@ class PhaseOutcome(str, Enum):
 
     CANCELLED is a real outcome, not a placeholder: `agent_runner` writes it to
     `v3_agent_telemetry` when a stop is requested mid-run (search for
-    `"CANCELLED"` there). It was written as a bare string that this enum did
-    not define, so the 32 call sites that switch on `PhaseOutcome` dropped
-    those rows silently — 5 of them in the first eleven days of September 2026
-    alone. Open item 51 filed this against `SKIPPED`, which turned out to be a
-    single historical row; CANCELLED is the live one.
+    `"CANCELLED"` there).
 
-    Any value this enum does not define is invisible to every consumer, so a
-    new outcome string belongs here in the same change that starts writing it.
+    ⚠ CORRECTION (2026-09-12). f48740eb added the member below with the claim
+    that "the 32 call sites that switch on `PhaseOutcome` dropped those rows"
+    and that defining it here fixed them. That mechanism was wrong and the
+    member alone fixed NOTHING:
+
+      * `PhaseOutcome(value)` coercion appears nowhere in production code — no
+        validator, Literal, TypedDict or schema enumerates these values, so an
+        undefined string never raised and never got dropped by this enum.
+      * `PhaseOutcome.CANCELLED` is never CONSTRUCTED. The cancel path
+        (`agent_runner`, `except asyncio.CancelledError`) writes the telemetry
+        STRING "CANCELLED" and then RE-RAISES, so it returns no outcome at
+        all; every site taking a `PhaseOutcome` argument is unreachable on a
+        cancel.
+      * The rows were mis-bucketed by RAW-STRING readers that never consult
+        this enum: `auditors/llm_audit.py`, `scripts/audit-loop.py`,
+        `routers/cycle_replay_router.py`, the client replay panel. Each read a
+        private denylist tuple of "bad" outcomes and swept everything else
+        into an accidental else-branch.
+
+    The fix is `OutcomeClass` below: ONE permitted set, classified once, that
+    those readers import instead of re-deriving. A new outcome string is then
+    covered by construction — `_assert_every_outcome_is_classified()` fails at
+    import until someone says which bucket it belongs to — and a value no
+    reader recognises is reported as UNRECOGNISED rather than silently
+    absorbed by whichever branch happened to be last.
     """
     SUCCESS = "SUCCESS"
     DATA_GAP = "DATA_GAP"
@@ -104,6 +123,116 @@ class PhaseOutcome(str, Enum):
     AGENT_ERROR = "AGENT_ERROR"
     TIMED_OUT = "TIMED_OUT"
     CANCELLED = "CANCELLED"
+
+
+class OutcomeClass(str, Enum):
+    """What a `PhaseOutcome` MEANS to a reader that has to bucket it.
+
+    Every reader of `v3_agent_telemetry.outcome` needs the same three-way
+    question answered — did the agent deliver, did something fail, or did
+    nobody get the chance — and before this each answered it privately with a
+    tuple of the outcomes it happened to know about. Those tuples are the
+    reason a CANCELLED row was scored as an LLM failure in one place, printed
+    as a benign "other" in a second, and drawn in the unknown-ish indigo of a
+    third.
+
+    ABANDONED is the class this taxonomy exists for. A cancellation is the
+    OPERATOR stopping the run — the usual cause is a deploy SIGTERMing an
+    in-flight cycle — so no model failed to answer and no tool broke. It is
+    therefore EXCLUDED from availability and quality scoring (see
+    `auditors/llm_audit.py`), but it stays fully VISIBLE in operational views:
+    an operator must be able to see that the cycle was cut short. Excluding it
+    from a failure numerator while leaving it in the denominator would be the
+    same lie with the sign flipped, so scorers must drop it from BOTH.
+
+    UNRECOGNISED is never a member's class — the import guard below forbids
+    that. It is what `classify_outcome()` returns for a string this vocabulary
+    does not define (the 24 dormant `'?'` rows, the single `SKIPPED` row, or
+    whatever gets written next), so an unknown value is reported loudly
+    instead of landing in an accidental bucket.
+    """
+    #: The agent produced its artifact.
+    DELIVERED = "DELIVERED"
+    #: It produced something, short of the full artifact. Worth showing; not
+    #: an outage.
+    DEGRADED = "DEGRADED"
+    #: The run itself did not deliver — the model or its tooling is at fault.
+    FAILED = "FAILED"
+    #: Stopped from outside the run. Nobody failed; do not score it.
+    ABANDONED = "ABANDONED"
+    #: Not a value this vocabulary defines. Never assigned to a member.
+    UNRECOGNISED = "UNRECOGNISED"
+
+
+#: The PERMITTED set, expressed once. Readers ask for a CLASS, never for a
+#: hand-maintained list of bad strings — a denylist only ever covers the
+#: outcomes whoever wrote it had already met.
+_OUTCOME_CLASS: dict[str, OutcomeClass] = {
+    PhaseOutcome.SUCCESS.value: OutcomeClass.DELIVERED,
+    PhaseOutcome.DATA_GAP.value: OutcomeClass.DEGRADED,
+    PhaseOutcome.TOOL_OUTAGE.value: OutcomeClass.DEGRADED,
+    PhaseOutcome.AGENT_ERROR.value: OutcomeClass.FAILED,
+    PhaseOutcome.TIMED_OUT.value: OutcomeClass.FAILED,
+    PhaseOutcome.CANCELLED.value: OutcomeClass.ABANDONED,
+}
+
+
+def classify_outcome(outcome: Any) -> OutcomeClass:
+    """Bucket one raw `outcome` string (as stored in Mongo, or a PhaseOutcome).
+
+    Returns `OutcomeClass.UNRECOGNISED` for None, for '?', and for any value
+    this module does not define — callers are expected to say so out loud
+    rather than fold it into their success or failure branch.
+    """
+    if isinstance(outcome, PhaseOutcome):
+        outcome = outcome.value
+    return _OUTCOME_CLASS.get(outcome, OutcomeClass.UNRECOGNISED)
+
+
+def outcomes_in(*classes: OutcomeClass) -> tuple[str, ...]:
+    """The outcome strings belonging to `classes`, sorted, for query filters.
+
+    With no arguments: the whole permitted vocabulary, so a reader can ask
+    "which rows carry an outcome nobody has classified?" without repeating the
+    list. `UNRECOGNISED` is not a membership class and yields nothing.
+    """
+    wanted = set(classes) or set(_OUTCOME_CLASS.values())
+    return tuple(sorted(v for v, c in _OUTCOME_CLASS.items() if c in wanted))
+
+
+def _assert_every_outcome_is_classified() -> None:
+    """Fail at import if a PhaseOutcome member has no class.
+
+    This is the "by construction" half. Adding a member below without saying
+    what it MEANS stops the process here, instead of shipping a value that
+    every reader quietly buckets somewhere different.
+    """
+    missing = [m.value for m in PhaseOutcome if m.value not in _OUTCOME_CLASS]
+    if missing:
+        raise AssertionError(
+            f"PhaseOutcome member(s) {sorted(missing)} have no OutcomeClass. "
+            f"Every outcome must be classified in _OUTCOME_CLASS — an "
+            f"unclassified value is invisible to llm_audit, audit-loop, the "
+            f"replay router and the client replay panel at once."
+        )
+    unclassifiable = [v for v, c in _OUTCOME_CLASS.items()
+                      if c is OutcomeClass.UNRECOGNISED]
+    if unclassifiable:
+        raise AssertionError(
+            f"{sorted(unclassifiable)} mapped to UNRECOGNISED. That class is "
+            f"what classify_outcome() returns for a value it does not know; "
+            f"a defined outcome must name a real bucket."
+        )
+    stray = [v for v in _OUTCOME_CLASS if v not in {m.value for m in PhaseOutcome}]
+    if stray:
+        raise AssertionError(
+            f"_OUTCOME_CLASS classifies {sorted(stray)}, which PhaseOutcome "
+            f"does not define. Add the member or drop the mapping — a class "
+            f"for a string nothing writes is a reader waiting to disagree."
+        )
+
+
+_assert_every_outcome_is_classified()
 
 
 class DecisionProvenance(str, Enum):
