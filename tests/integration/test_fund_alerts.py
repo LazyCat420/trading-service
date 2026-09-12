@@ -15,6 +15,8 @@ SQL round-trip only pinned the three columns it happened to SELECT.
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
+from app.db import mongo_query as _real_mongo_query
+
 import pytest
 
 from app.services.alert_service import record_fund_alert
@@ -66,6 +68,14 @@ class _MongoDouble:
         self.query.find_row.side_effect = self._find_row
         self.query.find_rows.side_effect = self._find_rows
         self.query.agg_row.side_effect = lambda *_a, **_k: (None,)
+        # `as_money` is a pure helper, not a database call — delegate it to the
+        # real implementation. Left as a bare MagicMock it returns a MagicMock,
+        # and the stop comparison below then raises
+        # `TypeError: '<=' not supported between instances of 'MagicMock' and
+        # 'MagicMock'` — which looks exactly like the Decimal/float TypeError
+        # this test exists to pin, so the test failed for the shape of the bug
+        # it was guarding against while proving nothing about it.
+        self.query.as_money.side_effect = _real_mongo_query.as_money
 
         self.store.with_txn.side_effect = self._with_txn
         # Value-preserving, so a monetary assertion reads the stored number.
