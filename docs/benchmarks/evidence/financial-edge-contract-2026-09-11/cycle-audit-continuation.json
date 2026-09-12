@@ -54,6 +54,28 @@
       "production_write_attempts": [],
       "staging_database_removed": true,
       "debate_ran": true
+    },
+    {
+      "run": "r7 (AFTER the fix, deployed source)",
+      "passed": true,
+      "cycle_id": "bench-financial-cycle-761f0360c2b2",
+      "endpoint_calls": 12,
+      "synthesizer_calls": 1,
+      "audit_status": "consistent",
+      "checked_claims": 36,
+      "audit_errors": [],
+      "policy_action": "HOLD_NO_SIGNAL",
+      "execution_errors": [],
+      "decision_producer": "v3_decision_synthesizer",
+      "decision_contract_status": "valid",
+      "decision_relation": "preserve",
+      "changed_fields": [],
+      "contract_rejections": 0,
+      "board_fallbacks": 0,
+      "order_attempts": 0,
+      "orders_in_staging": 0,
+      "production_write_attempts": [],
+      "staging_database_removed": true
     }
   ],
   "finding_decision_synthesizer_contract": {
@@ -251,5 +273,17 @@
     "The staging harness posts directly to prism-proxy; the FIRM_CONTEXT prefix was tested separately and changed nothing.",
     "tiktoken is absent from the local .venv (pinned in requirements, present in the container), so local context budgeting uses the 4 chars/token heuristic.",
     "The fix is committed on a branch only. It is NOT merged and NOT deployed."
-  ]
+  ],
+  "outcome": {
+    "shipped": "merged to fix/learning-lifecycle-20260907 as 00b14656 and DEPLOYED to the NAS",
+    "nas_verified": {
+      "container_started_utc": "2026-09-12T01:04:47Z",
+      "health": "running/healthy, restarts=0",
+      "http_health": "HTTP 200 at NAS:3031/health and in-container localhost:8080/health",
+      "runtime_hash_financial_evidence": "7290bde5d23076d3 (was af6b2a7c8cdbef18)",
+      "deployed_rules_name_the_fields": true
+    },
+    "effect_measured_in_r7": "synthesizer calls 4 -> 1; decision_producer board_fallback -> v3_decision_synthesizer; zero contract rejections; decision_relation=preserve with changed_fields=[] so the Board decision was not altered."
+  },
+  "truncation_detection_finding": "The EXISTING app/v3/output_rules.classify_output already flags every truncated response as TRUNCATED_JSON and every valid one as UNCLASSIFIED -- 6 of 6 agreement with the zero-usage signal on the recorded trials. Detection is NOT missing; a separate zero-usage detector would be redundant for detection, though usage is provider-side evidence available before parsing. The open question is retry policy: 5 of 8 attempts on this payload returned valid JSON, so a retry is worth more than the single shared correction allowance suggests."
 }
