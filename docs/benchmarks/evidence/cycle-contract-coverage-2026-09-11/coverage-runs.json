@@ -1,0 +1,336 @@
+{
+ "source_hashes_under_test": {
+  "app/services/pipeline_service.py": "f846c7a118ff57cc9531a4d6c77ed5e83582fca820225673a50a12fabb6813ba",
+  "app/v3/agent_runner.py": "1596de86bb32da5d914e7fc2254a4dd74e779b4c95a3f9aa807e851fbfac890a",
+  "app/v3/output_rules.py": "600fd4169e4d9275a72d4e0a7a03fb3d73f4ddb7c3bdd96cc0cc1e10aae2d5c3",
+  "app/v3/decision_contract.py": "acbfaaebbd10ca406596810135497bfb0bebeba8e698f8836f2ece6a6f84bb04",
+  "app/v3/orchestrator.py": "a0731881029800d1fc4d7c6b4da873a83aea5999c06a746c611d988c3ef679db",
+  "scripts/validate_financial_cycle.py": "0e15c34c019b725713944190d9df65b62356695667b1f7c38d98aa2d17653b13",
+  "scripts/decision_score_report.py": "c5be5f7cd6dae74ce5c6e33395386b1a228fdf70fd22cb45d571af0333d0c625"
+ },
+ "runs": [
+  {
+   "run": "A multi-ticker + orders",
+   "mode": {
+    "tickers": [
+     "ORCL",
+     "HOOD"
+    ],
+    "questions": 0,
+    "transport": "shim",
+    "tools": false,
+    "orders": "staging"
+   },
+   "cycle_id": "bench-financial-cycle-34db966c81fe",
+   "passed": true,
+   "error": null,
+   "states": [
+    "idle",
+    "starting",
+    "running",
+    "done"
+   ],
+   "endpoint_calls": 22,
+   "order_attempts": 0,
+   "orders_in_staging": 0,
+   "orders": [],
+   "production_write_attempts": [],
+   "staging_database_removed": true,
+   "seeded_questions": null,
+   "research": [
+    {
+     "ticker": "HOOD",
+     "questions_required": 0,
+     "question_ids": [],
+     "completion": null,
+     "answers_by_artifact": {
+      "fundamental_report": [],
+      "quant_report": [],
+      "valuation_report": [],
+      "desk_note": []
+     }
+    },
+    {
+     "ticker": "ORCL",
+     "questions_required": 0,
+     "question_ids": [],
+     "completion": null,
+     "answers_by_artifact": {
+      "fundamental_report": [],
+      "quant_report": [],
+      "valuation_report": [],
+      "desk_note": []
+     }
+    }
+   ],
+   "blocked_http_distinct": [
+    "http://10.0.0.16:5591/prism-proxy/embed",
+    "http://10.0.0.16:5591/vllm-shim/gold-spark/metrics",
+    "http://10.0.0.16:5591/vllm-shim/gold-spark/v1/models",
+    "http://10.0.0.16:5591/vllm-shim/jetson/metrics",
+    "http://10.0.0.16:5591/vllm-shim/jetson/v1/models"
+   ],
+   "checks": [
+    {
+     "ticker": "HOOD",
+     "action": "HOLD",
+     "confidence": 72,
+     "policy_action": "HOLD_NO_SIGNAL",
+     "decision_producer": "v3_decision_synthesizer",
+     "decision_relation": "preserve",
+     "changed_fields": [],
+     "contract_status": "valid",
+     "contract_errors": [],
+     "execution_errors": [],
+     "financial_evidence_version": 1,
+     "reasoning_version": 2,
+     "trade_attempted": false,
+     "trade_executed": false,
+     "audit_status": "consistent",
+     "checked_claims": 15
+    },
+    {
+     "ticker": "ORCL",
+     "action": "HOLD",
+     "confidence": 72,
+     "policy_action": "HOLD_NO_SIGNAL",
+     "decision_producer": "v3_decision_synthesizer",
+     "decision_relation": "preserve",
+     "changed_fields": [],
+     "contract_status": "valid",
+     "contract_errors": [],
+     "execution_errors": [],
+     "financial_evidence_version": 1,
+     "reasoning_version": 2,
+     "trade_attempted": false,
+     "trade_executed": false,
+     "audit_status": "consistent",
+     "checked_claims": 9
+    }
+   ]
+  },
+  {
+   "run": "B compound questions",
+   "mode": {
+    "tickers": [
+     "ORCL"
+    ],
+    "questions": 3,
+    "transport": "shim",
+    "tools": false,
+    "orders": "staging"
+   },
+   "cycle_id": "cycle-v3-staging-9616c4ff1f0a",
+   "passed": true,
+   "error": null,
+   "states": [
+    "idle",
+    "starting",
+    "running",
+    "done"
+   ],
+   "endpoint_calls": 12,
+   "order_attempts": 0,
+   "orders_in_staging": 0,
+   "orders": [],
+   "production_write_attempts": [],
+   "staging_database_removed": true,
+   "seeded_questions": [
+    "qitem-360ceb306fe7",
+    "qitem-556d6f500bcc",
+    "qitem-59de3fb0b1f6"
+   ],
+   "research": [
+    {
+     "ticker": "ORCL",
+     "questions_required": 3,
+     "question_ids": [
+      "qitem-360ceb306fe7",
+      "qitem-556d6f500bcc",
+      "qitem-59de3fb0b1f6"
+     ],
+     "completion": {
+      "answered": 0,
+      "deferred": 3,
+      "delivery_pending": 0
+     },
+     "answers_by_artifact": {
+      "fundamental_report": [],
+      "quant_report": [],
+      "valuation_report": [],
+      "desk_note": []
+     }
+    }
+   ],
+   "blocked_http_distinct": [
+    "http://10.0.0.16:5591/prism-proxy/embed",
+    "http://10.0.0.16:5591/vllm-shim/gold-spark/metrics",
+    "http://10.0.0.16:5591/vllm-shim/gold-spark/v1/models",
+    "http://10.0.0.16:5591/vllm-shim/jetson/metrics",
+    "http://10.0.0.16:5591/vllm-shim/jetson/v1/models"
+   ],
+   "checks": [
+    {
+     "ticker": "ORCL",
+     "action": "HOLD",
+     "confidence": 76,
+     "policy_action": "HOLD_NO_SIGNAL",
+     "decision_producer": "v3_decision_synthesizer",
+     "decision_relation": "preserve",
+     "changed_fields": [],
+     "contract_status": "valid",
+     "contract_errors": [],
+     "execution_errors": [],
+     "financial_evidence_version": 1,
+     "reasoning_version": 2,
+     "trade_attempted": false,
+     "trade_executed": false,
+     "audit_status": "consistent",
+     "checked_claims": 12
+    }
+   ]
+  },
+  {
+   "run": "C production transport + tools",
+   "mode": {
+    "tickers": [
+     "ORCL"
+    ],
+    "questions": 0,
+    "transport": "production",
+    "tools": true,
+    "orders": "staging"
+   },
+   "cycle_id": "bench-financial-cycle-9451d98f93ce",
+   "passed": true,
+   "error": null,
+   "states": [
+    "idle",
+    "starting",
+    "running",
+    "done"
+   ],
+   "endpoint_calls": 1,
+   "order_attempts": 0,
+   "orders_in_staging": 0,
+   "orders": [],
+   "production_write_attempts": [],
+   "staging_database_removed": true,
+   "seeded_questions": null,
+   "research": [
+    {
+     "ticker": "ORCL",
+     "questions_required": 0,
+     "question_ids": [],
+     "completion": null,
+     "answers_by_artifact": {
+      "fundamental_report": [],
+      "quant_report": [],
+      "valuation_report": [],
+      "desk_note": []
+     }
+    }
+   ],
+   "blocked_http_distinct": [],
+   "checks": [
+    {
+     "ticker": "ORCL",
+     "action": "HOLD",
+     "confidence": 62,
+     "policy_action": "HOLD_NO_SIGNAL",
+     "decision_producer": "v3_decision_synthesizer",
+     "decision_relation": "preserve",
+     "changed_fields": [],
+     "contract_status": "valid",
+     "contract_errors": [],
+     "execution_errors": [],
+     "financial_evidence_version": 1,
+     "reasoning_version": 2,
+     "trade_attempted": false,
+     "trade_executed": false,
+     "audit_status": "consistent",
+     "checked_claims": 32
+    }
+   ]
+  }
+ ],
+ "title": "Coverage sweep: the eight paths that had never run behind the Decision Synthesizer",
+ "measured_at_utc": "2026-09-12",
+ "deployed_revision": "4e77d051",
+ "findings": [
+  {
+   "severity": "live defect on the then-deployed revision, FIXED in 4e77d051",
+   "claim": "pipeline_service refused any BUY whose resolved size was not exactly the agent's requested size, gated on financial_evidence_version==1 which orchestrator.py:3264 sets for every ticker on every cycle. resolve_buy_size_pct applies a consensus/data-quality haircut by design, so equality is false whenever a consensus score exists.",
+   "measured": {
+    "buy_sizings_failing_the_equality": "54 of 55 over the last 600 production analyses",
+    "the_one_survivor": "UBER, which carried no internal_consensus_score",
+    "immediate_enter_now_buys_that_reach_the_line": 6,
+    "of_those_refused": 5,
+    "of_those_5_that_had_reached_EXECUTE_BUY": 4
+   },
+   "why_nothing_caught_it": "sizing_reconsideration_required is written twice and read nowhere, so the BUY was dropped silently; and no production cycle had yet run under the deployed revision."
+  },
+  {
+   "severity": "open, NOT fixed \u2014 needs a design decision",
+   "claim": "The compound-question path delivers and never collects. Three questions seeded through the production writer reached NINE agent prompts; none of the nine returned research_answers; finish_questions recorded answered=0 deferred=3.",
+   "measured": {
+    "agents_given_the_question_block": 9,
+    "agents_that_returned_research_answers": 0,
+    "artifacts_read_by_verified_answers": [
+     "fundamental_report",
+     "quant_report",
+     "valuation_report",
+     "desk_note"
+    ],
+    "artifacts_that_DO_emit_research_answers": [
+     "board_of_directors",
+     "decision_synthesizer"
+    ],
+    "note": "The two that comply are the two whose schema declares the field, and neither receives the question block nor is read for answers."
+   }
+  },
+  {
+   "severity": "harness blind spots, both now guarded",
+   "claim": "trade=false skipped the whole execution block so the sizing gate was unreachable; and a bench- cycle id is synthetic, so claim_for_ticker returned [] and every staging run reported questions_required=0 whatever was in the queue."
+  },
+  {
+   "severity": "measurement",
+   "claim": "The raw-HTTP shim under-reports agent latency against the real run_agent transport.",
+   "measured": {
+    "v3_regime_engine_no_tools_either_run": {
+     "shim_ms": 12570,
+     "production_ms": 46235,
+     "ratio": 3.7
+    },
+    "v3_junior_analyst": {
+     "shim_ms": 15684,
+     "production_ms": 153906,
+     "ratio": 9.8
+    },
+    "v3_fundamental_analyst": {
+     "shim_ms": 22766,
+     "production_ms": 289780,
+     "ratio": 12.7
+    },
+    "consequence": "The harness default --timeout is 1200s and r5-r7 all used it; a real-transport cycle cannot finish in that budget."
+   }
+  },
+  {
+   "severity": "measurement",
+   "claim": "Investment merit is not measurable yet.",
+   "measured": {
+    "BUY_only": {
+     "n": 17,
+     "board_confidence_spread_pp": 0.94,
+     "p": 0.531
+    },
+    "every_resolved_decision": {
+     "n": 289,
+     "board_confidence_spread_pp": -2.64,
+     "p": 0.0,
+     "caveat": "Mostly HOLDs carrying a hypothetical P&L, so this is about confidence calibration, not trading returns."
+    }
+   }
+  }
+ ]
+}
