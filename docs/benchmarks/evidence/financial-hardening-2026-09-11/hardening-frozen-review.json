@@ -1,0 +1,65 @@
+{
+  "scope": "Independent arithmetic recomputation plus rationale review aid; no automatic investment-quality judgment.",
+  "rows": [
+    {
+      "index": 8,
+      "case": "held_deterioration",
+      "arm": "no_method",
+      "outcome": "SUCCESS",
+      "financial_status": "consistent",
+      "calls": 2,
+      "action": "SELL",
+      "confidence": 92,
+      "size": 0,
+      "entry_mode": "enter_now",
+      "arithmetic_checked": [
+        "calc_holding_return_pct",
+        "calc_range_position_pct",
+        "calc_headroom_pct",
+        "calc_proposed_current_reward_risk"
+      ],
+      "arithmetic_discrepancies": [],
+      "reasoning": "The position is below its acquisition cost. [calc_holding_return_pct] The close is nearer support than resistance. [calc_range_position_pct] This supplied observation is available. [calc_price_vs_support] This supplied observation is available. [support] This supplied observation is available. [resistance] This supplied observation is available. [rsi_14] The supplied operating margin is negative. [operating_margin_pct] The supplied free cash flow is negative. [free_cash_flow] The supplied gross margin is positive. [gross_margin_pct] The supplied return on invested capital is positive. [roic_pct] This supplied observation is available. [sector_roic_pct] The supplied company return on invested capital exceeds the sector's same metric. [roic_pct] [sector_roic_pct] The supplied company gross margin is below the sector's same metric. [gross_margin_pct] [sector_gross_margin_pct] This supplied observation is available. [debt_to_equity] This supplied observation is available. [calc_unreserved_headroom_pct] Whether the supplied purchase fits remains unresolved. [calc_proposal_fits] The repeated reports share an underlying filing and do not provide independent corroboration. [underlying_filing_count] The supplied record says management met its guidance. [guidance_record] Reserved concentration capacity is unknown. [calc_headroom_pct] This supplied observation is unavailable. [calc_headroom_usd] Reward/risk at the current reference price is unknown. [calc_proposed_current_reward_risk]",
+      "answers": [
+        {
+          "id": "q-current",
+          "question": "Which free cash flow and operating margin figures are current at the decision date?",
+          "status": "answered",
+          "answer": "The supplied free cash flow is negative. [free_cash_flow] The supplied operating margin is negative. [operating_margin_pct]",
+          "values": {
+            "free_cash_flow": -40000000,
+            "operating_margin_pct": -2
+          }
+        },
+        {
+          "id": "q-loss",
+          "question": "What is the holding's unrealized percentage return from cost 120 to price 100?",
+          "status": "answered",
+          "answer": "The position is below its acquisition cost. [calc_holding_return_pct]",
+          "values": {
+            "calc_holding_return_pct": -16.666666666666668
+          }
+        },
+        {
+          "id": "q-independent",
+          "question": "Do the two reports repeating the same September filing provide two independent sources?",
+          "status": "answered",
+          "answer": "The repeated reports share an underlying filing and do not provide independent corroboration. [underlying_filing_count]",
+          "values": {
+            "underlying_filing_count": 1
+          }
+        }
+      ]
+    }
+  ],
+  "manual_review": {
+    "completed": true,
+    "scope": "Every rendered explanation and research answer checked against retained source facts. No investment-merit judgment.",
+    "findings": [
+      "No incorrect numeric or directional relationship found in the checked answers.",
+      "Missing historical volume, forward EPS growth and SMA observations remain explicitly unresolved.",
+      "Repeated/extra true observations make some answers verbose; factual acceptance is not a prose-quality or investment-quality score.",
+      "Saved original failed response receives only one new repair; it is not a fresh first-response trial."
+    ]
+  }
+}

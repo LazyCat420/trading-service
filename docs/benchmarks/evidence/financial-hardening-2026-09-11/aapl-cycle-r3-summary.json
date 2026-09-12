@@ -1,0 +1,179 @@
+{
+  "started_at": "2026-09-11T21:55:43.942892+00:00",
+  "finished_at": "2026-09-11T22:02:26.264878+00:00",
+  "source_hashes": {
+    "app/v3/financial_evidence.py": "97cdc6b9ebca115185317b78be763eacbd8c9525c092d03b5c9b2bc3a67c8bcc",
+    "app/v3/financial_reasoning.py": "da0607962fef1314231509db64239689ad5b671a979165156340839f7c52253e",
+    "app/v3/financial_claims.py": "ab59f2afab9ed07a8ad52211d6a7f73a3b59c8d2b3b43faac3920d913c3fbc6d",
+    "app/v3/agent_runner.py": "41c5401d1490adfdbac9bd42221600d3c6d0c533fbde9733d5d63a6ce99682f3",
+    "app/quant/technical_baseline.py": "99c4d8fef8508826991a682821aa21ba0e2c7af358de9976c7889e390155ba6d",
+    "scripts/test_live_financial_record.py": "006265da9a88a932c8984e4fd4415f632f50a707a757e1dff7aeb5bb6751ffa0",
+    "scripts/validate_financial_cycle.py": "4c0ddbb5e10b00d15d3fd37d1d47b977f63ab42ef15c1d0c9cda36953a67e381"
+  },
+  "cycle_id": "bench-financial-cycle-f2c5cda4d201",
+  "production_preflight": {
+    "status": "done",
+    "cycle_id": "cycle-v3-1789147244"
+  },
+  "staging_database": "financial_validation_023431da4ad64d6cac1b01d99b54e566",
+  "states": [
+    {
+      "status": "idle",
+      "at": "2026-09-11T21:55:47.654382+00:00"
+    },
+    {
+      "status": "starting",
+      "at": "2026-09-11T21:56:01.574218+00:00"
+    },
+    {
+      "status": "running",
+      "at": "2026-09-11T21:56:02.259494+00:00"
+    },
+    {
+      "status": "done",
+      "at": "2026-09-11T22:02:25.662408+00:00"
+    }
+  ],
+  "passed": false,
+  "error": null,
+  "financial_checks": [
+    {
+      "ticker": "AAPL",
+      "financial_evidence_version": null,
+      "reasoning_version": null,
+      "audit": {
+        "status": "missing"
+      },
+      "execution_errors": [],
+      "policy_action": null
+    }
+  ],
+  "order_attempts": 0,
+  "orders_in_staging": 0,
+  "production_write_attempts": [],
+  "staging_database_removed": true,
+  "limitations": [
+    "Stored real data; collection refresh disabled.",
+    "All agents use real inference but tools are disabled.",
+    "Paper portfolio copied into isolated database; no real broker validation.",
+    "One ticker does not measure multi-ticker concurrency or investment quality.",
+    "Production lifecycle ends at done, not an invented completed-to-idle sequence."
+  ],
+  "raw_receipt_path": "/tmp/financial-aapl-cycle-r3.json",
+  "raw_receipt_sha256": "94ef43eae81fde2763a7587389c8fb32cd5d127004aa3be8305cdbf3cc83d6d8",
+  "assessment": "Completed scheduler lifecycle but aborted at Board after repeated unknown research question IDs. Reproduced real integration defect; fixed in 2194e3a6.",
+  "calls": [
+    {
+      "agent": "v3_board_of_directors",
+      "started_at": "2026-09-11T21:56:01.594811+00:00",
+      "elapsed_s": 1.1882447509997291,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_regime_engine",
+      "started_at": "2026-09-11T21:56:09.149030+00:00",
+      "elapsed_s": 12.02618268399965,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_junior_analyst",
+      "started_at": "2026-09-11T21:56:21.732539+00:00",
+      "elapsed_s": 16.786072472998057,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_fundamental_analyst",
+      "started_at": "2026-09-11T21:56:37.569406+00:00",
+      "elapsed_s": 36.58468688100038,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_fundamental_analyst",
+      "started_at": "2026-09-11T21:57:13.873971+00:00",
+      "elapsed_s": 32.57823919599832,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_quant_analyst",
+      "started_at": "2026-09-11T21:57:44.699209+00:00",
+      "elapsed_s": 20.127440211999783,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_valuation_analyst",
+      "started_at": "2026-09-11T21:58:05.056531+00:00",
+      "elapsed_s": 19.632508752998547,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_bull_agent",
+      "started_at": "2026-09-11T21:58:24.721627+00:00",
+      "elapsed_s": 18.054865019999852,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_bear_agent",
+      "started_at": "2026-09-11T21:58:43.048063+00:00",
+      "elapsed_s": 43.681771714000206,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_bull_defense",
+      "started_at": "2026-09-11T21:59:24.535968+00:00",
+      "elapsed_s": 35.036394558999746,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_bull_defense",
+      "started_at": "2026-09-11T21:59:58.353778+00:00",
+      "elapsed_s": 32.04063055000006,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_debate_judge",
+      "started_at": "2026-09-11T22:00:29.965284+00:00",
+      "elapsed_s": 35.36429120500179,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_board_of_directors",
+      "started_at": "2026-09-11T22:01:04.981707+00:00",
+      "elapsed_s": 21.209423954001977,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_board_of_directors",
+      "started_at": "2026-09-11T22:01:24.742271+00:00",
+      "elapsed_s": 20.01833047299806,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_board_of_directors",
+      "started_at": "2026-09-11T22:01:43.583246+00:00",
+      "elapsed_s": 24.10022193400073,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_board_of_directors",
+      "started_at": "2026-09-11T22:02:07.774185+00:00",
+      "elapsed_s": 17.675320318001468,
+      "http_status": 200,
+      "error": null
+    }
+  ]
+}

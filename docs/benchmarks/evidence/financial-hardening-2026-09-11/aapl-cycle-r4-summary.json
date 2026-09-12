@@ -1,0 +1,223 @@
+{
+  "started_at": "2026-09-11T22:07:02.531470+00:00",
+  "finished_at": "2026-09-11T22:13:12.655775+00:00",
+  "source_hashes": {
+    "app/v3/financial_evidence.py": "bb9364621557ccb528ecb4f1ba7084cc92fe6b80a7e7e61efcfce1a96edc1fdc",
+    "app/v3/financial_reasoning.py": "4e9584416445eb8c237f319dd52c556d53da69a7048c9c04352e52d95c0add6f",
+    "app/v3/financial_claims.py": "b9daaa272cceb7c07c82987a1cecaaaf58d4cec06053531c107bd3ed06230cb6",
+    "app/v3/agent_runner.py": "41c5401d1490adfdbac9bd42221600d3c6d0c533fbde9733d5d63a6ce99682f3",
+    "app/quant/technical_baseline.py": "99c4d8fef8508826991a682821aa21ba0e2c7af358de9976c7889e390155ba6d",
+    "scripts/test_live_financial_record.py": "006265da9a88a932c8984e4fd4415f632f50a707a757e1dff7aeb5bb6751ffa0",
+    "scripts/validate_financial_cycle.py": "4c0ddbb5e10b00d15d3fd37d1d47b977f63ab42ef15c1d0c9cda36953a67e381"
+  },
+  "cycle_id": "bench-financial-cycle-82309240fab4",
+  "production_preflight": {
+    "status": "done",
+    "cycle_id": "cycle-v3-1789147244"
+  },
+  "staging_database": "financial_validation_bea2b4271fa54173a94d8bc9d9a8f05b",
+  "states": [
+    {
+      "status": "idle",
+      "at": "2026-09-11T22:07:06.517865+00:00"
+    },
+    {
+      "status": "starting",
+      "at": "2026-09-11T22:07:18.565751+00:00"
+    },
+    {
+      "status": "running",
+      "at": "2026-09-11T22:07:21.115174+00:00"
+    },
+    {
+      "status": "done",
+      "at": "2026-09-11T22:13:12.062427+00:00"
+    }
+  ],
+  "passed": false,
+  "error": null,
+  "financial_checks": [
+    {
+      "ticker": "AAPL",
+      "financial_evidence_version": 1,
+      "reasoning_version": 2,
+      "audit": {
+        "version": 1,
+        "status": "unresolved",
+        "record_sha256": "36c2bde2513ae77ac05c9db154418a43bbbb1feac94525d3bdc499a09ce21d97",
+        "checked_claims": 33,
+        "checked_fact_ids": [
+          "close",
+          "rsi_14",
+          "atr_14",
+          "support",
+          "resistance",
+          "sma_50",
+          "sma_200",
+          "calc_range_position_pct",
+          "calc_price_vs_support",
+          "volume_five_session_trend",
+          "operating_margin_pct",
+          "gross_margin_pct",
+          "net_margin_pct",
+          "roic_pct",
+          "roe_pct",
+          "roa_pct",
+          "debt_to_equity",
+          "forward_pe",
+          "trailing_pe",
+          "vendor_peg",
+          "revenue_growth_pct",
+          "eps_growth_qoq_pct",
+          "dividend_yield_pct",
+          "revenue_ttm",
+          "operating_income_ttm",
+          "equity",
+          "cash",
+          "exposure_pct",
+          "single_name_limit_pct",
+          "max_order_size_pct",
+          "calc_unreserved_headroom_pct",
+          "calc_proposal_fits",
+          "calc_proposed_current_reward_risk"
+        ],
+        "questions_required": 0,
+        "questions_returned": 0,
+        "errors": [
+          {
+            "kind": "structured_reasoning",
+            "field": "reasoning_steps",
+            "message": "reasoning conflicts with the selected code-verified steps; remove authored financial prose."
+          }
+        ],
+        "scope": "typed_source_facts_calculations_and_question_coverage",
+        "limitations": "Consistency with supplied evidence; not source truth, complete semantic entailment, or investment merit."
+      },
+      "execution_errors": [
+        "reasoning conflicts with the selected code-verified steps; remove authored financial prose."
+      ],
+      "policy_action": "HOLD_POLICY_BLOCKED_FINANCIAL_EVIDENCE"
+    }
+  ],
+  "order_attempts": 0,
+  "orders_in_staging": 0,
+  "production_write_attempts": [],
+  "staging_database_removed": true,
+  "limitations": [
+    "Stored real data; collection refresh disabled.",
+    "All agents use real inference but tools are disabled.",
+    "Paper portfolio copied into isolated database; no real broker validation.",
+    "One ticker does not measure multi-ticker concurrency or investment quality.",
+    "Production lifecycle ends at done, not an invented completed-to-idle sequence."
+  ],
+  "raw_receipt_path": "/tmp/financial-aapl-cycle-r4.json",
+  "raw_receipt_sha256": "cafcac688abfd914d03012ade62c3124ffa98078aaac2a7632d8d35a8d40d17b",
+  "calls": [
+    {
+      "agent": "v3_board_of_directors",
+      "started_at": "2026-09-11T22:07:18.586878+00:00",
+      "elapsed_s": 1.409421371998178,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_regime_engine",
+      "started_at": "2026-09-11T22:07:27.731197+00:00",
+      "elapsed_s": 9.303858398001466,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_junior_analyst",
+      "started_at": "2026-09-11T22:07:37.659595+00:00",
+      "elapsed_s": 14.903427982000721,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_fundamental_analyst",
+      "started_at": "2026-09-11T22:07:51.683270+00:00",
+      "elapsed_s": 25.390772189999552,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_quant_analyst",
+      "started_at": "2026-09-11T22:08:16.120044+00:00",
+      "elapsed_s": 14.79635879900161,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_valuation_analyst",
+      "started_at": "2026-09-11T22:08:32.943663+00:00",
+      "elapsed_s": 15.590489340000204,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_bull_agent",
+      "started_at": "2026-09-11T22:08:47.669986+00:00",
+      "elapsed_s": 24.645168278999336,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_bear_agent",
+      "started_at": "2026-09-11T22:09:12.295860+00:00",
+      "elapsed_s": 59.85833713900138,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_bull_defense",
+      "started_at": "2026-09-11T22:10:10.029471+00:00",
+      "elapsed_s": 41.44676502900256,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_debate_judge",
+      "started_at": "2026-09-11T22:10:50.890162+00:00",
+      "elapsed_s": 33.32649437400323,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_board_of_directors",
+      "started_at": "2026-09-11T22:11:23.858995+00:00",
+      "elapsed_s": 20.534349163001025,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_decision_synthesizer",
+      "started_at": "2026-09-11T22:11:44.119994+00:00",
+      "elapsed_s": 19.384811640000407,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_decision_synthesizer",
+      "started_at": "2026-09-11T22:12:02.133535+00:00",
+      "elapsed_s": 24.691188904998853,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_decision_synthesizer",
+      "started_at": "2026-09-11T22:12:25.689281+00:00",
+      "elapsed_s": 20.32261565600129,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_decision_synthesizer",
+      "started_at": "2026-09-11T22:12:46.310910+00:00",
+      "elapsed_s": 24.106966502000432,
+      "http_status": 200,
+      "error": null
+    }
+  ],
+  "assessment": "Board consistent. Synthesis failed its separate contract; Board fallback appended operational prose to verified reasoning, invalidating the persisted financial audit. Financial policy and execution checks blocked it. Fixed in f55811cb; no orders, temporary database removed."
+}

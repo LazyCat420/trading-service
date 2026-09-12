@@ -1,0 +1,149 @@
+{
+  "source_hashes": {
+    "app/v3/financial_evidence.py": "bb9364621557ccb528ecb4f1ba7084cc92fe6b80a7e7e61efcfce1a96edc1fdc",
+    "app/v3/financial_reasoning.py": "4e9584416445eb8c237f319dd52c556d53da69a7048c9c04352e52d95c0add6f",
+    "app/v3/financial_claims.py": "b9daaa272cceb7c07c82987a1cecaaaf58d4cec06053531c107bd3ed06230cb6",
+    "app/v3/agent_runner.py": "41c5401d1490adfdbac9bd42221600d3c6d0c533fbde9733d5d63a6ce99682f3",
+    "app/quant/technical_baseline.py": "99c4d8fef8508826991a682821aa21ba0e2c7af358de9976c7889e390155ba6d",
+    "scripts/test_live_financial_record.py": "006265da9a88a932c8984e4fd4415f632f50a707a757e1dff7aeb5bb6751ffa0"
+  },
+  "new_model_calls": 0,
+  "rows": [
+    {
+      "cohort": "hardening-fresh-r2",
+      "index": 1,
+      "case": "headroom",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_or_unresolved_blocked_despite_forged_pass": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r2",
+      "index": 2,
+      "case": "headroom",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_or_unresolved_blocked_despite_forged_pass": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r2",
+      "index": 3,
+      "case": "headroom",
+      "authored_fields_preserved": true,
+      "current_audit": "unresolved",
+      "execution_errors": [
+        "Proposed size exceeds calc_headroom_pct=0.6.",
+        "Proposed size exceeds calc_unreserved_headroom_pct=0.6."
+      ],
+      "tampered_or_unresolved_blocked_despite_forged_pass": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r2",
+      "index": 4,
+      "case": "missing_history",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_or_unresolved_blocked_despite_forged_pass": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r2",
+      "index": 5,
+      "case": "missing_history",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_or_unresolved_blocked_despite_forged_pass": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r2",
+      "index": 6,
+      "case": "missing_history",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_or_unresolved_blocked_despite_forged_pass": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r2",
+      "index": 7,
+      "case": "held_deterioration",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_or_unresolved_blocked_despite_forged_pass": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r2",
+      "index": 8,
+      "case": "held_deterioration",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_or_unresolved_blocked_despite_forged_pass": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r2",
+      "index": 9,
+      "case": "held_deterioration",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_or_unresolved_blocked_despite_forged_pass": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r2",
+      "index": 10,
+      "case": "conditional_entry",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_or_unresolved_blocked_despite_forged_pass": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r2",
+      "index": 11,
+      "case": "conditional_entry",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_or_unresolved_blocked_despite_forged_pass": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r2",
+      "index": 12,
+      "case": "conditional_entry",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_or_unresolved_blocked_despite_forged_pass": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    }
+  ],
+  "passed": true
+}

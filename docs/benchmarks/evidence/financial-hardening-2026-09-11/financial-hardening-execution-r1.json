@@ -1,0 +1,157 @@
+{
+  "source_hashes": {
+    "app/v3/financial_evidence.py": "97cdc6b9ebca115185317b78be763eacbd8c9525c092d03b5c9b2bc3a67c8bcc",
+    "app/v3/financial_reasoning.py": "da0607962fef1314231509db64239689ad5b671a979165156340839f7c52253e",
+    "app/v3/financial_claims.py": "ab59f2afab9ed07a8ad52211d6a7f73a3b59c8d2b3b43faac3920d913c3fbc6d",
+    "app/v3/agent_runner.py": "41c5401d1490adfdbac9bd42221600d3c6d0c533fbde9733d5d63a6ce99682f3",
+    "app/quant/technical_baseline.py": "99c4d8fef8508826991a682821aa21ba0e2c7af358de9976c7889e390155ba6d",
+    "scripts/test_live_financial_record.py": "006265da9a88a932c8984e4fd4415f632f50a707a757e1dff7aeb5bb6751ffa0"
+  },
+  "new_model_calls": 0,
+  "rows": [
+    {
+      "cohort": "hardening-fresh-r1",
+      "index": 1,
+      "case": "headroom",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_claim_blocked": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r1",
+      "index": 2,
+      "case": "headroom",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_claim_blocked": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r1",
+      "index": 3,
+      "case": "headroom",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_claim_blocked": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r1",
+      "index": 4,
+      "case": "missing_history",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_claim_blocked": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r1",
+      "index": 5,
+      "case": "missing_history",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_claim_blocked": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r1",
+      "index": 6,
+      "case": "missing_history",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_claim_blocked": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r1",
+      "index": 7,
+      "case": "held_deterioration",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_claim_blocked": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r1",
+      "index": 8,
+      "case": "held_deterioration",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_claim_blocked": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r1",
+      "index": 9,
+      "case": "held_deterioration",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_claim_blocked": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r1",
+      "index": 10,
+      "case": "conditional_entry",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_claim_blocked": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r1",
+      "index": 11,
+      "case": "conditional_entry",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_claim_blocked": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-fresh-r1",
+      "index": 12,
+      "case": "conditional_entry",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_claim_blocked": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    },
+    {
+      "cohort": "hardening-frozen-r1",
+      "index": 8,
+      "case": "held_deterioration",
+      "authored_fields_preserved": true,
+      "current_audit": "consistent",
+      "execution_errors": [],
+      "tampered_claim_blocked": true,
+      "changed_order_action_blocked": true,
+      "passed": true
+    }
+  ],
+  "passed": true
+}

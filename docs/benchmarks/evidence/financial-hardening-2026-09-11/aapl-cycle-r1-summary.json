@@ -1,0 +1,87 @@
+{
+  "started_at": "2026-09-11T21:50:53.296339+00:00",
+  "finished_at": "2026-09-11T21:51:22.718100+00:00",
+  "source_hashes": {
+    "app/v3/financial_evidence.py": "2157f3433fe0662b11975eea7484f2bb5b820ca9f25f579a2332e616e72cf33a",
+    "app/v3/financial_reasoning.py": "da0607962fef1314231509db64239689ad5b671a979165156340839f7c52253e",
+    "app/v3/financial_claims.py": "ab59f2afab9ed07a8ad52211d6a7f73a3b59c8d2b3b43faac3920d913c3fbc6d",
+    "app/v3/agent_runner.py": "41c5401d1490adfdbac9bd42221600d3c6d0c533fbde9733d5d63a6ce99682f3",
+    "scripts/test_live_financial_record.py": "cb560ee468fad651479f1b926d2b6a17c9a1a1c9a1ac83dcdbabe12dcc305106",
+    "scripts/validate_financial_cycle.py": "e53465ea856ab2f2330569508df9f296e262c53adce3b0de2c81821a4a8148b1"
+  },
+  "cycle_id": "bench-financial-cycle-2514928bde53",
+  "production_preflight": {
+    "status": "done",
+    "cycle_id": "cycle-v3-1789147244"
+  },
+  "staging_database": "financial_validation_a91cfb0d861b44519bb95049c1e64477",
+  "states": [
+    {
+      "status": "idle",
+      "at": "2026-09-11T21:50:56.474841+00:00"
+    },
+    {
+      "status": "starting",
+      "at": "2026-09-11T21:51:12.733426+00:00"
+    },
+    {
+      "status": "running",
+      "at": "2026-09-11T21:51:13.880366+00:00"
+    },
+    {
+      "status": "done",
+      "at": "2026-09-11T21:51:22.121822+00:00"
+    }
+  ],
+  "passed": false,
+  "error": null,
+  "financial_checks": [
+    {
+      "ticker": "AAPL",
+      "financial_evidence_version": 0,
+      "reasoning_version": null,
+      "audit": {
+        "status": "missing"
+      },
+      "execution_errors": [],
+      "policy_action": "HOLD_DEGRADED_NO_DECISION"
+    }
+  ],
+  "order_attempts": 0,
+  "orders_in_staging": 0,
+  "production_write_attempts": [],
+  "staging_database_removed": true,
+  "limitations": [
+    "Stored real data; collection refresh disabled.",
+    "All agents use real inference but tools are disabled.",
+    "Paper portfolio copied into isolated database; no real broker validation.",
+    "One ticker does not measure multi-ticker concurrency or investment quality.",
+    "Production lifecycle ends at done, not an invented completed-to-idle sequence."
+  ],
+  "raw_receipt_path": "/tmp/financial-aapl-cycle-r1.json",
+  "raw_receipt_sha256": "1fb735bcd1bf918eb218bdbd378ddfbf3554382f5272b8d0f604a1b201a6ed0c",
+  "assessment": "Failed staging transport: invented agent identifier produced HTTP 500. Corrected to production resolver.",
+  "calls": [
+    {
+      "agent": "preflight",
+      "started_at": "2026-09-11T21:51:12.754302+00:00",
+      "elapsed_s": 0.09711510600027395,
+      "http_status": 500,
+      "error": "HTTPStatusError"
+    },
+    {
+      "agent": "v3_regime_engine",
+      "started_at": "2026-09-11T21:51:18.655233+00:00",
+      "elapsed_s": 0.11161509699741146,
+      "http_status": 500,
+      "error": "HTTPStatusError"
+    },
+    {
+      "agent": "v3_regime_engine",
+      "started_at": "2026-09-11T21:51:19.783653+00:00",
+      "elapsed_s": 0.038625074997980846,
+      "http_status": 500,
+      "error": "HTTPStatusError"
+    }
+  ]
+}

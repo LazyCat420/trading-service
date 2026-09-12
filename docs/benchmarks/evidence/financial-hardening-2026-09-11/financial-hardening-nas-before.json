@@ -1,0 +1,34 @@
+{
+  "verified_at": "2026-09-11T22:00:23.063739+00:00",
+  "runtime": {
+    "git_sha": "ff9a14a9",
+    "source_hashes": {
+      "app/v3/agent_runner.py": "41c5401d1490adfdbac9bd42221600d3c6d0c533fbde9733d5d63a6ce99682f3",
+      "app/v3/financial_claims.py": "ab59f2afab9ed07a8ad52211d6a7f73a3b59c8d2b3b43faac3920d913c3fbc6d",
+      "app/v3/financial_evidence.py": "8020c00b24490eabea96ce236c60b486e9980c4246fbb9a402596161795e53ff",
+      "app/v3/financial_reasoning.py": "5080d9c2070f4a0a8a700799aedd72f2edc51833396d6bba1af1e5367c2ec2f1",
+      "app/quant/technical_baseline.py": "9a7055cd158558ab895c49f66ff198e0a116784c2272aaf0bbb4e9899684a9cf"
+    }
+  },
+  "state": {
+    "status": "running",
+    "health": "healthy",
+    "started_at": "2026-09-11T21:11:21.595029624Z"
+  },
+  "health": {
+    "status_code": 200,
+    "body": {
+      "status": "ok",
+      "service": "trading-service",
+      "version": "v3"
+    }
+  },
+  "local_source_hashes": {
+    "app/v3/agent_runner.py": "41c5401d1490adfdbac9bd42221600d3c6d0c533fbde9733d5d63a6ce99682f3",
+    "app/v3/financial_claims.py": "ab59f2afab9ed07a8ad52211d6a7f73a3b59c8d2b3b43faac3920d913c3fbc6d",
+    "app/v3/financial_evidence.py": "97cdc6b9ebca115185317b78be763eacbd8c9525c092d03b5c9b2bc3a67c8bcc",
+    "app/v3/financial_reasoning.py": "da0607962fef1314231509db64239689ad5b671a979165156340839f7c52253e",
+    "app/quant/technical_baseline.py": "99c4d8fef8508826991a682821aa21ba0e2c7af358de9976c7889e390155ba6d"
+  },
+  "all_runtime_hashes_match": false
+}

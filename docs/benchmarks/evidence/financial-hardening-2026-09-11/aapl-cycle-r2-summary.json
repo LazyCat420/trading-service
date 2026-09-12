@@ -1,0 +1,90 @@
+{
+  "started_at": "2026-09-11T21:52:38.573069+00:00",
+  "finished_at": "2026-09-11T21:54:08.917369+00:00",
+  "source_hashes": {
+    "app/v3/financial_evidence.py": "2157f3433fe0662b11975eea7484f2bb5b820ca9f25f579a2332e616e72cf33a",
+    "app/v3/financial_reasoning.py": "da0607962fef1314231509db64239689ad5b671a979165156340839f7c52253e",
+    "app/v3/financial_claims.py": "ab59f2afab9ed07a8ad52211d6a7f73a3b59c8d2b3b43faac3920d913c3fbc6d",
+    "app/v3/agent_runner.py": "41c5401d1490adfdbac9bd42221600d3c6d0c533fbde9733d5d63a6ce99682f3",
+    "scripts/test_live_financial_record.py": "cb560ee468fad651479f1b926d2b6a17c9a1a1c9a1ac83dcdbabe12dcc305106",
+    "scripts/validate_financial_cycle.py": "9f917bd1361bc4693d525cc2149af8df622df7b4cbbf69dadf426e5979c3afab"
+  },
+  "cycle_id": "bench-financial-cycle-065abb6bfa00",
+  "production_preflight": {
+    "status": "done",
+    "cycle_id": "cycle-v3-1789147244"
+  },
+  "staging_database": "financial_validation_2a097d8ea03b48c283d90a873f915d2c",
+  "states": [
+    {
+      "status": "idle",
+      "at": "2026-09-11T21:52:43.793759+00:00"
+    },
+    {
+      "status": "starting",
+      "at": "2026-09-11T21:52:56.276463+00:00"
+    },
+    {
+      "status": "running",
+      "at": "2026-09-11T21:52:58.979002+00:00"
+    },
+    {
+      "status": "stopped",
+      "at": "2026-09-11T21:54:08.333632+00:00"
+    }
+  ],
+  "passed": false,
+  "error": null,
+  "financial_checks": [],
+  "order_attempts": 0,
+  "orders_in_staging": 0,
+  "production_write_attempts": [],
+  "staging_database_removed": true,
+  "limitations": [
+    "Stored real data; collection refresh disabled.",
+    "All agents use real inference but tools are disabled.",
+    "Paper portfolio copied into isolated database; no real broker validation.",
+    "One ticker does not measure multi-ticker concurrency or investment quality.",
+    "Production lifecycle ends at done, not an invented completed-to-idle sequence."
+  ],
+  "raw_receipt_path": "/tmp/financial-aapl-cycle-r2.json",
+  "raw_receipt_sha256": "9fa899454e1714f2797c24a92ea051b0f93bd55f6fda30764e1000a70d7fd479",
+  "assessment": "Superseded and interrupted after source implementation changed. Not a completed cycle.",
+  "calls": [
+    {
+      "agent": "v3_board_of_directors",
+      "started_at": "2026-09-11T21:52:56.298193+00:00",
+      "elapsed_s": 1.2313016289990628,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_regime_engine",
+      "started_at": "2026-09-11T21:53:06.866225+00:00",
+      "elapsed_s": 10.266673766996973,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_junior_analyst",
+      "started_at": "2026-09-11T21:53:16.194501+00:00",
+      "elapsed_s": 14.633349388997885,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_fundamental_analyst",
+      "started_at": "2026-09-11T21:53:31.392657+00:00",
+      "elapsed_s": 22.605576440000732,
+      "http_status": 200,
+      "error": null
+    },
+    {
+      "agent": "v3_quant_analyst",
+      "started_at": "2026-09-11T21:53:53.121436+00:00",
+      "elapsed_s": 16.54869345499901,
+      "http_status": null,
+      "error": "CancelledError"
+    }
+  ]
+}

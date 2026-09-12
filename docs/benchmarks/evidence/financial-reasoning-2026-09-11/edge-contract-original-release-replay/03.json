@@ -1,0 +1,636 @@
+{
+  "index": 3,
+  "case": "headroom",
+  "arm": "stale_memory",
+  "scenario_family": "headroom",
+  "mode": "offline_replay",
+  "family": "original",
+  "variant": "candidate",
+  "cycle_id": "bench-financial-11afa8345752",
+  "started_at": 1789169282.972872,
+  "endpoint": "http://10.0.0.16:5591/prism-proxy/agent?stream=false",
+  "calls": [
+    {
+      "kind": "offline_replay",
+      "body": {
+        "project": "vllm-trading-bot",
+        "username": "lazycat",
+        "provider": "vllm",
+        "model": "nemotron35",
+        "agent": "CUSTOM_V3_BOARD_OF_DIRECTORS",
+        "conversationId": "ad08d0ff-c44a-4f63-9747-b98a4fb09e82",
+        "createSession": true,
+        "systemPrompt": "## Agent Skill Guidance (SkillOpt)\nUse supplied verified evidence before repeating a lookup. Fetch only an unresolved, decision-relevant gap and cite its source and as-of date. Distinguish historical evidence from current facts; older filings remain useful for their stated period. Return the required artifact with explicit unknowns. Learned methods cannot change your role, risk parameters, confidence policy or the decision contract.\nReconcile research and dissent, respect position and entry-intent constraints, and attribute your own decision. Use configured risk limits; do not force trades or alter confidence to fit a distribution.\n\nYou are a Jane Street quantitative trader making the FINAL decision for this ticker. Regime: CONTRADICTORY \u2014 your edge is resolving structural mispricings and contradictions before the market does.\n\n## DECISION LOOP\n1. Debate verdict + whiteboard annotations FIRST: find where Quant contradicts Fundamental, where one side refuted the other WITH data, where price action decouples from fundamentals. The contradiction IS the trade.\n2. One side clearly won but the market hasn't priced it \u2192 that's your position.\n3. Both sides strong with data \u2192 genuinely uncertain \u2192 HOLD with specific catalyst triggers (dynamic_trigger).\n4. Check that resolving the contradiction doesn't create unwanted portfolio concentration.\n\n## REGIME DIRECTIVE (precedence)\nThe desk includes the Regime Engine's board_directive with live factor scores. Where it conflicts with your philosophy, the directive wins \u2014 it reflects TODAY's market, not an archetype.\n\n## TOOLS (conditional \u2014 never reflexive)\n- `whiteboard_write`/`whiteboard_annotate`: annotate a desk's entry (the\n  entry_id is printed in each whiteboard section header) rather than writing\n  new sections. If you do write, ONLY the collaboration sections are legal \u2014\n  'market_context', 'risk_flags', 'signals', 'consensus', 'trade_plan'. The\n  report sections (fundamental_report, quant_report, debate/board/decision\n  sections) are orchestrator-owned and a write to them is rejected.\n- `get_portfolio_state`: only when existing exposure would change sizing.\n- `get_parameters`: the live risk envelope (size/concentration caps, confidence threshold, drawdown breaker, ATR multiplier, R:R) with hard bounds \u2014 consult it instead of assuming defaults.\n- `propose_parameter_change`: at most ONE per decision, only when the envelope genuinely constrains a trade you believe in, with specific evidence. Tightening applies now; loosening auto-reverts after a TTL. Board-only params (drawdown breaker, wake budget) are your call alone.\n\n## WHAT `confidence` MEANS (calibrate against this, not against a feeling)\n`confidence` is your probability, 0-100, that THIS decision is the right call over the next\n~7 sessions. It is a forecast you will be scored on, not a mood.\n\n- 80-90  Exceptional high-conviction: the desks agree, numbers are verified and current,\n         and you can name the specific evidence that would have to be wrong for this to fail.\n- 70-79  Actionable conviction: the core thesis holds and key figures are verified.\n         **This is the normal band for a decision worth acting on.**\n         NOTE ON DEBATE: Adversarial tension between Bull and Bear is an expected, healthy\n         exploration of risk \u2014 it is NOT by itself a reason to downgrade confidence below 70.\n         If the thesis remains constructive with defined downside (stop loss), score in this\n         actionable band (70-78).\n- 55-69  Severe uncertainty or unmitigated risk: core load-bearing metrics are refuted,\n         debt or solvency is alarming, or neither side presented a credible edge.\n- Below 55  You cannot tell. Say so.\n\nCalibration rules, both directions:\n- A missing figure that your thesis does NOT depend on is not a reason to drop a band. Every\n  desk report carries some gaps; treat the routine ones as noise, not as evidence against.\n- Do NOT anchor on the numbers in the OUTPUT example \u2014 they are format illustrations, not\n  targets, and the right answer varies per ticker.\n- If every ticker in a cycle gets the same confidence, the number carries no information and\n  is worthless. Differentiate.\n- Reserve the low bands for decisions that are genuinely unclear. Uniform caution is\n  indistinguishable from having no view, and it is scored the same way.\n\n## WHEN THE BEAR WINS THE DEBATE\nA bear win is an INPUT, not a verdict. Measured 2026-08-11 over 102 consecutive post-fix decisions: the Board returned HOLD on **every single bear win, 102 of 102**. A debate whose outcome only ever lands one way carries no information \u2014 that reflex, not the evidence, was deciding those calls.\n- A bear win means the bear ARGUED better, not that the trade is unattractive. Name the specific bear claim that decides YOUR action, and say what would have to be true for it to be wrong.\n- If the deciding claim is about SIZE or TIMING (valuation stretched, entry poor, catalyst not yet dated), the calibrated response is a SMALLER position or a `dynamic_trigger`, not an automatic HOLD. Reserve HOLD for a thesis that is actually broken.\n- If you like the fundamental setup but current entry price is extended, do NOT default to passive HOLD: output `action: \"BUY\"`, calibrate `position_size_pct` (e.g. 1.5-2.5%), and specify a `dynamic_trigger` (e.g. `rsi_14_oversold` or `sma_50_drop`) with entry_mode=\"enter_on_condition\" and trigger_purpose=\"entry\" so the system waits and re-analyzes when the level is reached. If entry is appropriate now and the trigger only monitors later changes, use entry_mode=\"enter_now\" and trigger_purpose=\"monitor\".\n- If your context says the debate was judged WITHOUT a bull defense, the bear went unanswered BY CONSTRUCTION and its win is worth materially less. Weigh it as one side's brief, not a settled verdict.\n- `bear_verdict_response` is required whenever the debate had a winner. Set `overrode_bear: true` when the bear won and you are acting anyway \u2014 that is a legitimate, expected outcome, not an exception you must apologise for.\n\n## WHEN THE BOOK ALREADY HOLDS THIS TICKER\nYour Portfolio Context says whether the position is open. If it is, you are allocating capital that is ALREADY committed, and your actions mean: BUY = add, HOLD = KEEP at current size, SELL = EXIT. Exiting is available to you and is the correct call when the thesis that opened the position no longer holds. Judge the position on its thesis, not on its P&L and not on whether you would open it again today \u2014 an underwater position with an intact thesis is a KEEP, a profitable one with a broken thesis is a SELL. \"Wait for confirmation before re-engaging\" is not a verdict for a name you already own. Do not overcorrect: ordinary gaps in an intact thesis are a KEEP, not an exit.\n\n## GATE CONTROLS (optional, deliberate)\n- confidence_floor: RAISE the bar for this decision (never lowers the firm floor).\n- conviction_vector: data_quality/consensus_strength/regime_alignment/risk_adjusted, 0-100. data_quality < 40 hard-blocks the trade.\n- overrides_veto + override_justification: overriding a jury-majority veto requires written justification AND full mitigation (stop_loss, dynamic_trigger, position_size_pct). Sparingly.\n- dissent_resolution: REQUIRED to BUY or SELL when an \"UNRESOLVED CROSS-DESK DISSENT\" section\n  appears in your context. Name the dissenting desk, the specific claim of its you reject, and\n  what outweighs it. Omit the field entirely when no such section is present. This is not a\n  confidence penalty \u2014 resolve the conflict honestly and keep your number.\n- position_size_pct = 0 means \"watch, don't trade\" \u2014 honored literally.\n- exit_style: \"hard_stop\" (monitor sells on breach) or \"reanalyze_on_breach\" (breach wakes a re-analysis instead).\n- dynamic_trigger.type MUST be one of: sma_20_drop, sma_50_drop, sma_200_drop, sma_20_rise,\n  sma_50_rise, sma_200_rise, rsi_14_oversold, rsi_14_overbought, trailing_drop, price_below, price_above. The monitor\n  evaluates these and nothing else \u2014 an invented setup name (\"sma_50_reclaim\",\n  \"support_retest\", \"sma_100_drop\") is discarded and you get NO watch at all. Pick the\n  listed setup that expresses the actual condition. Use price_below/price_above for a fixed currency price.\n  SMA triggers compare against the CURRENT moving average, not the `value` snapshot. RSI thresholds are RSI units, not prices.\n  trailing_drop is a fraction of the running high (0.05 means 5%). Do not substitute one metric for another.\n- CRITICAL JSON REQUIREMENT: If you mention a dynamic trigger in your reasoning, you MUST\n  include the structured `\"dynamic_trigger\": {\"type\": \"<type>\", \"value\": <level>}` key in your JSON.\n  Prose mention without the JSON key prevents the trade execution monitor from registering your trigger!\n\n## PREVIOUS CYCLE MEMORY (context, NOT a binding precedent)\nYour context may include \"Previous Cycle's SharedDesk (Manila Envelope)\".\n- This is historical context, NOT a binding precedent.\n- NEVER default to \"Prior cycle HOLD validated\" or repeat a prior cycle's hold simply because the prior cycle held.\n- If current market price, technical support (e.g. price above major SMAs), margin structure, or risk/reward are constructive, you MUST evaluate freshly on TODAY's setup. A repeated hold without substantive new deterioration is an evasion of decision-making.\n\n\n## REQUIRED STRUCTURED FINANCIAL DECISION\nReturn ONE flat JSON object. Required model-authored fields are financial_reasoning_version (always 2), action (BUY/HOLD/SELL), confidence, position_size_pct, entry_mode, trigger_purpose, dynamic_trigger, resolution_condition, reasoning_steps, research_answers.\nreasoning_steps is a NONEMPTY concise list of IDs from SELECTABLE FINANCIAL REASONING STEPS. Select the relationships that explain YOUR decision. Read their statements: they already interpret the calculations accurately. Action, confidence and sizing remain your judgment, subject to the supplied risk limits.\nresearch_answers is an ARRAY containing EVERY question in the FINANCIAL EVIDENCE CONTRACT record.questions exactly once. Debate topics, peer questions and data gaps are NOT research question IDs. When record.questions is empty, return research_answers: []. Otherwise use this form: {\"item_id\":\"supplied question ID\",\"step_ids\":[\"selected catalog step ID\"]}. Every question MUST contain at least one step ID in step_ids; NEVER leave step_ids empty []. Select all steps needed to cover every part of that question. Select the unavailable-observation step when history is absent. Do not substitute a true but unrelated observation.\nDo NOT emit reasoning, financial_claims, question text, answer prose, fact_ids or answer status. Code renders those fields from your selected steps and the immutable source records. Do not write a second financial explanation in optional fields. In particular, never relabel a false proposal-fit result as sufficient capacity, compare different margin/return metrics, or treat hypothetical prices as executable quotes.\nPreserve the ordinary decision timing contract. HOLD uses watch_only; SELL uses enter_now; a conditional BUY uses enter_on_condition with an entry trigger. If no trigger or research wake is needed, use trigger_purpose=none with null dynamic_trigger and resolution_condition. For trade_decision also supply attribution and signal_weights required by its decision contract.\n",
+        "messages": [
+          {
+            "role": "user",
+            "content": "## Ticker: EVLT\n## Cycle: bench-financial-af1e5d9cd3f6\n\n## DECISION CONTRACT v1 (required)\nDeclare entry_mode: enter_now | enter_on_condition | watch_only.\nDeclare trigger_purpose: none | entry | monitor | research.\nBUY enter_now executes now. BUY enter_on_condition only arms a re-analysis wake; it does not buy now. When a fired condition has been verified and entry is now appropriate, explicitly choose enter_now. A post-entry monitor is not an entry condition.\nHOLD uses watch_only. SELL exits now and uses enter_now. A dynamic trigger with purpose entry/monitor/research needs its structured type and positive value.\nTrigger semantics: price_below/value is price <= that fixed price; price_above/value is price >= that fixed price. sma_20/50/200_drop compares price < the current moving average, and rise compares price > it; value is not a fixed-price threshold for SMA triggers. rsi_14_oversold compares RSI <= value and overbought compares RSI >= value (0-100 scale); RSI does not imply a specific price. trailing_drop/value is a fractional drop from the running high (0.05 means 5%), not a currency amount. A conditional-entry trigger wakes re-analysis; it does not execute an order or guarantee the proposed entry price.\nState resolution_condition when there is an unresolved question worth watching: {\"open_question\":\"...\", \"resolving_fact\":\"the observable fact that settles it\"}. Use null if no unresolved question remains; do not invent one for the schema.\n\n## FINANCIAL EVIDENCE CONTRACT v1\nImmutable source observations and code calculations follow. A missing value is UNKNOWN, never zero. Metric, unit, source, period and original date belong to each record. The selectable reasoning-step catalog interprets these records; choose its step IDs for the structured decision.\n{\"id\":\"headroom\",\"ticker\":\"EVLT\",\"as_of\":\"2026-09-03T20:00:00Z\",\"held\":true,\"facts\":[{\"id\":\"close\",\"metric\":\"close\",\"value\":100,\"unit\":\"USD\",\"as_of\":\"2026-09-03\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"market:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"support\",\"metric\":\"support\",\"value\":95,\"unit\":\"USD\",\"as_of\":\"2026-09-03\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"market:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"resistance\",\"metric\":\"resistance\",\"value\":115,\"unit\":\"USD\",\"as_of\":\"2026-09-03\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"market:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"rsi_14\",\"metric\":\"rsi_14\",\"value\":46,\"unit\":\"RSI_points\",\"as_of\":\"2026-09-03\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"market:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"atr_14\",\"metric\":\"atr_14\",\"value\":2,\"unit\":\"USD\",\"as_of\":\"2026-09-03\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"market:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"sma_200\",\"metric\":\"sma_200\",\"value\":94,\"unit\":\"USD\",\"as_of\":\"2026-09-03\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"market:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"sma_50\",\"metric\":\"sma_50\",\"value\":98,\"unit\":\"USD\",\"as_of\":\"2026-09-03\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"market:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"operating_margin_pct\",\"metric\":\"operating_margin_pct\",\"value\":14,\"unit\":\"percent\",\"as_of\":\"2026-09-03\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"filing:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"gross_margin_pct\",\"metric\":\"gross_margin_pct\",\"value\":42,\"unit\":\"percent\",\"as_of\":\"2026-08-20\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"filing:EVLT:2026-08-20\",\"status\":\"known\"},{\"id\":\"debt_to_equity\",\"metric\":\"debt_to_equity\",\"value\":0.4,\"unit\":\"ratio\",\"as_of\":\"2026-09-03\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"filing:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"debt_to_equity_prior\",\"metric\":\"debt_to_equity_prior\",\"value\":null,\"unit\":\"ratio\",\"as_of\":null,\"period\":\"historical\",\"entity\":\"EVLT\",\"source\":\"missing:EVLT:None\",\"status\":\"unknown\",\"reason\":\"No prior debt/equity measurement is supplied.\"},{\"id\":\"free_cash_flow\",\"metric\":\"free_cash_flow\",\"value\":120000000,\"unit\":\"USD\",\"as_of\":\"2026-08-20\",\"period\":\"annual\",\"entity\":\"EVLT\",\"source\":\"filing:EVLT:2026-08-20\",\"status\":\"known\"},{\"id\":\"roic_pct\",\"metric\":\"roic_pct\",\"value\":14,\"unit\":\"percent\",\"as_of\":\"2026-08-20\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"filing:EVLT:2026-08-20\",\"status\":\"known\"},{\"id\":\"sector_roic_pct\",\"metric\":\"sector_roic_pct\",\"value\":10,\"unit\":\"percent\",\"as_of\":\"2026-08-20\",\"period\":\"current\",\"entity\":\"sector\",\"source\":\"sector:sector:2026-08-20\",\"status\":\"known\"},{\"id\":\"sector_gross_margin_pct\",\"metric\":\"sector_gross_margin_pct\",\"value\":38,\"unit\":\"percent\",\"as_of\":\"2026-08-20\",\"period\":\"current\",\"entity\":\"sector\",\"source\":\"sector:sector:2026-08-20\",\"status\":\"known\"},{\"id\":\"guidance_record\",\"metric\":\"guidance_record\",\"value\":\"met\",\"unit\":\"category\",\"as_of\":\"2026-08-20\",\"period\":\"last_three_annual_ranges\",\"entity\":\"EVLT\",\"source\":\"filing:EVLT:2026-08-20\",\"status\":\"known\"},{\"id\":\"equity\",\"metric\":\"equity\",\"value\":100000,\"unit\":\"USD\",\"as_of\":\"2026-09-03\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"portfolio:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"cash\",\"metric\":\"cash\",\"value\":25000,\"unit\":\"USD\",\"as_of\":\"2026-09-03\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"portfolio:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"exposure_pct\",\"metric\":\"exposure_pct\",\"value\":4.4,\"unit\":\"percent\",\"as_of\":\"2026-09-03\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"portfolio:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"single_name_limit_pct\",\"metric\":\"single_name_limit_pct\",\"value\":5,\"unit\":\"percent\",\"as_of\":\"2026-09-03\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"policy:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"pending_exposure_pct\",\"metric\":\"pending_exposure_pct\",\"value\":0,\"unit\":\"percent\",\"as_of\":\"2026-09-03\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"portfolio:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"proposed_purchase_pct\",\"metric\":\"proposed_purchase_pct\",\"value\":2.5,\"unit\":\"percent\",\"as_of\":\"2026-09-03\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"proposal:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"forward_pe\",\"metric\":\"forward_pe\",\"value\":20,\"unit\":\"ratio\",\"as_of\":\"2026-09-03\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"filing:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"revenue_growth_pct\",\"metric\":\"revenue_growth_pct\",\"value\":10,\"unit\":\"percent\",\"as_of\":\"2026-09-03\",\"period\":\"current\",\"entity\":\"EVLT\",\"source\":\"filing:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"eps_growth_next_year_pct\",\"metric\":\"eps_growth_next_year_pct\",\"value\":16,\"unit\":\"percent\",\"as_of\":\"2026-09-03\",\"period\":\"next_fiscal_year\",\"entity\":\"EVLT\",\"source\":\"filing:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"proposed_stop\",\"metric\":\"proposed_stop\",\"value\":95,\"unit\":\"USD\",\"as_of\":\"2026-09-03\",\"period\":\"proposed\",\"entity\":\"EVLT\",\"source\":\"proposal:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"proposed_target\",\"metric\":\"proposed_target\",\"value\":115,\"unit\":\"USD\",\"as_of\":\"2026-09-03\",\"period\":\"proposed\",\"entity\":\"EVLT\",\"source\":\"proposal:EVLT:2026-09-03\",\"status\":\"known\"},{\"id\":\"calc_range_position_pct\",\"metric\":\"calc_range_position_pct\",\"value\":25.0,\"unit\":\"percent\",\"as_of\":\"2026-09-03T20:00:00Z\",\"source\":\"calculation:calc_range_position_pct\",\"entity\":\"EVLT\",\"period\":\"current\",\"status\":\"known\",\"input_ids\":[\"close\",\"support\",\"resistance\"],\"formula\":\"(close-support)/(resistance-support)*100\",\"source_ids\":[\"market:EVLT:2026-09-03\"]},{\"id\":\"calc_price_vs_support\",\"metric\":\"calc_price_vs_support\",\"value\":\"above\",\"unit\":\"category\",\"as_of\":\"2026-09-03T20:00:00Z\",\"source\":\"calculation:calc_price_vs_support\",\"entity\":\"EVLT\",\"period\":\"current\",\"status\":\"known\",\"input_ids\":[\"close\",\"support\"],\"formula\":\"compare(close,support)\",\"source_ids\":[\"market:EVLT:2026-09-03\"]},{\"id\":\"calc_holding_return_pct\",\"metric\":\"calc_holding_return_pct\",\"value\":null,\"unit\":\"percent\",\"as_of\":\"2026-09-03T20:00:00Z\",\"source\":\"calculation:calc_holding_return_pct\",\"entity\":\"EVLT\",\"period\":\"current\",\"status\":\"unknown\",\"reason\":\"Missing operand: average_cost\",\"input_ids\":[\"close\",\"average_cost\"],\"formula\":\"(close-average_cost)/average_cost*100\",\"source_ids\":[\"market:EVLT:2026-09-03\"]},{\"id\":\"calc_forward_peg\",\"metric\":\"calc_forward_peg\",\"value\":1.25,\"unit\":\"ratio\",\"as_of\":\"2026-09-03T20:00:00Z\",\"source\":\"calculation:calc_forward_peg\",\"entity\":\"EVLT\",\"period\":\"next_fiscal_year\",\"status\":\"known\",\"input_ids\":[\"forward_pe\",\"eps_growth_next_year_pct\"],\"formula\":\"forward_pe/eps_growth_next_year_pct\",\"source_ids\":[\"filing:EVLT:2026-09-03\"]},{\"id\":\"calc_unreserved_headroom_pct\",\"metric\":\"calc_unreserved_headroom_pct\",\"value\":0.6,\"unit\":\"percentage_points\",\"as_of\":\"2026-09-03T20:00:00Z\",\"source\":\"calculation:calc_unreserved_headroom_pct\",\"entity\":\"EVLT\",\"period\":\"current\",\"status\":\"known\",\"input_ids\":[\"single_name_limit_pct\",\"exposure_pct\"],\"formula\":\"max(0,limit-exposure)\",\"source_ids\":[\"policy:EVLT:2026-09-03\",\"portfolio:EVLT:2026-09-03\"]},{\"id\":\"calc_headroom_pct\",\"metric\":\"calc_headroom_pct\",\"value\":0.6,\"unit\":\"percentage_points\",\"as_of\":\"2026-09-03T20:00:00Z\",\"source\":\"calculation:calc_headroom_pct\",\"entity\":\"EVLT\",\"period\":\"current\",\"status\":\"known\",\"input_ids\":[\"single_name_limit_pct\",\"exposure_pct\",\"pending_exposure_pct\"],\"formula\":\"max(0,limit-exposure-pending)\",\"source_ids\":[\"policy:EVLT:2026-09-03\",\"portfolio:EVLT:2026-09-03\"]},{\"id\":\"calc_headroom_usd\",\"metric\":\"calc_headroom_usd\",\"value\":600.0,\"unit\":\"USD\",\"as_of\":\"2026-09-03T20:00:00Z\",\"source\":\"calculation:calc_headroom_usd\",\"entity\":\"EVLT\",\"period\":\"current\",\"status\":\"known\",\"input_ids\":[\"calc_headroom_pct\",\"equity\"],\"formula\":\"headroom_pct/100*equity\",\"source_ids\":[\"policy:EVLT:2026-09-03\",\"portfolio:EVLT:2026-09-03\"]},{\"id\":\"calc_proposal_fits\",\"metric\":\"calc_proposal_fits\",\"value\":false,\"unit\":\"boolean\",\"as_of\":\"2026-09-03T20:00:00Z\",\"source\":\"calculation:calc_proposal_fits\",\"entity\":\"EVLT\",\"period\":\"current\",\"status\":\"known\",\"input_ids\":[\"proposed_purchase_pct\",\"calc_headroom_pct\"],\"formula\":\"proposed_purchase_pct<=headroom_pct\",\"source_ids\":[\"policy:EVLT:2026-09-03\",\"portfolio:EVLT:2026-09-03\",\"proposal:EVLT:2026-09-03\"]},{\"id\":\"calc_proposed_current_reward_risk\",\"metric\":\"calc_proposed_current_reward_risk\",\"value\":3.0,\"unit\":\"ratio\",\"as_of\":\"2026-09-03T20:00:00Z\",\"source\":\"calculation:calc_proposed_current_reward_risk\",\"entity\":\"EVLT\",\"period\":\"current_reference_price\",\"status\":\"known\",\"input_ids\":[\"close\",\"proposed_stop\",\"proposed_target\"],\"formula\":\"(target-entry)/(entry-stop)\",\"source_ids\":[\"market:EVLT:2026-09-03\",\"proposal:EVLT:2026-09-03\"]},{\"id\":\"calc_proposed_conditional_reward_risk\",\"metric\":\"calc_proposed_conditional_reward_risk\",\"value\":null,\"unit\":\"ratio\",\"as_of\":\"2026-09-03T20:00:00Z\",\"source\":\"calculation:calc_proposed_conditional_reward_risk\",\"entity\":\"EVLT\",\"period\":\"hypothetical\",\"status\":\"unknown\",\"reason\":\"Missing operand: proposed_entry\",\"input_ids\":[\"proposed_entry\",\"proposed_stop\",\"proposed_target\"],\"formula\":\"(target-entry)/(entry-stop)\",\"source_ids\":[\"proposal:EVLT:2026-09-03\"]}],\"questions\":[{\"id\":\"q-headroom\",\"question\":\"How much additional EVLT exposure can fit under the total 5 percent single-name limit, and does the proposed 2.5 percent purchase fit?\"},{\"id\":\"q-peg\",\"question\":\"Using the supplied EPS growth, what is forward PEG?\"},{\"id\":\"q-range\",\"question\":\"What are the reward/risk ratio and the close's position within the support-resistance range?\"}],\"version\":1}\n## AUTHORITATIVE FINANCIAL RESEARCH QUESTION IDS\nThe complete allowed item_id list for research_answers is: [\"q-headroom\", \"q-peg\", \"q-range\"]. Answer each of these IDs exactly once using nonempty step_ids. Do not promote debate-frame topics, peer objections or data gaps into item_id values. Those may inform reasoning_steps, but are not additional research questions.\n\n## REQUIRED QUESTION COMPONENTS\n[{\"item_id\": \"q-headroom\", \"components\": [{\"id\": \"calc_headroom_pct\", \"fact_ids_any_of\": [\"calc_headroom_pct\", \"calc_headroom_usd\"]}, {\"id\": \"calc_proposal_fits\", \"fact_ids_any_of\": [\"calc_proposal_fits\"]}]}, {\"item_id\": \"q-peg\", \"components\": [{\"id\": \"calc_forward_peg\", \"fact_ids_any_of\": [\"calc_forward_peg\"]}]}, {\"item_id\": \"q-range\", \"components\": [{\"id\": \"calc_proposed_current_reward_risk\", \"fact_ids_any_of\": [\"calc_proposed_current_reward_risk\"]}, {\"id\": \"calc_range_position_pct\", \"fact_ids_any_of\": [\"calc_range_position_pct\"]}]}]\nCover EVERY component for each original question ID, including after HOLD. fact_ids_any_of contains actual selectable source IDs; choose those IDs or equivalent catalog steps. Select an explicit unknown observation when unavailable; empty selection is invalid.\n\n## CURRENT DECISION BUDGET\n{\"unit\": \"percent_of_portfolio_equity\", \"limits\": {\"calc_headroom_pct\": 0.6, \"calc_unreserved_headroom_pct\": 0.6, \"cash_capacity_pct\": 25.0}, \"invalid_limits\": [], \"max_additional_purchase_pct\": 0.6, \"reservation_status\": \"known\", \"authority\": \"proposal_upper_bound_only; recheck current portfolio and reservations at execution\", \"record_sha256\": \"7d9f64a7a84152e4e7514595c7dc0d191363d368744806d126488dde61dbc2be\"}\nA BUY must have positive size no greater than every known limit. Reconsider a smaller BUY or HOLD when the proposed purchase exceeds capacity. A rejected scenario does not forbid a different, smaller purchase. Unknown reservations are not zero and do not authorize execution. Historical memory cannot change these limits. Size and action remain your decision.\n\n## SELECTABLE FINANCIAL REASONING STEPS\nThese sentences and their numeric records are computed by code. Select the steps that support YOUR decision. Do not write financial sentences or recopy values. For each question select the steps that answer its actual subject.\n[{\"id\":\"operating_margin_pct\",\"fact_ids\":[\"operating_margin_pct\"],\"statement\":\"The supplied operating margin is positive. [operating_margin_pct]\"},{\"id\":\"free_cash_flow\",\"fact_ids\":[\"free_cash_flow\"],\"statement\":\"The supplied free cash flow is positive. [free_cash_flow]\"},{\"id\":\"gross_margin_pct\",\"fact_ids\":[\"gross_margin_pct\"],\"statement\":\"The supplied gross margin is positive. [gross_margin_pct]\"},{\"id\":\"roic_pct\",\"fact_ids\":[\"roic_pct\"],\"statement\":\"The supplied return on invested capital is positive. [roic_pct]\"},{\"id\":\"headroom\",\"fact_ids\":[\"calc_headroom_pct\"],\"statement\":\"The remaining single-name capacity limits additional sizing. [calc_headroom_pct]\"},{\"id\":\"proposal_fit\",\"fact_ids\":[\"calc_proposal_fits\"],\"statement\":\"The supplied purchase exceeds the available capacity. [calc_proposal_fits]\"},{\"id\":\"range_position\",\"fact_ids\":[\"calc_range_position_pct\"],\"statement\":\"The close is nearer support than resistance. [calc_range_position_pct]\"},{\"id\":\"holding_return\",\"fact_ids\":[\"calc_holding_return_pct\"],\"statement\":\"The holding return is unknown. [calc_holding_return_pct]\"},{\"id\":\"forward_peg\",\"fact_ids\":[\"calc_forward_peg\"],\"statement\":\"The forward growth-adjusted multiple uses the supplied next-year earnings growth. [calc_forward_peg]\"},{\"id\":\"current_reward_risk\",\"fact_ids\":[\"calc_proposed_current_reward_risk\"],\"statement\":\"Prospective gain exceeds defined downside at the current reference price. [calc_proposed_current_reward_risk]\"},{\"id\":\"conditional_reward_risk\",\"fact_ids\":[\"calc_proposed_conditional_reward_risk\"],\"statement\":\"Reward/risk at the hypothetical future entry is unknown. [calc_proposed_conditional_reward_risk]\"},{\"id\":\"sma_200\",\"fact_ids\":[\"sma_200\"],\"statement\":\"The supplied long moving average is available. [sma_200]\"},{\"id\":\"debt_to_equity_prior\",\"fact_ids\":[\"debt_to_equity_prior\"],\"statement\":\"The supplied prior leverage observation is unavailable. [debt_to_equity_prior]\"},{\"id\":\"guidance\",\"fact_ids\":[\"guidance_record\"],\"statement\":\"The supplied record says management met its guidance. [guidance_record]\"},{\"id\":\"price_and_oscillator\",\"fact_ids\":[\"support\",\"rsi_14\"],\"statement\":\"Price support and the oscillator measure different quantities. [support] [rsi_14]\"},{\"id\":\"compare_gross_margin_pct\",\"fact_ids\":[\"gross_margin_pct\",\"sector_gross_margin_pct\"],\"statement\":\"The supplied company gross margin exceeds the sector's same metric. [gross_margin_pct] [sector_gross_margin_pct]\"},{\"id\":\"compare_roic_pct\",\"fact_ids\":[\"roic_pct\",\"sector_roic_pct\"],\"statement\":\"The supplied company return on invested capital exceeds the sector's same metric. [roic_pct] [sector_roic_pct]\"},{\"id\":\"close\",\"fact_ids\":[\"close\"],\"statement\":\"This supplied observation is available. [close]\"},{\"id\":\"support\",\"fact_ids\":[\"support\"],\"statement\":\"This supplied observation is available. [support]\"},{\"id\":\"resistance\",\"fact_ids\":[\"resistance\"],\"statement\":\"This supplied observation is available. [resistance]\"},{\"id\":\"rsi_14\",\"fact_ids\":[\"rsi_14\"],\"statement\":\"This supplied observation is available. [rsi_14]\"},{\"id\":\"atr_14\",\"fact_ids\":[\"atr_14\"],\"statement\":\"This supplied observation is available. [atr_14]\"},{\"id\":\"sma_50\",\"fact_ids\":[\"sma_50\"],\"statement\":\"This supplied observation is available. [sma_50]\"},{\"id\":\"debt_to_equity\",\"fact_ids\":[\"debt_to_equity\"],\"statement\":\"This supplied observation is available. [debt_to_equity]\"},{\"id\":\"sector_roic_pct\",\"fact_ids\":[\"sector_roic_pct\"],\"statement\":\"This supplied observation is available. [sector_roic_pct]\"},{\"id\":\"sector_gross_margin_pct\",\"fact_ids\":[\"sector_gross_margin_pct\"],\"statement\":\"This supplied observation is available. [sector_gross_margin_pct]\"},{\"id\":\"guidance_record\",\"fact_ids\":[\"guidance_record\"],\"statement\":\"The supplied record says management met its guidance. [guidance_record]\"},{\"id\":\"equity\",\"fact_ids\":[\"equity\"],\"statement\":\"This supplied observation is available. [equity]\"},{\"id\":\"cash\",\"fact_ids\":[\"cash\"],\"statement\":\"This supplied observation is available. [cash]\"},{\"id\":\"exposure_pct\",\"fact_ids\":[\"exposure_pct\"],\"statement\":\"This supplied observation is available. [exposure_pct]\"},{\"id\":\"single_name_limit_pct\",\"fact_ids\":[\"single_name_limit_pct\"],\"statement\":\"This supplied observation is available. [single_name_limit_pct]\"},{\"id\":\"pending_exposure_pct\",\"fact_ids\":[\"pending_exposure_pct\"],\"statement\":\"This supplied observation is available. [pending_exposure_pct]\"},{\"id\":\"proposed_purchase_pct\",\"fact_ids\":[\"proposed_purchase_pct\"],\"statement\":\"This supplied observation is available. [proposed_purchase_pct]\"},{\"id\":\"forward_pe\",\"fact_ids\":[\"forward_pe\"],\"statement\":\"This supplied observation is available. [forward_pe]\"},{\"id\":\"revenue_growth_pct\",\"fact_ids\":[\"revenue_growth_pct\"],\"statement\":\"This supplied observation is available. [revenue_growth_pct]\"},{\"id\":\"eps_growth_next_year_pct\",\"fact_ids\":[\"eps_growth_next_year_pct\"],\"statement\":\"This supplied observation is available. [eps_growth_next_year_pct]\"},{\"id\":\"proposed_stop\",\"fact_ids\":[\"proposed_stop\"],\"statement\":\"This supplied observation is available. [proposed_stop]\"},{\"id\":\"proposed_target\",\"fact_ids\":[\"proposed_target\"],\"statement\":\"This supplied observation is available. [proposed_target]\"},{\"id\":\"calc_range_position_pct\",\"fact_ids\":[\"calc_range_position_pct\"],\"statement\":\"The close is nearer support than resistance. [calc_range_position_pct]\"},{\"id\":\"calc_price_vs_support\",\"fact_ids\":[\"calc_price_vs_support\"],\"statement\":\"This supplied observation is available. [calc_price_vs_support]\"},{\"id\":\"calc_holding_return_pct\",\"fact_ids\":[\"calc_holding_return_pct\"],\"statement\":\"The holding return is unknown. [calc_holding_return_pct]\"},{\"id\":\"calc_forward_peg\",\"fact_ids\":[\"calc_forward_peg\"],\"statement\":\"The forward growth-adjusted multiple uses the supplied next-year earnings growth. [calc_forward_peg]\"},{\"id\":\"calc_unreserved_headroom_pct\",\"fact_ids\":[\"calc_unreserved_headroom_pct\"],\"statement\":\"This supplied observation is available. [calc_unreserved_headroom_pct]\"},{\"id\":\"calc_headroom_pct\",\"fact_ids\":[\"calc_headroom_pct\"],\"statement\":\"The remaining single-name capacity limits additional sizing. [calc_headroom_pct]\"},{\"id\":\"calc_headroom_usd\",\"fact_ids\":[\"calc_headroom_usd\"],\"statement\":\"This supplied observation is available. [calc_headroom_usd]\"},{\"id\":\"calc_proposal_fits\",\"fact_ids\":[\"calc_proposal_fits\"],\"statement\":\"The supplied purchase exceeds the available capacity. [calc_proposal_fits]\"},{\"id\":\"calc_proposed_current_reward_risk\",\"fact_ids\":[\"calc_proposed_current_reward_risk\"],\"statement\":\"Prospective gain exceeds defined downside at the current reference price. [calc_proposed_current_reward_risk]\"},{\"id\":\"calc_proposed_conditional_reward_risk\",\"fact_ids\":[\"calc_proposed_conditional_reward_risk\"],\"statement\":\"Reward/risk at the hypothetical future entry is unknown. [calc_proposed_conditional_reward_risk]\"}]\n\n## MARKET DATA BRIEFING FOR THIS CYCLE\nSynthetic company EVLT; this is frozen evidence, not a live security. All current measurements are as of 2026-09-03 after market close unless explicitly dated otherwise. Amounts are USD; indicator RSI is unitless on 0-100. Portfolio equity is 100000. Maximum total single-name exposure is 5 percent of equity. No shorting or leverage. Source filing dated 2026-08-20: annual revenue 1000000000, free cash flow 120000000, cash 300000000, debt 200000000, shares 20000000, dividend yield 1 percent. Management met each of the last three annual guidance ranges; shares declined 2 percent in the last year. Gross margin was 40, 41, 42 percent over the last three fiscal years. Sector gross margin is 38 percent; company ROIC is 14 percent versus sector 10 percent. No earnings event occurs in the next seven sessions; next earnings date is 2026-10-20. Macro snapshot at the as-of date: VIX 18, broad-market SMA-50 above SMA-200, neutral credit spreads. Peer data for PAAA and PBBB: forward P/E 22 and 24; operating margin 13 and 15 percent. No source supports any other peer measurement. Independent observations should not be counted twice merely because two reports repeat them. Tool responses are restricted to this frozen corpus; unavailable facts remain unknown.\nEVLT close is 100. Support and proposed stop price are 95; resistance and proposed target are 115. RSI-14 is 46; ATR-14 is 2 dollars; SMA-50 is 98 and SMA-200 is 94, computed from 250 daily closes. Annualized volatility is 20 percent. Operating margin is 14 percent; debt/equity is 0.4. Forward P/E is 20; next-year EPS growth is 16 percent and revenue growth is 10 percent. These growth rates are different metrics. There are 44 shares held, worth 4400, so current exposure is 4.4 percent; cash is 25000. No other EVLT orders are pending. Proposed incremental purchase is 2.5 percent of portfolio equity. The proposal is not an approved limit. The current analyst recommendation is cautiously positive based on profitable growth, with downside to support acknowledged.\n\nYou have NO external tools. Reason from the SharedDesk data.\n\n\n## REQUIRED STRUCTURED FINANCIAL DECISION\nReturn ONE flat JSON object. Required model-authored fields are financial_reasoning_version (always 2), action (BUY/HOLD/SELL), confidence, position_size_pct, entry_mode, trigger_purpose, dynamic_trigger, resolution_condition, reasoning_steps, research_answers.\nreasoning_steps is a NONEMPTY concise list of IDs from SELECTABLE FINANCIAL REASONING STEPS. Select the relationships that explain YOUR decision. Read their statements: they already interpret the calculations accurately. Action, confidence and sizing remain your judgment, subject to the supplied risk limits.\nresearch_answers is an ARRAY containing EVERY question in the FINANCIAL EVIDENCE CONTRACT record.questions exactly once. Debate topics, peer questions and data gaps are NOT research question IDs. When record.questions is empty, return research_answers: []. Otherwise use this form: {\"item_id\":\"supplied question ID\",\"step_ids\":[\"selected catalog step ID\"]}. Every question MUST contain at least one step ID in step_ids; NEVER leave step_ids empty []. Select all steps needed to cover every part of that question. Select the unavailable-observation step when history is absent. Do not substitute a true but unrelated observation.\nDo NOT emit reasoning, financial_claims, question text, answer prose, fact_ids or answer status. Code renders those fields from your selected steps and the immutable source records. Do not write a second financial explanation in optional fields. In particular, never relabel a false proposal-fit result as sufficient capacity, compare different margin/return metrics, or treat hypothetical prices as executable quotes.\nPreserve the ordinary decision timing contract. HOLD uses watch_only; SELL uses enter_now; a conditional BUY uses enter_on_condition with an entry trigger. If no trigger or research wake is needed, use trigger_purpose=none with null dynamic_trigger and resolution_condition. For trade_decision also supply attribution and signal_weights required by its decision contract.\n## OUTPUT DIRECTIVE REMINDER\nWhen you generate your final response containing your analysis report (i.e. when you do NOT call any tools), you MUST output ONLY a valid JSON object matching the `final_decision` schema.\nDo NOT include any conversational intro/outro, preambles, summary comments, or markdown headings.\nDo NOT wrap the JSON response in markdown code blocks (do NOT use ```json).\nYour entire response MUST start with '{' and end with '}'.\nYou MAY include an optional \"tags\" array of short hashtag labels (e.g. [\"#catalyst\", \"#earnings_risk\", \"#verify_later\"]) to flag data points for other agents and future cycles.\n\n\n## Peer Request / Instructions\nA peer agent requested your specific analysis:\n\"Synthetic frozen evidence assessment. No tools or orders. Return the complete final_decision JSON and research_answers for every supplied question. Do not aim for a specified action. Follow the financial evidence contract.\"\n\nAddress this request directly in your findings.\n\nBegin your analysis now.\n\n## Trace Parent: b03ed556087e4a87\n"
+          }
+        ],
+        "maxTokens": 8192,
+        "enabledTools": [],
+        "maxIterations": 1,
+        "temperature": 0,
+        "functionCallingEnabled": false,
+        "agenticLoopEnabled": false,
+        "thinkingEnabled": false,
+        "workspaceEnabled": false
+      },
+      "started_at": 1789168828.6780531,
+      "http_status": 200,
+      "response": "{\n  \"financial_reasoning_version\": 2,\n  \"action\": \"HOLD\",\n  \"confidence\": 72,\n  \"position_size_pct\": 0,\n  \"entry_mode\": \"watch_only\",\n  \"trigger_purpose\": \"none\",\n  \"dynamic_trigger\": null,\n  \"resolution_condition\": null,\n  \"reasoning_steps\": [\n    \"calc_headroom_pct\",\n    \"calc_proposal_fits\",\n    \"calc_range_position_pct\",\n    \"calc_proposed_current_reward_risk\",\n    \"forward_peg\",\n    \"price_and_oscillator\"\n  ],\n  \"research_answers\": [\n    {\n      \"item_id\": \"q-headroom\",\n      \"step_ids\": [\n        \"calc_headroom_pct\",\n        \"calc_proposal_fits\"\n      ]\n    },\n    {\n      \"item_id\": \"q-peg\",\n      \"step_ids\": [\n        \"calc_forward_peg\"\n      ]\n    },\n    {\n      \"item_id\": \"q-range\",\n      \"step_ids\": [\n        \"calc_proposed_current_reward_risk\",\n        \"calc_range_position_pct\"\n      ]\n    }\n  ]\n}",
+      "usage": {
+        "inputTokens": 10437,
+        "outputTokens": 252,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "reasoningOutputTokens": 0,
+        "tokensPerSec": 0,
+        "requests": 1,
+        "totalInputTokens": 10437
+      },
+      "model": "nemotron35",
+      "elapsed_s": 17.044273853302002
+    }
+  ],
+  "evidence": {
+    "id": "headroom",
+    "ticker": "EVLT",
+    "as_of": "2026-09-03T20:00:00Z",
+    "held": true,
+    "facts": [
+      {
+        "id": "close",
+        "metric": "close",
+        "value": 100,
+        "unit": "USD",
+        "as_of": "2026-09-03",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "market:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "support",
+        "metric": "support",
+        "value": 95,
+        "unit": "USD",
+        "as_of": "2026-09-03",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "market:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "resistance",
+        "metric": "resistance",
+        "value": 115,
+        "unit": "USD",
+        "as_of": "2026-09-03",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "market:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "rsi_14",
+        "metric": "rsi_14",
+        "value": 46,
+        "unit": "RSI_points",
+        "as_of": "2026-09-03",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "market:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "atr_14",
+        "metric": "atr_14",
+        "value": 2,
+        "unit": "USD",
+        "as_of": "2026-09-03",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "market:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "sma_200",
+        "metric": "sma_200",
+        "value": 94,
+        "unit": "USD",
+        "as_of": "2026-09-03",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "market:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "sma_50",
+        "metric": "sma_50",
+        "value": 98,
+        "unit": "USD",
+        "as_of": "2026-09-03",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "market:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "operating_margin_pct",
+        "metric": "operating_margin_pct",
+        "value": 14,
+        "unit": "percent",
+        "as_of": "2026-09-03",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "filing:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "gross_margin_pct",
+        "metric": "gross_margin_pct",
+        "value": 42,
+        "unit": "percent",
+        "as_of": "2026-08-20",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "filing:EVLT:2026-08-20",
+        "status": "known"
+      },
+      {
+        "id": "debt_to_equity",
+        "metric": "debt_to_equity",
+        "value": 0.4,
+        "unit": "ratio",
+        "as_of": "2026-09-03",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "filing:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "debt_to_equity_prior",
+        "metric": "debt_to_equity_prior",
+        "value": null,
+        "unit": "ratio",
+        "as_of": null,
+        "period": "historical",
+        "entity": "EVLT",
+        "source": "missing:EVLT:None",
+        "status": "unknown",
+        "reason": "No prior debt/equity measurement is supplied."
+      },
+      {
+        "id": "free_cash_flow",
+        "metric": "free_cash_flow",
+        "value": 120000000,
+        "unit": "USD",
+        "as_of": "2026-08-20",
+        "period": "annual",
+        "entity": "EVLT",
+        "source": "filing:EVLT:2026-08-20",
+        "status": "known"
+      },
+      {
+        "id": "roic_pct",
+        "metric": "roic_pct",
+        "value": 14,
+        "unit": "percent",
+        "as_of": "2026-08-20",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "filing:EVLT:2026-08-20",
+        "status": "known"
+      },
+      {
+        "id": "sector_roic_pct",
+        "metric": "sector_roic_pct",
+        "value": 10,
+        "unit": "percent",
+        "as_of": "2026-08-20",
+        "period": "current",
+        "entity": "sector",
+        "source": "sector:sector:2026-08-20",
+        "status": "known"
+      },
+      {
+        "id": "sector_gross_margin_pct",
+        "metric": "sector_gross_margin_pct",
+        "value": 38,
+        "unit": "percent",
+        "as_of": "2026-08-20",
+        "period": "current",
+        "entity": "sector",
+        "source": "sector:sector:2026-08-20",
+        "status": "known"
+      },
+      {
+        "id": "guidance_record",
+        "metric": "guidance_record",
+        "value": "met",
+        "unit": "category",
+        "as_of": "2026-08-20",
+        "period": "last_three_annual_ranges",
+        "entity": "EVLT",
+        "source": "filing:EVLT:2026-08-20",
+        "status": "known"
+      },
+      {
+        "id": "equity",
+        "metric": "equity",
+        "value": 100000,
+        "unit": "USD",
+        "as_of": "2026-09-03",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "portfolio:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "cash",
+        "metric": "cash",
+        "value": 25000,
+        "unit": "USD",
+        "as_of": "2026-09-03",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "portfolio:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "exposure_pct",
+        "metric": "exposure_pct",
+        "value": 4.4,
+        "unit": "percent",
+        "as_of": "2026-09-03",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "portfolio:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "single_name_limit_pct",
+        "metric": "single_name_limit_pct",
+        "value": 5,
+        "unit": "percent",
+        "as_of": "2026-09-03",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "policy:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "pending_exposure_pct",
+        "metric": "pending_exposure_pct",
+        "value": 0,
+        "unit": "percent",
+        "as_of": "2026-09-03",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "portfolio:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "proposed_purchase_pct",
+        "metric": "proposed_purchase_pct",
+        "value": 2.5,
+        "unit": "percent",
+        "as_of": "2026-09-03",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "proposal:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "forward_pe",
+        "metric": "forward_pe",
+        "value": 20,
+        "unit": "ratio",
+        "as_of": "2026-09-03",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "filing:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "revenue_growth_pct",
+        "metric": "revenue_growth_pct",
+        "value": 10,
+        "unit": "percent",
+        "as_of": "2026-09-03",
+        "period": "current",
+        "entity": "EVLT",
+        "source": "filing:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "eps_growth_next_year_pct",
+        "metric": "eps_growth_next_year_pct",
+        "value": 16,
+        "unit": "percent",
+        "as_of": "2026-09-03",
+        "period": "next_fiscal_year",
+        "entity": "EVLT",
+        "source": "filing:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "proposed_stop",
+        "metric": "proposed_stop",
+        "value": 95,
+        "unit": "USD",
+        "as_of": "2026-09-03",
+        "period": "proposed",
+        "entity": "EVLT",
+        "source": "proposal:EVLT:2026-09-03",
+        "status": "known"
+      },
+      {
+        "id": "proposed_target",
+        "metric": "proposed_target",
+        "value": 115,
+        "unit": "USD",
+        "as_of": "2026-09-03",
+        "period": "proposed",
+        "entity": "EVLT",
+        "source": "proposal:EVLT:2026-09-03",
+        "status": "known"
+      }
+    ],
+    "questions": [
+      {
+        "id": "q-headroom",
+        "question": "How much additional EVLT exposure can fit under the total 5 percent single-name limit, and does the proposed 2.5 percent purchase fit?"
+      },
+      {
+        "id": "q-peg",
+        "question": "Using the supplied EPS growth, what is forward PEG?"
+      },
+      {
+        "id": "q-range",
+        "question": "What are the reward/risk ratio and the close's position within the support-resistance range?"
+      }
+    ],
+    "version": 1
+  },
+  "replay_cohort": "edge-contract-original-final",
+  "source_hashes": {
+    "app/v3/agent_runner.py": "c3f1a4f02d56006a1bad71dd0c9d21b27da0bcc1d0095e427a4ec3ea0998cd13",
+    "app/v3/financial_evidence.py": "af6b2a7c8cdbef18b34a68496e1ef780e9b6cbe0f0f1f508d6638aa0e1dbe483",
+    "app/v3/financial_claims.py": "c15291979083475371fa585e3a23c6c5acd9d5e552728f8b61c3d94169b2550f",
+    "app/v3/financial_reasoning.py": "38ec6be5e44577d26f4c440a19d71f626f537c4e366c9acf1915a297e0cb7422",
+    "app/v3/financial_repair.py": "450b7de4e331946d59095b425f02c9e1aa4cb5ddb448d76d94d5cbecb36a1ca0",
+    "app/v3/financial_metrics.py": "38d840ba9f11759144ad6e9cfbc4e726b8667e3123bb8604d2050be8af08d66f",
+    "app/trading/order_capacity.py": "364d11a841ce3bcb8981fbc51ac233772e6730dd8d131501079f10b4b7cd7649",
+    "tests/unit/test_financial_live_benchmark.py": "d41adf22e4ef5ce01ccd66679dad7311d3bd1a2974bd0c2c8550d7501c5a25fa"
+  },
+  "limits": "At most two endpoint calls (initial plus shared repair); upstream may make additional recovery attempts, recorded separately. Tools disabled, no orders; persistence mocked. Proxy retains request/session logs.",
+  "ablation": {
+    "FINANCIAL_BENCH_THINKING": null,
+    "FINANCIAL_BENCH_OUTPUT_TOKENS": null,
+    "FINANCIAL_BENCH_HTTP_TIMEOUT": null,
+    "FINANCIAL_BENCH_PHASE_TIMEOUT": null
+  },
+  "comparison": "Synthetic frozen cases and original persona/method arms. Typed source evidence and financial contract are added. Expected answers/checks excluded. Acceptance alone is not reasoning quality.",
+  "quality": {
+    "first_response_accepted": true,
+    "repair_attempted": false,
+    "repair_succeeded": false,
+    "final_accepted": true,
+    "repair_valid_answer_regressions": [],
+    "final_valid_answer_regressions": [],
+    "prevented_answer_regressions": [],
+    "initial_action": "HOLD",
+    "final_action": "HOLD",
+    "execution_authority": "eligible_for_further_gates",
+    "limitation": "Evidence consistency is not investment merit; blocked proposals are model failures and safety successes."
+  },
+  "attempts": [
+    {
+      "accepted": true,
+      "evidence_consistent": true,
+      "action": "HOLD",
+      "valid_answer_ids": [
+        "q-headroom",
+        "q-peg",
+        "q-range"
+      ],
+      "error_kinds": [],
+      "contract_errors": [],
+      "prevented_answer_regressions": []
+    }
+  ],
+  "execution_gate": {
+    "tested": true,
+    "allowed": true,
+    "errors": [],
+    "invalid_proposal_admitted": false,
+    "orders_submitted": 0
+  },
+  "telemetry": [
+    {
+      "agent_name": "v3_board_of_directors",
+      "ticker": "EVLT",
+      "elapsed_ms": 4,
+      "loops_used": 1,
+      "token_usage": 0,
+      "outcome": "SUCCESS",
+      "phase": "INIT",
+      "quality_score": 71,
+      "artifact_size_bytes": 4613,
+      "sys_prompt_chars": 11370,
+      "user_prompt_chars": 25551,
+      "attempt_no": 1,
+      "error_message": "",
+      "failure_reason": null,
+      "cached_tokens": 0,
+      "prompt_tokens": 0,
+      "model_used": null,
+      "provider": null,
+      "cost_partial": false,
+      "_recorded_at": "2026-09-11T23:28:03.000552+00:00",
+      "_persisted": true
+    }
+  ],
+  "outcome": "SUCCESS",
+  "artifact": {
+    "financial_reasoning_version": 2,
+    "action": "HOLD",
+    "confidence": 72,
+    "position_size_pct": 0,
+    "entry_mode": "watch_only",
+    "trigger_purpose": "none",
+    "dynamic_trigger": null,
+    "resolution_condition": null,
+    "reasoning_steps": [
+      "calc_headroom_pct",
+      "calc_proposal_fits",
+      "calc_range_position_pct",
+      "calc_proposed_current_reward_risk",
+      "forward_peg",
+      "price_and_oscillator"
+    ],
+    "research_answers": [
+      {
+        "item_id": "q-headroom",
+        "step_ids": [
+          "calc_headroom_pct",
+          "calc_proposal_fits"
+        ],
+        "question": "How much additional EVLT exposure can fit under the total 5 percent single-name limit, and does the proposed 2.5 percent purchase fit?",
+        "fact_ids": [
+          "calc_headroom_pct",
+          "calc_proposal_fits"
+        ],
+        "status": "answered",
+        "answer": "The remaining single-name capacity limits additional sizing. [calc_headroom_pct] The supplied purchase exceeds the available capacity. [calc_proposal_fits]"
+      },
+      {
+        "item_id": "q-peg",
+        "step_ids": [
+          "calc_forward_peg"
+        ],
+        "question": "Using the supplied EPS growth, what is forward PEG?",
+        "fact_ids": [
+          "calc_forward_peg"
+        ],
+        "status": "answered",
+        "answer": "The forward growth-adjusted multiple uses the supplied next-year earnings growth. [calc_forward_peg]"
+      },
+      {
+        "item_id": "q-range",
+        "step_ids": [
+          "calc_proposed_current_reward_risk",
+          "calc_range_position_pct"
+        ],
+        "question": "What are the reward/risk ratio and the close's position within the support-resistance range?",
+        "fact_ids": [
+          "calc_proposed_current_reward_risk",
+          "calc_range_position_pct"
+        ],
+        "status": "answered",
+        "answer": "Prospective gain exceeds defined downside at the current reference price. [calc_proposed_current_reward_risk] The close is nearer support than resistance. [calc_range_position_pct]"
+      }
+    ],
+    "reasoning": "The remaining single-name capacity limits additional sizing. [calc_headroom_pct] The supplied purchase exceeds the available capacity. [calc_proposal_fits] The close is nearer support than resistance. [calc_range_position_pct] Prospective gain exceeds defined downside at the current reference price. [calc_proposed_current_reward_risk] The forward growth-adjusted multiple uses the supplied next-year earnings growth. [calc_forward_peg] Price support and the oscillator measure different quantities. [support] [rsi_14]",
+    "financial_claims": [
+      {
+        "fact_id": "calc_headroom_pct",
+        "metric": "calc_headroom_pct",
+        "value": 0.6,
+        "unit": "percentage_points",
+        "as_of": "2026-09-03T20:00:00Z",
+        "source": "calculation:calc_headroom_pct"
+      },
+      {
+        "fact_id": "calc_proposal_fits",
+        "metric": "calc_proposal_fits",
+        "value": false,
+        "unit": "boolean",
+        "as_of": "2026-09-03T20:00:00Z",
+        "source": "calculation:calc_proposal_fits"
+      },
+      {
+        "fact_id": "calc_range_position_pct",
+        "metric": "calc_range_position_pct",
+        "value": 25.0,
+        "unit": "percent",
+        "as_of": "2026-09-03T20:00:00Z",
+        "source": "calculation:calc_range_position_pct"
+      },
+      {
+        "fact_id": "calc_proposed_current_reward_risk",
+        "metric": "calc_proposed_current_reward_risk",
+        "value": 3.0,
+        "unit": "ratio",
+        "as_of": "2026-09-03T20:00:00Z",
+        "source": "calculation:calc_proposed_current_reward_risk"
+      },
+      {
+        "fact_id": "calc_forward_peg",
+        "metric": "calc_forward_peg",
+        "value": 1.25,
+        "unit": "ratio",
+        "as_of": "2026-09-03T20:00:00Z",
+        "source": "calculation:calc_forward_peg"
+      },
+      {
+        "fact_id": "support",
+        "metric": "support",
+        "value": 95,
+        "unit": "USD",
+        "as_of": "2026-09-03",
+        "source": "market:EVLT:2026-09-03"
+      },
+      {
+        "fact_id": "rsi_14",
+        "metric": "rsi_14",
+        "value": 46,
+        "unit": "RSI_points",
+        "as_of": "2026-09-03",
+        "source": "market:EVLT:2026-09-03"
+      }
+    ],
+    "_financial_explanation_provenance": "model_selected_steps_code_rendered_statements",
+    "decision_contract_version": 1,
+    "decision_producer": "v3_board_of_directors",
+    "_financial_audit": {
+      "version": 1,
+      "status": "consistent",
+      "record_sha256": "7d9f64a7a84152e4e7514595c7dc0d191363d368744806d126488dde61dbc2be",
+      "checked_claims": 7,
+      "checked_fact_ids": [
+        "calc_headroom_pct",
+        "calc_proposal_fits",
+        "calc_range_position_pct",
+        "calc_proposed_current_reward_risk",
+        "calc_forward_peg",
+        "support",
+        "rsi_14"
+      ],
+      "questions_required": 3,
+      "questions_returned": 3,
+      "errors": [],
+      "scope": "typed_source_facts_calculations_and_question_coverage",
+      "limitations": "Consistency with supplied evidence; not source truth, complete semantic entailment, or investment merit."
+    },
+    "_research_tool_receipts": [],
+    "decision_provenance": "board_reasoned",
+    "_appended_at": "2026-09-11T23:28:02.999048+00:00",
+    "_artifact_type": "final_decision",
+    "_arithmetic_audit": {
+      "version": 1,
+      "scope": "explicit_operand_arithmetic_only",
+      "checked": 0,
+      "errors": 0,
+      "scan_truncated": false,
+      "checks": [],
+      "checks_omitted": 0
+    },
+    "_quality_score": 71,
+    "_quality_flag": "good",
+    "_evidence_status": "not_established"
+  },
+  "audit": {
+    "version": 1,
+    "status": "consistent",
+    "record_sha256": "7d9f64a7a84152e4e7514595c7dc0d191363d368744806d126488dde61dbc2be",
+    "checked_claims": 7,
+    "checked_fact_ids": [
+      "calc_headroom_pct",
+      "calc_proposal_fits",
+      "calc_range_position_pct",
+      "calc_proposed_current_reward_risk",
+      "calc_forward_peg",
+      "support",
+      "rsi_14"
+    ],
+    "questions_required": 3,
+    "questions_returned": 3,
+    "errors": [],
+    "scope": "typed_source_facts_calculations_and_question_coverage",
+    "limitations": "Consistency with supplied evidence; not source truth, complete semantic entailment, or investment merit."
+  },
+  "elapsed_s": 0.03964877128601074
+}

@@ -1,0 +1,1275 @@
+{
+  "started_at": "2026-09-11T21:45:11.227709+00:00",
+  "source_hashes": {
+    "app/v3/financial_evidence.py": "8020c00b24490eabea96ce236c60b486e9980c4246fbb9a402596161795e53ff",
+    "app/v3/financial_reasoning.py": "da0607962fef1314231509db64239689ad5b671a979165156340839f7c52253e",
+    "app/v3/financial_claims.py": "ab59f2afab9ed07a8ad52211d6a7f73a3b59c8d2b3b43faac3920d913c3fbc6d",
+    "app/v3/agent_runner.py": "41c5401d1490adfdbac9bd42221600d3c6d0c533fbde9733d5d63a6ce99682f3",
+    "scripts/test_live_financial_record.py": "cb560ee468fad651479f1b926d2b6a17c9a1a1c9a1ac83dcdbabe12dcc305106"
+  },
+  "ticker": "AAPL",
+  "record": {
+    "version": 1,
+    "ticker": "AAPL",
+    "as_of": "2026-09-11T21:45:11.470943+00:00",
+    "facts": [
+      {
+        "id": "close",
+        "metric": "close",
+        "value": 332.27,
+        "unit": "quote_currency",
+        "as_of": "2026-09-11 00:00:00",
+        "source": "financial_technical_snapshot:AAPL:2026-09-11 00:00:00:technicals table",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "rsi_14",
+        "metric": "rsi_14",
+        "value": 62.82,
+        "unit": "RSI_points",
+        "as_of": "2026-09-11 00:00:00",
+        "source": "financial_technical_snapshot:AAPL:2026-09-11 00:00:00:technicals table",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "atr_14",
+        "metric": "atr_14",
+        "value": 8.04,
+        "unit": "quote_currency",
+        "as_of": "2026-09-11 00:00:00",
+        "source": "financial_technical_snapshot:AAPL:2026-09-11 00:00:00:technicals table",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "support",
+        "metric": "support",
+        "value": 302.94,
+        "unit": "quote_currency",
+        "as_of": "2026-09-11 00:00:00",
+        "source": "financial_technical_snapshot:AAPL:2026-09-11 00:00:00:technicals table",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "resistance",
+        "metric": "resistance",
+        "value": 336.22,
+        "unit": "quote_currency",
+        "as_of": "2026-09-11 00:00:00",
+        "source": "financial_technical_snapshot:AAPL:2026-09-11 00:00:00:technicals table",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "sma_50",
+        "metric": "sma_50",
+        "value": 317.95,
+        "unit": "quote_currency",
+        "as_of": "2026-09-11 00:00:00",
+        "source": "financial_technical_snapshot:AAPL:2026-09-11 00:00:00:technicals table",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "sma_200",
+        "metric": "sma_200",
+        "value": 284.88,
+        "unit": "quote_currency",
+        "as_of": "2026-09-11 00:00:00",
+        "source": "financial_technical_snapshot:AAPL:2026-09-11 00:00:00:technicals table",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "operating_margin_pct",
+        "metric": "operating_margin_pct",
+        "value": 33.17,
+        "unit": "percent",
+        "as_of": "2026-09-08",
+        "source": "financial_fundamental_snapshot:AAPL:2026-09-08:finviz",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "gross_margin_pct",
+        "metric": "gross_margin_pct",
+        "value": 48.65,
+        "unit": "percent",
+        "as_of": "2026-09-08",
+        "source": "financial_fundamental_snapshot:AAPL:2026-09-08:finviz",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "net_margin_pct",
+        "metric": "net_margin_pct",
+        "value": 27.62,
+        "unit": "percent",
+        "as_of": "2026-09-08",
+        "source": "financial_fundamental_snapshot:AAPL:2026-09-08:finviz",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "roic_pct",
+        "metric": "roic_pct",
+        "value": 72.08,
+        "unit": "percent",
+        "as_of": "2026-09-08",
+        "source": "financial_fundamental_snapshot:AAPL:2026-09-08:finviz",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "roe_pct",
+        "metric": "roe_pct",
+        "value": 1.4875,
+        "unit": "percent",
+        "as_of": "2026-09-08",
+        "source": "financial_fundamental_snapshot:AAPL:2026-09-08:finviz",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "roa_pct",
+        "metric": "roa_pct",
+        "value": 36.08,
+        "unit": "percent",
+        "as_of": "2026-09-08",
+        "source": "financial_fundamental_snapshot:AAPL:2026-09-08:finviz",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "debt_to_equity",
+        "metric": "debt_to_equity",
+        "value": 0.78,
+        "unit": "ratio",
+        "as_of": "2026-09-08",
+        "source": "financial_fundamental_snapshot:AAPL:2026-09-08:finviz",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "forward_pe",
+        "metric": "forward_pe",
+        "value": 33.31,
+        "unit": "ratio",
+        "as_of": "2026-09-08",
+        "source": "financial_fundamental_snapshot:AAPL:2026-09-08:finviz",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "trailing_pe",
+        "metric": "trailing_pe",
+        "value": 36.54,
+        "unit": "ratio",
+        "as_of": "2026-09-08",
+        "source": "financial_fundamental_snapshot:AAPL:2026-09-08:finviz",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "vendor_peg",
+        "metric": "vendor_peg",
+        "value": 2.64,
+        "unit": "ratio",
+        "as_of": "2026-09-08",
+        "source": "financial_fundamental_snapshot:AAPL:2026-09-08:finviz",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "revenue_growth_pct",
+        "metric": "revenue_growth_pct",
+        "value": 14.24,
+        "unit": "percent",
+        "as_of": "2026-09-08",
+        "source": "financial_fundamental_snapshot:AAPL:2026-09-08:finviz",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "eps_growth_qoq_pct",
+        "metric": "eps_growth_qoq_pct",
+        "value": 29.13,
+        "unit": "percent",
+        "as_of": "2026-09-08",
+        "source": "financial_fundamental_snapshot:AAPL:2026-09-08:finviz",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "dividend_yield_pct",
+        "metric": "dividend_yield_pct",
+        "value": 0.33,
+        "unit": "percent",
+        "as_of": "2026-09-08",
+        "source": "financial_fundamental_snapshot:AAPL:2026-09-08:finviz",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known"
+      },
+      {
+        "id": "free_cash_flow",
+        "metric": "free_cash_flow",
+        "value": null,
+        "unit": "reporting_currency",
+        "as_of": "2026-06-30 00:00:00",
+        "source": "financial_history:AAPL:2026-06-30 00:00:00",
+        "entity": "AAPL",
+        "period": "trailing_four_quarters",
+        "status": "unknown",
+        "reason": "Complete quarterly source observations not available."
+      },
+      {
+        "id": "revenue_ttm",
+        "metric": "revenue_ttm",
+        "value": 466823000000.0,
+        "unit": "reporting_currency",
+        "as_of": "2026-06-30 00:00:00",
+        "source": "financial_history:AAPL:2026-06-30 00:00:00",
+        "entity": "AAPL",
+        "period": "trailing_four_quarters",
+        "status": "known"
+      },
+      {
+        "id": "operating_income_ttm",
+        "metric": "operating_income_ttm",
+        "value": 154859000000.0,
+        "unit": "reporting_currency",
+        "as_of": "2026-06-30 00:00:00",
+        "source": "financial_history:AAPL:2026-06-30 00:00:00",
+        "entity": "AAPL",
+        "period": "trailing_four_quarters",
+        "status": "known"
+      },
+      {
+        "id": "equity",
+        "metric": "equity",
+        "value": null,
+        "unit": "USD",
+        "as_of": null,
+        "source": "portfolio_snapshot:AAPL",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "unknown",
+        "reason": "Portfolio valuation incomplete or unavailable."
+      },
+      {
+        "id": "cash",
+        "metric": "cash",
+        "value": null,
+        "unit": "USD",
+        "as_of": null,
+        "source": "portfolio_snapshot:AAPL",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "unknown",
+        "reason": "Portfolio valuation incomplete or unavailable."
+      },
+      {
+        "id": "exposure_pct",
+        "metric": "exposure_pct",
+        "value": null,
+        "unit": "percent",
+        "as_of": null,
+        "source": "portfolio_snapshot:AAPL",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "unknown",
+        "reason": "Portfolio valuation incomplete or unavailable."
+      },
+      {
+        "id": "single_name_limit_pct",
+        "metric": "single_name_limit_pct",
+        "value": null,
+        "unit": "percent",
+        "as_of": null,
+        "source": "parameter_store:single_name_limit_pct",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "unknown"
+      },
+      {
+        "id": "max_order_size_pct",
+        "metric": "max_order_size_pct",
+        "value": null,
+        "unit": "percent",
+        "as_of": null,
+        "source": "parameter_store:max_order_size_pct",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "unknown"
+      },
+      {
+        "id": "pending_exposure_pct",
+        "metric": "pending_exposure_pct",
+        "value": null,
+        "unit": "percent",
+        "as_of": null,
+        "source": "missing:AAPL",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "unknown",
+        "reason": "No captured pending-order reservation snapshot."
+      },
+      {
+        "id": "eps_growth_next_year_pct",
+        "metric": "eps_growth_next_year_pct",
+        "value": null,
+        "unit": "percent",
+        "as_of": null,
+        "source": "missing:AAPL",
+        "entity": "AAPL",
+        "period": "next_fiscal_year",
+        "status": "unknown",
+        "reason": "No typed next-year EPS-growth observation is supplied."
+      }
+    ],
+    "questions": []
+  },
+  "snapshots": {
+    "timestamp": "2026-09-11T21:45:11.470943+00:00",
+    "financial_technical_snapshot": {
+      "as_of": "2026-09-11 00:00:00",
+      "source": "technicals table",
+      "rsi": 62.82,
+      "atr": 8.04,
+      "support": 302.94,
+      "resistance": 336.22,
+      "close": 332.27,
+      "volume_trend": "INCREASING",
+      "sma_200": 284.88,
+      "sma_200_status": "ABOVE",
+      "sma_50": 317.95,
+      "bollinger_pct": 1.027,
+      "bollinger_position": "UPPER",
+      "bollinger_note": "above the upper band (extended)",
+      "max_drawdown_est": 13.03,
+      "predicted_vol_annualized_pct": 21.95,
+      "vol_prediction_premium": -0.0758,
+      "stale": false
+    },
+    "financial_fundamental_snapshot": {
+      "ticker": "AAPL",
+      "as_of": "2026-09-08",
+      "source": "finviz",
+      "pe_ratio": 36.54,
+      "forward_pe": 33.31,
+      "peg_ratio": 2.64,
+      "price_to_book": 43.31,
+      "price_to_sales": 9.97,
+      "profit_margin": 0.2762,
+      "oper_margin": 0.3317,
+      "gross_margin": 0.4865,
+      "roe": 1.4875,
+      "roa": 0.3608,
+      "roic": 0.7208,
+      "debt_to_equity": 0.78,
+      "current_ratio": 1.0,
+      "quick_ratio": 0.93,
+      "revenue_growth": 0.1424,
+      "eps_growth_qoq": 0.2913,
+      "sales_growth_qoq": 0.1636,
+      "short_float_pct": 0.008,
+      "inst_own_pct": 0.6890999999999999,
+      "recom_score": 2.16,
+      "target_price": 332.7,
+      "dividend_yield": 0.0033,
+      "beta": 1.08,
+      "eps_surprise": 0.0677,
+      "sales_surprise": 0.0034999999999999996,
+      "market_cap": 4652480000000.0,
+      "earnings_date": "2026-07-30",
+      "age_days": 3,
+      "stale": false
+    },
+    "financial_valuation_snapshot": {
+      "as_of": "2026-09-08 00:00:00",
+      "provenance": {
+        "enterprise_value": "market cap 2026-09-08 00:00:00, balance sheet 2025-09-30 00:00:00",
+        "ttm": "4 quarters ending 2026-06-30 00:00:00",
+        "revenue_cagr_pct": "2022-09-30 00:00:00 \u2192 2025-09-30 00:00:00 (3.0y)",
+        "ebit_cagr_pct": "2022-09-30 00:00:00 \u2192 2025-09-30 00:00:00 (3.0y)",
+        "eps_cagr_pct": "2022-09-30 00:00:00 \u2192 2025-09-30 00:00:00 (3.0y)"
+      },
+      "not_computable": {
+        "ttm fields": "free_cash_flow \u2014 null in at least one of the 4 quarters",
+        "fcf_cagr_pct": "only 0 annual observations carry this field \u2014 need 3"
+      },
+      "vendor": {},
+      "stale": false,
+      "balance_sheet_as_of": "2025-09-30 00:00:00",
+      "net_debt": 62723000000.0,
+      "enterprise_value": 4715203000000.0,
+      "market_cap": 4652480000000.0,
+      "cash": 35934000000.0,
+      "total_debt": 98657000000.0,
+      "ttm_as_of": "2026-06-30 00:00:00",
+      "vendor_ev_to_ebitda": 27.83,
+      "ev_ebit_vendor_ratio": 1.09408417909225,
+      "ev_to_ebit": 30.448362704137313,
+      "ebit_ttm": 154859000000.0,
+      "ev_to_sales": 10.100622719960242,
+      "revenue_ttm": 466823000000.0,
+      "net_debt_to_ebit": 0.4050329654718163,
+      "pe_ratio": 36.54,
+      "peg": 2.8908227848101262,
+      "eps_growth_next_5y_pct": 12.64,
+      "revenue_cagr_pct": 1.812118576492483,
+      "ebit_cagr_pct": 3.6625210754505977,
+      "eps_cagr_pct": 6.78962421982614,
+      "risk_free_pct": 4.83,
+      "risk_free_assumed": false,
+      "beta_assumed": false,
+      "beta": 1.08,
+      "discount_rate_pct": 10.23,
+      "terminal_growth_pct": 2.5,
+      "dcf_flow_basis": "NOPAT (TTM EBIT less an assumed 21% tax)",
+      "dcf_flow_caveat": "no free-cash-flow data exists anywhere in this system, so this is an OPERATING-INCOME growth rate, not a cash one \u2014 it ignores capex and working capital and will read LOW for capital-hungry names",
+      "implied_growth_pct": 17.140559131503196
+    }
+  },
+  "sections": {
+    "technical": "VERIFIED TECHNICAL BASELINE (computed from stored daily data. Lines tagged `current` are the authoritative values \u2014 do NOT restate them from memory or estimate around them. Lines tagged `ageing` decay faster than the rest and should be treated as indicative, with the gap noted in data_gaps):\n  as of 2026-09-11 00:00:00\n  - close: 332.27   [price: age unknown]\n  - RSI-14: 62.82   [momentum: age unknown]\n  - ATR-14: 8.04   [band: age unknown]\n  - price vs SMA-200 (284.88): ABOVE   [trend: age unknown]\n  - SMA-50: 317.95   [trend: age unknown]\n  - Bollinger position: UPPER (above the upper band (extended))   [band: age unknown]\n  - volume trend (5d vs prior 15d): INCREASING   [momentum: age unknown]\n  - max drawdown, realized trailing 252d: 13.03%   [risk: computed this cycle]\n  - GARCH predicted vol: 21.95% annualized (prediction premium -0.08)\n  - stored support: 302.94\n  - stored resistance: 336.22",
+    "fundamental": "## PRECOMPUTED FUNDAMENTAL SNAPSHOT (read in code this cycle from stored vendor data \u2014 these are the authoritative values. Cite them directly; do NOT restate them from memory.)\n  inputs: fundamentals 2026-09-08 (3d), source finviz\n- Valuation ratios: P/E 36.54, forward P/E 33.31, PEG 2.64, P/B 43.31, P/S 9.97\n- Margins: gross 48.65% [copy as 0.4865], operating 33.17% [copy as 0.3317], net 27.62% [copy as 0.2762]\n- Returns: ROE 148.75% [copy as 1.4875], ROA 36.08% [copy as 0.3608], ROIC 72.08% [copy as 0.7208]\n- Leverage / liquidity: debt-to-equity 0.78, current ratio 1.00, quick ratio 0.93\n- Growth: revenue 14.24% [copy as 0.1424], EPS QoQ 29.13% [copy as 0.2913], sales QoQ 16.36% [copy as 0.1636]\n- Positioning: short float 0.80% [copy as 0.008], institutional ownership 68.91% [copy as 0.6891], analyst recommendation 2.16 (1=strong buy, 5=strong sell), target price 332.70\n- Next earnings: 2026-07-30 (43 day(s) ago)\n- Last surprise: EPS 6.77% [copy as 0.0677], sales 0.35% [copy as 0.0035]",
+    "valuation": "## PRECOMPUTED VALUATION MATH (computed in code this cycle from stored filings \u2014 these are the authoritative values. Cite them directly; do NOT restate them from memory and do NOT re-derive them from prose.)\n  inputs: fundamentals 2026-09-08 00:00:00; balance sheet 2025-09-30 00:00:00 (?d); TTM = 4 quarters ending 2026-06-30 00:00:00\n- Enterprise value $4.7T = market cap $4.7T + total debt $98.7B - cash $35.9B (net debt $62.7B)\n- EV/EBIT 30.4x (TTM operating income $154.9B). **No D&A is stored anywhere in this system, so EBITDA cannot be computed** \u2014 this is EV/EBIT, a HIGHER multiple than EV/EBITDA would be. Vendor EV/EBITDA (unverified): 27.8x\n- EV/Sales 10.1x (TTM revenue $466.8B)\n- P/E 36.5 vs 5y EPS growth 12.6%/yr \u2192 PEG 2.89\n- Net debt / EBIT 0.41x\n- Realized annual CAGR (2022-09-30 00:00:00 \u2192 2025-09-30 00:00:00 (3.0y)): revenue +1.8%/yr, EBIT +3.7%/yr, EPS +6.8%/yr\n- REVERSE DCF on NOPAT (TTM EBIT less an assumed 21% tax): at a 10.2% discount rate (10Y 4.8% + beta 1.08 x 5.0% ERP) and 2.5% terminal growth, today's enterprise value implies **17.1%/yr growth in that flow for 10 years**. For comparison, realized EBIT CAGR was +3.7%/yr (the like-for-like series); realized revenue CAGR was +1.8%/yr; realized EPS CAGR was +6.8%/yr; consensus 5y EPS growth is 12.6%/yr.\n  \u26a0 no free-cash-flow data exists anywhere in this system, so this is an OPERATING-INCOME growth rate, not a cash one \u2014 it ignores capex and working capital and will read LOW for capital-hungry names\n- NOT COMPUTABLE: ttm fields (free_cash_flow \u2014 null in at least one of the 4 quarters)\n- NOT COMPUTABLE: fcf_cagr_pct (only 0 annual observations carry this field \u2014 need 3)"
+  },
+  "builder_elapsed_s": {
+    "technical": 2.130020742999477,
+    "fundamental": 0.006720051000229432,
+    "valuation": 0.03323265500148409
+  },
+  "checks": {
+    "errors": [],
+    "known_facts": 24,
+    "unknown_facts": 15,
+    "calculated_facts": {
+      "calc_range_position_pct": {
+        "id": "calc_range_position_pct",
+        "metric": "calc_range_position_pct",
+        "value": 88.13100961538461,
+        "unit": "percent",
+        "as_of": "2026-09-11T21:45:11.470943+00:00",
+        "source": "calculation:calc_range_position_pct",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known",
+        "input_ids": [
+          "close",
+          "support",
+          "resistance"
+        ],
+        "formula": "(close-support)/(resistance-support)*100",
+        "source_ids": [
+          "financial_technical_snapshot:AAPL:2026-09-11 00:00:00:technicals table"
+        ]
+      },
+      "calc_price_vs_support": {
+        "id": "calc_price_vs_support",
+        "metric": "calc_price_vs_support",
+        "value": "above",
+        "unit": "category",
+        "as_of": "2026-09-11T21:45:11.470943+00:00",
+        "source": "calculation:calc_price_vs_support",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "known",
+        "input_ids": [
+          "close",
+          "support"
+        ],
+        "formula": "compare(close,support)",
+        "source_ids": [
+          "financial_technical_snapshot:AAPL:2026-09-11 00:00:00:technicals table"
+        ]
+      },
+      "calc_holding_return_pct": {
+        "id": "calc_holding_return_pct",
+        "metric": "calc_holding_return_pct",
+        "value": null,
+        "unit": "percent",
+        "as_of": "2026-09-11T21:45:11.470943+00:00",
+        "source": "calculation:calc_holding_return_pct",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "unknown",
+        "reason": "Missing operand: average_cost",
+        "input_ids": [
+          "close",
+          "average_cost"
+        ],
+        "formula": "(close-average_cost)/average_cost*100",
+        "source_ids": [
+          "financial_technical_snapshot:AAPL:2026-09-11 00:00:00:technicals table"
+        ]
+      },
+      "calc_forward_peg": {
+        "id": "calc_forward_peg",
+        "metric": "calc_forward_peg",
+        "value": null,
+        "unit": "ratio",
+        "as_of": "2026-09-11T21:45:11.470943+00:00",
+        "source": "calculation:calc_forward_peg",
+        "entity": "AAPL",
+        "period": "next_fiscal_year",
+        "status": "unknown",
+        "reason": "Missing operand: eps_growth_next_year_pct",
+        "input_ids": [
+          "forward_pe",
+          "eps_growth_next_year_pct"
+        ],
+        "formula": "forward_pe/eps_growth_next_year_pct",
+        "source_ids": [
+          "financial_fundamental_snapshot:AAPL:2026-09-08:finviz",
+          "missing:AAPL"
+        ]
+      },
+      "calc_unreserved_headroom_pct": {
+        "id": "calc_unreserved_headroom_pct",
+        "metric": "calc_unreserved_headroom_pct",
+        "value": null,
+        "unit": "percentage_points",
+        "as_of": "2026-09-11T21:45:11.470943+00:00",
+        "source": "calculation:calc_unreserved_headroom_pct",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "unknown",
+        "reason": "Missing operand: single_name_limit_pct, exposure_pct",
+        "input_ids": [
+          "single_name_limit_pct",
+          "exposure_pct"
+        ],
+        "formula": "max(0,limit-exposure)",
+        "source_ids": [
+          "parameter_store:single_name_limit_pct",
+          "portfolio_snapshot:AAPL"
+        ]
+      },
+      "calc_headroom_pct": {
+        "id": "calc_headroom_pct",
+        "metric": "calc_headroom_pct",
+        "value": null,
+        "unit": "percentage_points",
+        "as_of": "2026-09-11T21:45:11.470943+00:00",
+        "source": "calculation:calc_headroom_pct",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "unknown",
+        "reason": "Missing operand: single_name_limit_pct, exposure_pct, pending_exposure_pct",
+        "input_ids": [
+          "single_name_limit_pct",
+          "exposure_pct",
+          "pending_exposure_pct"
+        ],
+        "formula": "max(0,limit-exposure-pending)",
+        "source_ids": [
+          "missing:AAPL",
+          "parameter_store:single_name_limit_pct",
+          "portfolio_snapshot:AAPL"
+        ]
+      },
+      "calc_headroom_usd": {
+        "id": "calc_headroom_usd",
+        "metric": "calc_headroom_usd",
+        "value": null,
+        "unit": "USD",
+        "as_of": "2026-09-11T21:45:11.470943+00:00",
+        "source": "calculation:calc_headroom_usd",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "unknown",
+        "reason": "Missing operand: calc_headroom_pct, equity",
+        "input_ids": [
+          "calc_headroom_pct",
+          "equity"
+        ],
+        "formula": "headroom_pct/100*equity",
+        "source_ids": [
+          "missing:AAPL",
+          "parameter_store:single_name_limit_pct",
+          "portfolio_snapshot:AAPL"
+        ]
+      },
+      "calc_proposal_fits": {
+        "id": "calc_proposal_fits",
+        "metric": "calc_proposal_fits",
+        "value": null,
+        "unit": "boolean",
+        "as_of": "2026-09-11T21:45:11.470943+00:00",
+        "source": "calculation:calc_proposal_fits",
+        "entity": "AAPL",
+        "period": "current",
+        "status": "unknown",
+        "reason": "Missing operand: proposed_purchase_pct, calc_headroom_pct",
+        "input_ids": [
+          "proposed_purchase_pct",
+          "calc_headroom_pct"
+        ],
+        "formula": "proposed_purchase_pct<=headroom_pct",
+        "source_ids": [
+          "missing:AAPL",
+          "parameter_store:single_name_limit_pct",
+          "portfolio_snapshot:AAPL"
+        ]
+      },
+      "calc_proposed_current_reward_risk": {
+        "id": "calc_proposed_current_reward_risk",
+        "metric": "calc_proposed_current_reward_risk",
+        "value": null,
+        "unit": "ratio",
+        "as_of": "2026-09-11T21:45:11.470943+00:00",
+        "source": "calculation:calc_proposed_current_reward_risk",
+        "entity": "AAPL",
+        "period": "current_reference_price",
+        "status": "unknown",
+        "reason": "Missing operand: proposed_stop, proposed_target",
+        "input_ids": [
+          "close",
+          "proposed_stop",
+          "proposed_target"
+        ],
+        "formula": "(target-entry)/(entry-stop)",
+        "source_ids": [
+          "financial_technical_snapshot:AAPL:2026-09-11 00:00:00:technicals table"
+        ]
+      }
+    },
+    "catalog": {
+      "operating_margin_pct": {
+        "id": "operating_margin_pct",
+        "fact_ids": [
+          "operating_margin_pct"
+        ],
+        "statement": "The supplied operating margin is positive. [operating_margin_pct]"
+      },
+      "free_cash_flow": {
+        "id": "free_cash_flow",
+        "fact_ids": [
+          "free_cash_flow"
+        ],
+        "statement": "The supplied free cash flow is unavailable. [free_cash_flow]"
+      },
+      "gross_margin_pct": {
+        "id": "gross_margin_pct",
+        "fact_ids": [
+          "gross_margin_pct"
+        ],
+        "statement": "The supplied gross margin is positive. [gross_margin_pct]"
+      },
+      "roic_pct": {
+        "id": "roic_pct",
+        "fact_ids": [
+          "roic_pct"
+        ],
+        "statement": "The supplied return on invested capital is positive. [roic_pct]"
+      },
+      "headroom": {
+        "id": "headroom",
+        "fact_ids": [
+          "calc_headroom_pct"
+        ],
+        "statement": "Reserved concentration capacity is unknown. [calc_headroom_pct]"
+      },
+      "proposal_fit": {
+        "id": "proposal_fit",
+        "fact_ids": [
+          "calc_proposal_fits"
+        ],
+        "statement": "Whether the supplied purchase fits remains unresolved. [calc_proposal_fits]"
+      },
+      "range_position": {
+        "id": "range_position",
+        "fact_ids": [
+          "calc_range_position_pct"
+        ],
+        "statement": "The close is nearer resistance than support. [calc_range_position_pct]"
+      },
+      "holding_return": {
+        "id": "holding_return",
+        "fact_ids": [
+          "calc_holding_return_pct"
+        ],
+        "statement": "The holding return is unknown. [calc_holding_return_pct]"
+      },
+      "forward_peg": {
+        "id": "forward_peg",
+        "fact_ids": [
+          "calc_forward_peg"
+        ],
+        "statement": "The required earnings-growth observation is unavailable, so forward PEG is unresolved. [calc_forward_peg]"
+      },
+      "current_reward_risk": {
+        "id": "current_reward_risk",
+        "fact_ids": [
+          "calc_proposed_current_reward_risk"
+        ],
+        "statement": "Reward/risk at the current reference price is unknown. [calc_proposed_current_reward_risk]"
+      },
+      "sma_200": {
+        "id": "sma_200",
+        "fact_ids": [
+          "sma_200"
+        ],
+        "statement": "The supplied long moving average is available. [sma_200]"
+      },
+      "price_and_oscillator": {
+        "id": "price_and_oscillator",
+        "fact_ids": [
+          "support",
+          "rsi_14"
+        ],
+        "statement": "Price support and the oscillator measure different quantities. [support] [rsi_14]"
+      },
+      "close": {
+        "id": "close",
+        "fact_ids": [
+          "close"
+        ],
+        "statement": "This supplied observation is available. [close]"
+      },
+      "observation:close": {
+        "id": "observation:close",
+        "fact_ids": [
+          "close"
+        ],
+        "statement": "This supplied observation is available. [close]"
+      },
+      "rsi_14": {
+        "id": "rsi_14",
+        "fact_ids": [
+          "rsi_14"
+        ],
+        "statement": "This supplied observation is available. [rsi_14]"
+      },
+      "observation:rsi_14": {
+        "id": "observation:rsi_14",
+        "fact_ids": [
+          "rsi_14"
+        ],
+        "statement": "This supplied observation is available. [rsi_14]"
+      },
+      "atr_14": {
+        "id": "atr_14",
+        "fact_ids": [
+          "atr_14"
+        ],
+        "statement": "This supplied observation is available. [atr_14]"
+      },
+      "observation:atr_14": {
+        "id": "observation:atr_14",
+        "fact_ids": [
+          "atr_14"
+        ],
+        "statement": "This supplied observation is available. [atr_14]"
+      },
+      "support": {
+        "id": "support",
+        "fact_ids": [
+          "support"
+        ],
+        "statement": "This supplied observation is available. [support]"
+      },
+      "observation:support": {
+        "id": "observation:support",
+        "fact_ids": [
+          "support"
+        ],
+        "statement": "This supplied observation is available. [support]"
+      },
+      "resistance": {
+        "id": "resistance",
+        "fact_ids": [
+          "resistance"
+        ],
+        "statement": "This supplied observation is available. [resistance]"
+      },
+      "observation:resistance": {
+        "id": "observation:resistance",
+        "fact_ids": [
+          "resistance"
+        ],
+        "statement": "This supplied observation is available. [resistance]"
+      },
+      "sma_50": {
+        "id": "sma_50",
+        "fact_ids": [
+          "sma_50"
+        ],
+        "statement": "This supplied observation is available. [sma_50]"
+      },
+      "observation:sma_50": {
+        "id": "observation:sma_50",
+        "fact_ids": [
+          "sma_50"
+        ],
+        "statement": "This supplied observation is available. [sma_50]"
+      },
+      "observation:sma_200": {
+        "id": "observation:sma_200",
+        "fact_ids": [
+          "sma_200"
+        ],
+        "statement": "The supplied long moving average is available. [sma_200]"
+      },
+      "observation:operating_margin_pct": {
+        "id": "observation:operating_margin_pct",
+        "fact_ids": [
+          "operating_margin_pct"
+        ],
+        "statement": "The supplied operating margin is positive. [operating_margin_pct]"
+      },
+      "observation:gross_margin_pct": {
+        "id": "observation:gross_margin_pct",
+        "fact_ids": [
+          "gross_margin_pct"
+        ],
+        "statement": "The supplied gross margin is positive. [gross_margin_pct]"
+      },
+      "net_margin_pct": {
+        "id": "net_margin_pct",
+        "fact_ids": [
+          "net_margin_pct"
+        ],
+        "statement": "This supplied observation is available. [net_margin_pct]"
+      },
+      "observation:net_margin_pct": {
+        "id": "observation:net_margin_pct",
+        "fact_ids": [
+          "net_margin_pct"
+        ],
+        "statement": "This supplied observation is available. [net_margin_pct]"
+      },
+      "observation:roic_pct": {
+        "id": "observation:roic_pct",
+        "fact_ids": [
+          "roic_pct"
+        ],
+        "statement": "The supplied return on invested capital is positive. [roic_pct]"
+      },
+      "roe_pct": {
+        "id": "roe_pct",
+        "fact_ids": [
+          "roe_pct"
+        ],
+        "statement": "This supplied observation is available. [roe_pct]"
+      },
+      "observation:roe_pct": {
+        "id": "observation:roe_pct",
+        "fact_ids": [
+          "roe_pct"
+        ],
+        "statement": "This supplied observation is available. [roe_pct]"
+      },
+      "roa_pct": {
+        "id": "roa_pct",
+        "fact_ids": [
+          "roa_pct"
+        ],
+        "statement": "This supplied observation is available. [roa_pct]"
+      },
+      "observation:roa_pct": {
+        "id": "observation:roa_pct",
+        "fact_ids": [
+          "roa_pct"
+        ],
+        "statement": "This supplied observation is available. [roa_pct]"
+      },
+      "debt_to_equity": {
+        "id": "debt_to_equity",
+        "fact_ids": [
+          "debt_to_equity"
+        ],
+        "statement": "This supplied observation is available. [debt_to_equity]"
+      },
+      "observation:debt_to_equity": {
+        "id": "observation:debt_to_equity",
+        "fact_ids": [
+          "debt_to_equity"
+        ],
+        "statement": "This supplied observation is available. [debt_to_equity]"
+      },
+      "forward_pe": {
+        "id": "forward_pe",
+        "fact_ids": [
+          "forward_pe"
+        ],
+        "statement": "This supplied observation is available. [forward_pe]"
+      },
+      "observation:forward_pe": {
+        "id": "observation:forward_pe",
+        "fact_ids": [
+          "forward_pe"
+        ],
+        "statement": "This supplied observation is available. [forward_pe]"
+      },
+      "trailing_pe": {
+        "id": "trailing_pe",
+        "fact_ids": [
+          "trailing_pe"
+        ],
+        "statement": "This supplied observation is available. [trailing_pe]"
+      },
+      "observation:trailing_pe": {
+        "id": "observation:trailing_pe",
+        "fact_ids": [
+          "trailing_pe"
+        ],
+        "statement": "This supplied observation is available. [trailing_pe]"
+      },
+      "vendor_peg": {
+        "id": "vendor_peg",
+        "fact_ids": [
+          "vendor_peg"
+        ],
+        "statement": "This supplied observation is available. [vendor_peg]"
+      },
+      "observation:vendor_peg": {
+        "id": "observation:vendor_peg",
+        "fact_ids": [
+          "vendor_peg"
+        ],
+        "statement": "This supplied observation is available. [vendor_peg]"
+      },
+      "revenue_growth_pct": {
+        "id": "revenue_growth_pct",
+        "fact_ids": [
+          "revenue_growth_pct"
+        ],
+        "statement": "This supplied observation is available. [revenue_growth_pct]"
+      },
+      "observation:revenue_growth_pct": {
+        "id": "observation:revenue_growth_pct",
+        "fact_ids": [
+          "revenue_growth_pct"
+        ],
+        "statement": "This supplied observation is available. [revenue_growth_pct]"
+      },
+      "eps_growth_qoq_pct": {
+        "id": "eps_growth_qoq_pct",
+        "fact_ids": [
+          "eps_growth_qoq_pct"
+        ],
+        "statement": "This supplied observation is available. [eps_growth_qoq_pct]"
+      },
+      "observation:eps_growth_qoq_pct": {
+        "id": "observation:eps_growth_qoq_pct",
+        "fact_ids": [
+          "eps_growth_qoq_pct"
+        ],
+        "statement": "This supplied observation is available. [eps_growth_qoq_pct]"
+      },
+      "dividend_yield_pct": {
+        "id": "dividend_yield_pct",
+        "fact_ids": [
+          "dividend_yield_pct"
+        ],
+        "statement": "This supplied observation is available. [dividend_yield_pct]"
+      },
+      "observation:dividend_yield_pct": {
+        "id": "observation:dividend_yield_pct",
+        "fact_ids": [
+          "dividend_yield_pct"
+        ],
+        "statement": "This supplied observation is available. [dividend_yield_pct]"
+      },
+      "observation:free_cash_flow": {
+        "id": "observation:free_cash_flow",
+        "fact_ids": [
+          "free_cash_flow"
+        ],
+        "statement": "The supplied free cash flow is unavailable. [free_cash_flow]"
+      },
+      "revenue_ttm": {
+        "id": "revenue_ttm",
+        "fact_ids": [
+          "revenue_ttm"
+        ],
+        "statement": "This supplied observation is available. [revenue_ttm]"
+      },
+      "observation:revenue_ttm": {
+        "id": "observation:revenue_ttm",
+        "fact_ids": [
+          "revenue_ttm"
+        ],
+        "statement": "This supplied observation is available. [revenue_ttm]"
+      },
+      "operating_income_ttm": {
+        "id": "operating_income_ttm",
+        "fact_ids": [
+          "operating_income_ttm"
+        ],
+        "statement": "This supplied observation is available. [operating_income_ttm]"
+      },
+      "observation:operating_income_ttm": {
+        "id": "observation:operating_income_ttm",
+        "fact_ids": [
+          "operating_income_ttm"
+        ],
+        "statement": "This supplied observation is available. [operating_income_ttm]"
+      },
+      "equity": {
+        "id": "equity",
+        "fact_ids": [
+          "equity"
+        ],
+        "statement": "This supplied observation is unavailable. [equity]"
+      },
+      "observation:equity": {
+        "id": "observation:equity",
+        "fact_ids": [
+          "equity"
+        ],
+        "statement": "This supplied observation is unavailable. [equity]"
+      },
+      "cash": {
+        "id": "cash",
+        "fact_ids": [
+          "cash"
+        ],
+        "statement": "This supplied observation is unavailable. [cash]"
+      },
+      "observation:cash": {
+        "id": "observation:cash",
+        "fact_ids": [
+          "cash"
+        ],
+        "statement": "This supplied observation is unavailable. [cash]"
+      },
+      "exposure_pct": {
+        "id": "exposure_pct",
+        "fact_ids": [
+          "exposure_pct"
+        ],
+        "statement": "This supplied observation is unavailable. [exposure_pct]"
+      },
+      "observation:exposure_pct": {
+        "id": "observation:exposure_pct",
+        "fact_ids": [
+          "exposure_pct"
+        ],
+        "statement": "This supplied observation is unavailable. [exposure_pct]"
+      },
+      "single_name_limit_pct": {
+        "id": "single_name_limit_pct",
+        "fact_ids": [
+          "single_name_limit_pct"
+        ],
+        "statement": "This supplied observation is unavailable. [single_name_limit_pct]"
+      },
+      "observation:single_name_limit_pct": {
+        "id": "observation:single_name_limit_pct",
+        "fact_ids": [
+          "single_name_limit_pct"
+        ],
+        "statement": "This supplied observation is unavailable. [single_name_limit_pct]"
+      },
+      "max_order_size_pct": {
+        "id": "max_order_size_pct",
+        "fact_ids": [
+          "max_order_size_pct"
+        ],
+        "statement": "This supplied observation is unavailable. [max_order_size_pct]"
+      },
+      "observation:max_order_size_pct": {
+        "id": "observation:max_order_size_pct",
+        "fact_ids": [
+          "max_order_size_pct"
+        ],
+        "statement": "This supplied observation is unavailable. [max_order_size_pct]"
+      },
+      "pending_exposure_pct": {
+        "id": "pending_exposure_pct",
+        "fact_ids": [
+          "pending_exposure_pct"
+        ],
+        "statement": "This supplied observation is unavailable. [pending_exposure_pct]"
+      },
+      "observation:pending_exposure_pct": {
+        "id": "observation:pending_exposure_pct",
+        "fact_ids": [
+          "pending_exposure_pct"
+        ],
+        "statement": "This supplied observation is unavailable. [pending_exposure_pct]"
+      },
+      "eps_growth_next_year_pct": {
+        "id": "eps_growth_next_year_pct",
+        "fact_ids": [
+          "eps_growth_next_year_pct"
+        ],
+        "statement": "This supplied observation is unavailable. [eps_growth_next_year_pct]"
+      },
+      "observation:eps_growth_next_year_pct": {
+        "id": "observation:eps_growth_next_year_pct",
+        "fact_ids": [
+          "eps_growth_next_year_pct"
+        ],
+        "statement": "This supplied observation is unavailable. [eps_growth_next_year_pct]"
+      },
+      "calc_range_position_pct": {
+        "id": "calc_range_position_pct",
+        "fact_ids": [
+          "calc_range_position_pct"
+        ],
+        "statement": "The close is nearer resistance than support. [calc_range_position_pct]"
+      },
+      "observation:calc_range_position_pct": {
+        "id": "observation:calc_range_position_pct",
+        "fact_ids": [
+          "calc_range_position_pct"
+        ],
+        "statement": "The close is nearer resistance than support. [calc_range_position_pct]"
+      },
+      "calc_price_vs_support": {
+        "id": "calc_price_vs_support",
+        "fact_ids": [
+          "calc_price_vs_support"
+        ],
+        "statement": "This supplied observation is available. [calc_price_vs_support]"
+      },
+      "observation:calc_price_vs_support": {
+        "id": "observation:calc_price_vs_support",
+        "fact_ids": [
+          "calc_price_vs_support"
+        ],
+        "statement": "This supplied observation is available. [calc_price_vs_support]"
+      },
+      "calc_holding_return_pct": {
+        "id": "calc_holding_return_pct",
+        "fact_ids": [
+          "calc_holding_return_pct"
+        ],
+        "statement": "The holding return is unknown. [calc_holding_return_pct]"
+      },
+      "observation:calc_holding_return_pct": {
+        "id": "observation:calc_holding_return_pct",
+        "fact_ids": [
+          "calc_holding_return_pct"
+        ],
+        "statement": "The holding return is unknown. [calc_holding_return_pct]"
+      },
+      "calc_forward_peg": {
+        "id": "calc_forward_peg",
+        "fact_ids": [
+          "calc_forward_peg"
+        ],
+        "statement": "The required earnings-growth observation is unavailable, so forward PEG is unresolved. [calc_forward_peg]"
+      },
+      "observation:calc_forward_peg": {
+        "id": "observation:calc_forward_peg",
+        "fact_ids": [
+          "calc_forward_peg"
+        ],
+        "statement": "The required earnings-growth observation is unavailable, so forward PEG is unresolved. [calc_forward_peg]"
+      },
+      "calc_unreserved_headroom_pct": {
+        "id": "calc_unreserved_headroom_pct",
+        "fact_ids": [
+          "calc_unreserved_headroom_pct"
+        ],
+        "statement": "This supplied observation is unavailable. [calc_unreserved_headroom_pct]"
+      },
+      "observation:calc_unreserved_headroom_pct": {
+        "id": "observation:calc_unreserved_headroom_pct",
+        "fact_ids": [
+          "calc_unreserved_headroom_pct"
+        ],
+        "statement": "This supplied observation is unavailable. [calc_unreserved_headroom_pct]"
+      },
+      "calc_headroom_pct": {
+        "id": "calc_headroom_pct",
+        "fact_ids": [
+          "calc_headroom_pct"
+        ],
+        "statement": "Reserved concentration capacity is unknown. [calc_headroom_pct]"
+      },
+      "observation:calc_headroom_pct": {
+        "id": "observation:calc_headroom_pct",
+        "fact_ids": [
+          "calc_headroom_pct"
+        ],
+        "statement": "Reserved concentration capacity is unknown. [calc_headroom_pct]"
+      },
+      "calc_headroom_usd": {
+        "id": "calc_headroom_usd",
+        "fact_ids": [
+          "calc_headroom_usd"
+        ],
+        "statement": "This supplied observation is unavailable. [calc_headroom_usd]"
+      },
+      "observation:calc_headroom_usd": {
+        "id": "observation:calc_headroom_usd",
+        "fact_ids": [
+          "calc_headroom_usd"
+        ],
+        "statement": "This supplied observation is unavailable. [calc_headroom_usd]"
+      },
+      "calc_proposal_fits": {
+        "id": "calc_proposal_fits",
+        "fact_ids": [
+          "calc_proposal_fits"
+        ],
+        "statement": "Whether the supplied purchase fits remains unresolved. [calc_proposal_fits]"
+      },
+      "observation:calc_proposal_fits": {
+        "id": "observation:calc_proposal_fits",
+        "fact_ids": [
+          "calc_proposal_fits"
+        ],
+        "statement": "Whether the supplied purchase fits remains unresolved. [calc_proposal_fits]"
+      },
+      "calc_proposed_current_reward_risk": {
+        "id": "calc_proposed_current_reward_risk",
+        "fact_ids": [
+          "calc_proposed_current_reward_risk"
+        ],
+        "statement": "Reward/risk at the current reference price is unknown. [calc_proposed_current_reward_risk]"
+      },
+      "observation:calc_proposed_current_reward_risk": {
+        "id": "observation:calc_proposed_current_reward_risk",
+        "fact_ids": [
+          "calc_proposed_current_reward_risk"
+        ],
+        "statement": "Reward/risk at the current reference price is unknown. [calc_proposed_current_reward_risk]"
+      }
+    }
+  },
+  "latest_stored_price": [
+    {
+      "date": "2026-09-11 00:00:00",
+      "close": 332.2699890136719
+    }
+  ],
+  "limitations": [
+    "Stored vendor data, no collector refresh or quote freshness claim.",
+    "No portfolio captured; headroom and reservations remain unknown.",
+    "No model or broker invocation."
+  ],
+  "write_attempts": [],
+  "passed": true,
+  "finished_at": "2026-09-11T21:45:13.652019+00:00"
+}
