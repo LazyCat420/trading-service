@@ -287,6 +287,19 @@ when the plan changes. Newly authored conflicting prose/facts and unknown
 references remain invalid. All merged outputs are revalidated, within the
 existing single shared correction allowance.
 
+A repair whose generation was CUT OFF is re-issued, at most
+`agent_runner.REPAIR_ATTEMPTS` times in total and never below
+`REPAIR_RETRY_MIN_BUDGET_S` seconds of remaining run budget. Cut off means
+`output_rules.was_cut_off`: JSON that opened and never closed, or a substantial
+reply the provider reported ZERO output tokens for. This does not widen the
+single shared correction allowance — the same correction is asked again because
+the answer never arrived, and a COMPLETE artifact is never re-issued however
+unwelcome its content.
+
+The sizing haircut in `resolve_buy_size_pct` is deliberate policy, not clipping:
+an order is never refused for differing from the size the agent asked for. The
+capacity refusal above is `buy(strict_capacity=True)` alone.
+
 `financial_attempts`, `financial_quality_metrics`, and
 `financial_execution_validation` distinguish initial acceptance, repair,
 prevented answer regressions, and order-boundary enforcement. A blocked

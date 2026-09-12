@@ -2793,41 +2793,48 @@ class PipelineService:
                                     "[PipelineService] %s: health sizing check failed (ignored): %s",
                                     ticker_name, health_err,
                                 )
-                            if result.get('financial_evidence_version') == 1 and (
-                                    not isinstance(agent_size_pct, (int, float)) or
-                                    abs(float(size_pct or 0) * 100 - agent_size_pct) > 0.000001):
-                                result['no_trade_reason'] = 'CAPACITY_REVALIDATION_FAILED'
-                                result['sizing_reconsideration_required'] = True
-                                policy_action = 'HOLD_POLICY_BLOCKED_CAPACITY'
-                                result['policy_action'] = policy_action
+                            # NO pre-buy equality check between the agent's requested size and
+                            # the resolved one. resolve_buy_size_pct applies the consensus /
+                            # data-quality haircut BY DESIGN ("disagreement ... now costs size
+                            # mechanically"), so demanding equality blocked a BUY for having
+                            # been sized correctly: replayed over the last 600 analyses, 54 of
+                            # 55 real BUY sizings failed the equality, the single survivor only
+                            # because it carried no consensus score. Of the 6 that actually
+                            # REACH this line (an enter_on_condition BUY is diverted above and
+                            # places no order now), 5 would have been refused -- 4 of them
+                            # decisions that had reached EXECUTE_BUY in production. Nothing
+                            # consumed the `sizing_reconsideration_required` it set, so the BUY
+                            # was simply dropped. Capacity is revalidated where it can
+                            # actually be revalidated -- inside buy(strict_capacity=True),
+                            # against cash, concentration and pending reservations, two lines
+                            # below -- and that refusal is handled on the trade_res branch.
+                            result["trade_attempted"] = True
+                            effective_size_pct = float(size_pct) if isinstance(size_pct, (int, float)) else 0.0
+                            logger.info(
+                                "[PipelineService] %s: sizing %s → %.1f%% of equity (cash-capped)",
+                                ticker_name,
+                                "from agent decision" if isinstance(agent_size_pct, (int, float)) and agent_size_pct > 0 else "via confidence fallback",
+                                effective_size_pct * 100,
+                            )
+                            _est = result.get("estimate") or {}
+                            trade_res = await buy(
+                                bot_id=active_bot_id, ticker=ticker_name, size_pct=effective_size_pct, cycle_id=cycle_id,
+                                stop_loss_price=_est.get("stop_loss"),
+                                take_profit_price=_est.get("take_profit"),
+                                exit_style=_est.get("exit_style"),
+                                strict_capacity=result.get("financial_evidence_version") == 1,
+                            )
+                            if isinstance(trade_res, dict) and trade_res.get("error"):
+                                if trade_res.get('reason') == 'CAPACITY_REVALIDATION_FAILED':
+                                    policy_action = 'HOLD_POLICY_BLOCKED_CAPACITY'
+                                    result['policy_action'] = policy_action
+                                    result['sizing_reconsideration_required'] = True
+                                result["no_trade_reason"] = resolve_no_trade_reason(trade_res)
+                                logger.warning("[PipelineService] %s: BUY not executed: %s", ticker_name, trade_res["error"])
+                                emit_trade(ticker_name, "BUY", trade_res, False, result["no_trade_reason"])
                             else:
-                                result["trade_attempted"] = True
-                                effective_size_pct = float(size_pct) if isinstance(size_pct, (int, float)) else 0.0
-                                logger.info(
-                                    "[PipelineService] %s: sizing %s → %.1f%% of equity (cash-capped)",
-                                    ticker_name,
-                                    "from agent decision" if isinstance(agent_size_pct, (int, float)) and agent_size_pct > 0 else "via confidence fallback",
-                                    effective_size_pct * 100,
-                                )
-                                _est = result.get("estimate") or {}
-                                trade_res = await buy(
-                                    bot_id=active_bot_id, ticker=ticker_name, size_pct=effective_size_pct, cycle_id=cycle_id,
-                                    stop_loss_price=_est.get("stop_loss"),
-                                    take_profit_price=_est.get("take_profit"),
-                                    exit_style=_est.get("exit_style"),
-                                    strict_capacity=result.get("financial_evidence_version") == 1,
-                                )
-                                if isinstance(trade_res, dict) and trade_res.get("error"):
-                                    if trade_res.get('reason') == 'CAPACITY_REVALIDATION_FAILED':
-                                        policy_action = 'HOLD_POLICY_BLOCKED_CAPACITY'
-                                        result['policy_action'] = policy_action
-                                        result['sizing_reconsideration_required'] = True
-                                    result["no_trade_reason"] = resolve_no_trade_reason(trade_res)
-                                    logger.warning("[PipelineService] %s: BUY not executed: %s", ticker_name, trade_res["error"])
-                                    emit_trade(ticker_name, "BUY", trade_res, False, result["no_trade_reason"])
-                                else:
-                                    result["trade_executed"] = True
-                                    emit_trade(ticker_name, "BUY", trade_res, True)
+                                result["trade_executed"] = True
+                                emit_trade(ticker_name, "BUY", trade_res, True)
                     elif action == "SELL":
                         # Pre-attempt position check: a SELL on an unheld
                         # ticker is a guaranteed refusal at the paper trader

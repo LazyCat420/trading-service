@@ -35,6 +35,7 @@ from app.v3.artifacts import (
     validate_artifact,
 )
 from app.v3.output_rules import (
+    was_cut_off as repair_was_cut_off,
     CANCELLED as REASON_CANCELLED,
     NON_LATIN_PROSE_THRESHOLD,
     prose_script_share,
@@ -412,6 +413,16 @@ def _fallback_overlays_from_metrics(artifact: dict) -> list:
             "reasoning": "Suggested stop-loss level",
         })
     return overlays
+
+
+#: A cut-off repair is retried at most this many times in total (first attempt
+#: included). Two, not more: the failure is ~3 in 8 on the payload that shows
+#: it, so a second attempt takes the chance a truncation survives both from
+#: ~37% to ~14%, and every attempt is a full prefill on a box the cycle shares.
+REPAIR_ATTEMPTS = 2
+#: A retry is refused below this much remaining run budget, so the retry can
+#: never be the reason the whole ticker times out.
+REPAIR_RETRY_MIN_BUDGET_S = 90.0
 
 
 async def _persist_quant_chart(ticker: str, artifact: dict) -> None:
@@ -1598,33 +1609,72 @@ async def run_v3_agent(
                 # Measured separately: this prompt carries the failed attempt
                 # back in (so it is larger), but runs tool-less (so the schemas
                 # are gone). Reusing the first call's budget would be wrong twice.
-                repair_result = await asyncio.wait_for(
-                    _with_heartbeat(run_agent(
-                        agent_name=agent_name,
-                        ticker=desk.ticker,
-                        cycle_id=cycle_id,
-                        bot_id=bot_id,
-                        system_prompt=repair_system,
-                        user_prompt=repair_prompt,
-                        max_tokens=_safe_max_tokens(
+                # The repair is retried ONLY on a cut-off generation, which is
+                # a transport-shaped fault the model never chose: measured on
+                # the case03 payload, the repair truncated in a degenerate
+                # repetition loop on 3 of 8 identical attempts, and
+                # usage.outputTokens==0 agreed with `classify_output` about
+                # which ones on 6 of 6. A complete artifact is never re-rolled,
+                # however much its content is disliked -- that would be asking
+                # the model again until it says something nicer.
+                repair_result, repair_text = {}, ""
+                repair_attempts = []
+                for attempt in range(1, REPAIR_ATTEMPTS + 1):
+                    remaining = (t_start + timeout_seconds) - time.monotonic()
+                    if attempt > 1 and remaining < REPAIR_RETRY_MIN_BUDGET_S:
+                        logger.warning(
+                            "[V3Runner] %s: truncated repair for %s not retried — %.0fs "
+                            "left of the run's budget, a retry needs >= %.0fs",
+                            agent_name, desk.ticker, remaining, REPAIR_RETRY_MIN_BUDGET_S,
+                        )
+                        break
+                    repair_result = await asyncio.wait_for(
+                        _with_heartbeat(run_agent(
                             agent_name=agent_name,
+                            ticker=desk.ticker,
+                            cycle_id=cycle_id,
+                            bot_id=bot_id,
                             system_prompt=repair_system,
                             user_prompt=repair_prompt,
-                            tool_whitelist=None,
-                        ),
-                        enable_tools=False,
-                        model_override=model_override,
-                        prism_overrides=prism_overrides,
-                        cost_sink=_cost_sink,  # the repair's spend joins the run's
-                        soft_deadline_s=timeout_seconds * 0.5,
-                        deadline_monotonic=t_start + timeout_seconds,
-                    ), cycle_id),
-                    timeout=timeout_seconds,
-                )
-                trace_data(cycle_id, desk.ticker, agent_name, "artifact.repair",
-                           data={"prompt":repair_prompt,"response":repair_result.get("response", "")},
-                           reason=rule.name)
-                repair_text = repair_result.get("response", "")
+                            max_tokens=_safe_max_tokens(
+                                agent_name=agent_name,
+                                system_prompt=repair_system,
+                                user_prompt=repair_prompt,
+                                tool_whitelist=None,
+                            ),
+                            enable_tools=False,
+                            model_override=model_override,
+                            prism_overrides=prism_overrides,
+                            cost_sink=_cost_sink,  # the repair's spend joins the run's
+                            soft_deadline_s=timeout_seconds * 0.5,
+                            deadline_monotonic=t_start + timeout_seconds,
+                        ), cycle_id),
+                        timeout=max(1.0, min(timeout_seconds, remaining)),
+                    )
+                    repair_text = repair_result.get("response", "")
+                    # Every attempt's spend counts, including the ones thrown away.
+                    token_usage += repair_result.get("tokens_used", 0)
+                    trace_data(cycle_id, desk.ticker, agent_name, "artifact.repair",
+                               data={"prompt": repair_prompt, "response": repair_text,
+                                     "attempt": attempt},
+                               reason=rule.name)
+                    cut_off = repair_was_cut_off(repair_result, repair_text)
+                    repair_attempts.append({"attempt": attempt, "chars": len(repair_text or ""),
+                                            "tokens_used": repair_result.get("tokens_used"),
+                                            "cut_off": cut_off})
+                    if not cut_off:
+                        break
+                    logger.warning(
+                        "[V3Runner] %s: repair attempt %d for %s came back cut off "
+                        "(%d chars, tokens_used=%s)%s",
+                        agent_name, attempt, desk.ticker, len(repair_text or ""),
+                        repair_result.get("tokens_used"),
+                        "" if attempt >= REPAIR_ATTEMPTS else " — retrying",
+                    )
+                if len(repair_attempts) > 1:
+                    desk.cycle_metadata.setdefault('repair_retries', []).append(
+                        {'agent': agent_name, 'ticker': desk.ticker, 'rule': rule.name,
+                         'attempts': repair_attempts})
                 artifact = _parse_artifact(repair_text, artifact_type, agent_name)
                 if financial_record is not None:
                     from app.v3.financial_reasoning import render_reasoning_artifact
@@ -1641,7 +1691,7 @@ async def run_v3_agent(
                         "(rule %s)",
                         agent_name, desk.ticker, rule.name,
                     )
-                token_usage += repair_result.get("tokens_used", 0)
+                # token_usage was accumulated per attempt inside the loop above.
                 # Recompute on BOTH repair outcomes: recomputing only on
                 # success meant an AGENT_ERROR row's elapsed_ms excluded the
                 # failed repair pass, understating retry cost (~647s of board

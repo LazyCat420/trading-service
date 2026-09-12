@@ -1,0 +1,502 @@
+{
+ "note": "Every BUY in the last 600 production analyses, with the three inputs resolve_buy_size_pct reads. Captured 2026-09-11 from trading_bot.analysis_results so the sizing gate can be replayed without a database.",
+ "captured_at": "2026-09-11",
+ "source": "trading_bot.analysis_results",
+ "rows": [
+  {
+   "observed_at": "2026-09-11 17:04:26.526000",
+   "ticker": "PAM",
+   "confidence": 68,
+   "agent_position_size_pct": 2.0,
+   "internal_consensus_score": 62,
+   "data_quality": 72,
+   "policy_action_as_shipped": "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+  },
+  {
+   "observed_at": "2026-09-11 16:46:57.869000",
+   "ticker": "HBM",
+   "confidence": 71,
+   "agent_position_size_pct": 0.8,
+   "internal_consensus_score": 68,
+   "data_quality": 72,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-11 16:41:38.172000",
+   "ticker": "HOOD",
+   "confidence": 72,
+   "agent_position_size_pct": 0.5,
+   "internal_consensus_score": 72,
+   "data_quality": 75,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-11 16:19:05.306000",
+   "ticker": "UBER",
+   "confidence": 72,
+   "agent_position_size_pct": 2.5,
+   "internal_consensus_score": null,
+   "data_quality": 68,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-11 15:41:08.299000",
+   "ticker": "EAT",
+   "confidence": 71,
+   "agent_position_size_pct": 1.2,
+   "internal_consensus_score": 72,
+   "data_quality": 72,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-11 15:11:38.166000",
+   "ticker": "ORCL",
+   "confidence": 71,
+   "agent_position_size_pct": 0.8,
+   "internal_consensus_score": 78,
+   "data_quality": 72,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-11 02:45:45.455000",
+   "ticker": "MSFT",
+   "confidence": 71,
+   "agent_position_size_pct": 1.5,
+   "internal_consensus_score": 72,
+   "data_quality": 72,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-08 19:34:58.908000",
+   "ticker": "CRWV",
+   "confidence": 70,
+   "agent_position_size_pct": 0.5,
+   "internal_consensus_score": 62,
+   "data_quality": 62,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-08 14:25:13.488000",
+   "ticker": "ORCL",
+   "confidence": 66,
+   "agent_position_size_pct": 1.2,
+   "internal_consensus_score": 62,
+   "data_quality": 72,
+   "policy_action_as_shipped": "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+  },
+  {
+   "observed_at": "2026-09-08 11:39:51.578000",
+   "ticker": "MSFT",
+   "confidence": 72,
+   "agent_position_size_pct": 1.5,
+   "internal_consensus_score": 78,
+   "data_quality": 75,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-08 09:32:10.673000",
+   "ticker": "RH",
+   "confidence": 72,
+   "agent_position_size_pct": 1.2,
+   "internal_consensus_score": 62,
+   "data_quality": 55,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-07 22:43:02.281000",
+   "ticker": "FWONK",
+   "confidence": 70,
+   "agent_position_size_pct": 3.0,
+   "internal_consensus_score": 63,
+   "data_quality": 70,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-07 20:04:11.937000",
+   "ticker": "EAT",
+   "confidence": 71,
+   "agent_position_size_pct": 1.3,
+   "internal_consensus_score": 82,
+   "data_quality": 62,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-07 19:34:28.259000",
+   "ticker": "AGI",
+   "confidence": 72,
+   "agent_position_size_pct": 1.1,
+   "internal_consensus_score": 78,
+   "data_quality": 55,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-07 19:28:31.594000",
+   "ticker": "BAR",
+   "confidence": 62,
+   "agent_position_size_pct": 2.0,
+   "internal_consensus_score": 58,
+   "data_quality": 45,
+   "policy_action_as_shipped": "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+  },
+  {
+   "observed_at": "2026-09-07 15:40:09.714000",
+   "ticker": "XT",
+   "confidence": 68,
+   "agent_position_size_pct": 1.8,
+   "internal_consensus_score": 68,
+   "data_quality": 55,
+   "policy_action_as_shipped": "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+  },
+  {
+   "observed_at": "2026-09-07 00:41:00.765000",
+   "ticker": "MANU",
+   "confidence": 71,
+   "agent_position_size_pct": 3.0,
+   "internal_consensus_score": 68,
+   "data_quality": 78,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-07 00:23:54.206000",
+   "ticker": "DKS",
+   "confidence": 70,
+   "agent_position_size_pct": 1.9,
+   "internal_consensus_score": 58,
+   "data_quality": 85,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-07 00:14:21.791000",
+   "ticker": "MRNA",
+   "confidence": 71,
+   "agent_position_size_pct": 0.5,
+   "internal_consensus_score": 62,
+   "data_quality": 90,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-07 00:11:54.397000",
+   "ticker": "CRDO",
+   "confidence": 70,
+   "agent_position_size_pct": 0.4,
+   "internal_consensus_score": 62,
+   "data_quality": 75,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-06 23:35:15.394000",
+   "ticker": "SMR",
+   "confidence": 62,
+   "agent_position_size_pct": 0.2,
+   "internal_consensus_score": 58,
+   "data_quality": 80,
+   "policy_action_as_shipped": "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+  },
+  {
+   "observed_at": "2026-09-06 21:38:40.623000",
+   "ticker": "SNDK",
+   "confidence": 66,
+   "agent_position_size_pct": 0.3,
+   "internal_consensus_score": 58,
+   "data_quality": 78,
+   "policy_action_as_shipped": "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+  },
+  {
+   "observed_at": "2026-09-06 19:19:35.363000",
+   "ticker": "AMD",
+   "confidence": 72,
+   "agent_position_size_pct": 0.5,
+   "internal_consensus_score": 68,
+   "data_quality": 85,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-06 12:32:53.555000",
+   "ticker": "NVDA",
+   "confidence": 72,
+   "agent_position_size_pct": 0.4,
+   "internal_consensus_score": 78,
+   "data_quality": 82,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-06 06:46:39.531000",
+   "ticker": "ET",
+   "confidence": 74,
+   "agent_position_size_pct": 2.0,
+   "internal_consensus_score": 74,
+   "data_quality": 88,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-06 05:34:04.172000",
+   "ticker": "AVGO",
+   "confidence": 72,
+   "agent_position_size_pct": 1.1,
+   "internal_consensus_score": 72,
+   "data_quality": 85,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-06 03:29:00.632000",
+   "ticker": "SCHD",
+   "confidence": 72,
+   "agent_position_size_pct": 4.0,
+   "internal_consensus_score": 70,
+   "data_quality": 70,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-06 00:08:21.660000",
+   "ticker": "GOOG",
+   "confidence": 71,
+   "agent_position_size_pct": 1.0,
+   "internal_consensus_score": 68,
+   "data_quality": 85,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-06 00:05:34.449000",
+   "ticker": "ZS",
+   "confidence": 72,
+   "agent_position_size_pct": 0.8,
+   "internal_consensus_score": 63,
+   "data_quality": 85,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-05 23:52:04.107000",
+   "ticker": "SNOW",
+   "confidence": 72,
+   "agent_position_size_pct": 1.0,
+   "internal_consensus_score": 68,
+   "data_quality": 85,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-05 21:56:54.564000",
+   "ticker": "LULU",
+   "confidence": 71,
+   "agent_position_size_pct": 1.2,
+   "internal_consensus_score": 68,
+   "data_quality": 82,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-05 07:11:09.927000",
+   "ticker": "C",
+   "confidence": 72,
+   "agent_position_size_pct": 0.8,
+   "internal_consensus_score": 75,
+   "data_quality": 75,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-04 03:47:53.988000",
+   "ticker": "HPE",
+   "confidence": 72,
+   "agent_position_size_pct": 1.6,
+   "internal_consensus_score": 72,
+   "data_quality": 72,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-04 03:25:03.624000",
+   "ticker": "DELL",
+   "confidence": 72,
+   "agent_position_size_pct": 1.0,
+   "internal_consensus_score": 62,
+   "data_quality": 62,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-03 20:52:04.222000",
+   "ticker": "AGX",
+   "confidence": 68,
+   "agent_position_size_pct": 0.6,
+   "internal_consensus_score": 67,
+   "data_quality": 75,
+   "policy_action_as_shipped": "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+  },
+  {
+   "observed_at": "2026-09-03 13:37:04.646000",
+   "ticker": "AGX",
+   "confidence": 67,
+   "agent_position_size_pct": 0.27,
+   "internal_consensus_score": 45,
+   "data_quality": 75,
+   "policy_action_as_shipped": "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+  },
+  {
+   "observed_at": "2026-09-03 12:10:34.705000",
+   "ticker": "TMUS",
+   "confidence": 72,
+   "agent_position_size_pct": 3.0,
+   "internal_consensus_score": 65,
+   "data_quality": 75,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-03 11:17:44.263000",
+   "ticker": "CSCO",
+   "confidence": 76,
+   "agent_position_size_pct": 2.7,
+   "internal_consensus_score": 76,
+   "data_quality": 80,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-09-03 08:25:16.300000",
+   "ticker": "NVDA",
+   "confidence": 72,
+   "agent_position_size_pct": 1.6,
+   "internal_consensus_score": 78,
+   "data_quality": 75,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-08-26 07:59:08.703000",
+   "ticker": "CVX",
+   "confidence": 62,
+   "agent_position_size_pct": 4.0,
+   "internal_consensus_score": 58,
+   "data_quality": 80,
+   "policy_action_as_shipped": "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+  },
+  {
+   "observed_at": "2026-08-20 03:23:14.330000",
+   "ticker": "NVDA",
+   "confidence": 63,
+   "agent_position_size_pct": 1.5,
+   "internal_consensus_score": 64,
+   "data_quality": 80,
+   "policy_action_as_shipped": "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+  },
+  {
+   "observed_at": "2026-08-18 14:39:12.490000",
+   "ticker": "GOOG",
+   "confidence": 70,
+   "agent_position_size_pct": 3.0,
+   "internal_consensus_score": 72,
+   "data_quality": 80,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-08-18 14:33:17.607000",
+   "ticker": "SPY",
+   "confidence": 68,
+   "agent_position_size_pct": 6.0,
+   "internal_consensus_score": 70,
+   "data_quality": 55,
+   "policy_action_as_shipped": "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+  },
+  {
+   "observed_at": "2026-08-17 14:27:08.995000",
+   "ticker": "AMZN",
+   "confidence": 70,
+   "agent_position_size_pct": 3.5,
+   "internal_consensus_score": 70,
+   "data_quality": 85,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-08-12 20:55:41.573000",
+   "ticker": "TRMB",
+   "confidence": 72,
+   "agent_position_size_pct": 2.4,
+   "internal_consensus_score": 74,
+   "data_quality": 80,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-08-12 14:49:52.706000",
+   "ticker": "AMZN",
+   "confidence": 67,
+   "agent_position_size_pct": 4.0,
+   "internal_consensus_score": 68,
+   "data_quality": 78,
+   "policy_action_as_shipped": "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+  },
+  {
+   "observed_at": "2026-08-12 14:42:33.465000",
+   "ticker": "ABT",
+   "confidence": 66,
+   "agent_position_size_pct": 3.3,
+   "internal_consensus_score": 68,
+   "data_quality": 80,
+   "policy_action_as_shipped": "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+  },
+  {
+   "observed_at": "2026-08-12 07:45:54.531000",
+   "ticker": "SE",
+   "confidence": 72,
+   "agent_position_size_pct": 1.5,
+   "internal_consensus_score": 78,
+   "data_quality": 85,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-08-12 07:45:19.750000",
+   "ticker": "MCD",
+   "confidence": 68,
+   "agent_position_size_pct": 4.0,
+   "internal_consensus_score": 70,
+   "data_quality": 75,
+   "policy_action_as_shipped": "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+  },
+  {
+   "observed_at": "2026-08-12 05:24:48.356000",
+   "ticker": "ET",
+   "confidence": 70,
+   "agent_position_size_pct": 6.0,
+   "internal_consensus_score": 68,
+   "data_quality": 85,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-08-10 23:34:05.645000",
+   "ticker": "MA",
+   "confidence": 63,
+   "agent_position_size_pct": 3.5,
+   "internal_consensus_score": 63,
+   "data_quality": 85,
+   "policy_action_as_shipped": "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+  },
+  {
+   "observed_at": "2026-08-10 14:25:17.744000",
+   "ticker": "T",
+   "confidence": 66,
+   "agent_position_size_pct": 4.0,
+   "internal_consensus_score": 82,
+   "data_quality": 85,
+   "policy_action_as_shipped": "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+  },
+  {
+   "observed_at": "2026-08-09 19:37:05.566000",
+   "ticker": "FCF",
+   "confidence": 70,
+   "agent_position_size_pct": 3.5,
+   "internal_consensus_score": 70,
+   "data_quality": 75,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  },
+  {
+   "observed_at": "2026-08-06 14:39:35.884000",
+   "ticker": "EPD",
+   "confidence": 68,
+   "agent_position_size_pct": 4.0,
+   "internal_consensus_score": 68,
+   "data_quality": 85,
+   "policy_action_as_shipped": "HOLD_POLICY_BLOCKED_LOW_CONFIDENCE"
+  },
+  {
+   "observed_at": "2026-08-06 06:52:55.796000",
+   "ticker": "EXLS",
+   "confidence": 72,
+   "agent_position_size_pct": 3.5,
+   "internal_consensus_score": 75,
+   "data_quality": 90,
+   "policy_action_as_shipped": "EXECUTE_BUY"
+  }
+ ]
+}

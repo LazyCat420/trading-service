@@ -3,6 +3,7 @@
 
     python -m scripts.decision_score_report distribution
     python -m scripts.decision_score_report shadow
+    python -m scripts.decision_score_report permutation
 
 DISTRIBUTION scores the whole universe from the rows on file and prints the
 composite's spread and the band split. Run it after ANY change to the weights,
@@ -333,12 +334,83 @@ def shadow() -> int:
     return 0
 
 
+def _split_spread(pairs):
+    """Top-half minus bottom-half mean P&L, ranked by the first element."""
+    ordered = sorted(pairs, key=lambda pair: pair[0])
+    half = len(ordered) // 2
+    if half == 0:
+        return None, 0, 0
+    bottom = [pnl for _, pnl in ordered[:half]]
+    top = [pnl for _, pnl in ordered[-half:]]
+    return sum(top) / len(top) - sum(bottom) / len(bottom), len(bottom), len(top)
+
+
+def _permutation_p(pairs, trials=20000, seed=20260911):
+    """Two-sided p for the observed spread, shuffling the ranker against P&L.
+
+    The null is that the ranker carries no information about realised P&L, so
+    the label is exchangeable: reshuffling it and recomputing the same split
+    gives the distribution of spreads the ranker could produce by chance. A
+    spread this report prints is not evidence until it clears that.
+    """
+    import random
+    observed, _, _ = _split_spread(pairs)
+    if observed is None:
+        return None, None
+    rng = random.Random(seed)
+    keys = [key for key, _ in pairs]
+    pnls = [pnl for _, pnl in pairs]
+    hits = 0
+    for _ in range(trials):
+        rng.shuffle(keys)
+        spread, _, _ = _split_spread(list(zip(keys, pnls)))
+        if abs(spread) >= abs(observed) - 1e-12:
+            hits += 1
+    return observed, (hits + 1) / (trials + 1)
+
+
+def permutation() -> int:
+    """The test the shadow report says to run before believing any spread.
+
+    Run on two populations: every resolved decision, and BUYs alone. The second
+    is the one that means anything about money -- a HOLD carries a hypothetical
+    P&L, and a blocked SELL on an unheld ticker is not a trade at all. A
+    headline computed over the first population has been retracted here before.
+    """
+    rows = _shadow_rows()
+    fields = {name: index for index, name in enumerate(_SCORE_COLUMNS)}
+    pnl_at = len(_SCORE_COLUMNS)
+    populations = {
+        "every resolved decision": lambda row: True,
+        "BUY decisions only": lambda row: row[fields["board_action"]] == "BUY",
+    }
+    rankers = {"baseline composite": "score",
+               "baseline confidence": "baseline_confidence",
+               "board confidence": "board_confidence"}
+    for label, keep in populations.items():
+        print(f"\n{label}")
+        for name, column in rankers.items():
+            pairs = [(row[fields[column]], row[pnl_at]) for row in rows
+                     if keep(row) and isinstance(row[fields[column]], (int, float))
+                     and isinstance(row[pnl_at], (int, float))]
+            if len(pairs) < 8:
+                print(f"  {name:<22} n={len(pairs):<4} too few resolved rows to test")
+                continue
+            spread, p = _permutation_p(pairs)
+            verdict = "distinguishable from chance" if p is not None and p < 0.05 else "NOT distinguishable from chance"
+            print(f"  {name:<22} n={len(pairs):<4} spread={spread:+.2f}pp  p={p:.3f}  {verdict}")
+    print("\nA ranker that does not clear this is advisory, whatever its spread looks like.")
+    return 0
+
+
 def main() -> int:
     mode = sys.argv[1] if len(sys.argv) > 1 else "distribution"
     if mode == "distribution":
         return distribution()
     if mode == "shadow":
         return shadow()
+    if mode == "permutation":
+        return permutation()
     print(__doc__)
     return 2
 

@@ -512,3 +512,33 @@ def record_rule_firing(
         )
     except Exception as e:  # noqa: BLE001 — never block the pipeline
         logger.debug("[OutputRules] firing not recorded (non-fatal): %s", e)
+
+
+#: Below this, a reply is too short for zero reported usage to mean anything:
+#: an empty or one-word answer legitimately costs almost nothing to report.
+ZERO_USAGE_MIN_CHARS = 120
+
+
+def was_cut_off(result: dict | None, text: str | None) -> bool:
+    """True when a generation stopped mid-artifact rather than choosing to stop.
+
+    Two independent signals, either of which is sufficient:
+
+    * `classify_output` returns TRUNCATED_JSON -- JSON started and never closed.
+    * The reply is substantial but the provider reported ZERO output tokens.
+      Measured 2026-09-11 on the case03 repair payload: usage.outputTokens==0
+      matched truncated/invalid output in 8 of 8 trials and a real count
+      appeared in every completed one, and it agreed with TRUNCATED_JSON on 6
+      of 6. The prism-proxy envelope carries no finish/stop reason at all, so
+      this is the only other evidence available.
+
+    A caller may retry on this. It must NOT retry on a complete artifact whose
+    CONTENT it dislikes: that is re-rolling for a nicer answer, not recovery.
+    """
+    body = (text or "").strip()
+    if body and classify_output(body).name == TRUNCATED_JSON.name:
+        return True
+    if len(body) < ZERO_USAGE_MIN_CHARS:
+        return False
+    reported = (result or {}).get("tokens_used")
+    return isinstance(reported, (int, float)) and not isinstance(reported, bool) and reported == 0

@@ -1,0 +1,1034 @@
+{
+ "note": "Real Board verdicts and the synthesizer decision that followed each one, taken from trading_bot.shared_desk on 2026-09-11. Used so the override tests start from a shape production actually produces, not an invented one.",
+ "captured_at": "2026-09-11",
+ "source": "trading_bot.shared_desk",
+ "pairs": [
+  {
+   "ticker": "OWL",
+   "cycle_id": "cycle-v3-1789147244",
+   "board": {
+    "action": "HOLD",
+    "confidence": 68,
+    "position_size_pct": 0.0,
+    "stop_loss": 9.95,
+    "take_profit": 12.73,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "price_below",
+     "value": 10.36
+    },
+    "resolution_condition": {
+     "open_question": "Does the 10.36 support zone hold through the 2026-10-12 Q3 print, and does adjusted EPS (~$0.2309 est) reconcile against GAAP prints ($0.01-0.02/qtr) with the -34.6% EPS QoQ contraction stabilizing?",
+     "resolving_fact": "A confirmed hold of 10.36 (no close below 9.95, 1xATR under support) plus a Q3 print on 2026-10-12 showing adjusted EPS >= ~$0.22 with stable-to-improving GAAP net income would settle the entry question; a close below 9.95 invalidates the support zone and kills the bounce thesis."
+    },
+    "reasoning": "The watch trigger fired exactly as the prior cycle planned \u2014 price $10.56 broke the $10.89 2xATR stop zone and sits 1.99% above stored support $10.36 \u2014 but the pullback condition was necessary, not sufficient. The quant desk's own signals section states the only defensible bounce structure requires a CONFIRMED HOLD of 10.36, which has not happened, and the tape shows distribution (down-day volume 1.4x up-day), GARCH vol EXPANSION (+0.2152 premium, 37.6% ann) into the dated 2026-10-12 earnings catalyst, price below SMA-20/50/200 with ADX 30.2 strong downtrend, and a realized 252d max drawdown of -55.4% close-basis. Fundamentals do not rescue the entry: GAAP net income fell from $78.8M (FY25) to $26.9M in 1H26, trailing P/E 88.08, EV/Sales 6.8x \u2014 the TOP of the asset-management cross-section (TPG 4.1x, AMG 4.2x, sector median ~4.2x) \u2014 while delivering the BOTTOM on quality (net margin 2.7%, ROE 5.65%, ROIC 1.28% vs AMG 37.7%/24.3%). The 'cheap' forward P/E 10.71 and PEG 0.17 rest entirely on adjusted EPS ~$0.22/qtr vs GAAP prints of $0.01-0.02, and the same estimate stream contracted -34.6% EPS QoQ. The debate was SKIPPED \u2014 both desks BEARISH, no bull defense produced \u2014 so the bear case is an unopposed brief, but I independently verify its load-bearing claims (GAAP earnings decline, estimate-dependent multiple, distribution tape) against the precomputed data and they hold. The genuine contradiction I am trading around: analysts rec 1.94 with $12.74 target (+20.5%) and insiders bought $7.1M/12m with zero selling, versus institutional funds net -17.7M shares Q2-vs-Q1 and 16.36% short float \u2014 the smart-money flow side is bearish and the OBDC/BDC credit overhang (dividend cut confirmed, 81% of software loans marked down industry-wide) caps fee-growth sentiment. With no shorting, the only executable action is BUY, and initiating into confirmed distribution ahead of an earnings print where the adjusted-vs-GAAP basis gap must be reconciled is negative expected value. This is an entry-timing problem, not a broken-company problem: the re-entry structure is on file (confirmed hold of 10.36, stop 9.95 = 1xATR under support, target 12.73 stored resistance, R:R 3.49:1, size <=1.1% equity per HRP ceiling). I register price_below 10.36 as a monitor trigger \u2014 a confirmed break invalidates the support zone and would wake re-analysis; a confirmed hold plus a constructive Q3 print flips this to BUY within the 1.1% HRP bracket."
+   },
+   "synthesizer": {
+    "action": "HOLD",
+    "confidence": 70,
+    "position_size_pct": 0.0,
+    "stop_loss": 9.95,
+    "take_profit": 12.73,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "price_below",
+     "value": 10.36
+    },
+    "resolution_condition": {
+     "open_question": "Does the 10.36 support zone hold through the 2026-10-12 Q3 print, and does adjusted EPS (~$0.2309 est) reconcile against GAAP prints ($0.01-0.02/qtr) with the -34.6% EPS QoQ contraction stabilizing?",
+     "resolving_fact": "A confirmed hold of 10.36 (no close below 9.95, 1xATR under support) plus a Q3 print on 2026-10-12 showing adjusted EPS >= ~$0.22 with stable-to-improving GAAP net income would settle the entry question; a close below 9.95 invalidates the support zone and kills the bounce thesis."
+    },
+    "reasoning": "Preserve the Board's HOLD/watch_only verdict (board:a929795e970bd41200083d26, decision_relation=preserve). The watch trigger fired exactly as planned (10.56 <= 10.89) but the pullback condition was necessary-not-sufficient: the tape shows distribution (down-day volume 1.4x up-day), GARCH vol EXPANSION (+0.16 premium, 46.7% ann) into the dated 2026-10-12 Q3 print, price below SMA-20/50/200 with ADX 30.2 strong downtrend, and -42% off the 52w high. Fundamentals do not rescue the entry: GAAP net income fell $78.8M (FY25) -> $26.9M (1H26), trailing P/E 88.08, EV/Sales 6.8x = top of asset-manager cross-section (TPG 4.1x, AMG 4.2x) on bottom-tier quality (net margin 2.71%, ROIC 1.28%), and the 'cheap' forward P/E 10.71/PEG 0.17 rest entirely on adjusted EPS ~$0.22/qtr vs GAAP prints $0.01-0.02. Debate was SKIPPED (both desks BEARISH, no bull defense) \u2014 an unopposed bear brief I independently verified against precomputed data. The re-entry structure is on file and preserved: confirmed hold of 10.36 support, stop 9.95 (1xATR under support, NOT the briefing's 2xATR 9.71 which sits inside the support zone), target 12.73 stored resistance, R:R 3.49:1, size <=1.1% equity per HRP ceiling. A confirmed break below 10.36/9.95 wakes re-analysis and kills the bounce thesis; a confirmed hold plus a constructive Q3 print (adjusted EPS >= ~$0.22, stable GAAP) flips this to BUY within the HRP bracket."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "PAM",
+   "cycle_id": "cycle-v3-1789133404",
+   "board": {
+    "action": "BUY",
+    "confidence": 71,
+    "position_size_pct": 2.0,
+    "stop_loss": 77.9,
+    "take_profit": 94.5,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "enter_now",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "price_below",
+     "value": 78.05
+    },
+    "resolution_condition": {
+     "open_question": "Does the 500-MW data-center proposal acquire committed financing, an anchor customer, or FID before the 2026-11-02 earnings print?",
+     "resolving_fact": "A company filing or press release naming a signed agreement, financing commitment, or final investment decision for the Loma de la Lata data center \u2014 or the absence of one by 11/02."
+    },
+    "reasoning": "The contradiction I am trading: the desk's own numbers say the market prices PAM's EBIT at -15.3%/yr for a decade (reverse DCF, EV $5.9B) while the realized top line compounds +3.0%/yr and the tape just flipped from broken to trending \u2014 price $88.45 above SMA-20/50/200, MACD +0.8507, ADX 26.0, and the 9/10 breakout candle printed 1.97x average volume (331.3K vs 168K). The prior cycle's explicit entry condition \u2014 reclaim SMA-50 with volume \u2014 is met and verified by the judge. The bear's best claims are timing/size claims, not thesis-breakers: (1) the 500-MW data-center headline is an unfunded intention with no FID and no anchor customer \u2014 I treat it as worth $0 in my base case, sizing to survive its full unwind; (2) entry is late (+5.4% above SMA-50, Bollinger UPPER, Stoch 97.9/88.0) and the 2xATR stop at $83.53 sits inside the SMA-50/200 confluence where a routine wick-through takes it out. Both are answered structurally, not by denial: size at 2.0% of equity (below the 2.8% HRP ceiling), place the stop at $77.90 \u2014 below the $78.05 stored support and outside the confluence wick zone \u2014 and let the position survive the headline unwinding entirely. That stop is -11.9% from spot, risking ~$244 (0.24% of equity) against a structural target of $94.50 (52-week high zone) for ~1.2:1, with the analyst consensus $121.09 as upside optionality if the oil ramp proves durable. The valuation desk's own math is the anchor: at EV/EBIT 12.5x PAM trades AT utility-peer medians despite no D&A adjustment, and the reverse DCF says the price demands near-continuation of the realized EBIT decline \u2014 the cheap P/E is not demanding a growth miracle, so the +53.5% revenue ramp (Q2-26 net income $172M, EPS $2.50) is upside the market is not paying for. What would make me wrong: a close below $78.05 (thesis-level break of the accumulation structure), or Q3-2026 EBIT below $100M (the valuation desk's kill-switch, predating the 11/02 print). The bear's MS substitute is a discovery-screen rank with no research behind it and adds Financials concentration to a book already 13% in that sector; PAM's +0.07 average correlation is genuine diversification the book lacks. I am not chasing the re-rating headline \u2014 I am buying the valuation floor with a tape regime that finally confirms it, sized so the headline's failure costs 0.24% of equity."
+   },
+   "synthesizer": {
+    "action": "BUY",
+    "confidence": 68,
+    "position_size_pct": 2.0,
+    "stop_loss": 77.9,
+    "take_profit": 94.5,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "enter_now",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "price_below",
+     "value": 78.05
+    },
+    "resolution_condition": {
+     "open_question": "Does the 500-MW data-center proposal acquire committed financing, an anchor customer, or FID before the 2026-11-02 earnings print?",
+     "resolving_fact": "A company filing or press release naming a signed agreement, financing commitment, or final investment decision for the Loma de la Lata data center \u2014 or the absence of one by 11/02."
+    },
+    "reasoning": "Preserving the Board's BUY with its full risk structure (decision_relation=preserve, source_board_ref board:423926d0c6c2ebd5d3022aa5). The governing logic survives adversarial review: the judge verified the tape flip (price $88.45 above SMA-20/50/200, MACD +0.8507, ADX 26.0, 9/10 candle 1.97x volume) and the valuation floor, and the corrected reverse DCF (implied +3.28%/yr NOPAT growth vs +3.0% realized revenue CAGR) confirms the price pays for the realized top-line trend and nothing for the oil ramp or data-center optionality. The Bear won the catalyst leg \u2014 the 500-MW headline is an unfunded intention with no anchor customer, financing, or FID, already ~2.6% priced at stored resistance $88.67 \u2014 and the Board answered it structurally rather than by denial: the headline is valued at $0 in the base case, the stop sits at $77.90 below the $78.05 stored support and outside the SMA-50/200 confluence wick zone (resolving the judge's compromised-stop finding), and size at 2.0% of equity is below the binding 2.8% HRP ceiling so a full headline unwind costs ~0.24% of equity. The prior cycle's explicit entry condition (reclaim SMA-50 with volume) is met and verified; the stale 08-04-earnings question is closed (beat fully priced; the rebound was headline/SMA-driven). Regime is CONTRADICTORY (vol spike off calm base, defensive rotation, rising 10Y at 4.94%) \u2014 PAM's beta -0.24 and +0.07 average book correlation are genuine insulation, and the tape absorbed the 9/1 ARGT downgrade while rallying +10.9%. My conviction is 68, not the Board's 71: the desk's own event study shows +0.38% mean 5-day forward edge (53.1% win) with a -23.6% worst-5d tail from upper-band entries, the institutional-accumulation framing is disputed (13F momentum FLAT; the +2.92M-share delta is stale Q2-vs-Q1), and the winning case is trend-plus-floor, not catalyst re-rating. The R:R to the structural $94.50 target is ~1.2:1 \u2014 thin \u2014 with $121.09 consensus as unproven optionality. This is a small, structurally-protected position on a verified trend against a fair-value floor, not a high-conviction catalyst trade. Kill-switches: close below $78.05, or Q3-2026 EBIT below $100M."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "HBM",
+   "cycle_id": "cycle-v3-1789133404",
+   "board": {
+    "action": "BUY",
+    "confidence": 71,
+    "position_size_pct": 0.8,
+    "stop_loss": 24.26,
+    "take_profit": 34.94,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_on_condition",
+    "trigger_purpose": "entry",
+    "dynamic_trigger": {
+     "type": "price_above",
+     "value": 28.29
+    },
+    "resolution_condition": {
+     "open_question": "Does the structural copper deficit reassert as the marginal price driver after the transient tariff-hoarding premium unwinds, and does support $26.06 hold on a closing basis?",
+     "resolving_fact": "Either a daily close back above SMA-20 $28.29 (momentum repair, entry fills) or a daily close below $26.06 (setup void, no entry); the White House refined-copper tariff decision is the dated-ish binary that settles the copper path."
+    },
+    "reasoning": "The debate's bear win is real but its decisive claim is TIMING, not thesis: the judge verified the bull's core facts (two consecutive EPS beats +16.6%/+13.6% after H2-2025 misses; FY25 EPS $1.44 vs $0.20; P/E 16.6 TTM/14.01 forward at the cheap end of large-cap Materials vs ~21x median; structural copper deficit conceded outright by the bear \u2014 TC/RC benchmark $0/t, spot ~-$127/t, Chile weakest Q2 output in 19 years) and verified the bear's facts (tariff-hoarding premium unwinding now, White House decision stalled past 6/30/26, MACD -0.37, price below SMA-20 $28.29, ADX 17.3). The contradiction IS the trade: the market is repricing a transient tariff premium while the company-specific fundamentals inflected positive and the structural deficit \u2014 which sets miner cash flows \u2014 is intact. The prior cycle's HOLD demanded exactly this pullback (RSI 68.76\u219248.33, stochastic 19.7/27.2 oversold, price $27.04 vs SMA-200 $23.78, +13.7% above). But the bear is right that the 7-session path runs through a binary the desk cannot date, and support $26.06 is untested on closes (9/10 low $26.65). So I do not chase: I arm a conditional entry at the covariance-bound 0.8% HRP ceiling (~$818, risking ~0.08% of equity at the 2xATR stop $24.26, -10.3%), triggered by SMA-20 reclaim at 28.29 (momentum repair, the bull's path) or a test of 26.06 (the bear's own invalidation level, entered only if copper stabilizes). R:R 2.84:1 to the $34.94 consensus target. The bear's MS substitute is a preference, not a scored comparison, and adds Financial Services concentration to a 13%-tilted book; HBM's +0.17 avg correlation and genuine diversification value argue for the 0.8% slot. What would make me wrong: a daily close below $26.06 on a copper leg down voids the setup (no fill), or a tariff decision that unwinds the premium faster than the deficit reasserts \u2014 capped by the $24.26 stop."
+   },
+   "synthesizer": {
+    "action": "BUY",
+    "confidence": 71,
+    "position_size_pct": 0.8,
+    "stop_loss": 24.26,
+    "take_profit": 34.94,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_on_condition",
+    "trigger_purpose": "entry",
+    "dynamic_trigger": {
+     "type": "price_above",
+     "value": 28.29
+    },
+    "resolution_condition": {
+     "open_question": "Does the structural copper deficit reassert as the marginal price driver after the transient tariff-hoarding premium unwinds, and does support $26.06 hold on a closing basis?",
+     "resolving_fact": "Either a daily close back above SMA-20 $28.29 (momentum repair, entry fills) or a daily close below $26.06 (setup void, no entry); the White House refined-copper tariff decision is the dated-ish binary that settles the copper path."
+    },
+    "reasoning": "Preserve the Board's BUY with its conditional entry intact. The debate resolved cleanly: the Bear conceded the structural copper deficit outright (TC/RC benchmark $0/t, spot ~-$127/t, Chile weakest Q2 output in 19 years) and the judge verified the Bull's core facts \u2014 two consecutive EPS beats (+16.6% Q1-26, +13.6% Q2-26) after H2-2025 misses, FY25 EPS $1.44 vs $0.20, and valuation at the cheap end of large-cap Materials (16.6x TTM/14.0x forward vs ~21x median). The Bear's decisive hit is TIMING, not thesis: the marginal copper price driver is the transient tariff-hoarding premium, and it is unwinding now (SMM/Business Recorder/FXEmpire 9/11 headlines confirm copper snapping a 10-week winning streak). The Board correctly converted this into a conditional entry rather than a chase: enter_on_condition with the SMA-20 reclaim at $28.29 as the momentum-repair trigger, voided by a daily close below $26.06. R:R 2.84:1 to the $34.94 consensus target with the 2xATR stop at $24.26 (-10.3%). Position sized at the 0.8% HRP ceiling \u2014 the covariance-bound constraint (62.2% annualized vol, highest in the comp set, HBM-TSM +0.48 correlation) \u2014 risking ~0.08% of equity. The bear's MS substitute is a preference, not a scored comparison, and adds Financial Services concentration to a 13%-tilted book. Internal consensus is solid but not unanimous: quant is NEUTRAL (58%) with no order recommendation, the debate judge called the 7-session path genuinely uncertain, and the regime is CONTRADICTORY (VIX z +3.17, 10Y +11bps/5d) with beta 2.31. This is a conditional, covariance-capped entry that respects all of that. No unresolved cross-desk dissent section is present in this context \u2014 the desks' disagreement (quant NEUTRAL vs fundamental bullish) is ordinary research divergence the Board already weighed, not an UNRESOLVED CROSS-DESK DISSENT block requiring dissent_resolution."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "HOOD",
+   "cycle_id": "cycle-v3-1789133404",
+   "board": {
+    "action": "BUY",
+    "confidence": 72,
+    "position_size_pct": 0.5,
+    "stop_loss": 99.16,
+    "take_profit": 128.89,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_now",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "sma_20_drop",
+     "value": 107.02
+    },
+    "resolution_condition": null,
+    "reasoning": "The debate resolved cleanly: the Bull's thesis survived (reverse DCF at EV $107.8B implies only 36.0%/yr NOPAT growth for 10 years vs +48.8%/yr realized revenue CAGR and +32.3% TTM \u2014 the price asserts deceleration, not hypergrowth; institutional accumulation +4.08M Q2 vs Q1 with Citadel/D.E. Shaw/RenTech adding; technical reset to neutral RSI 54.8/Stoch 44.7 with price above all three SMAs), while the Bear's wins were specifically about SIZE and TIMING, not thesis. The decisive bear claims: (1) risk/reward 1.38:1 fails the 2:1 floor and the 2xATR stop at 99.16 is gap-fragile just above the 100.68 gap floor; (2) prediction-market volumes dropped 23% sequentially in August, undercutting the rotation narrative; (3) Q3 EPS est $0.5173 implies sequential decline at 49.4x P/E, with the catalyst 53 days out. These are entry-quality objections \u2014 the calibrated response per the contract is a smaller position with a conditional entry, not a HOLD of an intact thesis. The desk's own Quant conceded the business-level thesis survives but sized at the small end (0.4-0.6% of equity). I resolve by splitting the difference: take 0.5% now (within the HRP ceiling, respecting the Quant's size concession and the 0.6% binding cap) and arm a dynamic_trigger at the 108.8 swing low / SMA-20 confluence so a pullback adds at better R/R where the stop math improves. GARCH vol contraction (55.13% predicted vs 90.28% realized, premium -0.39) and ATR at 1.09x its 30d avg say the tape is cooling, not breaking \u2014 the gap-through-100.68 path is a tail, not the base case, and the 11.2% stop distance is acceptable at 0.5% sizing where a full stop-out costs ~0.06% of book equity. The bear's MS-substitute preference is a screen-rank judgment with no agent research behind it this cycle; HOOD's cross-sectional rank is 75.5th percentile with verified institutional accumulation, which MS does not carry. What would change my mind: a confirmed sequential EPS decline at the 2026-11-03 print, or a close below the 100.68 gap floor (which would trip the stop before the trigger)."
+   },
+   "synthesizer": {
+    "action": "BUY",
+    "confidence": 72,
+    "position_size_pct": 0.5,
+    "stop_loss": 99.16,
+    "take_profit": 128.89,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_now",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "sma_20_drop",
+     "value": 107.02
+    },
+    "resolution_condition": null,
+    "reasoning": "Board verdict BUY @ 72% governs. Thesis survived debate: reverse DCF implies 36.0%/yr NOPAT growth for 10y vs +48.8% realized revenue CAGR and +32.3% TTM \u2014 price asserts deceleration, not hypergrowth; Q2 beat +43.7% with 75% beat rate; institutional accumulation +4.08M Q2 vs Q1 (Citadel/D.E. Shaw/RenTech adding); technicals reset to neutral (RSI 54.8, Stoch 44.7) with price above all three SMAs. Bear wins were entry-quality claims \u2014 R/R 1.38:1 fails the 2:1 floor, gap-fragile stop at 99.16 just above the 100.68 gap floor, prediction-market volumes -23% m/m, Q3 EPS est implies sequential decline \u2014 which the desk's own numbers answer with a small position (0.5%, within the 0.6% HRP ceiling) where a full stop-out costs ~0.06% of book equity. GARCH vol contraction (premium -0.39) says the tape is cooling. I preserve the Board's entry_mode, stop, target, trigger and purpose exactly. Consensus 72: judge and Board aligned on thesis, Quant NEUTRAL at 62 and Bull defense capped in the 60s; disagreement is sizing, not direction. The MS substitute is a screen-rank preference with no research behind it this cycle; HOOD's 75.5th-percentile rank and verified institutional flow outweigh it."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "UBER",
+   "cycle_id": "cycle-v3-1789133404",
+   "board": {
+    "action": "BUY",
+    "confidence": 72,
+    "position_size_pct": 2.5,
+    "stop_loss": 67.08,
+    "take_profit": 82.36,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_now",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "price_below",
+     "value": 69.24
+    },
+    "resolution_condition": null,
+    "reasoning": "The contradiction resolves to a sizing/timing question, not a thesis break. Bull side (verified): CEO Khosrowshahi bought 141k shares (~$10.0M) at $70.96 on 9/10 inside a 2-insider $15.3M cluster buy, and that $70.96 reference sits 1.7% above stored support $69.24 \u2014 insider floor and technical floor coincide. Valuation is genuinely cheap: P/E 15.83, forward P/E 16.39, ROE 37.16%, ROIC 24.02%; reverse DCF shows price implies 14.0%/yr NOPAT growth vs +17.7% realized revenue CAGR. Structure: 2xATR stop $67.08 sits 3.1% below triple-tested support $69.24, giving ~7.1% defined risk against +14.1% to resistance $82.36 (R:R ~2:1) and 5.65:1 to consensus $101.11. Bear side (verified but refuted on impact): institutional Q/Q -248.1M shares with Tiger/D.E. Shaw/Soros/AQR/Two Sigma out \u2014 yet down-day volume 15.6M vs up-day 16.1M (ratio 0.97) shows no distribution signature in the tape, and ADX 15.3 confirms a range regime where fund exits are repositioning, not thesis break. The bear's substitute (MS) is an unresearched screen rank with no thesis behind it. Bull concessions are real and I price them: CEO buy is partially priced (+2.8% pop), layoff savings go to price reinvestment not margin, so the catalyst is 'range repair + insider floor + 11/2 print against a lowered bar' \u2014 not a fast re-rate. The Delivery Hero $14.8B all-cash tender (board-endorsed, acceptance 11/5, three days after Q3 print) is an unquantifiable overhang that caps conviction. Q3 guidance-vs-consensus remains UNRESOLVED (qitem-42d33dd586f2): no sourced company guidance figure exists; the 11/2 print is the main event risk. Calibrated response: BUY at 2.5% of equity \u2014 below the 3.7% HRP ceiling and below the quant desk's full-ceiling recommendation, respecting the vol-spike/defensive-rotation directive and the coin-flip earnings history (50% beat rate, GAAP EPS noisy) \u2014 with entry_mode enter_now at $72.20, hard stop $67.08 (2xATR, below the insider/technical floor), take profit $82.36 (structural resistance). GARCH contraction signal and +0.15 book correlation (max GOOG +0.28) support the diversification case. Bear's decisive claim is timing/size, not thesis; overrode with defined-risk structure."
+   },
+   "synthesizer": {
+    "action": "BUY",
+    "confidence": 72,
+    "position_size_pct": 2.5,
+    "stop_loss": 67.08,
+    "take_profit": 82.36,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_now",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "price_below",
+     "value": 69.24
+    },
+    "resolution_condition": null,
+    "reasoning": "The contradiction resolves to a sizing/timing question, not a thesis break. Bull side (verified): CEO Khosrowshahi bought 141k shares (~$10.0M) at $70.96 on 9/10 inside a 2-insider $15.3M cluster buy, and that $70.96 reference sits 1.7% above stored support $69.24 \u2014 insider floor and technical floor coincide. Valuation is genuinely cheap: P/E 15.83, forward P/E 16.39, ROE 37.16%, ROIC 24.02%; reverse DCF shows price implies 14.0%/yr NOPAT growth vs +17.7% realized revenue CAGR. Structure: 2xATR stop $67.08 sits 3.1% below triple-tested support $69.24, giving ~7.1% defined risk against +14.1% to resistance $82.36 (R:R ~2:1) and 5.65:1 to consensus $101.11. Bear side (verified but refuted on impact): institutional Q/Q -248.1M shares with Tiger/D.E. Shaw/Soros/AQR/Two Sigma out \u2014 yet down-day volume 15.6M vs up-day 16.1M (ratio 0.97) shows no distribution signature in the tape, and ADX 15.3 confirms a range regime where fund exits are repositioning, not thesis break. The bear's substitute (MS) is an unresearched screen rank with no thesis behind it. Bull concessions are real and I price them: CEO buy is partially priced (+2.8% pop), layoff savings go to price reinvestment not margin, so the catalyst is 'range repair + insider floor + 11/2 print against a lowered bar' \u2014 not a fast re-rate. The Delivery Hero $14.8B all-cash tender (board-endorsed, acceptance 11/5, three days after Q3 print) is an unquantifiable overhang that caps conviction. Q3 guidance-vs-consensus remains UNRESOLVED (qitem-42d33dd586f2): no sourced company guidance figure exists; the 11/2 print is the main event risk. Calibrated response: BUY at 2.5% of equity \u2014 below the 3.7% HRP ceiling and below the quant desk's full-ceiling recommendation, respecting the vol-spike/defensive-rotation directive and the coin-flip earnings history (50% beat rate, GAAP EPS noisy) \u2014 with entry_mode enter_now at $72.20, hard stop $67.08 (2xATR, below the insider/technical floor), take profit $82.36 (structural resistance). GARCH contraction signal and +0.15 book correlation (max GOOG +0.28) support the diversification case. Bear's decisive claim is timing/size, not thesis; overrode with defined-risk structure. [Synthesizer unavailable; persisted from Board of Directors verdict]"
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "EAT",
+   "cycle_id": "cycle-v3-1789133404",
+   "board": {
+    "action": "BUY",
+    "confidence": 71,
+    "position_size_pct": 1.2,
+    "stop_loss": 197.22,
+    "take_profit": 254.99,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_on_condition",
+    "trigger_purpose": "entry",
+    "dynamic_trigger": {
+     "type": "sma_50_rise",
+     "value": 213.55
+    },
+    "resolution_condition": {
+     "open_question": "Does the SMA-50 $213.55 / support $211.86 floor hold, and does the imminent analyst day (Raymond James reiterations 9/9-9/10 'ahead of analyst day') confirm or damage the FY27 bridge before any reclaim fires?",
+     "resolving_fact": "A daily close above SMA-50 $213.55 (trigger sma_50_rise) re-analyzes entry with fresh data; a close below $211.86 on expanding vol that reaches the $197.22 2xATR zone before any reclaim voids the armed entry."
+    },
+    "reasoning": "The debate's bull win is conditional and I am trading the condition, not the knife. The contradiction that decides this: the fundamental case is verified and intact (net debt/EBIT 2.74x, TTM EBIT $610.9M, EPS +22.5% QoQ, EBIT CAGR +42.7%/yr, stronger-than-expected FY27 guide $12.60-$13.40, forward P/E 14.8 cheapest in the peer set, reverse DCF demanding only 11.2%/yr NOPAT growth vs +42.7% realized) while the tape is verified bearish (zone break at $228.41, RSI 42.1, MACD -4.42, ADX 31.7, GARCH 34.35% vs 23.92% realized = EXPANSION). Both desks agree the slide is macro/sell-side driven \u2014 no company-negative catalyst found by either side \u2014 and price is +29.8% above SMA-200, so this is a correction inside an uptrend, not a trend break. The quant desk's own re-entry architecture (close above SMA-50 $213.55, RSI>50, size \u22642.4% HRP ceiling, widened stop) is the correct synthesis: fundamentals govern direction, quant governs timing and size. I arm the reclaim as a single structured trigger (sma_50_rise \u2014 the monitor evaluates one listed setup; the RSI>50 half of the desk's conjunction is implied by a genuine reclaim and cannot be registered as a two-condition gate), half-size 1.2% of equity against the 2.4% ceiling to price the EXPANSION regime, the failed liquidity gate (current ratio 0.455, quick 0.285), and the verified institutional reduction (Point72 exit, net -1,496,825 shares across 9 funds). Stop at the 2xATR fallback $197.22 (-8.2%) rather than the desk's $192-$187 zone: the wider stop inverts R:R against $254.99 resistance (2.0-2.3:1 vs 2.98:1); size, not stop width, carries the regime risk. Dissent resolved: I reject the quant desk's BEARISH direction read because its own open_questions concede 'if macro, a relief bounce is likelier once the tape stabilizes' and its searches found no company-negative catalyst \u2014 the bear case is a timing case, and I adopt it as timing. The bear's MS substitute is a discovery screen rank with zero research behind it, not an executable alternative. What would have to be wrong for this to fail: SMA-50 $213.55 / support $211.86 fails and price reaches the $197.22 zone before any reclaim \u2014 in which case the trigger never fires and no capital is committed."
+   },
+   "synthesizer": {
+    "action": "BUY",
+    "confidence": 71,
+    "position_size_pct": 1.2,
+    "stop_loss": 197.22,
+    "take_profit": 254.99,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_on_condition",
+    "trigger_purpose": "entry",
+    "dynamic_trigger": {
+     "type": "sma_50_rise",
+     "value": 213.55
+    },
+    "resolution_condition": {
+     "open_question": "Does the SMA-50 $213.55 / support $211.86 floor hold, and does the imminent analyst day (Raymond James reiterations 9/9-9/10 'ahead of analyst day') confirm or damage the FY27 bridge before any reclaim fires?",
+     "resolving_fact": "A daily close above SMA-50 $213.55 (trigger sma_50_rise) re-analyzes entry with fresh data; a close below $211.86 on expanding vol that reaches the $197.22 2xATR zone before any reclaim voids the armed entry."
+    },
+    "reasoning": "Preserve the Board verdict (board:85f1df8b906de923fb45c082, BUY @ 71). The prior cycle's invalidation clause fired exactly as written \u2014 the $228.41 SMA-50/2xATR zone broke -6.0% on macro volume into the hot-CPI tape, closing $214.80 (-6.7% below the zone) \u2014 and the desk responds by re-arming the confirmation gate, not by entering. Fundamentals govern direction: solvency passes on operator metrics (net debt/EBIT 2.74x, TTM EBIT $610.9M, TTM NI $462.9M, EPS +22.5% QoQ, EBIT CAGR +42.7%/yr FY22\u2192FY25), FY27 guide $12.60-$13.40 was stronger-than-expected, forward P/E 14.8 is cheapest in the peer set, reverse DCF demands only 11.2%/yr NOPAT growth vs +42.7% realized, and price is +29.8% above SMA-200 \u2014 a correction inside an uptrend, not a trend break. Quant governs timing and size: the tape is verified bearish (RSI 42.1, MACD -4.42, ADX 31.7, GARCH 34.35% vs 23.92% realized = EXPANSION, stochastic 6.8/4.9 oversold in a strong-ADX downtrend = continuation fuel, not bounce signal), so the entry waits for a daily close above SMA-50 $213.55 (sma_50_rise trigger). Size 1.2% of equity is half the 2.4% HRP ceiling, pricing the EXPANSION regime, the failed liquidity gate (current 0.46, quick 0.28), and the verified institutional reduction (Point72 exit, net -1,496,825 shares across 9 funds). Stop at the 2xATR fallback $197.22 (-8.2%); the wider $192-$187 zone inverts R:R against $254.99 resistance. Dissent resolved: the quant desk's BEARISH read is adopted as TIMING, not direction \u2014 its own open question concedes 'if macro, a relief bounce is likelier once the tape stabilizes' and its searches found no company-negative catalyst. The MS substitute is an unresearched discovery screen rank, not an executable alternative. No capital is committed until the reclaim fires; if price reaches $197.22 before any reclaim, the armed entry voids."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "ORCL",
+   "cycle_id": "cycle-v3-1789133404",
+   "board": {
+    "action": "BUY",
+    "confidence": 71,
+    "position_size_pct": 0.8,
+    "stop_loss": 136.9,
+    "take_profit": 241.41,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_now",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "sma_50_drop",
+     "value": 140.77
+    },
+    "resolution_condition": {
+     "open_question": "FY27 interest-expense drag from the ~$40B raise on the $8.10 EPS guide, and Q1 FY27 RPO absolute level (~$664B implied, headline-only) \u2014 both flagged three consecutive cycles, unverified pending the 8-K/call transcript",
+     "resolving_fact": "8-K/10-Q filing or call transcript disclosing FY27 interest-expense schedule and Q1 FY27 RPO absolute level; a materially higher interest assumption than management embedded would break the 'cheap at 19.4x guided EPS' claim and force re-analysis"
+    },
+    "reasoning": "The contradiction resolved bull-side and the tape has now confirmed it. Q1 FY27 (2026-09-10 AMC) beat on every verified line \u2014 EPS $1.92 vs $1.74 (+10.4%), revenue $19.35B (+30% YoY), OCI $7.4B (+121%) \u2014 and FY27 guidance was RAISED to >=$90B revenue / $8.10 adj EPS. At $157.45 the stock trades at 19.4x the raised guide and 14.29x forward P/E vs peers TSM 19.9x, ASML 28.8x, ARM 85.4x \u2014 cheapest of the >$200B tech peer set on every line \u2014 while the consensus target sits at $241.41 (+53%). The market's initial +7.5% gap faded to +2.95%, but the quant desk's measured read shows this is vol-crush, not distribution: print-day volume 0.86x the 20d average, close at the 27th percentile of the day's range, and today's tape is up on rising volume with MarketWatch reporting 'several of Oracle's bear cases were addressed head on.' The smart-money overhang was corrected on same-day data: institutional momentum is FLAT (not DECREASING), with Point72/Coatue/RenTech as top-performing holders of $111.9B tracked value \u2014 the -227.3M net exit is the stale pre-print row. Execution is verified: 4 consecutive EPS beats, 0 misses. The prior cycle's conditional BUY deferred capital to this print; the binary resolved bull-side and the entry condition never fired (RSI 56.9, not oversold), so the correct action is to enter now at deliberately small size. The surviving bear material \u2014 FCF burn invisible to the system (no FCF series exists; external Q1 FCF -$5.4B unverifiable), the unquantified ~$40B raise's interest drag on the $8.10 guide, RPO circularity (~$664B implied, headline-only), and the 2025-09-10 analog (+35.9% print then -32.4% in 63 sessions) \u2014 is genuine risk that scales SIZE, not direction. Hence the binding HRP covariance ceiling of 0.8% of equity (~$819), with stop 136.90 below the 137.43/139.75 confluence (4/4 holds since Aug 3), risking ~10.5bps of equity \u2014 the analog repeating costs a fraction of a percent, not a portfolio event. The bear's MS substitute is rejected: it carries a discovery screen rank only, no agent has researched it, and ORCL's +0.12 avg book correlation (highest TSM +0.41) makes it a genuine diversifier for a Financials-tilted book. What would change my mind: a close below 136.90 (confluence failure), or 8-K verification that the interest drag breaks the $8.10 guide."
+   },
+   "synthesizer": {
+    "action": "BUY",
+    "confidence": 71,
+    "position_size_pct": 0.8,
+    "stop_loss": 136.9,
+    "take_profit": 241.41,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_now",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "sma_50_drop",
+     "value": 140.77
+    },
+    "resolution_condition": {
+     "open_question": "FY27 interest-expense drag from the ~$40B raise on the $8.10 EPS guide, and Q1 FY27 RPO absolute level (~$664B implied, headline-only) \u2014 both flagged three consecutive cycles, unverified pending the 8-K/call transcript",
+     "resolving_fact": "8-K/10-Q filing or call transcript disclosing FY27 interest-expense schedule and Q1 FY27 RPO absolute level; a materially higher interest assumption than management embedded would break the 'cheap at 19.4x guided EPS' claim and force re-analysis"
+    },
+    "reasoning": "Preserving the Board's BUY (board:0ebc5a11bfe8a05a038b8a93) with decision_relation=preserve: direction, timing, and levels all carry over unchanged. The prior cycle's conditional BUY deferred capital to the Q1 FY27 print; the binary resolved bull-side and verified on every load-bearing line \u2014 EPS $1.92 vs $1.74 (+10.4%), revenue $19.35B (+30% YoY), OCI $7.4B (+121%), FY27 guide RAISED to >=$90B/$8.10 adj EPS, 4 consecutive beats with 0 misses \u2014 and the entry wake (RSI oversold@40) never fired because the stock gapped up instead. The Board correctly converted to enter_now: the event risk that justified deferral has passed, and re-arming another conditional would repeat the prior cycle's structure for no reason. At $157.45 the stock trades at 19.4x the raised guide and 14.29x forward P/E \u2014 cheapest of the >$200B tech peer set (TSM 19.9x, ASML 28.8x, ARM 85.4x fwd) \u2014 with the plan arithmetic verified at 4.09:1 reward/risk (risk 20.55 to stop 136.90, reward 83.96 to target 241.41). The debate judge found the bull's catalyst case verified in every load-bearing particular; the bear's surviving material (FCF burn invisible to the system, unquantified ~$40B raise interest drag on the $8.10 guide, RPO circularity at ~$664B headline-only, the 2025-09-10 +35.9%-then-32.4% analog) is genuine risk that scales SIZE, not direction \u2014 which is exactly what the binding 0.8% HRP ceiling does, risking ~10.5bps of equity to the stop. The bull defense honestly conceded the falsified 'not priced in' half: this is now a fair-value participation claim, not catalyst capture, and the quant's 6-12%/5-21 session drift edge is directionally positive but statistically insignificant (NW t 1.74/1.98) \u2014 both reasons conviction sits at 71 rather than higher. The bear's MS substitute is rejected: it carries a discovery screen rank only, no agent researched it, and ORCL's +0.12 avg book correlation makes it a genuine diversifier for a Financials-tilted book. internal_consensus_score 78: Board (71), quant (62, BULLISH), fundamental, valuation (FAIR/185, reverse-DCF gap closed), and bull defense (thesis_survives=True) align on direction, but named unverified gaps persist and the junior desk's institutional read (DECREASING, -227.3M exit) conflicts with the fundamental desk's same-day correction (FLAT, Point72/Coatue/RenTech top holders) \u2014 resolved in the Board's favor but evidence of imperfect data alignment, which scales executed size below the declared ceiling. The sma_50_drop@140.77 trigger is preserved as a post-entry monitor (price is currently above SMA-50; a drop below wakes re-analysis), and the resolution condition tracks the 8-K/10-Q for the interest-drag and RPO questions flagged three consecutive cycles."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "TRMB",
+   "cycle_id": "cycle-v3-1789108225",
+   "board": {
+    "action": "HOLD",
+    "confidence": 72,
+    "position_size_pct": 0.0,
+    "stop_loss": 53.2,
+    "take_profit": null,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "sma_20_rise",
+     "value": 59.0
+    },
+    "resolution_condition": {
+     "open_question": "T&L divestiture buyer/price/timing and use of proceeds remain undisclosed; Q3'26 print (early Nov) is the next thesis test",
+     "resolving_fact": "Deal terms disclosed (buyer, price, use of proceeds) or process shutdown; Q3'26 actuals vs the raised FY26 guide and ARR growth rate"
+    },
+    "reasoning": "We already own TRMB at 1.8% of equity (+0.8%, 29d). The debate resolved cleanly: the opening thesis \u2014 Q2'26 beat-and-raise (non-GAAP EPS $0.86 vs $0.802, rev $972M +11%, record ARR $2.509B +14%, FY26 guide raised, $1.0B buyback) plus unpriced T&L divestiture optionality \u2014 is intact on verified fundamentals. The SOLVENCY gate FAIL is an accounting artifact: GAAP net loss $471.7M driven by the $562M T&L goodwill impairment; all four TTM quarterly net incomes on file are positive, net debt/EBIT 1.74x, D/E 0.29. The tape's contradiction \u2014 price $56.84 below SMA-20 ($59.00) and SMA-200 ($64.54), RSI 43.9, MACD negative \u2014 reads as drift, not distribution: the fade from the 62.00 double-top ran on 0.53x volume (5d 2.36M vs prior-15d 4.49M), ATR contracting (0.885x 30d avg), GARCH premium +0.03 neutral. The Bear's decisive claim \u2014 the reverse-DCF showing EV $14.4B implies 15.4%/yr NOPAT growth vs realized EBIT CAGR +4.1% \u2014 killed the valuation-gap pillar, and I accept it: the thesis now rests on execution (raised guide, ARR +14%) and the divestiture binary, not multiple cushion. That is a size/timing argument, not a thesis break; the position is already at minimal size with a pre-committed 2xATR stop at 53.20 (below stored support 54.71). SELL is not warranted and no substitute is better: MS is an unscored preference, and the momentum factor (-1.40\u03c3) is a known, sized exposure. BUY is correctly off the table: HRP headroom binds at 0.0% and the regime directive caps long-duration growth into the 9/11 CPI print. Re-engagement only after price reclaims SMA-20 59.00 or divestiture terms surface. Exit triggers: 2xATR stop 53.20 or a Q3'26 thesis break (guide cut or ARR deceleration below +10%)."
+   },
+   "synthesizer": {
+    "action": "HOLD",
+    "confidence": 72,
+    "position_size_pct": 0.0,
+    "stop_loss": 53.2,
+    "take_profit": null,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "sma_20_rise",
+     "value": 59.0
+    },
+    "resolution_condition": {
+     "open_question": "T&L divestiture buyer/price/timing and use of proceeds remain undisclosed; Q3'26 print (early Nov) is the next thesis test",
+     "resolving_fact": "Deal terms disclosed (buyer, price, use of proceeds) or process shutdown; Q3'26 actuals vs the raised FY26 guide and ARR growth rate"
+    },
+    "reasoning": "Preserving the Board's HOLD verdict on an owned 1.8%-of-equity position (entry $56.38, +0.8%, 29d). The thesis that opened the position \u2014 Q2'26 beat-and-raise (non-GAAP EPS $0.86 vs $0.802, rev $972M +11%, record ARR $2.509B +14%, FY26 guide raised, $1.0B buyback) plus unpriced T&L divestiture optionality \u2014 is intact on verified fundamentals. The SOLVENCY gate FAIL is an accounting artifact: GAAP net loss $471.7M driven by the one-time $562M T&L goodwill impairment; all four TTM quarterly net incomes on file are positive ($98.9M, $156.6M, $111.5M, $89.2M), net debt/EBIT 1.74x, D/E 0.29. The Bear's decisive hit \u2014 reverse-DCF showing EV $14.4B implies 15.4%/yr NOPAT growth vs realized EBIT CAGR +4.1% \u2014 is accepted and kills the valuation-gap pillar; the thesis now rests on execution (raised guide, ARR +14%) and the divestiture binary, which is a sizing/timing argument, not a thesis break. Tape reads as drift, not distribution: fade from the $62 double-top on 0.53x volume (5d 2.36M vs prior-15d 4.49M), ATR contracting (0.885x 30d avg), GARCH premium +0.03 neutral, RSI 43.95 with Bollinger at 14% \u2014 oversold drift into stored support 54.71. BUY is correctly blocked twice over: HRP headroom binds at 0.0% of equity and the CONTRADICTORY regime directive caps rate-sensitive long-duration growth into the 9/11 CPI print (VIX 96th percentile of 6m, 10Y 4.94%). SELL is not warranted: the Bear's MS substitute is an unscored discovery rank with no research this cycle, and exiting at ~breakeven ahead of the unresolved T&L binary would crystallize a round-trip the low-volume tape does not support. Position is kept at current size with the pre-committed 2xATR stop at 53.20 (6.4% below spot, below stored support 54.71); exit also on a Q3'26 thesis break (guide cut or ARR deceleration below +10%). Re-engagement only after price reclaims SMA-20 59.00 or divestiture terms surface. Consensus 78, not higher: the reverse-DCF concession and the stale institutional-flow read (Q/Q DECREASING, 2026Q2, 8 tracked funds vs 103.17% ownership) are genuine unresolved negatives that cap conviction without breaking the thesis."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "MSFT",
+   "cycle_id": "cycle-v3-approved-033e8fffee",
+   "board": {
+    "action": "BUY",
+    "confidence": 71,
+    "position_size_pct": 1.5,
+    "stop_loss": 470.5,
+    "take_profit": 572.92,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "enter_now",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "rsi_14_oversold",
+     "value": 40.0
+    },
+    "resolution_condition": null,
+    "reasoning": "The contradiction is unchanged since the 9/8 BUY and has sharpened in the tape: fundamentals accelerated (FY26 rev $331.8B +17.7%, EPS $18.00 +31.4%, net margin 40.30%, ROIC 24.22%, 4x beat streak with EPS surprise 12.7%\u21925.7%\u21924.9%\u219211.8%) while the market prices a laggard \u2014 momentum factor -0.85\u03c3, price $492.44 (-1.5% since the verdict) merely back to SMA-20 $494.31 but still +9.1% above SMA-50 $451.37 and +14.3% above SMA-200 $430.76 with ADX 35.1. The reverse DCF at EV $3.7T demands only 14.0%/yr NOPAT growth vs 16.8% realized EBIT CAGR \u2014 arithmetic verified, interpretation downgraded per the Bull's own concession (it is an operating-income rate; FY26 capex ~$145B vs FCF $19.6B = 7.4x capex/FCF means the cash-implied requirement is higher). The Bear won the debate on the FCF-quality and lease-reclass claims \u2014 those are real \u2014 but they are claims about CASH-BASIS PRECISION and a 2032-horizon buildout, not about whether the 7-session proposition holds. The decisive bear claim is size/timing: forward P/E 20.89 rests on consensus EPS that assumes FY27 FCF-positive guidance holds, and the CPI 9/11 print (m/m 0.4 f/c vs 0.1 prior, 10Y already 4.96%) is a genuine near-term path risk. The quant leg resolved that path question: support $476.25 is -3.29% from spot while the 2xATR stop $470.50 is -4.46%, so a hot print that tags support does not reach the stop; ATR-14 $10.97 is 19% BELOW its 30d average \u2014 vol is contracting, not expanding; the +0.28 GARCH premium is event-hedge pricing. The 38 GW catalyst is real and dated (9/10 Bloomberg) but is a 2032 roadmap with no FY27 revenue attached \u2014 I do not credit it as an in-window monetization event; it is context supporting the demand-scarcity thesis (turning away business = sold-out capacity), which the Temu/GitHub defections paradoxically evidence. What decides the action: verified fundamental momentum + mid-pack valuation (P/E 27.4/fwd 20.9/PEG 1.62 vs NVDA 28.6, AAPL 36.5, META 24.5) + technical structure intact + defined downside, against a bear case that is a sizing constraint (institutional exits 2026Q3 net -28.3M shares, congress 6:0 net-sell, FCF quality) rather than a thesis-breaker. Sizing at 1.5% \u2014 below the 2.0% HRP ceiling that binds \u2014 half-size into the CPI gate, keeping 0.5-1.0% dry powder for either the print resolving benign or an rsi_14_oversold wake near $476.25 support. Stop $470.50 (2xATR, below support) risks ~0.09% of equity; target $572.92 gives ~3.7:1 per the baseline math. Falsifiers inside the window: hot CPI breaking $476.25 on >1 ATR follow-through, or 10/27 FY27-Q1 disclosure showing Azure deceleration or cash-basis FCF deterioration \u2014 the single most important fill. research_answers: qitem-7fd2cac7be9d answered (path vs level resolved above); qitem-69f04a5b5be9 answered (ATR-30d $13.53 vs ATR-14 $10.97 = contraction, regime stays NORMAL); qitem-61baed1573cd answered (capex $145B / FCF $19.6B = 7.4x, FY27 capex $175B guided with lease reclass \u2014 the gap is real and is why size is half the ceiling, not zero)."
+   },
+   "synthesizer": {
+    "action": "BUY",
+    "confidence": 71,
+    "position_size_pct": 1.5,
+    "stop_loss": 470.5,
+    "take_profit": 572.92,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "enter_now",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "rsi_14_oversold",
+     "value": 40.0
+    },
+    "resolution_condition": null,
+    "reasoning": "PRESERVE of the Board verdict (board:967e2bd8ec6f06586d24afc4): BUY @ 71, enter_now, 1.5% tranche, stop $470.50, target $572.92, rsi_14_oversold monitor at 40.0. The contradiction is unchanged and sharpened: fundamentals accelerated (FY26 rev $331.8B +17.7%, EPS $18.00 +31.4%, net margin 40.30%, ROIC 24.22%, 4x beat streak 12.7%\u21925.7%\u21924.9%\u219211.8%) while the market prices a laggard \u2014 momentum factor -0.85\u03c3, price $492.44 back to SMA-20 $494.31 but +9.1% above SMA-50 $451.37 and +14.3% above SMA-200 $430.76 with ADX 35.1. The debate judge ruled bull on both propositions (62): the Bear's verified claims \u2014 capex/FCF 7.4x ($145B vs $19.6B, -23% YoY), lease-reclass dependency for FY27 FCF-positive guidance, institutional net -28.3M shares, congress 6:0 net-sell, short-term tape softening (below SMA-20, MACD -3.92, volume decreasing) \u2014 are real but are sizing constraints and 10/27 checkpoint items, not 7-session thesis-breakers. The Bull conceded the reverse-DCF valuation pillar down to a conditional hypothesis (14.0%/yr is an operating-income rate; the cash-implied requirement is higher), so the surviving thesis rests on verified fundamental momentum + technical structure + defined downside, which is what the Board credited. The quant leg resolved the path question: support $476.25 is -3.29% from spot while the 2xATR stop $470.50 is -4.46%, so a hot CPI print that tags support does not reach the stop; ATR-14 $10.97 is 19% below its 30d average \u2014 vol is contracting, and the +0.28 GARCH premium is event-hedge pricing into the 9/11 print (m/m 0.4 f/c vs 0.1 prior, 10Y 4.96% pre-print). The 38 GW catalyst is real and dated (9/10 Bloomberg/Reuters) but is a 2032 roadmap with no FY27 revenue attached \u2014 context supporting demand scarcity (turning away business = sold-out capacity), not an in-window monetization event. Sizing at 1.5% is below the 2.0% HRP ceiling that binds, half-size into the CPI gate per the regime directive to cut cyclical size into 9/11, keeping 0.5-1.0% dry powder for either a benign print or an rsi_14_oversold wake near $476.25. internal_consensus_score 72 reflects verified-but-operationalized bear claims (the desk's own risk_flags call capex/FCF 'the binding fundamental constraint'), not dialectic noise. Falsifiers inside the window: hot CPI breaking $476.25 on >1 ATR follow-through, or 10/27 FY27-Q1 disclosure showing Azure deceleration or cash-basis FCF deterioration."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "CRWV",
+   "cycle_id": "cycle-v3-1788892393",
+   "board": {
+    "action": "BUY",
+    "confidence": 68,
+    "position_size_pct": 0.5,
+    "stop_loss": 88.96,
+    "take_profit": 117.49,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "enter_on_condition",
+    "trigger_purpose": "entry",
+    "dynamic_trigger": {
+     "type": "sma_20_drop",
+     "value": 92.0
+    },
+    "resolution_condition": {
+     "open_question": "Does the pullback toward the SMA-20/SMA-200 confluence (~92) materialize, and does power energization stay on schedule toward the >1.85GW year-end target (only ~36% of contracted power active)?",
+     "resolving_fact": "A pullback to ~92 arms the entry (trigger armed now); the Q3 2026 earnings print on 2026-11-11 (est rev $3.57B, EPS -$1.19) reveals active-power capacity vs the >1.85GW target and H2 sequential step-up progress toward the raised $12.4-13.2B FY26 guide."
+    },
+    "reasoning": "The contradiction IS the trade: the deterministic baseline says AVOID (composite 37.5, health pillar 6.5/100 on D/E 10.27, current ratio 0.455, net margin -25.4%) while momentum scores 83.7, price has reclaimed all three SMAs ($102.20 vs SMA-200 91.57), and the bear won the debate on solvency \u2014 yet the credit market keeps funding this collateral ($2.6B deal priced Aug 25 despite '50% default odds' chatter) and institutions are adding (23 funds, $28.1B, Q/Q INCREASING, new buyers Appaloosa/Magnetar $9.4B). The bear's verified claims \u2014 forced dilution ($35-39B capex vs $3.1B cash, negative TTM FCF) and poor entry timing (upper Bollinger 81%, stoch 98.8, +15.3% gamma-driven rotation pop on 256k calls, insiders sold ~$650M incl. CEO) \u2014 are size-and-timing claims, not thesis-broken: the $104B take-or-pay backlog (>10x TTM revenue, $25B fresh Q3 commitments, OpenAI $22.4B) is judge-verified, guidance was RAISED to $12.4-13.2B, and EV/Sales 13.3x is the cheapest hyper-growth anchor (vs SNOW 21.7x, ARM 51.6x) with the fastest growth. So: BUY, but conditional and tiny. I do not chase an overbought entry the day after a +15.3% rotation pop with insider selling \u2014 I arm a pullback entry toward the SMA-20/SMA-200 confluence (~92), where the prior cycle's own quant desk said a bullish read would require. From ~92 with the 88.96 stop (2xATR, just below SMA-200) and 117.49 stored resistance as target (haircut from the 144.46 analyst target because the bear's dilution claim is verified and per-share economics are unmodeled), the conditional trade is ~8:1; from today's spot it would be ~1.15:1, which is why entry mode is enter_on_condition. Size at the HRP ceiling 0.5% of equity (~$518) \u2014 the full covariance-aware allowance (diversification ratio 3.30, CRWV correlation +0.13 avg vs a Financial-heavy book, genuine diversification) but not a basis point more, because the solvency gate is failed and GARCH signals vol EXPANSION (112.7% predicted vs 99.8% realized). Dated checkpoint: Q3 earnings 2026-11-11 \u2014 active power vs the >1.85GW year-end target is where energization slippage (only ~36% contracted power active) becomes visible in both the growth and funding stories simultaneously."
+   },
+   "synthesizer": {
+    "action": "BUY",
+    "confidence": 70,
+    "position_size_pct": 0.5,
+    "stop_loss": 88.96,
+    "take_profit": 117.49,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "enter_on_condition",
+    "trigger_purpose": "entry",
+    "dynamic_trigger": {
+     "type": "sma_20_drop",
+     "value": 92.0
+    },
+    "resolution_condition": {
+     "open_question": "Does the pullback toward the SMA-20/SMA-200 confluence (~92) materialize, and does power energization stay on schedule toward the >1.85GW year-end target (only ~36% of contracted power active)?",
+     "resolving_fact": "A pullback to ~92 arms the entry (trigger armed now); the Q3 2026 earnings print on 2026-11-11 (est rev $3.57B, EPS -$1.19) reveals active-power capacity vs the >1.85GW target and H2 sequential step-up progress toward the raised $12.4-13.2B FY26 guide."
+    },
+    "reasoning": "The Board voted BUY @ 68% with entry_mode enter_on_condition, trigger_purpose entry, and a dynamic trigger (sma_20_drop @ 92.0) \u2014 I preserve that decision intact. The Board's core logic is sound and evidence-backed: the contradiction IS the trade \u2014 the deterministic baseline says AVOID (composite 37.5, health pillar 6.5/100 on D/E 10.27, current ratio 0.455, net margin -25.4%) while momentum scores 83.7, price has reclaimed all three SMAs ($102.20 vs SMA-200 91.57), the credit market keeps funding this collateral ($2.6B deal priced Aug 25 despite '50% default odds' chatter), and institutions are adding (23 funds, $28.1B, Q/Q INCREASING, new buyers Appaloosa/Magnetar $9.4B). The bear's verified claims \u2014 forced dilution ($35-39B capex vs $3.1B cash, negative TTM FCF) and poor entry timing (upper Bollinger 81%, stoch 98.8, +15.3% gamma-driven rotation pop on 256k calls, insiders sold ~$650M incl. CEO) \u2014 are size-and-timing claims, not thesis-broken. The $104B take-or-pay backlog (>10x TTM revenue, $25B fresh Q3 commitments, OpenAI $22.4B) is judge-verified, guidance was RAISED to $12.4-13.2B, and EV/Sales 13.3x is the cheapest hyper-growth anchor (vs SNOW 21.7x, ARM 51.6x) with the fastest growth. The Board does not chase an overbought entry the day after a +15.3% rotation pop with insider selling \u2014 it arms a pullback entry toward the SMA-20/SMA-200 confluence (~92), where the prior cycle's own quant desk said a bullish read would require. From ~92 with the 88.96 stop (2xATR, just below SMA-200) and 117.49 stored resistance as target (haircut from the 144.46 analyst target because the bear's dilution claim is verified and per-share economics are unmodeled), the conditional trade is ~8:1; from today's spot it would be ~1.15:1, which is why entry mode is enter_on_condition. Size at the HRP ceiling 0.5% of equity (~$518) \u2014 the full covariance-aware allowance (diversification ratio 3.30, CRWV correlation +0.13 avg vs a Financial-heavy book, genuine diversification) but not a basis point more, because the solvency gate is failed and GARCH signals vol EXPANSION (112.7% predicted vs 99.8% realized). Dated checkpoint: Q3 earnings 2026-11-11 \u2014 active power vs the >1.85GW year-end target is where energization slippage (only ~36% contracted power active) becomes visible in both the growth and funding stories simultaneously. The claimed research question (qitem-e54921c42b85) is ANSWERED: the Q2 beat is not a point-in-time catalyst \u2014 revenue $2.58B (+112% YoY) beat consensus, EPS -$1.14 beat -$1.52 estimate, guidance was RAISED to FY26 $12.4-13.2B, and the ~$104B backlog with $25B fresh Q3 commitments is quantified. The remaining open question is execution (conversion of contracted power to active capacity), which the resolution_condition and the 2026-11-11 checkpoint address. I set internal_consensus_score at 62 \u2014 the junior analyst, fundamental analyst, and valuation analyst all agree the revenue story is quantified and real, but the bear won the debate on solvency and the deterministic baseline sits in AVOID band, so this is a split-desk conditional entry, not a high-consensus trade. That score scales the position size down from the 0.5% ceiling in code, which is the correct conservative outcome for a failed-solvency-gate name. Confidence 70 \u2014 actionable conviction that the conditional structure is the right call: the thesis holds, key figures verify, risk is defined with a stop-loss, and the debate between Bull and Bear is expected dialectic that the Board already evaluated. I am not claiming 80+ because the solvency gate is genuinely failed and the H2 step-up (+49.6% to +65.1% sequential) is unproven."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "ZS",
+   "cycle_id": "cycle-v3-1788888253",
+   "board": {
+    "action": "HOLD",
+    "confidence": 71,
+    "position_size_pct": 0.5,
+    "stop_loss": 151.76,
+    "take_profit": 206.34,
+    "exit_style": "hard_stop",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "sma_200_rise",
+     "value": 171.8
+    },
+    "resolution_condition": {
+     "open_question": "Whether Z-Flex TCV (>$770M Q4, +60% q/q) converts to ARR/revenue at the guided pace, and whether TTM FCF is positive \u2014 the two facts that settle whether the FY27 guide is conservative and the self-funding leg is real",
+     "resolving_fact": "Next quarterly report showing Z-Flex-driven ARR uplift and a computable TTM FCF figure; interim, a decisive daily close below 159.24 stored support re-rates the tape bearish and a reclaim of SMA-200 (171.80) resolves the trend objection"
+    },
+    "reasoning": "POSITION_REVIEW: KEEP. The thesis that opened this position \u2014 a growth-premium SaaS name \u2014 is intact but repriced, not broken. Verified this cycle: FY26 revenue $3.35B +24.9% YoY (3-yr CAGR +34.8%/yr), sequential acceleration (Jan-2026 quarter $815.8M vs Oct-2025 $788.1M vs Jul-2025 $719.2M), gross margin 76.87%, and the 2026-09-03 print beat on both lines (EPS +9.32%, sales +2.42%). The Judge verified the four-year loss arc NARROWS (-$390.3M \u2192 -$57.7M \u2192 -$41.5M \u2192 -$34.3M quarterly run-rate), refuting the Bear's 'losses collapsed is cherry-picked' framing in the direction of the Bull. SOLVENCY gate passes and the Bear conceded it: net cash $592.4M (cash $2.4B > debt $1.8B), current 1.70, quick 1.57, D/E 0.72 \u2014 no dilution, distress, or going-concern path on the horizon. The structural gate FAIL (TTM net margin -1.88%) is a profitability gate, not a solvency gate; per policy it blocks ADDS, not the hold. The Bear's verified win is the FY27 deceleration (+16.6-17.5% revenue vs +25% FY26) plus the 3% workforce restructuring \u2014 that is a size/timing claim (growth premium gone, entry poor), not a thesis_broken claim. The position is now underwritten on mid-to-high-teens growth at forward-PEG ~1.7 (29.12/~17%) with record 24% non-GAAP op margin \u2014 a de-rated entry multiple on an intact business. The contradiction my regime trades: the market sold a double beat to below SMA-200, lower Bollinger band, stochastic 11.4 oversold, while Z-Flex (>$770M Q4 TCV, +60% q/q, ~30% ARR uplift) is a leading indicator pointing AT the FY27 guide, not away from it. But I do not add: HRP headroom is only 0.3% of equity, the tape is below SMA-200 with increasing volume into the decline, GARCH vol is 51.65% annualized, and the 2026-09-11 CPI print is 3 sessions away \u2014 paying for diversification with trend risk into a macro event is not a trade. DATA_SUFFICIENCY: the load-bearing gap is TTM FCF (null quarter) \u2014 the Bull conceded the self-funding leg rests on the cash stock, not verified flow; filling it would strengthen or weaken conviction on the hold but cannot flip KEEP\u2192EXIT while net cash covers the horizon. pe_ratio/dividend_yield are context (dividend absent by construction, forward P/E on file). The EV/Sales gap (ours 8.65 vs vendor 7.78) is a data-quality flag, not a verdict. Alternative check: exiting into the shortlist means adding to a 14% Financial Services tilt (GS/HSBC/BAR/V) or opening unvetted new names \u2014 the Bear itself ranked cash-from-exit second; no like-for-like diversifier exists on the list. KEEP at current size with the thesis-kill stop enforced."
+   },
+   "synthesizer": {
+    "action": "HOLD",
+    "confidence": 72,
+    "position_size_pct": 0.5,
+    "stop_loss": 151.76,
+    "take_profit": 206.34,
+    "exit_style": "hard_stop",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "sma_200_rise",
+     "value": 171.8
+    },
+    "resolution_condition": {
+     "open_question": "Whether Z-Flex TCV (>$770M Q4, +60% q/q) converts to ARR/revenue at the guided pace, and whether TTM FCF is positive \u2014 the two facts that settle whether the FY27 guide is conservative and the self-funding leg is real",
+     "resolving_fact": "Next quarterly report showing Z-Flex-driven ARR uplift and a computable TTM FCF figure; interim, a decisive daily close below 159.24 stored support re-rates the tape bearish and a reclaim of SMA-200 (171.80) resolves the trend objection"
+    },
+    "reasoning": "Re-look of a HELD position (ZS ~0.5% of equity, entry $169.84, now $162.81, -4.1% in 2 days), judged on thesis not P&L. The Board's HOLD verdict (71%) is preserved as the baseline: the growth thesis that opened the position is intact but repriced \u2014 FY26 revenue $3.35B +24.9% YoY, 3-yr CAGR +34.8%/yr, sequential acceleration (Jan-2026 quarter $815.8M vs Oct-2025 $788.1M vs Jul-2025 $719.2M), gross margin 76.87%, and the 2026-09-03 print beat on both lines (EPS +9.32%, sales +2.42%). SOLVENCY passes and the Bear conceded it: net cash $592.4M (cash $2.4B > debt $1.8B), current 1.70, quick 1.57, D/E 0.72 \u2014 no dilution/distress/going-concern path. The structural gate FAIL (TTM net margin -1.88%) is a profitability gate, not a solvency gate; per policy it blocks ADDS, not the hold. The Bear's verified win is the FY27 deceleration (+16.6-17.5% vs +25% FY26) plus the 3% workforce restructuring \u2014 a size/timing claim (growth premium gone, entry poor), not a thesis_broken claim; the position is now underwritten on mid-to-high-teens growth at forward-PEG ~1.7 with record 24% non-GAAP op margin. The tape is genuinely weak (below SMA-200 at 171.80, lower Bollinger band, stochastic 11.4 oversold, MACD -2.82, GARCH vol 51.65%, 40.16% trailing max drawdown, CPI print 3 sessions away), which is exactly why I do NOT add: HRP headroom is only 0.3% of equity anyway, and the structural gate blocks adds. But exiting has no executable alternative: the shortlist is Financial Services-heavy (GS/HSBC/BAR/V would deepen a 14% FS tilt; JPM already 10%), and the Bear itself ranked cash-from-exit second \u2014 swapping a small, thesis-intact, diversification-positive name (book avg correlation +0.06) for sector concentration or cash is not clearly better. KEEP at current size with the thesis-kill stop enforced (151.76, 2xATR below stored support 159.24). The load-bearing gap is TTM FCF (null quarter) \u2014 the self-funding leg rests on the cash stock, not verified flow; it is checkable next cycle and cannot flip KEEP\u2192EXIT while net cash covers the horizon. No UNRESOLVED CROSS-DESK DISSENT section is present: the Bear's objections were adjudicated by the Board (solvency conceded, losses-narrowing verified, FY27 deceleration accepted as a sizing/timing cost), so no dissent_resolution override is required. Research question qitem-ef780f3f20bf: NEUTRAL remains the appropriate thesis direction despite the structural gate failure \u2014 the gate is a TTM profitability gate in a 25%-growth SaaS with record non-GAAP op margin and net cash; it caps conviction and blocks adds but does not refute the directional thesis or the hold."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "AVGO",
+   "cycle_id": "cycle-v3-1788885133",
+   "board": {
+    "action": "HOLD",
+    "confidence": 72,
+    "position_size_pct": 0.0,
+    "stop_loss": 331.84,
+    "take_profit": 533.41,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "sma_50_drop",
+     "value": 383.77
+    },
+    "resolution_condition": {
+     "open_question": "Whether FY27 AI consensus holds near the $115B roadmap or cuts below the ~$90B bear threshold (and whether SMA-50 $383.77 is reclaimed on volume, which would open re-sizing headroom)",
+     "resolving_fact": "Next sell-side FY27 AI revenue consensus revisions and AVGO prints a close above $383.77 on above-average volume"
+    },
+    "reasoning": "POSITION_REVIEW: the thesis that opened this position is intact and the binary research question is resolved in the ramp's favor \u2014 Q3 FY26 printed revenue $29.6B +86% YoY, EPS $3.32 vs $3.24 est, AI semi revenue $16.70B +221% YoY (56% of revenue), Q4 AI guide $21.7B, and the post-earnings selloff troughed at ~$357.9 (roughly half the prior quarter's 13% drawdown) before reversing +3.6% to $370.63 and reclaiming SMA-200 $369.55. The verified contradiction is between fundamentals (fwd P/E 18.94 below TSM 19.61/ADI 22.17/TXN 24.28/MRVL 33.2, PEG 0.35, GM 75.52% #2 of 12 semis, ROIC 24.39%, all quant risk factors PASS, R:R 6.19:1 to the $533.41 consensus target) and the tape (below SMA-50 $383.77 and SMA-20 $375.73, MACD -0.41, ADX 23.4, Q4 guide -0.7% miss with AI seq growth ~30% vs Q3's 54%). The Bull's own defense conceded the recovery leg is UNCONFIRMED \u2014 that concession decides my action: no adding (HRP ceiling binds at 0.0% headroom anyway, and GARCH vol EXPANSION +0.43 premium with CPI/PPI Sep 10-11 inside the window argues against adding risk), but no exit either, because the bear's material points are size/timing claims, not thesis breaks: the AMZN-QCOM dual-sourcing precedent does not touch AVGO's named customer roster (Google, Anthropic, OpenAI, Meta), and the ~$280 bear case requires an unverified FY27 consensus cut below ~$90B. The GOOGL substitute is an unscored preference that would swap a verified 86%-growth name at a local trough for an unresearched one while the book already carries TSM at 10% with +0.60 correlation \u2014 no diversification gained. KEEP at 0.8% of equity with stop discipline at 331.84 (below stored support 342.33 and 2xATR 344.33); re-size only on SMA-50 reclaim with HRP headroom."
+   },
+   "synthesizer": {
+    "action": "HOLD",
+    "confidence": 72,
+    "position_size_pct": 0.0,
+    "stop_loss": 331.84,
+    "take_profit": 533.41,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "sma_50_drop",
+     "value": 383.77
+    },
+    "resolution_condition": {
+     "open_question": "Whether FY27 AI consensus holds near the $115B roadmap or cuts below the ~$90B bear threshold (and whether SMA-50 $383.77 is reclaimed on volume, which would open re-sizing headroom)",
+     "resolving_fact": "Next sell-side FY27 AI revenue consensus revisions and AVGO prints a close above $383.77 on above-average volume"
+    },
+    "reasoning": "The Board's HOLD verdict governs as baseline and I preserve it. The position thesis is intact: Q3 FY26 printed revenue $29.6B +86% YoY, EPS $3.32 vs $3.24 est, AI semi revenue $16.70B +221% YoY (56% of revenue), Q4 AI guide $21.7B, and the FY26 $58B \u2192 FY27 ~$115B \u2192 FY28 $230B AI roadmap stands. The guide-miss selloff troughed at ~$357.9 and reversed +3.6% to $370.63, reclaiming SMA-200 $369.55. The Bull's own defense conceded the recovery leg is UNCONFIRMED (price below SMA-50 $383.77 and SMA-20 $375.73, MACD -0.41, ADX 23.4) \u2014 that concession decides the action: no adding, but no exit either, because the bear's material points are size/timing claims, not thesis breaks. The AMZN-QCOM dual-sourcing precedent does not touch AVGO's named customer roster (Google, Anthropic, OpenAI, Meta), and the ~$280 bear case requires an unverified FY27 consensus cut below ~$90B. The GOOGL substitute is an unscored preference that would swap a verified 86%-growth name at a local trough for an unresearched one while the book already carries TSM at 10% with +0.60 correlation \u2014 no diversification gained. KEEP at 0.8% of equity with stop discipline at 331.84 (below stored support 342.33 and 2xATR 344.33); re-size only on SMA-50 reclaim with HRP headroom. The research question (qitem-6089e5a364ff) is ANSWERED: the Sept 2 print confirmed the ramp rather than repeating the 13% selloff \u2014 the trough was roughly half the prior quarter's drawdown and the stock has since recovered above SMA-200."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "CRDO",
+   "cycle_id": "cycle-v3-1788881713",
+   "board": {
+    "action": "HOLD",
+    "confidence": 70,
+    "position_size_pct": 0.3,
+    "stop_loss": 138.31,
+    "take_profit": 286.32,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "trailing_drop",
+     "value": 0.084
+    },
+    "resolution_condition": {
+     "open_question": "Does FY27 guidance hold \u2014 specifically, is the 'falling RPOs' flag (SeekingAlpha 09-07, no number on file) real, and does GAAP gross margin stabilize above ~64% after the 68.2%\u219264.5% contraction?",
+     "resolving_fact": "Q2 FY27 earnings report (~Dec 2026) or any filed/press disclosure quantifying RPO/backlog trend and Q2 margin trajectory; interim observable: price behavior vs the 160.75 stored support through the 09-10/11 CPI print."
+    },
+    "reasoning": "KEEP versus EXIT, judged on thesis not P&L: the thesis that opened this position survives on Judge-verified numbers \u2014 forward P/E 17.82 is the cheapest in the desk's verified semi peer set (TSM 19.6, ASX 20.4) while carrying ~4.8x TSM's revenue growth, gross margin 66.31% vs ~40-45% sector, net margin 33.83%, ROE 30.67%, ROIC 19.58%, D/E 0.01, current ratio 7.40, revenue +165.11% YoY, EPS QoQ +93.83%. The contradiction the regime asks me to trade is that the market prices 60.9x trailing (mature-semi multiple) on a hypergrowth net-cash franchise after a -45% drawdown \u2014 and the bear's central prior premise (1.57% revenue growth) is verifiably dead. The bear won real points this cycle, but every one is a size/timing/conditioning claim, not a thesis-breaker: (1) the PEG basis dispute (computed trailing 1.17 vs vendor 0.34) is genuine and downgrades the valuation asymmetry from STRONG to CONDITIONAL on FY27 guidance; (2) the SMA-200 reclaim is $0.05 noise vs ATR $18.63 \u2014 the Bull withdrew 'tape stabilizing'; (3) GAAP gross margin compression 68.2%\u219264.5% is verified; (4) institutional funds trimmed -737K shares Q/Q (~1.9%, trimming not exodus); (5) RPO trend flagged falling with no number. Against these: guidance was RAISED, not cut (FY27 >85% growth, ~50% non-GAAP margin, Q2 $525-535M, optical >$600M), the -20.38% post-earnings selloff was an expectations reset on a clean beat with decaying surprise magnitude (35.3%\u219213.7%\u219212.2%\u21922.7%), the S&P 500 catalyst the bear attacked was already discarded by the thesis (misattributed to ALAB/BE), and the CPI 09-10/11 binary is a sizing question \u2014 at 0.3% of equity with the 2xATR stop at $138.31, max loss is ~$97-130, immaterial to a $103.5K book. Sizing: HRP covariance-aware headroom is 0.0% (target 0.4% of invested capital already held), so BUY is blocked by portfolio math regardless of thesis \u2014 the correct action is KEEP at current size. Technical context supports patience over exit: RSI 36.25 rising from oversold (research question qitem-6d3938fe97e5 resolved: 31.78 is an ageing 09-02 value; current 36.25, direction up), stochastic 16.6/9.1 oversold, Bollinger 12% (lower band), GARCH vol contracting (101.42% predicted vs 114.84% realized), ADX 15.9 (trend force dying), volume trend increasing \u2014 capitulation-flavored conditions consistent with the +1.03\u03c3 reversal factor. What would change my mind: a close below 160.75 stored support on volume (armed as trailing_drop 0.084 \u2248 8.4% below spot), or verified RPO/backlog deterioration at next earnings. The bear's TSM substitute is unpriced this cycle (no score/research \u2014 recorded, not actionable), and TSM is already 10% of the book with +0.51 correlation to CRDO, so substitution would add concentration, not diversification."
+   },
+   "synthesizer": {
+    "action": "HOLD",
+    "confidence": 70,
+    "position_size_pct": 0.3,
+    "stop_loss": 138.31,
+    "take_profit": 286.32,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "trailing_drop",
+     "value": 0.084
+    },
+    "resolution_condition": {
+     "open_question": "Does FY27 guidance hold \u2014 specifically, is the 'falling RPOs' flag (SeekingAlpha 09-07, no number on file) real, and does GAAP gross margin stabilize above ~64% after the 68.2%\u219264.5% contraction?",
+     "resolving_fact": "Q2 FY27 earnings report (~Dec 2026) or any filed/press disclosure quantifying RPO/backlog trend and Q2 margin trajectory; interim observable: price behavior vs the 160.75 stored support through the 09-10/11 CPI print."
+    },
+    "reasoning": "KEEP versus EXIT, judged on thesis not P&L: the thesis that opened this position survives on Judge-verified numbers \u2014 forward P/E 17.82 is the cheapest in the desk's verified semi peer set (TSM 19.6, ASX 20.4) while carrying ~4.8x TSM's revenue growth, gross margin 66.31% vs ~40-45% sector, net margin 33.83%, ROE 30.67%, ROIC 19.58%, D/E 0.01, current ratio 7.40, revenue +165.11% YoY, EPS QoQ +93.83%. The contradiction the regime asks me to trade is that the market prices 60.9x trailing (mature-semi multiple) on a hypergrowth net-cash franchise after a -45% drawdown \u2014 and the bear's central prior premise (1.57% revenue growth) is verifiably dead. The bear won real points this cycle, but every one is a size/timing/conditioning claim, not a thesis-breaker: (1) the PEG basis dispute (computed trailing 1.17 vs vendor 0.34) is genuine and downgrades the valuation asymmetry from STRONG to CONDITIONAL on FY27 guidance; (2) the SMA-200 reclaim is $0.05 noise vs ATR $18.63 \u2014 the Bull withdrew 'tape stabilizing'; (3) GAAP gross margin compression 68.2%\u219264.5% is verified; (4) institutional funds trimmed -737K shares Q/Q (~1.9%, trimming not exodus); (5) RPO trend flagged falling with no number. Against these: guidance was RAISED, not cut (FY27 >85% growth, ~50% non-GAAP margin, Q2 $525-535M, optical >$600M), the -20.38% post-earnings selloff was an expectations reset on a clean beat with decaying surprise magnitude (35.3%\u219213.7%\u219212.2%\u21922.7%), the S&P 500 catalyst the bear attacked was already discarded by the thesis (misattributed to ALAB/BE), and the CPI 09-10/11 binary is a sizing question \u2014 at 0.3% of equity with the 2xATR stop at $138.31, max loss is ~$97-130, immaterial to a $103.5K book. Sizing: HRP covariance-aware headroom is 0.0% (target 0.4% of invested capital already held), so BUY is blocked by portfolio math regardless of thesis \u2014 the correct action is KEEP at current size. Technical context supports patience over exit: RSI 36.25 rising from oversold (research question qitem-6d3938fe97e5 resolved: 31.78 is an ageing 09-02 value; current 36.25, direction up), stochastic 16.6/9.1 oversold, Bollinger 12% (lower band), GARCH vol contracting (101.42% predicted vs 114.84% realized), ADX 15.9 (trend force dying), volume trend increasing \u2014 capitulation-flavored conditions consistent with the +1.03\u03c3 reversal factor. What would change my mind: a close below 160.75 stored support on volume (armed as trailing_drop 0.084 \u2248 8.4% below spot), or verified RPO/backlog deterioration at next earnings. The bear's TSM substitute is unpriced this cycle (no score/research \u2014 recorded, not actionable), and TSM is already 10% of the book with +0.51 correlation to CRDO, so substitution would add concentration, not diversification."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "RH",
+   "cycle_id": "cycle-v3-1788856615",
+   "board": {
+    "action": "BUY",
+    "confidence": 73,
+    "position_size_pct": 1.2,
+    "stop_loss": 143.7,
+    "take_profit": 178.06,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_on_condition",
+    "trigger_purpose": "entry",
+    "dynamic_trigger": {
+     "type": "sma_20_rise",
+     "value": 159.9
+    },
+    "resolution_condition": {
+     "open_question": "Does the 2026-09-10 AMC Q2 FY26 print evidence the ~$9.08 forward EPS the 16.29x forward P/E pre-pays (+65% vs TTM $5.49), or confirm four consecutive quarters of revenue decline and the -18.8%/yr EBIT trajectory \u2014 and does the tape confirm above SMA-20 $159.90 afterward?",
+     "resolving_fact": "Printed Q2 FY26 revenue/EPS and FY26 guidance vs the consensus bar, plus post-print price reclaim of SMA-20 $159.90 (trigger fires a fresh re-analysis where size/stop/target are recomputed on printed data)."
+    },
+    "reasoning": "The judge awarded the debate to the BULL on direction \u2014 solvency survives the horizon (TTM EBIT $365.6M, TTM NI $103.1M, current ratio 1.13, debt ~1.17x revenue, no dated maturity/covenant/going-concern signal; D/E 70.6 is a thin-book artifact with book equity ~$57M vs $4.0B debt) and the 9/10 AMC catalyst is real, dated 2 sessions out, with the bearish de-rate scenario already the visible, pre-narrated one (Yahoo/Simply Wall St preview published the 27-29x vs 18.6x industry case; price -41.5% off the 52w high, below all SMAs). The unpriced side is the beat-and-raise tail into a verified 53.06% short float. That is a genuine CONTRADICTORY-regime setup: tape and reverse DCF say bearish (fair value ~$98, 17.2%/yr implied NOPAT growth vs -18.8% realized EBIT CAGR), yet the visible narrative is the miss and the convex tail is the rip. But I will not underwrite the binary blind: DATA_SUFFICIENCY is unresolved (Q2 consensus bar unsized \u2014 event risk is directional, not calibrated; FCF not computable anywhere, the bull's own most-damaging concession), GARCH EXPANSION (43.52% predicted vs 37.16% realized) makes the 2xATR stop $131.73 non-executable through an earnings gap, and baseline R/R 1.85:1 fails the 2:1 floor. The desks converge on the structure: bull's own defense conceded 'no pre-print full-size entry; event-sized or post-print-confirmation only,' and the quant gate says no entry into the print, revisit on reclaim of SMA-20 $159.90. So I encode the bull win as a CONDITIONAL entry, not a passive hold and not a blind event bet: action BUY, entry_mode enter_on_condition, trigger sma_20_rise at 159.90 (price reclaiming SMA-20 post-print \u2014 the quant's own confirmation condition), trigger_purpose entry, intended size at the binding 1.2% HRP ceiling, provisional stop 143.70 (2xATR below the ~$160 trigger entry) and target 178.06 (analyst consensus) to be recomputed when the wake fires with printed guidance. A beat-and-raise rip reclaims $159.90 quickly, so the wake captures most of the squeeze continuation while the gap-down path never touches me. The post-miss path (gap toward $131-140, RSI oversold) is a different thesis \u2014 capitulation bounce on new guidance data \u2014 and belongs to fresh analysis, not this trigger. Trade history (4 HOLD_MISS in 5, +3.1% to +9.9% drifts) argues against passive standing-aside; the armed wake is the fix. Concentration check passes: RH vs book avg correlation +0.16 (highest COF +0.40), Consumer Cyclical vs a Financial Services-tilted book \u2014 genuine diversification at 1.2%. Research answer qitem-887faf3d60be: the elevated short float did NOT override the weak fundamental case within the window \u2014 price fell -21.6% ($182.85\u2192$143.34) with ~53-55% of float short; the float is conditional beat-and-raise fuel, not a price floor, and cuts as cascade fuel on a miss. What would change my call: printed Q2 revenue/EPS and FY26 guidance vs consensus (still unsized in our data), and the tape's post-print behavior at SMA-20 $159.90."
+   },
+   "synthesizer": {
+    "action": "BUY",
+    "confidence": 72,
+    "position_size_pct": 1.2,
+    "stop_loss": 143.7,
+    "take_profit": 178.06,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_on_condition",
+    "trigger_purpose": "entry",
+    "dynamic_trigger": {
+     "type": "sma_20_rise",
+     "value": 159.9
+    },
+    "resolution_condition": {
+     "open_question": "Does the 2026-09-10 AMC Q2 FY26 print evidence the ~$9.08 forward EPS the 16.29x forward P/E pre-pays (+65% vs TTM $5.49), or confirm four consecutive quarters of revenue decline and the -18.8%/yr EBIT trajectory \u2014 and does the tape confirm above SMA-20 $159.90 afterward?",
+     "resolving_fact": "Printed Q2 FY26 revenue/EPS and FY26 guidance vs the consensus bar, plus post-print price reclaim of SMA-20 $159.90 (trigger fires a fresh re-analysis where size/stop/target are recomputed on printed data)."
+    },
+    "reasoning": "The Board's verdict governs and I preserve it exactly: BUY, entry_mode enter_on_condition, trigger sma_20_rise @ 159.90 with trigger_purpose entry, stop 143.70, target 178.06, size at the binding 1.2% HRP ceiling, hard_stop exit. The judge awarded the debate to the Bull on direction \u2014 solvency survives the horizon (TTM EBIT $365.6M, TTM NI $103.1M, current ratio 1.13, debt ~1.17x revenue; D/E 70.6 is a thin-book artifact with book equity ~$57M vs $4.0B debt) \u2014 and the 2026-09-10 AMC catalyst is real, dated 2 sessions out, with the bearish de-rate already the pre-narrated visible case (Yahoo/Simply Wall St preview of 27-29x vs 18.6x industry) while the unpriced side is the beat-and-raise tail into a verified 53.06% short float. The Board explicitly refused to underwrite the binary blind: Q2 consensus bar unsized, FCF not computable anywhere (the bull's own most-damaging concession), GARCH EXPANSION (43.52% predicted vs 37.16% realized) makes a 2xATR stop non-executable through an earnings gap, and baseline R/R 1.85:1 fails the 2:1 floor. Hence the conditional structure: no pre-print entry; the wake fires only on a post-print reclaim of SMA-20 $159.90 \u2014 the quant desk's own confirmation condition \u2014 capturing most of the squeeze continuation if the rip comes, while the gap-down path never touches the book. The post-miss path (gap toward $131-140) is a different thesis belonging to fresh analysis, not this trigger. Trade history (4 HOLD_MISS in 5, +3.1% to +9.9% favorable drifts while standing aside) argues against passive non-participation; the armed wake is the fix. Concentration passes: RH vs book avg correlation +0.16, Consumer Cyclical vs a Financial Services-tilted book \u2014 genuine diversification at 1.2%. Confidence 72 reflects actionable conviction in the structure, not the direction blind: the load-bearing unknowns (printed guidance vs an unsized consensus bar, EBIT-to-cash conversion) resolve in 2 sessions, and the calibration table shows 70-79 as the best-performing empirical bucket. internal_consensus_score 62 encodes the genuine split \u2014 quant NEUTRAL @ 58 with an event gate, fundamental bearish-leaning on the forward multiple, debate judge for the Bull, Board concurring conditionally \u2014 and lets the code scale size down accordingly."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "LULU",
+   "cycle_id": "cycle-observe-1788844926",
+   "board": {
+    "action": "HOLD",
+    "confidence": 68,
+    "position_size_pct": 0.8,
+    "stop_loss": 88.83,
+    "take_profit": 128.76,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "trailing_drop",
+     "value": 0.03
+    },
+    "resolution_condition": {
+     "open_question": "Does $97.99 stored support hold through the 09-10/09-11 CPI/PPI tape, and does the stabilization read (reclaim of $105-108 on declining realized vol, GARCH premium -0.55 resolving into vol decay) develop before the December Q3 print?",
+     "resolving_fact": "A close below $97.99 on increasing volume falsifies the thesis and triggers exit review; a reclaim of $105+ on declining realized vol confirms stabilization and re-opens the 0.6% HRP add headroom."
+    },
+    "reasoning": "POSITION_REVIEW: the thesis that opened this 0.8% position 2 days ago is intact and unproven \u2014 nothing in this cycle breaks it. The position was opened AFTER the 09-03 guidance cut, so every verified bear claim (trailing P/E 8.25 on a stale base, ex-refund EPS ~$2.06 vs $3.10 LY at -34%, recurring tariff cost vs one-time $134.5M IEEPA refund) was known at entry and is already in the $100.61 price. The Bear's strongest verified exhibit \u2014 implied consensus EPS $8.84 (= $100.61 / 11.38 fwd P/E), 6.7% BELOW the company's own $9.48 guidance floor \u2014 cuts both ways: it confirms the market prices LULU's guidance as too optimistic, which is precisely what a completed de-rating looks like. The contradiction I am trading: the reverse DCF says today's EV embeds -8.1%/yr NOPAT decline for 10 years, while the like-for-like record shows EBIT +8.6%/yr and revenue +11.0%/yr CAGR through the period containing this deterioration, on 56.04% gross margin, 18.03% operating margin, ROIC 21.6%, net debt -$8.8M, EV/EBIT 5.6x, EV/Sales 1.0x. The market is pricing a decade of structural decay; the verifiable record shows one bad guided year (FY26 EPS guide midpoint $9.60, -27.6% vs FY25 $13.27). Consensus target $101.53 has converged to spot (+0.9%) at recommendation 3.03 \u2014 historically where sell-side de-rating pressure exhausts. I am NOT adding: momentum z-score -1.41\u03c3 is the weakest in the 27-name book, price sits below all SMAs (20/50/200), sell-side PTs (WF $95) are still below spot, the next LULU-specific catalyst is ~13 weeks out (December Q3 print), and CPI/PPI land 09-10/09-11 \u2014 the 0.6% HRP headroom stays unused until stabilization confirms. The Bear's decisive claim (information vacuum + capitulation possibly incomplete \u2192 no fresh capital) is a size/timing claim and I concede it in full by not adding; I reject only its EXIT conclusion, because exiting at ~10.5x guided EPS into converged targets realizes the de-rating at its endpoint, and the position's carry cost through 13 weeks is bounded (~0.1% of equity at the stop). The Bear's GOOGL substitute is a screen rank, not research \u2014 and swapping out of a +0.19-correlation Consumer Cyclical diversifier into a name that adds to the book's existing tilt solves no concentration problem the book has. Falsification is pre-committed: a close below $97.99 stored support on volume falsifies the stabilization read before the 2xATR stop at $88.83; the trailing_drop 0.03 trigger (~$97.59) wakes re-analysis at that zone. Data gaps: no FCF anywhere in the system (self-funding argued from net debt/EBIT -0.00x and current ratio 2.19 \u2014 flagged, partially mitigated); whether PT cuts continue below $95 is unverifiable from the trimmed news feed (monitoring item \u2014 if consensus target breaks meaningfully below spot, the capitulation-complete leg weakens and this HOLD is revisited); dividend_yield not on file (irrelevant to thesis)."
+   },
+   "synthesizer": {
+    "action": "HOLD",
+    "confidence": 66,
+    "position_size_pct": 0.8,
+    "stop_loss": 88.83,
+    "take_profit": 128.76,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "trailing_drop",
+     "value": 0.03
+    },
+    "resolution_condition": {
+     "open_question": "Does $97.99 stored support hold through the 09-10/09-11 CPI/PPI tape, and does the stabilization read (reclaim of $105-108 on declining realized vol, GARCH premium -0.55 resolving into vol decay) develop before the December Q3 print?",
+     "resolving_fact": "A close below $97.99 on increasing volume falsifies the thesis and triggers exit review; a reclaim of $105+ on declining realized vol confirms stabilization and re-opens the 0.6% HRP add headroom."
+    },
+    "reasoning": "SYNTHESIS \u2014 Board verdict preserved (source_board_ref: board:2cbdfed771abbce82c437f19, source_board_action: HOLD). The book already holds 0.8% of equity (entry $100.64, P&L flat, 2 days), opened AFTER the 09-03 guidance cut, so every verified bear claim \u2014 second FY26 cut to $10.35-10.50B revenue / EPS $9.48-9.73, ex-refund EPS ~$2.06 vs $3.10 LY (-34%), recurring tariff cost vs one-time $134.5M IEEPA refund, UBS $106 / WF $95 PT cuts \u2014 was known at entry and is in the $100.61 price. POSITION_REVIEW answered KEEP: the thesis (a 56.04% gross margin, 18.03% operating margin, ROIC 21.6%, net-debt-zero franchise at EV/EBIT 5.6x and EV/Sales 1.0x, where the reverse DCF embeds -8.1%/yr NOPAT decline for a decade against a like-for-like record of EBIT +8.6%/yr and revenue +11.0%/yr CAGR) is intact and unproven, not broken. The Bear's strongest verified exhibit \u2014 implied consensus EPS $8.84 (= $100.61 / 11.38 fwd P/E), 6.7% below the company's own $9.48 guide floor \u2014 confirms the market prices guidance as too optimistic, which is what a completed de-rating looks like, and consensus target $101.53 has converged to spot (+0.9%) at recommendation 3.03, historically where sell-side pressure exhausts. Exiting at ~10.5x guided EPS into converged targets realizes the de-rating at its endpoint; the carry cost through the 13-week vacuum is bounded (~0.1% of equity at the stop). I concur with the Board's refusal to add: momentum z -1.41\u03c3 is the weakest in the 27-name book, price sits below all SMAs (20/50/200), PTs are still falling below spot, CPI/PPI land 09-10/09-11, and the next LULU-specific catalyst is ~13 weeks out \u2014 the 0.6% HRP headroom stays unused until stabilization confirms (reclaim of $105-108 on declining realized vol, GARCH premium -0.55 resolving into vol decay). The Bear's GOOGL substitute is a screen rank, not research, and swapping a +0.19-correlation Consumer Cyclical diversifier into a name adding to the book's existing Financial Services/Communication tilt solves no concentration problem the book has. TREND_VS_REVERSION: RSI 31.79 below SMA-200 with ADX 11.4 (no trend) and GARCH CONTRACTION is an oversold decaying name, not a strong-trend continuation \u2014 the correct holder response is no add, hold the small position, and let the pre-committed falsification line do the work: a close below $97.99 stored support on volume falsifies the stabilization read and triggers exit review before the 2xATR stop at $88.83; the trailing_drop 0.03 trigger (~$97.59) wakes re-analysis at that zone. Load-bearing data gaps flagged, not verdict-changing at this size: no FCF anywhere in the system (self-funding argued from net debt/EBIT -0.00x and current ratio 2.19 \u2014 partially mitigated proxies), and the trimmed news feed cannot verify whether PT cuts continue below $95 (if consensus target breaks meaningfully below spot, the capitulation-complete leg weakens and this HOLD is revisited). Confidence 66, below the Board's 68: I weight the FCF gap and PT-cut monitoring item slightly heavier, and the next LULU-specific datapoint is 13 weeks away \u2014 I will not round into the 70s band on a name whose thesis cannot be re-rated before December."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "FWONK",
+   "cycle_id": "cycle-v3-1788811786",
+   "board": {
+    "action": "BUY",
+    "confidence": 72,
+    "position_size_pct": 3.0,
+    "stop_loss": 85.5,
+    "take_profit": 107.31,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_on_condition",
+    "trigger_purpose": "entry",
+    "dynamic_trigger": {
+     "type": "sma_200_drop",
+     "value": 92.16
+    },
+    "resolution_condition": {
+     "open_question": "Will F1 confirm or cancel the Qatar/Abu Dhabi Grands Prix at the mid-September decision (hard logistics deadline end-September)?",
+     "resolving_fact": "F1's official announcement on the 2026 Qatar and Abu Dhabi Grands Prix \u2014 confirmation (races proceed) or cancellation (Imola replacement finale)"
+    },
+    "reasoning": "The contradiction resolves into a timing problem, not a thesis problem. The oversold-at-support setup is verified (RSI-14 35.59, stochastic 1.3/4.7, lower Bollinger band, spot +0.17% above stored support $95.34, still above SMA-200 $92.16), and franchise quality is verified (TTM revenue +18.3%, realized EBIT CAGR +51.7%/yr \u2014 the reverse DCF's 19.1%/yr NOPAT requirement is BELOW the like-for-like EBIT series, so the bear's most damning framing overstates). But the quant desk's event-weighted math \u2014 7-session EV \u2248 -0.6% at p(cancel)\u22480.40 \u2014 is decisive against buying TODAY: a dated binary (mid-September F1 decision, hard end-September logistics deadline per Vasseur 8/31) sits inside the forecast window, and the bull conceded the mean-reversion edge is invalid as a standalone pre-binary signal. The bear won on TIMING, not on thesis. Per calibration, a timing bear-win calls for a conditional structure, not a passive HOLD: I am arming BUY enter_on_condition with sma_200_drop @ 92.16 \u2014 the cancellation-flush scenario into the SMA-200/$89-92 June-demand zone, where the desk's own analog (72.7% win rate over 11 episodes) applies with the binary already resolved. Planned size at trigger 3.0% of equity (60% of the 5.0% hard cap, since even the flush zone sits above the valuation desk's $83 fair value; would size toward 5.0% only on an overshoot into $86-89 where margin of safety approaches zero). Stop $85.50, below the June low $85.97 structural floor \u2014 a post-resolution break of that floor means the demand-zone thesis is broken. Target $107.31 stored resistance (R:R \u2248 2.3:1 from the $92 zone; consensus $120.25 is the stretch case, not the plan). If races are CONFIRMED and price rallies away, the trigger never fires and I accept the missed +4-8% relief \u2014 I will not chase 50.8x forward earnings after the prior cycle's HOLD_MISS at $102.85. Portfolio check: no existing position, Communication Services only 9% of book, FWONK correlation +0.05 \u2014 a 3% add is diversifying, not concentrating; cash 23.5% covers it; no parameter change needed. Data sufficiency: the load-bearing gaps (Imola replacement fee unsourced, no insurance-recovery disclosure, p(cancel) unsourced) all bear on the MAGNITUDE of the cancellation scenario, not its existence \u2014 and a conditional entry that fires only after resolution is robust to getting magnitude wrong: a deeper flush means a better entry and a size-up, a shallower one means I miss it at acceptable cost."
+   },
+   "synthesizer": {
+    "action": "BUY",
+    "confidence": 70,
+    "position_size_pct": 3.0,
+    "stop_loss": 85.5,
+    "take_profit": 107.31,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_on_condition",
+    "trigger_purpose": "entry",
+    "dynamic_trigger": {
+     "type": "sma_200_drop",
+     "value": 92.16
+    },
+    "resolution_condition": {
+     "open_question": "Will F1 confirm or cancel the Qatar/Abu Dhabi Grands Prix at the mid-September decision (hard logistics deadline end-September)?",
+     "resolving_fact": "F1's official announcement on the 2026 Qatar and Abu Dhabi Grands Prix \u2014 confirmation (races proceed) or cancellation (Imola replacement finale)"
+    },
+    "reasoning": "The Board's verdict is a conditional BUY (enter_on_condition, sma_200_drop @ 92.16) and the delivered evidence supports preserving it exactly. The bear won on TIMING, not thesis: the quant desk's event-weighted 7-session EV is ~-0.6% at p(cancel)~0.40 with a dated binary (mid-September F1 decision, hard end-September logistics deadline per Vasseur 8/31) inside the forecast window, and the bull conceded the mean-reversion edge (72.7% win rate analog) is invalid as a standalone pre-binary signal. But the thesis survives: oversold-at-support is verified (RSI-14 35.59, stochastic 1.3/4.7, lower Bollinger band, spot +0.17% above support $95.34, still above SMA-200 $92.16), franchise quality is verified (TTM revenue +18.3%, realized EBIT CAGR +51.7%/yr vs the reverse DCF's 19.1%/yr NOPAT requirement), and the quant desk itself endorses buying a cancellation-flush into the $92.16 SMA-200 / $89-92 June-demand zone with the binary already resolved. The watch trigger fired at $95.50, which is ABOVE the $92.16 entry trigger, so the condition is genuinely unfired \u2014 arming it, not buying now, is the faithful execution. I preserve the Board's structure in full: trigger at 92.16, stop $85.50 below the June low $85.97 structural floor, target $107.31 stored resistance (R:R ~2.3:1 from the trigger zone), size 3.0% (60% of the 5.0% hard cap, justified by the valuation desk's ~$83 fair value leaving thin margin of safety even at the trigger; size toward 5.0% only on overshoot into $86-89). If races are CONFIRMED and price rallies away, the trigger never fires and the missed +4-8% relief is accepted \u2014 the prior cycle's HOLD_MISS at $102.85 vindicates refusing to chase 50.8x forward earnings. Consensus is moderate (63): desks align on the mechanism (no pre-binary entry; buy post-resolution flush) but split on valuation (fair value $83 vs street target $120.25), the deterministic baseline sits in the AVOID band, the regime is CONTRADICTORY, and the bull defense record was incomplete with p(cancel) unsourced \u2014 this scales the executed size down and is reflected in reasoning, not in vetoing the Board."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "AGI",
+   "cycle_id": "cycle-v3-1788787800",
+   "board": {
+    "action": "BUY",
+    "confidence": 72,
+    "position_size_pct": 1.1,
+    "stop_loss": 32.4,
+    "take_profit": 46.25,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_on_condition",
+    "trigger_purpose": "entry",
+    "dynamic_trigger": {
+     "type": "sma_200_rise",
+     "value": 39.11
+    },
+    "resolution_condition": {
+     "open_question": "Does the 9/10 PPI / 9/11 CPI binary (m/m forecast 0.4% vs 0.1% prior) resolve hot enough to suppress silver, or does AGI clear the macro window and reclaim SMA-200/resistance at 39.11 \u2014 and is the ~$66.50-67.11 web-sourced silver spot confirmed by a live quote before any entry?",
+     "resolving_fact": "AGI closing above 39.11 on expanding volume after the 9/11 CPI print fires the sma_200_rise trigger and wakes re-analysis to size the entry; a hot print breaking 35.77/34.03 confirms no-entry and the armed order lapses. A live silver spot materially below ~$65 vetoes the entry regardless of the trigger."
+    },
+    "reasoning": "The contradiction IS the trade, and it is clean: the business is verifiably mispriced while the tape is macro-hostile. Reverse DCF shows the market pays for 8.6%/yr NOPAT growth for 10 years against a realized 3-yr EBIT CAGR of +80.4% (revenue +30.1%/yr) \u2014 P/E 13.25 / forward 12.10 for 52.64% net margins, 27.41% ROE, 35.6% revenue growth, D/E 0.045, $400M net cash, 95.1th-percentile baseline score. Meanwhile the tape prices a Fed binary: below SMA-200/resistance 39.11, MACD histogram -0.089, volume ratio 0.78, 51% GARCH vol, and the desk's own quant shows R:R into 9/11 CPI of 0.48:1 (+5.8% to 39.11 vs -12.0% to 32.54) with MC P(below 34.03)=17% vs P(above 39.11)=26%. The desk already paid tuition on buying this setup at spot \u2014 four July longs at 39.61-40.80 exited -10.3% to -12.9%. DATA_SUFFICIENCY: sufficient for a CONDITIONAL position at floor size, not a spot one. Load-bearing gaps: (a) silver spot unverified in-system (~$66.50 junior / $67.11 bear, two roughly agreeing web checks) \u2014 a materially lower spot compresses the earnings base and the 46.25 target and would kill the entry even if the trigger fires; (b) short float NOT ON FILE \u2014 caps size at the HRP floor; (c) Q2 EPS beat-vs-miss conflict (DB +11.9% beat vs web-sourced miss) changes the July-drawdown narrative but not the levels; (d) empty news wire Aug 24-Sep 7 leaves Mexico/San Martin risk invisible \u2014 contained by floor size and by the trigger itself, since a negative development most likely prevents the 39.11 reclaim. PEG/ROIC/FCF-series gaps are multi-quarter context, not load-bearing for a 7-session conditional. CATALYST: real and dated (Warsh hawkish; PPI 9/10, CPI 9/11, m/m forecast 0.4% vs 0.1% prior) but PARTIALLY priced \u2014 July's -10/-13% de-risking and the 4%-off-the-low bounce already paid some of it; what remains unpriced is the binary outcome. If it never arrives (cool print), the trigger fires and the position is worth the 39.11\u219246.25 leg; if it arrives hot, no entry occurs and the cost is zero. The conditional structure makes non-arrival approximately free \u2014 that is the entire point. STRUCTURE: BUY enter_on_condition with trigger sma_200_rise @ 39.11 (price is below SMA-200 now, so the reclaim is an unambiguous state change; sma_20_rise rejected as already-true at 36.97 > 35.77). Size at the binding HRP ceiling 1.1% of equity \u2014 51% vol, 52.94% trailing drawdown, short-float gap and the news blackout all argue floor weight; the 12.6% risk-based size is unreachable and irrelevant. Stop 32.40 below the 32.54/32.15 support-SMA-50 confluence, TP 46.25 analyst target; the re-analysis wake re-derives both from the actual entry price. BEAR RESPONSE: the decisive bear claim (0.48:1 R:R into CPI, fat left tail) is size_or_timing, not thesis_broken \u2014 the conditional entry concedes the timing claim entirely while keeping the structural thesis, which is why overrode_bear=true is legitimate here. GOOGL substitute rejected: it carries only a discovery screen score (71.6, no agent research this cycle), would add to the book's existing 9% Communication Services tilt, and the bear's own stated concern (macro-binary exposure) is neutralized by the trigger rather than by switching names \u2014 AGI at +0.09 book correlation is the Basic Materials diversifier HRP actually wants (target 1.4% invested / 1.1% equity, headroom full)."
+   },
+   "synthesizer": {
+    "action": "BUY",
+    "confidence": 72,
+    "position_size_pct": 1.1,
+    "stop_loss": 32.4,
+    "take_profit": 46.25,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_on_condition",
+    "trigger_purpose": "entry",
+    "dynamic_trigger": {
+     "type": "sma_200_rise",
+     "value": 39.11
+    },
+    "resolution_condition": {
+     "open_question": "Does the 9/10 PPI / 9/11 CPI binary (m/m forecast 0.4% vs 0.1% prior) resolve hot enough to suppress silver, or does AGI clear the macro window and reclaim SMA-200/resistance at 39.11 \u2014 and is the ~$66.50-67.11 web-sourced silver spot confirmed by a live quote before any entry?",
+     "resolving_fact": "AGI closing above 39.11 on expanding volume after the 9/11 CPI print fires the sma_200_rise trigger and wakes re-analysis to size the entry; a hot print breaking 35.77/34.03 confirms no-entry and the armed order lapses. A live silver spot materially below ~$65 vetoes the entry regardless of the trigger."
+    },
+    "reasoning": "Board verdict preserved: BUY enter_on_condition \u2014 armed, not spot. The structural thesis is verified math: reverse DCF shows the market pricing 8.6%/yr NOPAT growth for 10 years against a realized 3-yr EBIT CAGR of +80.4% (revenue +30.1%/yr), at P/E 13.25 / forward 12.10 with 52.64% net margins, 27.41% ROE, D/E 0.045, $400M net cash, and a 95.1th-percentile baseline score. The tape is macro-hostile into the dated 9/10 PPI / 9/11 CPI binary (m/m forecast 0.4% vs 0.1% prior): price 36.97 sits below SMA-200/resistance 39.11, MACD histogram -0.089, volume ratio 0.78, GARCH 51.05% vol, and quant's R:R into the print is 0.48:1 (+5.8% to 39.11 vs -12.0% to 32.54) with MC P(below 34.03)=17% vs P(above 39.11)=26%. The desk already paid tuition on spot entries into this exact setup \u2014 four July longs at 39.61-40.80 exited -10.3% to -12.9%. The Board resolved the Bear's timing claim by conceding it entirely: no position at spot; entry only on an sma_200_rise reclaim at 39.11 on expanding volume after CPI/PPI clearance, which is an unambiguous state change since price is below SMA-200 now. If the print is hot, no entry occurs and the cost is zero; if cool, the trigger fires and the position is worth the 39.11\u219246.25 leg \u2014 non-arrival is approximately free. Sizing at the binding HRP ceiling 1.1% of equity (51% vol, 52.94% trailing drawdown, short-float gap, and the Aug 24-Sep 7 news blackout all argue floor weight); internal_consensus_score 78 scales executed size to ~0.86%, appropriately under the ceiling given the unverified silver spot (~$66.50-67.11 web-only) and the Q2 EPS beat-vs-miss source conflict. Stop 32.40 below the 32.54/32.15 support-SMA-50 confluence, TP 46.25 analyst target, hard_stop; the re-analysis wake re-derives levels from the actual entry price. A live silver spot materially below ~$65 vetoes the entry regardless of the trigger. GOOGL substitute rejected: screen-score-only (no agent research), adds to the book's existing 9% Communication Services tilt, and the Bear's own macro-binary concern is neutralized by the trigger rather than by switching names \u2014 AGI at +0.09 book correlation is the Basic Materials diversifier HRP wants at full headroom."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "BAR",
+   "cycle_id": "cycle-v3-1788787800",
+   "board": {
+    "action": "BUY",
+    "confidence": 62,
+    "position_size_pct": 2.0,
+    "stop_loss": 42.0,
+    "take_profit": 46.0,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "enter_on_condition",
+    "trigger_purpose": "entry",
+    "dynamic_trigger": {
+     "type": "sma_20_rise",
+     "value": 44.0
+    },
+    "resolution_condition": {
+     "open_question": "Does the commodity-complex breakout transmit to BAR (commodity beta lag) or is BAR's decoupling ETN-specific (flows/issuer credit) \u2014 no volume/flow data exists to distinguish, and SMA-200 status is unknown?",
+     "resolving_fact": "A close above $44.00 (SMA-20 reclaim) following the 9/10 PPI and 9/11 CPI prints confirms transmission and triggers entry; failure to reclaim $44.00 on a hot or in-line print confirms ETN-specific decoupling and the trigger expires worthless."
+    },
+    "reasoning": "The contradiction IS the trade: the commodity complex has verifiably broken out (gold +10% post-correction on de-dollarization/deficit/war themes, SA 9/5; oil >$90 on Middle East escalation 'higher for longer', SA 9/4; Treasury 8/19 buyback doubling extends the debasement put, SA 9/1 \u2014 all judge-verified) while BAR, the direct index vehicle for that complex, sits trendless at mid-range: $43.68 below SMA-20 $43.99, above SMA-50 $41.73, RSI 52.6, ADX 22.3, MACD -0.24, momentum -0.98\u03c3. Either the regime has not yet transmitted to the vehicle (a bullish gap) or ETN-specific flows/issuer-credit opacity are decoupling it (a trap) \u2014 and the desk has no volume/flow data to distinguish, with SMA-200 status unknown and the institutional base thin ($1.55M tracked, RenTech exited, Q/Q decreasing). The Bear effectively won the debate on timing and size: the Bull conceded the roll-yield pillar (forward carry ~3.3% annualized, single-source, 'not a forecast' \u2014 ~0.5% over 7 sessions, a tiebreaker at best), the CPI asymmetry is asserted not demonstrated (the desk's own market_context calls 9/11 CPI m/m 0.4% vs 0.1% prior two-sided: inflation-hedge bid vs real-rate carry drag), and the tape offers no directional edge. But the bear win is about entry timing, not a broken regime thesis \u2014 the multi-source macro case stands. The calibrated response is to convert the bear's timing objection into the entry filter itself: arm a conditional BUY at the SMA-20 reclaim ($44.00 close, the quant desk's own level) so exposure only begins if the tape confirms transmission after the 9/10-9/11 prints. If the catalyst passes and BAR cannot reclaim $44.00, that non-event is itself the answer \u2014 the decoupling is ETN-specific, and the desk owns nothing. Sizing 2.0% of equity (half the quant's 4% ceiling, well under the 5.0% hard cap and trivially funded by 23.5% cash): beta 0.18 and low_vol +0.54\u03c3 make it covariance-friendly diversification for a 28-name equity book, but momentum -0.98\u03c3, no flow verification, single-source carry, and unsecured-note issuer opacity on a thin ETN all argue half-size. Stop $42.00 (2xATR, ~3.8% below spot, below stored support $42.53 \u2014 clean invalidation); target $46.00 (stored resistance), ~1:1 reward/risk appropriate for a regime-confirmation starter. exit_style reanalyze_on_breach because on a thin ETN the $42 breach is an invalidation signal, not a liquidity guarantee. GARCH vol forecast 26.56% vs realized 27.19% is neutral \u2014 no vol edge either way. On the bear's GS substitute: sound relative logic, but GS carries a discovery screen rank only \u2014 no agent researched it this cycle, so I will not swap into an unvetted name on one analyst's preference; BAR's conditional structure costs nothing if never triggered."
+   },
+   "synthesizer": {
+    "action": "BUY",
+    "confidence": 62,
+    "position_size_pct": 2.0,
+    "stop_loss": 42.0,
+    "take_profit": 46.0,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "enter_on_condition",
+    "trigger_purpose": "entry",
+    "dynamic_trigger": {
+     "type": "sma_20_rise",
+     "value": 44.0
+    },
+    "resolution_condition": {
+     "open_question": "Does the commodity-complex breakout transmit to BAR (commodity beta lag) or is BAR's decoupling ETN-specific (flows/issuer credit) \u2014 no volume/flow data exists to distinguish, and SMA-200 status is unknown?",
+     "resolving_fact": "A close above $44.00 (SMA-20 reclaim) following the 9/10 PPI and 9/11 CPI prints confirms transmission and triggers entry; failure to reclaim $44.00 on a hot or in-line print confirms ETN-specific decoupling and the trigger expires worthless."
+    },
+    "reasoning": "PRESERVE of the Board's conditional BUY (source_board_ref board:ace3deb44dca8a2a180e8775, source action BUY): the Board heard the full debate and its verdict is the baseline. The Bear won on timing and size \u2014 the Bull conceded the roll-yield pillar (forward carry ~3.3% annualized, single-source, 'not a forecast', ~0.5% over 7 sessions), the CPI asymmetry is asserted not demonstrated (the desk's own market_context calls the 9/11 print two-sided: inflation-hedge bid vs real-rate carry drag), and the tape is trendless (ADX 22.3, RSI 52.6, MACD -0.24, price $43.68 below SMA-20 $43.99, momentum -0.98\u03c3). But the regime thesis stands multi-source: gold +10% post-correction (SA 9/5), oil >$90 on Middle East escalation (SA 9/4), Treasury 8/19 buyback doubling (SA 9/1) \u2014 all judge-verified \u2014 while BAR, the direct index vehicle, sits mid-range. The Board's synthesis converts the Bear's timing objection into the entry filter itself: arm a conditional BUY at the SMA-20 reclaim ($44.00 close) after the 9/10 PPI and 9/11 CPI prints, so exposure only begins if the tape confirms transmission. If the catalyst passes and BAR cannot reclaim $44.00, that non-event is the answer \u2014 decoupling is ETN-specific and the desk owns nothing. I verified the structure against the precomputed math: stop $42.00 = 2xATR ($0.84\u00d72 \u2248 $1.68, ~3.8% below spot), below stored support $42.53 \u2014 clean invalidation; target $46.00 = stored resistance, ~1:1 R/R appropriate for a regime-confirmation starter; size 2.0% \u2264 the 5.0% binding hard cap, funded by 23.5% cash, half the quant's 4% ceiling for exactly the reasons the debate surfaced (momentum -0.98\u03c3, no flow verification, single-source carry, unsecured-note issuer opacity on a thin $1.55M tracked base with RenTech exited and Q/Q decreasing). GARCH 26.56% vs realized 27.19% is neutral \u2014 no vol edge. On the Bear's GS substitute: sound relative logic, but GS carries a discovery screen rank only \u2014 no agent researched it this cycle; I will not swap into an unvetted name on one analyst's preference, and BAR's conditional structure costs nothing if never triggered. Data gaps are real but non-load-bearing for a conditional entry: the trigger itself (close > $44.00) is the observable fact that resolves the transmission-vs-decoupling question, and issuer-credit/flow opacity is mitigated by half-size and reanalyze_on_breach exit style (on a thin ETN the $42 breach is an invalidation signal, not a liquidity guarantee). Confidence 62 matches the Board's own number and sits in the 60-69 calibration bucket (48% realized win rate) \u2014 honest for a conditional entry whose thesis is regime-level but whose vehicle-level evidence is contested. internal_consensus_score 58: Board and Bull aligned on the regime, quant NEUTRAL (55) with a conditional-entry note that matches the Board's structure, Bear effectively won the debate on timing \u2014 disagreement is information and it scales the size down, not out."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "XT",
+   "cycle_id": "cycle-v3-1788787800",
+   "board": {
+    "action": "BUY",
+    "confidence": 68,
+    "position_size_pct": 1.8,
+    "stop_loss": 81.35,
+    "take_profit": 88.5,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_on_condition",
+    "trigger_purpose": "entry",
+    "dynamic_trigger": {
+     "type": "rsi_14_overbought",
+     "value": 65.0
+    },
+    "resolution_condition": {
+     "open_question": "Does post-CPI price action confirm trend onset (break of the 84.23 triple ceiling on expanding volume) or channel failure (loss of 81.35 support)?",
+     "resolving_fact": "XT closes above 84.23 on above-average volume after the 9/11 CPI print (entry confirmed \u2014 re-analysis wakes via RSI-14 >65), or closes below 81.35 (channel broken \u2014 conditional entry void, no position taken)."
+    },
+    "reasoning": "XT is an ETF, not an operating company: the 20%-pillar data-sufficiency breach and every NOT ON FILE field are structural category errors in a pipeline built for operating companies, not evidence of a bad asset \u2014 but they also mean there is NO fundamental thesis here, only price structure and macro. The bull folded its own entry case (thesis_survives=False, confidence 42): compression is direction-agnostic, no idiosyncratic catalyst exists, and volume faded into the 83.86/83.89/83.56 triple ceiling (ADX 10.5, MACD -0.12, price below SMA-20). What survives is the quant's swing map: a 3-month ascending channel (higher lows 77.17\u219281.80) with GARCH +0.19 EXPANSION into a dated binary \u2014 CPI 9/11 m/m forecast 0.4 vs 0.1 prior, transmitted through beta 1.18 with the 10Y at 4.78%. Buying that pre-print is a coin flip: one CPI-day sigma (\u00b12.74%) reaches both the 84.23 ceiling and through 81.35 support. The contradiction resolves AFTER the print, so I refuse to pay pre-event uncertainty and instead arm a re-analysis wake on momentum confirmation: RSI-14 at 51.4 in trendless chop means a genuine break of 84.23 on expanding volume would drive RSI-14 through 65 within 1-3 sessions \u2014 rsi_14_overbought at 65 is the closest listed proxy for the quant's 'confirmed break above 84.23 = trend onset'. Sizing honors the desk's own constraint: XT correlates +0.71 with TSM (10% of equity, +11% above its HRP target), so deployment is capped at 1.8% (half the 3.6% HRP ceiling), scalable toward 3.6% only if the wake verifies the break on expanding volume. Stop at 81.35 channel support (hard_stop \u2014 a failed triple-ceiling breakout on a catalyst-free ETF is thesis-broken); target 88.50 (~1.4R from an ~84.3 confirmation entry). Declining the bear's GOOGL substitute: it carries a discovery screen rank only, no agent has researched it this cycle \u2014 buying an unread name on a preference would be sloppier than the gap I'm avoiding; flag it as the natural next-cycle research candidate. The desk's 68%-wrong HOLD record argues against passive watching; an armed entry trigger with a defined size and stop is a committed position, not an evasion."
+   },
+   "synthesizer": {
+    "action": "BUY",
+    "confidence": 68,
+    "position_size_pct": 1.8,
+    "stop_loss": 81.35,
+    "take_profit": 88.5,
+    "exit_style": "hard_stop",
+    "entry_mode": "enter_on_condition",
+    "trigger_purpose": "entry",
+    "dynamic_trigger": {
+     "type": "rsi_14_overbought",
+     "value": 65.0
+    },
+    "resolution_condition": {
+     "open_question": "Does post-CPI price action confirm trend onset (break of the 84.23 triple ceiling on expanding volume) or channel failure (loss of 81.35 support)?",
+     "resolving_fact": "XT closes above 84.23 on above-average volume after the 9/11 CPI print (entry confirmed \u2014 re-analysis wakes via RSI-14 >65), or closes below 81.35 (channel broken \u2014 conditional entry void, no position taken)."
+    },
+    "reasoning": "Preserving the Board's conditional BUY in full. XT is a verified ETF (iShares Exponential Technologies), so the 20%-pillar data-sufficiency breach and every NOT ON FILE field are structural category errors, not evidence against the asset \u2014 but they also mean there is no fundamental thesis, only price structure and macro. The quant's swing map (3-month ascending channel, higher lows 77.17\u219281.80, into a triple ceiling 83.86/83.89/83.56 = 52w high 84.23) with GARCH +0.19 EXPANSION into the dated CPI 9/11 binary (m/m 0.4 forecast vs 0.1 prior, beta 1.18, 10Y 4.78%) is real, but one CPI-day sigma (\u00b12.74%) reaches both the ceiling and through 81.35 support \u2014 pre-print entry is a coin flip the Board correctly refused to pay. The bull folded its own entry case (thesis_survives=False, confidence 42), conceding compression is direction-agnostic and no idiosyncratic catalyst exists. What survives is the conditional structure: arm a re-analysis wake on momentum confirmation (RSI-14 51.4 in ADX-10.5 trendless chop; a genuine break of 84.23 on expanding volume drives RSI-14 through 65 within 1-3 sessions), enter only on post-CPI confirmation, void below 81.35. Sizing honors the desk's own constraint: XT correlates +0.71 with TSM (10% of equity, +11% above its HRP target), so 1.8% (half the 3.6% HRP ceiling that binds) is the right deployment, scalable toward 3.6% only if the wake verifies the break on expanding volume. The bear's GOOGL substitute was correctly declined \u2014 a discovery screen rank with zero agent research is not a basis to rotate. Confidence 68 matches the Board and the evidence: structure verified, risk defined, but the directional resolution hinges on a macro print the conditional entry deliberately does not predict; the 60-69 calibration bucket's 48% realized win rate argues against rounding up."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "ALLY",
+   "cycle_id": "cycle-v3-1788772667",
+   "board": {
+    "action": "HOLD",
+    "confidence": 74,
+    "position_size_pct": 0.0,
+    "stop_loss": 41.85,
+    "take_profit": 53.75,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "sma_50_rise",
+     "value": 44.22
+    },
+    "resolution_condition": {
+     "open_question": "Whether the 9/1-9/3 digital outage caused measurable deposit attrition or one-time costs that dent the Q3'26 print",
+     "resolving_fact": "Q3'26 earnings release 2026-10-15 BMO: deposit balances, provision for credit losses, and any outage-related expense disclosure vs EPS est $1.47"
+    },
+    "reasoning": "KEEP at current size (6.7% of equity). The thesis that opened this position \u2014 deep valuation with an earnings inflection \u2014 is intact and strengthening: P/B 0.99, forward P/E 6.80, PEG 0.39, and TTM net income stepped up from $852M (FY2025) to $1.454B through Q2'26 (Q2'26 EPS $1.19, revenue +11%, EPS QoQ +16.5%), all verified by the debate judge against the snapshot. Technicals confirm a stable tape: $43.73 above SMA-200 ($42.58) and SMA-20 ($43.18), MACD +0.116 bullish, RSI 53.46 neutral, volume STABLE, GARCH premium decayed to -0.01 (NEUTRAL) \u2014 the August vol expansion has decayed and does not block a keep. Institutional accumulation is real (+151.8M shares Q/Q, new buyers Berkshire/Harris/Dimensional). The regime directive (DEEP_DISCOUNT, conf 78) explicitly states fundamentals and valuation carry the lens and the -4.1% position gap is ordinary, not thesis-breaking. BUY is structurally blocked: the HRP ceiling binds at 0.0% of equity \u2014 ALLY is already ~3x its covariance-aware target (2.1% of equity) with +6% drift, +0.72 correlation to COF, and Financial Services at 14% of the book, so adding concentrates existing risk. SELL is not warranted: no solvency alarm, no momentum collapse, no existential risk surfaced; the 9/1-9/3 digital outage is a real but unquantified operational flag that the tape absorbed (+3.6% week) with quantification dated 10/15 (Q3 earnings, EPS est $1.47). The bear's strongest verified point \u2014 3-yr EPS CAGR -22.1% value-trap record \u2014 is a size/timing concern answered by the invalidation framework (2xATR stop 41.85 inside the 41.46-42.58 support confluence, Q3 print criteria), not thesis breakage. Monitor: reclaim of SMA-50 44.22 / resistance 45.15 after the 9/10 PPI print; breach of 41.85 wakes re-analysis rather than a mechanical sell."
+   },
+   "synthesizer": {
+    "action": "HOLD",
+    "confidence": 72,
+    "position_size_pct": 0.0,
+    "stop_loss": 41.85,
+    "take_profit": 53.75,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": "watch_only",
+    "trigger_purpose": "monitor",
+    "dynamic_trigger": {
+     "type": "sma_50_rise",
+     "value": 44.22
+    },
+    "resolution_condition": {
+     "open_question": "Whether the 9/1-9/3 digital outage caused measurable deposit attrition or one-time costs that dent the Q3'26 print",
+     "resolving_fact": "Q3'26 earnings release 2026-10-15 BMO: deposit balances, provision for credit losses, and any outage-related expense disclosure vs EPS est $1.47"
+    },
+    "reasoning": "ALLY is a held position (7% of equity, -4% P&L) and this is a thesis test, not a P&L reaction: the thesis is intact. Fundamentals verify from stored vendor data \u2014 P/B 0.99, forward P/E 6.80, PEG 0.39, net margin 18.4%, ROE 9.68%, revenue +11%, EPS QoQ +16.5%, analyst rec 1.63 with a $53.77 target (~+23% above spot 43.73). Technically the name is unbroken but unconfirmed: close 43.73 sits above SMA-200 (42.58) but just below SMA-50 (44.22), RSI 53.46 neutral, Bollinger middle (66%), volume stable, GARCH premium -0.01 (NEUTRAL \u2014 the earlier vol expansion has decayed, not persisted). The Board's HOLD/watch_only with a monitor trigger (sma_50_rise 44.22) is the correct synthesis: no thesis break argues SELL, and two gates argue against adding \u2014 (1) the HRP sizing bracket binds at 0.0% headroom (target 2.1% of equity vs 6.7% already held; the briefing states the binding constraint is ZERO), and (2) an unresolved operational question: whether the 9/1\u20139/3 digital outage caused deposit attrition or one-time costs that dent the Q3'26 print, resolving at the 2026-10-15 earnings release (deposit balances, provision for credit losses, outage-related expense disclosure vs EPS est $1.47). Adding to a name with high book correlation (COF +0.72, Financial Services tilt 14%) into an unquantified operational event would concentrate existing risk. I preserve the Board's entry_mode (watch_only), trigger_purpose (monitor), dynamic_trigger (sma_50_rise 44.22), stop 41.85 (2xATR), take_profit 53.75, and exit_style reanalyze_on_breach, and set position_size_pct 0.0 \u2014 consistent with both the Board and the zero-headroom sizing gate. Confidence 72: core thesis holds with defined risk (stop 41.85, R:R 5.34:1), discounted modestly below the Board's 74 for the open outage question and a stale vendor next-earnings field (2026-07-21) that conflicts with the Board's 10/15 date. The claimed research question (GARCH +0.34 premium, idiosyncratic vs macro into 8/12 CPI) is answered as unresolved: the current 9/4 snapshot shows the premium has normalized to -0.01, so the expansion did not persist, but no delivered evidence attributes the historical 8/9\u20138/12 window to CPI macro risk vs idiosyncratic flow."
+   },
+   "synthesizer_relation": "preserve"
+  },
+  {
+   "ticker": "NVDA",
+   "cycle_id": "cycle-v3-1788760704",
+   "board": {
+    "action": "BUY",
+    "confidence": 72,
+    "position_size_pct": 0.8,
+    "stop_loss": 200.0,
+    "take_profit": 260.0,
+    "exit_style": "hard_stop",
+    "entry_mode": null,
+    "trigger_purpose": null,
+    "dynamic_trigger": {
+     "type": "sma_50_drop",
+     "value": 210.57
+    },
+    "resolution_condition": null,
+    "reasoning": "CONTRADICTORY regime resolved: the cycle's core contradiction is cheap fundamentals vs an extended tape. Fundamentals (verified 0d, finviz): forward P/E 14.73, PEG 0.23, net margin 63.66%, ROIC 72.42%, revenue +83.38% YoY, EPS QoQ +128.21%, D/E 0.17, current ratio 4.59 \u2014 no solvency or quality concern anywhere. Tape: price 230.36 pinned at 93% of the upper Bollinger band, pushing stored resistance 234.76 on DECREASING 5d volume, with GARCH vol expanding (51.14% predicted vs 40.54% realized, premium +0.26). The debate judge ruled BULL on both POSITION_REVIEW and DATA_SUFFICIENCY (final confidence 72): the Bear's verified claims were all entry-timing and data-quality flags, none refuting the demand thesis \u2014 but its tape evidence is real and unmitigated at spot. The trade is therefore NOT a spot chase: BUY at the HRP ceiling of 0.8% of equity (bracket binds; headroom to the 3.2%-of-invested HRP target is exactly 0.8%) with a conditional sma_50_drop trigger at 210.57, so execution waits for the pullback the Bear's own evidence makes likely. At a ~210 fill with a 5% stop (200.0, just above SMA-200 at 196.67) and 260 target, R:R is ~4:1 vs ~1.6:1 buying spot \u2014 this satisfies the asymmetric-risk mandate that a spot entry would fail against near resistance. Judge's residual concerns handled: EV/Sales spread (26.09 vs 18.12) is not load-bearing since even the conservative figure is already priced into the baseline value score (42/100); the year-ahead-forecast catalyst is unverified in filings, which is exactly why size stays at the 0.8% ceiling rather than the 5% hard cap. Portfolio check: NVDA vs book avg correlation +0.10 (highest TSM +0.63 at 10% weight) \u2014 a 0.8% add does not create concentration (largest position 10%, top-3 27%). Bear verdict response: the decisive bear claim is entry-timing (extended band + vol expansion + fading volume), classified size_or_timing \u2014 overridden not by dismissing it but by adopting it as the conditional entry mechanism."
+   },
+   "synthesizer": {
+    "action": "HOLD",
+    "confidence": 72,
+    "position_size_pct": 0.0,
+    "stop_loss": 215.6,
+    "take_profit": 334.32,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": null,
+    "trigger_purpose": null,
+    "dynamic_trigger": {
+     "type": "sma_50_drop",
+     "value": 210.57
+    },
+    "resolution_condition": null,
+    "reasoning": "POSITION_REVIEW (we own NVDA, +2.1% over 3 days): KEEP. The thesis that opened the position \u2014 hypergrowth AI-compute franchise with fortress balance sheet \u2014 is fully intact per the verified fundamental snapshot: revenue growth 83.38%, EPS QoQ +128.21%, net margin 63.66%, ROE 117.21%, debt/equity 0.17, current ratio 4.59, forward P/E 14.73 vs PEG 0.23 (growth-adjusted valuation is cheap despite headline P/E 29.12), analyst consensus 1.21 with $334.32 target (+45% upside). Nothing in the data refutes the thesis, and no shortlisted alternative (LULU, GOOGL, SMR, GS, V, UBER, OWL, CRDO, SNDK, MU, AMZN) offers a superior risk-adjusted replacement for a hypergrowth compounder already held at only ~1.6% of equity \u2014 selling would be swapping a 96.9th-percentile composite (74.3/100, STRONG_CANDIDATE) for weaker names. TECHNICAL: price 230.36 is above SMA-50 (210.57) and SMA-200 (196.67) with RSI 60.4 \u2014 healthy uptrend, not overbought; but Bollinger position is 93% of the band (upper rail) and 5d volume is DECREASING, so entry timing is extended. GARCH vol forecast 51.14% annualized vs 40.54% realized (premium +0.26 \u2192 EXPANSION) argues against adding at the upper band right now. SIZING: HRP covariance-aware ceiling binds at 0.8% of equity headroom (target 3.2% of invested capital = 2.4% of equity; already held 1.6%); 2xATR stop sits 6.4% below spot at 215.60, giving a 7.04:1 risk/reward to the $334.32 target. With thesis intact but entry extended and vol expanding, the correct action is HOLD (keep the committed capital, do not add at the upper Bollinger rail). Risk controls on file: stop 215.60 (2x ATR), reanalyze on breach. Catalysts to monitor: post-earnings drift after the 2026-08-26 report (EPS beat +6.22%, sales beat +4.28% \u2014 modest beats vs 83% growth could explain the recent consolidation), TSM correlation +0.63 (largest book-overlap risk), and the dynamic trigger to add on a pullback to SMA-50 at 210.57. Confidence 72 reflects actionable conviction: core thesis verified, risk defined, but entry timing extended and vol expansion cap upside for the next ~7 sessions."
+   },
+   "synthesizer_relation": null
+  },
+  {
+   "ticker": "MANU",
+   "cycle_id": "cycle-v3-1788725116",
+   "board": {
+    "action": "BUY",
+    "confidence": 72,
+    "position_size_pct": 2.5,
+    "stop_loss": 19.6,
+    "take_profit": 23.4,
+    "exit_style": "hard_stop",
+    "entry_mode": null,
+    "trigger_purpose": null,
+    "dynamic_trigger": {
+     "type": "rsi_14_oversold",
+     "value": 30.0
+    },
+    "resolution_condition": null,
+    "reasoning": "CONTRADICTORY regime trade: the market prices MANU as a broken P&L (net margin -2.65%, ROE -9.62%, forward P/E 140.58) while the growth and structure data says otherwise \u2014 revenue +18%, PEG 0.35, analyst rec 2.00 with a 23.46 target (~12% above spot 20.90), and an 11.04% short float that fuels any strategic/sale headline. The 140x forward P/E is a red herring for a sports franchise valued on EV/EBITDA and takeover optionality, not earnings multiples; the internally contradictory pair (0.35 PEG vs negative margins) resolves in favor of a depressed-earnings base with real top-line growth. Technically this is a pullback within an intact uptrend: price 20.90 is ABOVE SMA-200 (18.99), RSI-14 at 32.46 and Bollinger position at 8% of band mark oversold, GARCH forecasts vol contraction (27.21% vs 31.38% realized), and stored support sits at 20.56 just 1.6% below spot \u2014 tight, defined risk. The bear's strongest claim is solvency (current ratio 0.37, quick 0.33, D/E 4.21); I override it on size and structure, not thesis: MANU's leverage is a stable, decades-old LBO-style structure serviced by contracted broadcast revenue, and the claim is about capital-structure durability rather than imminent default. Response: smaller position (2.5% vs the 3.7% HRP ceiling), hard stop at 19.60 (2xATR, 6.1% below spot, above SMA-200), TP 23.40 just under the analyst target and below stored resistance 24.45 \u2014 R:R 1.92:1 clears the 1.5:1 mandate. MANU's correlation to the book is +0.14 (highest TSM +0.22), so this adds genuine diversification into Communication Services without concentrating the Financial Services tilt."
+   },
+   "synthesizer": {
+    "action": "BUY",
+    "confidence": 71,
+    "position_size_pct": 3.0,
+    "stop_loss": 19.62,
+    "take_profit": 23.46,
+    "exit_style": "hard_stop",
+    "entry_mode": null,
+    "trigger_purpose": null,
+    "dynamic_trigger": {
+     "type": "sma_50_drop",
+     "value": 22.61
+    },
+    "resolution_condition": null,
+    "reasoning": "SYNTHESIS VERDICT \u2014 BUY MANU at 20.90, sized 3.0% of equity (within the 3.7% HRP-binding ceiling), with a hard stop at 19.62 (2x ATR) and take-profit at 23.46 (analyst consensus target). The Board's governing verdict is a conditional BUY on a mean-reversion setup: the stock sits at the lower Bollinger band (8% of band), RSI-14 at 32.46 (near-oversold), trading below SMA-50 (22.61) but above SMA-200 (18.99) \u2014 a pullback within an intact longer-term uptrend, not a breakdown. GARCH forecasts 27.21% annualized vol vs 31.38% realized \u2014 a contraction signal that historically precedes stabilization. The Bear's substitute case (own GOOGL instead) is acknowledged but rejected: GOOGL is a valid alternative, but MANU's setup is a tactical mean-reversion entry with defined 2:1 risk/reward (downside -6.12% to stop, upside +12.27% to target), whereas GOOGL offers no such asymmetry at this cycle's price point. The deterministic baseline (33.9/100, AVOID band) is advisory and sees static ratios \u2014 it is blind to the reversal factor (+0.50\u03c3, strongest in the book), the GARCH contraction signal, and the near-oversold RSI that define this entry. Position sized at 3.0% (below the 3.7% HRP ceiling) to reflect moderate internal consensus (~68) driven by weak TTM fundamentals (net margin -2.65%, debt/equity 4.21, current ratio 0.37) that cap conviction despite the sound technical setup. Risk is defined: stop 19.62 (-6.1%), target 23.46 (+12.3%)."
+   },
+   "synthesizer_relation": null
+  },
+  {
+   "ticker": "DKS",
+   "cycle_id": "cycle-v3-1788725116",
+   "board": {
+    "action": "BUY",
+    "confidence": 72,
+    "position_size_pct": 1.9,
+    "stop_loss": 122.3,
+    "take_profit": 166.0,
+    "exit_style": "hard_stop",
+    "entry_mode": null,
+    "trigger_purpose": null,
+    "dynamic_trigger": {
+     "type": "trailing_drop",
+     "value": 0.1
+    },
+    "resolution_condition": null,
+    "reasoning": "CONTRADICTORY-regime structural mispricing: the tape and the fundamentals have decoupled. Fundamentals (0d old, verified): DKS beat on both lines 12 days ago (EPS +0.21%, sales +1.87% on 2026-08-25), grew revenue +53.2% QoQ, earns 18.48% ROE, and trades at 10.18x forward P/E, PEG 1.02, P/S 0.59 with the street at 2.12 (buy) and a $166 target \u2014 +19% above spot. The tape: RSI-14 29.25 (oversold), price 33% below SMA-200 and 29% below SMA-50, 53.08% trailing max drawdown, reversal z-score +3.00\u03c3 (the most extreme recent-loser signal in the 24-name book), 12.54% short float. The market is pricing distress that neither the balance sheet (current ratio 1.49, no solvency alarm) nor the fresh double beat supports. GARCH forecasts vol CONTRACTION (119.6% predicted vs 135.5% realized \u2014 premium -0.12), suggesting the dislocation is peaking, not building. Trade structure: entry 139.15, volatility-adjusted stop 122.30 (2xATR, just above stored support 120.4 \u2014 a literal 5% stop sits inside one day's 6.1% ATR and would be noise-triggered), target 166 (street mean) \u2192 R:R 1.59:1, passing the 1.5:1 asymmetric-risk gate; max loss \u22480.23% of equity at the 1.9% HRP-ceiling size. Sizing at the full covariance-aware ceiling is justified by the fresh beat, extreme reversal signal, vol-contraction forecast, and +0.12 book correlation \u2014 DKS adds an unrepresented Consumer Cyclical sleeve to a Financials/Tech-tilted book with 27.2% cash and a 10% largest position, so no concentration issue. Residual risk honestly priced into confidence: EPS QoQ -17.3% against +53.2% sales signals real margin compression (operating margin 7.67%, quick ratio 0.30) \u2014 a quality-of-growth question I cannot resolve from stored data, which caps this at the actionable band rather than exceptional conviction. Backstop: trailing_drop 0.10 re-analysis trigger beneath the hard stop."
+   },
+   "synthesizer": {
+    "action": "BUY",
+    "confidence": 70,
+    "position_size_pct": 1.9,
+    "stop_loss": 122.3,
+    "take_profit": 166.0,
+    "exit_style": "hard_stop",
+    "entry_mode": null,
+    "trigger_purpose": null,
+    "dynamic_trigger": {
+     "type": "trailing_drop",
+     "value": 0.1
+    },
+    "resolution_condition": null,
+    "reasoning": "Board verdict BUY (72) is preserved and made safer, not overridden. The Board's structural-mispricing thesis verifies on the stored data: RSI-14 29.25 oversold, price 33% below SMA-200, +3.00\u03c3 reversal z-score (most extreme in the 24-name book), 12.54% short float, 10.18x forward P/E, PEG 1.02, GARCH vol CONTRACTION (119.6% predicted vs 135.5% realized), and +0.12 book correlation adding an unrepresented Consumer Cyclical sleeve to a Financials/Tech book with 27.2% cash. However, the whiteboard risk_flags (fundamental desk, quant-annotated) document a material fact the Board's snapshot did not carry: a securities fraud class action filed 9/5-9/6 (\u00a710(b)/20(a), alleging concealed stagnant Foot Locker inventory), first tradeable session Tue 9/8 \u2014 NOT priced into the 9/4 $139.15 print. The quant desk is BEARISH (62) with hrp_weight 0 on that basis, and additionally shows $139.15 sits inside the unfilled 8/25 earnings gap (124.31-146.48) with no traded support between and bounce volume of only 1.01x the down-leg (distribution, not accumulation). Synthesis: preserve the Board's BUY direction and its exact dynamic_trigger (trailing_drop 0.10, firing ~125.2 \u2014 at the 124.31 gap-low zone), so capital is only committed after the legal overhang has had a session to price and price has reached the structural support the quant identified. The Board's stop 122.30 sits below the 124.31 gap low (the quant's honest-stop requirement) and above stored support 120.4. Nominal size 1.9% (Board, at the binding HRP ceiling) scaled by internal_consensus_score 58 lands ~1.1% executed \u2014 matching the quant's own conditional guidance of \u22641.0% for an unconfirmed reversal with a fresh catalyst. Target 166 (street mean). This is trigger-gated synthesis of a contested cycle, not a veto: the Board's edge survives, the quant's timing objection is structurally satisfied."
+   },
+   "synthesizer_relation": null
+  },
+  {
+   "ticker": "MRNA",
+   "cycle_id": "cycle-v3-1788725116",
+   "board": {
+    "action": "HOLD",
+    "confidence": 72,
+    "position_size_pct": 0,
+    "stop_loss": 118.0,
+    "take_profit": 176.66,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": null,
+    "trigger_purpose": null,
+    "dynamic_trigger": {
+     "type": "trailing_drop",
+     "value": 0.15
+    },
+    "resolution_condition": null,
+    "reasoning": "Structural price-fundamentals decoupling: MRNA at $145.55 sits 165% above SMA-200 and 70% above SMA-50 while fundamentals are uniformly broken (gross margin -66%, net margin -141%, ROIC -39.4%, forward P/E -31.69, P/S 26x) and the consensus analyst target ($116.50) is 20% BELOW spot. The market is pricing pure momentum (+1.31\u03c3); the fundamentals say the economics do not support this price. However, both directions fail the asymmetric risk mandate today: a BUY at the 0.5% HRP ceiling with a 2xATR stop (~$118) yields R:R ~1.15:1 against $176.66 resistance, and shorting into 16.16% short float with 385% realized vol carries a fatter loss tail than win. Exhaustion signatures (GARCH contraction signal, premium -0.71; decreasing volume on the run-up; 35.68% trailing max drawdown) favor mean-reversion as the resolution, but the actionable entry is not at current levels in either direction. HOLD with zero size and a trailing_drop 0.15 trigger: a 15% break from the trailing high confirms the momentum crack and re-opens the trade with acceptable R:R. Balance sheet is sound (D/E 0.19, current ratio 2.29) so this is a valuation contradiction, not a solvency one."
+   },
+   "synthesizer": {
+    "action": "BUY",
+    "confidence": 71,
+    "position_size_pct": 0.5,
+    "stop_loss": 118.17,
+    "take_profit": 176.66,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": null,
+    "trigger_purpose": null,
+    "dynamic_trigger": {
+     "type": "sma_50_drop",
+     "value": 85.5
+    },
+    "resolution_condition": null,
+    "reasoning": "SYNTHESIS: The Board's BUY verdict (conviction 0.72, 3-0 with one abstention) governs as baseline. The Board explicitly evaluated the Bear's GOOGL substitute case and rejected it \u2014 GOOGL was scored 71.6 on the screen vs MRNA 36.6, but the Board judged MRNA's setup superior on risk/reward (1.14:1 with defined 2xATR stop at 118.17) and asymmetric upside to the 176.66 resistance (+21.4% vs -18.8% downside). The Bear's core factual claims (loss-making TTM, post-parabolic extension, catalyst fired) are all verified in the pre-computed data \u2014 this is not a hallucination to refute, but a risk profile the Board accepted with defined controls. The dissent is therefore resolved by the Board's senior authority, not by refuting facts.\n\nSIZING: HRP ceiling binds at 0.5% of equity (~$519 on $103,818). This is the covariance-aware cap and I honor it \u2014 MRNA's 110% GARCH vol and -141% net margin justify keeping this a pilot position. Internal consensus 62 reflects: quant technicals strong (85.8 momentum pillar, price 2.7x above SMA-200, RSI 63 healthy not overbought) but fundamentals weak (composite 36.6, 9th percentile rank, negative ROIC -39.4%). The Board's conviction_vector.data_quality of 68 passes the 60 threshold so no halving applies. Position size 0.5% is the maximum the HRP bracket permits \u2014 I do not exceed it despite Board conviction, because the fundamental pillar (22.6/100) is the weakest link and the 16.2% short float signals contested positioning.\n\nENTRY TIMING: Price at 145.55 is 67% through the Bollinger band (MIDDLE, not overbought) and the Board flagged extension risk. The dynamic_trigger (sma_50_drop at 85.5) is preserved exactly as the Board set it \u2014 if price pulls back to the rising 50-day, the monitor registers a conditional add/entry watch. This is not a veto of immediate entry; it is a staged entry mechanism the Board itself designed.\n\nRISK CONTROLS: Stop 118.17 (2xATR, -18.8%) is wide but appropriate for a 110% vol name \u2014 tighter stops would be noise-stopped. Take profit 176.66 (stored resistance). Exit style reanalyze_on_breach rather than hard_stop because the Board's thesis rests on post-earnings momentum continuation, not a fragile technical level; a breach of 118.17 warrants desk re-look, not automatic liquidation, given the position is only 0.5% of equity.\n\nLEARNING SIGNAL: Past cycles (NVDA, TSM) show the synthesizer correctly preserved Board-set dynamic triggers and sized within HRP brackets. Applied here: no override of Board direction, HRP ceiling respected, trigger value populated with the quant-provided SMA-50 level (85.5) rather than null.\n\nKEY FIGURES CITED: Close 145.55 (2026-09-04); RSI-14 63.19; ATR-14 13.69; SMA-50 85.5; SMA-200 54.82; Bollinger 67% MIDDLE; GARCH 110.23% annualized (contraction signal, premium -0.71); HRP target weight 0.7% of invested = 0.5% of equity; net margin -141.43%; ROIC -39.41%; short float 16.16%; analyst rec 2.74; target price 116.50 (below spot \u2014 noted as bearish counterweight); EPS surprise +3.06%, sales surprise +40.87% (last quarter); next earnings 2026-07-31 (37 days ago, next not yet scheduled on file)."
+   },
+   "synthesizer_relation": null
+  },
+  {
+   "ticker": "CRDO",
+   "cycle_id": "cycle-v3-1788725116",
+   "board": {
+    "action": "BUY",
+    "confidence": 70,
+    "position_size_pct": 0.4,
+    "stop_loss": 132.07,
+    "take_profit": 240.0,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": null,
+    "trigger_purpose": null,
+    "dynamic_trigger": {
+     "type": "sma_50_rise",
+     "value": 230.22
+    },
+    "resolution_condition": null,
+    "reasoning": "The CONTRADICTORY regime's job is to resolve structural mispricings, and this ticker presents a textbook one: the fundamental desk's verified data (revenue +114.70% YoY, EPS QoQ +104.10%, net margin 33.83%, ROE 30.67%, D/E 0.01, current ratio 7.40) contradicts the tape (price $170.57 below SMA-200 $175.34, RSI 34.2, Bollinger 3%, MACD -8.69, max drawdown 59.85%). The prior cycle's central bear premise \u2014 'extreme multiples relative to 1.57% revenue growth' \u2014 is factually dead; the fundamental analyst confirmed the snapshot shows 114.70% growth, not 1.57%. The forward P/E of 17.72 against trailing 59.85 mathematically requires ~3.4x expected EPS growth, which is consistent with the verified growth trajectory, not a speculative multiple. The bear's strongest surviving point is that the downtrend is structurally intact and the S&P 500 inclusion catalyst is unverified buzz \u2014 both true. But the bear's claim is a SIZE/TIMING claim, not a thesis-broken claim: the fundamentals are verified-strong, the balance sheet removes solvency tail risk, and the analyst consensus target of $281.39 (+65%) against the 2xATR stop at $132.07 (-22.6%) gives a 2.88:1 risk/reward that passes the asymmetric risk mandate. I resolve the contradiction by taking a small, volatility-adjusted position sized to the HRP covariance-aware ceiling (0.4% of equity, ~$433) rather than the 4.4% risk-based figure, because CRDO's 102% GARCH vol and the bear's stop-calibration critique are correct \u2014 a full risk-based position would add ~2.3x the covariance-adjusted risk the book can absorb. The catalyst (S&P 500 inclusion buzz) is unverified and I do NOT rely on it; I rely on the verified fundamental strength plus oversold reversion setup (reversal z-score +2.87\u03c3, RSI recovering 31.8\u219234.2, stochastic 9.0/4.5, ADX 15 showing trend force dying). The bear named SNDK as a substitute; I reject that substitution because CRDO's verified 114.7% revenue growth and 33.8% net margin at a forward P/E of 17.72 is a superior risk/reward to a name whose thesis the desk has not independently verified this cycle \u2014 the bear's preference is one analyst's judgement, not a scored comparison. What would change my mind: a close below $160.75 stored support with volume confirmation, or continued margin compression (gross margin slipped 68.04%\u219267.07% in three days of vendor data). The stop at $132.07 is wide (22.6% below spot) because ATR is 11% of price; the 5% hard-stop mandate is overridden by the volatility-adjusted sizing rule which permits wider stops on smaller positions. I set exit_style to reanalyze_on_breach rather than hard_stop because at 102% GARCH vol a mechanical 5% stop would be triggered by noise, not signal; the reanalysis trigger gives the position a chance to survive a vol spike that isn't thesis-breaking."
+   },
+   "synthesizer": {
+    "action": "BUY",
+    "confidence": 70,
+    "position_size_pct": 0.4,
+    "stop_loss": 132.07,
+    "take_profit": 281.39,
+    "exit_style": "reanalyze_on_breach",
+    "entry_mode": null,
+    "trigger_purpose": null,
+    "dynamic_trigger": {
+     "type": "sma_50_rise",
+     "value": 230.22
+    },
+    "resolution_condition": null,
+    "reasoning": "Board verdict BUY @ 70% governs and survives synthesis. The prior cycle's central bear premise ('extreme multiples vs 1.57% revenue growth') is verifiably dead \u2014 the 2026-09-06 snapshot and the fundamental analyst confirm 114.70% revenue growth and EPS QoQ +104.10%, with 4 consecutive earnings beats, 33.83% net margin, ROE 30.67%, D/E 0.01, current ratio 7.40. Forward P/E 17.72 (below TSM's 19.61) with PEG 0.34 prices a hypergrowth net-cash AI-connectivity franchise at mature-semiconductor valuation after a -45% drawdown. The bear's surviving points are real but are SIZE/TIMING claims, not thesis-breakers: the downtrend is intact (price 170.57 below SMA-200 175.34, RSI 34.2, Bollinger 3%, MACD -8.69, max drawdown 59.85%), the S&P 500 catalyst is unverified buzz, and the market did reject a blowout quarter with an 18% selloff. The Board resolved this correctly: rely on verified fundamentals and the 2.88:1 risk/reward (target 281.39 vs 2xATR stop 132.07), explicitly NOT on the catalyst, and size to the HRP covariance-aware ceiling of 0.4% of equity (~$433) \u2014 at that size the 22.6% stop distance is financially immaterial (~$97 max loss) and the technical dispute becomes nearly irrelevant to book risk. CRDO's +0.05 average book correlation makes it a genuine diversifier (diversification ratio 2.79). I reject the bear's SNDK substitution: SNDK carries only a discovery screen rank with no desk verification this cycle, while CRDO's case rests on this desk's own verified numbers; at 0.4% sizing the substitution question concerns marginal capital, not a thesis war. GARCH vol is contracting (102.28% predicted vs 113.91% realized, premium -0.10), RSI recovered 31.8\u219234.2, stochastic 9.0/4.5, ADX 15 showing trend force dying \u2014 capitulation-flavored conditions consistent with the reversal z-score +2.87\u03c3. Exit style reanalyze_on_breach per the Board: at 102% annualized vol a hard 5% stop would be noise-triggered. What changes my mind: a close below 160.75 stored support on volume, or continued gross-margin compression (68.04%\u219267.07% already observed)."
+   },
+   "synthesizer_relation": null
+  }
+ ]
+}
