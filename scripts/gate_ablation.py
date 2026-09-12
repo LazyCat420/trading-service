@@ -161,6 +161,23 @@ NOT_ABLATABLE = ("no branch in _ablate() — the gate still fires during replay,
                  "so a zero here would mean 'not measured', not 'no effect'")
 
 
+def largest_measured_change(results: dict) -> tuple[int | None, int]:
+    """(largest `n_changed_action` among MEASURED gates, how many refused).
+
+    `None` for the first element means nothing was measurable — which is not
+    the same as zero, and the POWER summary must not print it as one.
+
+    Pure for the same reason `refusal_for` is: it implements the one line of
+    `main()`'s report that still contained `.get('n_changed_action') or 0` —
+    the exact confident-zero idiom the refusal guard exists to kill. A refused
+    gate carries a `reason` and no `n_changed_action`, so that `or 0` fed it
+    into `max()` as "this gate changed 0 decisions".
+    """
+    measured = [r["n_changed_action"] for r in results.values()
+                if not r.get("reason") and r.get("n_changed_action") is not None]
+    return (max(measured) if measured else None, len(results) - len(measured))
+
+
 def refusal_for(gate: str, sample_desk: dict | None) -> dict | None:
     """The verdict to record instead of measuring `gate`, or None to measure it.
 
@@ -624,8 +641,10 @@ def main() -> int:
         print("═══ POWER ═══")
         print(f"  Per-decision SD ~{max(sd, 6.0):.1f}% at horizon {args.horizon}.")
         print(f"  Detecting a 1pp effect at 80% power needs ~{need} CHANGED decisions PER GATE.")
-        print(f"  Largest gate here changed "
-              f"{max((r.get('n_changed_action') or 0) for r in results.values())}.")
+        largest, refused = largest_measured_change(results)
+        largest_txt = f"{largest}" if largest is not None else "nothing — no gate was measurable"
+        note = f"  ({refused} gate(s) REFUSED: not measured, not zero.)" if refused else ""
+        print(f"  Largest gate here changed {largest_txt}.{note}")
         print("  => Most verdicts are 'needs-more-data' BY CONSTRUCTION, not by timidity.")
         print("     This harness exists to retire the gate hypothesis with evidence,")
         print("     not because the gates are where the money is.\n")

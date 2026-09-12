@@ -167,10 +167,54 @@ from app.services.mcp_prefix import strip_mcp_prefix  # noqa: E402
 # exempts a different one disagrees with the alarm it is supposed to confirm.
 from app.v3.tool_telemetry import _FORBIDDEN, _META_TOOLS  # noqa: E402
 
-#: Non-SUCCESS outcomes that mean the agent did not deliver. Checked against
-#: the live vocabulary (v3_agent_telemetry, 8,787 rows): SUCCESS 8,239,
-#: AGENT_ERROR 520, '?' 24, DATA_GAP 3, SKIPPED 1, TIMED_OUT 0.
-FAILED_OUTCOMES = ("TIMED_OUT", "AGENT_ERROR")
+# The outcome vocabulary, imported for the same reason as the tool exemptions
+# above: a private copy of the list drifts. Checked against the live vocabulary
+# (v3_agent_telemetry, 8,787 rows): SUCCESS 8,239, AGENT_ERROR 520, '?' 24,
+# DATA_GAP 3, SKIPPED 1, TIMED_OUT 0, plus CANCELLED, which arrived in
+# September and had no branch here at all.
+from app.v3.shared_desk import (  # noqa: E402
+    OutcomeClass,
+    classify_outcome,
+    outcomes_in,
+)
+
+#: Non-SUCCESS outcomes that mean the agent did not deliver. DERIVED, not
+#: re-listed — the old tuple was a denylist, so every outcome it had not met
+#: fell through an if/elif with NO else and was printed without raising a
+#: CRITICAL. A run this script does not understand silently passed the audit;
+#: that is how the next new value gets missed.
+FAILED_OUTCOMES = outcomes_in(OutcomeClass.FAILED)
+
+def outcome_note(agent: str | None, outcome) -> str | None:
+    """The line to print under one telemetry row, or None if it needs none.
+
+    Exhaustive over `OutcomeClass` — including the class for a value this
+    script has never seen. The chain this replaces was an if/elif over a
+    DENYLIST tuple with no `else`, so CANCELLED (live since September) and the
+    dormant `'?'` / `SKIPPED` rows were counted, printed and passed over in
+    silence. An outcome nobody classified is now the loudest line here: an
+    unaudited run must not read as a healthy one.
+    """
+    outcome_class = classify_outcome(outcome)
+    if outcome == "TIMED_OUT":
+        return f"   [!] CRITICAL: {agent} timed out!"
+    if outcome_class is OutcomeClass.FAILED:
+        return f"   [!] CRITICAL: {agent} did not complete ({outcome})"
+    if outcome_class is OutcomeClass.ABANDONED:
+        # Not a failure: the run was stopped from outside — an operator stop,
+        # or the SIGTERM a deploy sends to every in-flight cycle. Said out
+        # loud so the cycle is not read as complete; it raises nothing.
+        return (f"   [-] STOPPED: {agent} was cancelled mid-run "
+                f"— operator stop, not an agent failure")
+    if outcome_class is OutcomeClass.DEGRADED:
+        return (f"   [~] DEGRADED: {agent} delivered less than a full "
+                f"artifact ({outcome})")
+    if outcome_class is OutcomeClass.UNRECOGNISED:
+        return (f"   [!] CRITICAL: {agent} reported {outcome!r}, an outcome no "
+                f"reader classifies — add it to app/v3/shared_desk.OutcomeClass. "
+                f"Until then this run is unaudited, not healthy.")
+    return None  # DELIVERED: the row above already says SUCCESS.
+
 
 #: Tool calls per agent PER RUN above which a loop is suspect. Unchanged from
 #: the original — but applied per run rather than per cycle, because a cycle
@@ -489,10 +533,9 @@ def audit_latest_cycle(cycle_id_override: str | None = None) -> int:
                 runs += 1
                 outcomes[outcome or "?"] += 1
                 print(f" - [{ticker}] {agent}: {outcome} ({ms / 1000:.1f}s)")
-                if outcome == "TIMED_OUT":
-                    print(f"   [!] CRITICAL: {agent} timed out!")
-                elif outcome in FAILED_OUTCOMES:
-                    print(f"   [!] CRITICAL: {agent} did not complete ({outcome})")
+                note = outcome_note(agent, outcome)
+                if note:
+                    print(note)
         # The denominator, so a quiet section cannot be read as a healthy one.
         print(f" {runs} agent run(s): "
               + ", ".join(f"{n} {o}" for o, n in outcomes.most_common()))

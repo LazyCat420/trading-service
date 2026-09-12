@@ -2,6 +2,7 @@ import logging
 
 from app.db import mongo_query
 from app.autoresearch.trace_evidence import trace_quality_window
+from app.v3.shared_desk import OutcomeClass, outcomes_in
 
 LLM_SCORE_VERSION = "llm_execution_time_v2"
 from datetime import datetime, timedelta, timezone
@@ -13,7 +14,30 @@ logger = logging.getLogger(__name__)
 # is not aborted) still carries its failure_reason — count those too, or the
 # downgrade hides the failure from this audit exactly the way it hides it from
 # _check_abort.
-_FAILED_OUTCOMES = ("AGENT_ERROR", "TIMED_OUT")
+#
+# Derived from the shared taxonomy, not re-listed: a private tuple here is
+# what let a CANCELLED row be scored as an LLM failure while the replay router
+# drew the same row as a benign "other".
+_FAILED_OUTCOMES = outcomes_in(OutcomeClass.FAILED)
+
+#: Outcomes that must not be SCORED at all — neither numerator nor
+#: denominator. A cancellation is the operator stopping the run (deploying
+#: this service SIGTERMs in-flight cycles, so cancels cluster around deploys),
+#: not a model failing to answer, and it always carries failure_reason
+#: CANCELLED — so the `failure_reason IS NOT NULL` branch below swept every
+#: one of them into the failure count. With availability scored 1 - 2*fail
+#: rate, a cycle an operator killed with their own deploy could drive LLM
+#: availability to 0 and raise a false "LLM unhealthy".
+#:
+#: Excluding them from `failed` alone would be the same bug with the sign
+#: flipped — the surviving denominator would make availability look better
+#: than the evidence supports — so they leave BOTH counts and are reported
+#: separately as `cancelled_calls`.
+_UNSCORED_OUTCOMES = outcomes_in(OutcomeClass.ABANDONED)
+
+#: The whole permitted vocabulary. Anything else in the column is a value no
+#: reader here understands; it is counted and NAMED rather than bucketed.
+_KNOWN_OUTCOMES = outcomes_in()
 
 
 def _audit_llm_traces(cycle_id: str) -> dict:
@@ -29,8 +53,12 @@ def _audit_llm_traces(cycle_id: str) -> dict:
     cycle, so an in-memory counter was the wrong instrument even when wired.)
 
     Blend:
-      - availability (0.5): 1 - 2*fail_rate over this cycle's agent runs;
-        None (not 1.0) when the cycle has no telemetry rows at all
+      - availability (0.5): 1 - 2*fail_rate over this cycle's SCORABLE agent
+        runs; None (not 1.0) when the cycle has no telemetry rows at all.
+        Cancelled runs (OutcomeClass.ABANDONED) are excluded from BOTH the
+        numerator and the denominator — an operator stopping a cycle, which a
+        deploy does to every in-flight run, is not the model failing to
+        answer. They are reported as `cancelled_calls` instead of scored.
       - judge quality (0.3): decision_evaluations.final_quality_score (0-5,
         LLM-as-judge over real decisions), 7d average
       - eval quality (0.2): scored tool traces executed in the last 7d
@@ -43,13 +71,29 @@ def _audit_llm_traces(cycle_id: str) -> dict:
     issues = []
     try:
         cycle_filter = {"cycle_id": cycle_id}
-        total_calls = mongo_query.count("v3_agent_telemetry", cycle_filter)
-        failed = mongo_query.count("v3_agent_telemetry", {
+        # Every scored count runs over the SCORABLE rows only, so the
+        # numerator and the denominator can never disagree about what is in
+        # the population.
+        scored_filter = {
             "cycle_id": cycle_id,
+            "outcome": {"$nin": list(_UNSCORED_OUTCOMES)},
+        }
+        total_calls = mongo_query.count("v3_agent_telemetry", scored_filter)
+        failed = mongo_query.count("v3_agent_telemetry", {
+            **scored_filter,
             "$or": [
                 {"outcome": {"$in": list(_FAILED_OUTCOMES)}},
                 {"failure_reason": {"$ne": None}},
             ],
+        })
+        # Excluded from the score, never from the operator's view.
+        cancelled_calls = mongo_query.count("v3_agent_telemetry", {
+            "cycle_id": cycle_id,
+            "outcome": {"$in": list(_UNSCORED_OUTCOMES)},
+        })
+        unrecognised_calls = mongo_query.count("v3_agent_telemetry", {
+            "cycle_id": cycle_id,
+            "outcome": {"$nin": list(_KNOWN_OUTCOMES)},
         })
         # Context only: the per-decision LLM ledger (~1 row per cycle since
         # the per-call logging died). It cannot express failure, so it never
@@ -60,6 +104,22 @@ def _audit_llm_traces(cycle_id: str) -> dict:
         if total_calls > 0:
             fail_rate = failed / total_calls
             availability = max(0.0, 1.0 - fail_rate * 2)
+        elif cancelled_calls:
+            # Every run in the cycle was stopped from outside. That is not a
+            # failing LLM and it is not missing telemetry either — naming the
+            # cancellation is the difference between "the operator killed it"
+            # and "the instrument is broken".
+            fail_rate = None
+            availability = None
+            issues.append({
+                "issue": (
+                    f"Cycle {cycle_id} was stopped before any agent run could "
+                    f"be scored: all {cancelled_calls} telemetry rows are "
+                    f"cancellations (a deploy or an operator stop) — "
+                    f"availability unmeasured, not zero"
+                ),
+                "severity": "info",
+            })
         else:
             # No evidence is not health. Refuse to compute, and say so.
             fail_rate = None
@@ -69,6 +129,27 @@ def _audit_llm_traces(cycle_id: str) -> dict:
                     f"No per-cycle LLM activity evidence for {cycle_id}: "
                     f"0 rows in v3_agent_telemetry, {llm_calls_logged} in "
                     f"llm_audit_logs — availability unmeasured"
+                ),
+                "severity": "warning",
+            })
+
+        if cancelled_calls and total_calls > 0:
+            issues.append({
+                "issue": (
+                    f"{cancelled_calls} agent run(s) in {cycle_id} were "
+                    f"cancelled (operator stop / deploy) and are excluded "
+                    f"from availability — {total_calls} scorable run(s) remain"
+                ),
+                "severity": "info",
+            })
+        if unrecognised_calls:
+            issues.append({
+                "issue": (
+                    f"{unrecognised_calls} telemetry row(s) in {cycle_id} "
+                    f"carry an outcome outside the known vocabulary "
+                    f"{list(_KNOWN_OUTCOMES)} — classify it in "
+                    f"app/v3/shared_desk.OutcomeClass before trusting this "
+                    f"cycle's availability"
                 ),
                 "severity": "warning",
             })
@@ -165,6 +246,8 @@ def _audit_llm_traces(cycle_id: str) -> dict:
             "tool_evidence": tool_evidence,
             "total_calls": total_calls,
             "failed_calls": failed,
+            "cancelled_calls": cancelled_calls,
+            "unrecognised_calls": unrecognised_calls,
             "llm_calls_logged": llm_calls_logged,
             "source": "v3_agent_telemetry",
             "fail_rate": round(fail_rate, 3) if fail_rate is not None else None,

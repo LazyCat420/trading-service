@@ -97,12 +97,28 @@ async def _reflect(audit_bundle: dict) -> dict:
     # audit could not measure (no telemetry rows), say "unmeasured" — a
     # fabricated 0 here once led the reflection LLM to conclude the decision
     # engine never ran on a perfectly healthy cycle.
+    #
+    # `total_calls` is now the SCORABLE population: cancelled runs (an operator
+    # stop, or the SIGTERM a deploy sends every in-flight cycle) are excluded
+    # from both halves of the fail rate. They must still be NAMED here — a
+    # projection that drops them makes this line lie about the row. Without it
+    # a cycle a deploy killed reads as "no telemetry rows", i.e. as a broken
+    # instrument, which is the same wrong conclusion in the other direction.
     _calls = llm_a.get('total_calls')
+    _cancelled = llm_a.get('cancelled_calls') or 0
     if llm_a.get('availability') is None and not _calls:
-        llm_line = "Agent LLM runs this cycle: unmeasured (no telemetry rows)"
+        llm_line = (
+            f"Agent LLM runs this cycle: unmeasured — all {_cancelled} run(s) "
+            f"were CANCELLED (operator stop or deploy), which is not a model "
+            f"failure and not missing telemetry"
+            if _cancelled else
+            "Agent LLM runs this cycle: unmeasured (no telemetry rows)"
+        )
     else:
         llm_line = (f"Agent LLM runs this cycle: {_calls or 0}, "
-                    f"failed runs: {llm_a.get('failed_calls', 0)}")
+                    f"failed runs: {llm_a.get('failed_calls', 0)}"
+                    + (f", cancelled and excluded from scoring: {_cancelled}"
+                       if _cancelled else ""))
     prompt += (
         f"{llm_line}\n"
         f"Duration: {perf.get('total_ms', 0) / 1000:.1f}s\n"

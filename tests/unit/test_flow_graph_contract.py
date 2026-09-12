@@ -145,3 +145,69 @@ def test_contradiction_shadow_keeps_its_zero_and_shows_no_quality_badge():
     mermaid = _build_mermaid(nodes, [])
     assert "0.0s ✅" in mermaid
     assert "Q:" not in mermaid
+
+
+# ── CANCELLED is its own bucket, not the unknown-ish other-bucket ──────
+#
+# f48740eb added PhaseOutcome.CANCELLED and claimed that closed this. It did
+# not: nothing in this file coerces a string to the enum, so a cancelled row
+# was bucketed by the raw-string `not in ("SUCCESS", *_FAILED_OUTCOMES)`
+# tests below — it drew as a degraded ⚠️ in #6366f1, the indigo this module
+# uses for "non-SUCCESS, no idea what". An operator could not tell a run their
+# own deploy stopped from a run that came back short.
+
+def test_a_cancelled_run_reads_as_stopped_not_as_degraded():
+    mermaid = _build_mermaid(
+        [_node("junior_analyst", elapsed_ms=12000, outcome="CANCELLED", quality=-1)], [])
+    assert "🛑" in mermaid, (
+        "an operator-stopped run must say so; pre-fix it drew ⚠️ degraded")
+    assert "⚠️" not in mermaid
+    assert "fill:#6366f1" not in mermaid, (
+        "#6366f1 is this module's unknown-ish colour — a cancellation is known")
+
+
+def test_a_cancellation_never_outranks_a_real_failure():
+    nodes = [
+        _node("fundamental_analyst", ticker="MA", outcome="CANCELLED", quality=-1),
+        _node("fundamental_analyst", ticker="F", outcome="AGENT_ERROR", quality=-1),
+    ]
+    mermaid = _build_mermaid(nodes, [])
+    assert "1/2 failed" in mermaid
+    assert "fill:#dc2626" in mermaid, (
+        "a wave containing a real failure stays red even when a peer was stopped")
+
+
+def test_a_cancelled_wave_reports_how_many_were_stopped():
+    nodes = [_node("bull_agent", ticker=t, outcome=oc, quality=-1)
+             for t, oc in [("MA", "CANCELLED"), ("F", "CANCELLED"), ("XOM", "SUCCESS")]]
+    mermaid = _build_mermaid(nodes, [])
+    assert "2/3 stopped" in mermaid
+    assert "fill:#64748b" in mermaid
+
+
+def test_an_outcome_nobody_classified_renders_as_a_question():
+    """The permitted set must make the NEXT value loud.
+
+    'SKIPPED' is the historical example. Pre-fix it took the same indigo
+    degraded rendering as a DATA_GAP — a value no reader understands drawn as
+    a value every reader does.
+    """
+    mermaid = _build_mermaid([_node("quant_analyst", outcome="SKIPPED", quality=-1)], [])
+    assert "❓" in mermaid
+    assert "fill:#a21caf" in mermaid
+    assert "fill:#6366f1" not in mermaid
+
+
+def test_the_known_outcomes_still_keep_their_old_rendering():
+    """Guard against the taxonomy quietly restyling a shape that was right."""
+    for outcome, fill, mark in [
+        ("SUCCESS", "#059669", "✅"),
+        ("DATA_GAP", "#d97706", "⚠️"),
+        ("TOOL_OUTAGE", "#6366f1", "⚠️"),
+        ("AGENT_ERROR", "#dc2626", "❌"),
+        ("TIMED_OUT", "#dc2626", "❌"),
+    ]:
+        mermaid = _build_mermaid(
+            [_node("debate_judge", outcome=outcome, quality=80)], [])
+        assert f"fill:{fill}" in mermaid, (outcome, mermaid)
+        assert mark in mermaid, (outcome, mermaid)
