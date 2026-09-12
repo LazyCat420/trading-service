@@ -85,12 +85,25 @@ class DeskPhase(str, Enum):
 
 
 class PhaseOutcome(str, Enum):
-    """Outcome classification for each pipeline phase."""
+    """Outcome classification for each pipeline phase.
+
+    CANCELLED is a real outcome, not a placeholder: `agent_runner` writes it to
+    `v3_agent_telemetry` when a stop is requested mid-run (search for
+    `"CANCELLED"` there). It was written as a bare string that this enum did
+    not define, so the 32 call sites that switch on `PhaseOutcome` dropped
+    those rows silently — 5 of them in the first eleven days of September 2026
+    alone. Open item 51 filed this against `SKIPPED`, which turned out to be a
+    single historical row; CANCELLED is the live one.
+
+    Any value this enum does not define is invisible to every consumer, so a
+    new outcome string belongs here in the same change that starts writing it.
+    """
     SUCCESS = "SUCCESS"
     DATA_GAP = "DATA_GAP"
     TOOL_OUTAGE = "TOOL_OUTAGE"
     AGENT_ERROR = "AGENT_ERROR"
     TIMED_OUT = "TIMED_OUT"
+    CANCELLED = "CANCELLED"
 
 
 class DecisionProvenance(str, Enum):

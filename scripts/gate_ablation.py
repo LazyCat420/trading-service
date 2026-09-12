@@ -148,6 +148,40 @@ UNREPLAYABLE = {
     "DROPPED_IMPLAUSIBLE_LEVEL": "probes price_history at replay time; also non-returning",
 }
 
+#: Fallback reason for a gate `_ablate` cannot disable but this list never
+#: named. The hand-maintained dict above is a DENYLIST, and a denylist misses
+#: the next one: `HOLD_POLICY_BLOCKED_STALE_PRICE_DATA` has no branch in
+#: `_ablate`, is absent from UNREPLAYABLE, and was therefore replayed with the
+#: gate still firing — every desk came back unchanged and the tool printed
+#: `n_changed_action: 0`, which reads as "this gate never matters" (open item
+#: 53). The guard below asks `_ablate` whether it actually disabled the gate
+#: and refuses when it did not, so the DEFAULT for an unknown gate is a
+#: refusal rather than a confident zero.
+NOT_ABLATABLE = ("no branch in _ablate() — the gate still fires during replay, "
+                 "so a zero here would mean 'not measured', not 'no effect'")
+
+
+def refusal_for(gate: str, sample_desk: dict | None) -> dict | None:
+    """The verdict to record instead of measuring `gate`, or None to measure it.
+
+    A pure function on purpose: the guard it implements lives inside `main()`'s
+    replay loop, which needs Mongo and a populated desk set, so a test that
+    drove the loop would be an integration test and the guard would stay
+    unpinned. Everything that decides a refusal is here.
+
+    Two reasons to refuse, in order:
+      1. `UNREPLAYABLE` names the gate — it carries a SPECIFIC reason (a live
+         health probe, a point-in-time price read) worth telling the operator.
+      2. `_ablate` cannot falsify the gate's predicate. This is the general
+         case and the one that matters: it catches every gate nobody has taught
+         the harness about, including any added after this was written.
+    """
+    if gate in UNREPLAYABLE:
+        return {"verdict": "needs-more-data", "reason": UNREPLAYABLE[gate], "n_fired": 0}
+    if sample_desk is not None and not _ablate(copy.deepcopy(sample_desk), gate):
+        return {"verdict": "needs-more-data", "reason": NOT_ABLATABLE, "n_fired": 0}
+    return None
+
 
 def _decision_of(d: dict) -> dict:
     """The dict `_apply_policy_gates` reads: trade_decision or final_decision."""
@@ -499,11 +533,11 @@ def main() -> int:
         results, pvals = {}, {}
 
         for gate in gates:
-            if gate in UNREPLAYABLE:
-                results[gate] = {"verdict": "needs-more-data",
-                                 "reason": UNREPLAYABLE[gate], "n_fired": 0}
-                continue
             fired = [i for i, v in baseline.items() if v == gate]
+            refusal = refusal_for(gate, desks[fired[0]]["desk"] if fired else None)
+            if refusal is not None:
+                results[gate] = {**refusal, "n_fired": len(fired)}
+                continue
             changed, exposed = [], Counter()
             for i in fired:
                 r = desks[i]
