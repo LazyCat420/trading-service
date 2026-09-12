@@ -1,0 +1,255 @@
+{
+  "title": "Trading-cycle audit continuation: real-cycle validation of released revision 0bfdb438",
+  "measured_at_utc": "2026-09-12",
+  "branch": "fix/learning-lifecycle-20260907",
+  "released_revision": "0bfdb438",
+  "fix_commit": "f9cb6c34 (branch fix/financial-rules-contract-fields, NOT merged, NOT deployed)",
+  "source_hashes_under_test": {
+    "app/v3/financial_evidence.py": "7290bde5d23076d35371d43c0ac28693e529d0ecb8afbd2ab0fc9f5241a815b7",
+    "app/v3/financial_claims.py": "c15291979083475371fa585e3a23c6c5acd9d5e552728f8b61c3d94169b2550f",
+    "app/v3/financial_reasoning.py": "38ec6be5e44577d26f4c440a19d71f626f537c4e366c9acf1915a297e0cb7422",
+    "app/v3/agent_runner.py": "c3f1a4f02d56006a1bad71dd0c9d21b27da0bcc1d0095e427a4ec3ea0998cd13",
+    "app/v3/orchestrator.py": "a0731881029800d1fc4d7c6b4da873a83aea5999c06a746c611d988c3ef679db",
+    "app/v3/decision_contract.py": "acbfaaebbd10ca406596810135497bfb0bebeba8e698f8836f2ece6a6f84bb04",
+    "scripts/validate_financial_cycle.py": "e0b1712c557a97e29ba38c7b5d76cbda28cbf438fec5e3f585c9063b1b373e6f"
+  },
+  "gap_that_prompted_this": "Every financial source file, and the validation script itself, changed after the last real-cycle run (aapl-cycle-r4), and r4 FAILED. The release was validated only against synthetic fixtures and the unit suite.",
+  "real_cycle_runs": [
+    {
+      "run": "r5",
+      "passed": true,
+      "cycle_id": "bench-financial-cycle-8ecf20f5837e",
+      "endpoint_calls": 11,
+      "audit_status": "consistent",
+      "checked_claims": 35,
+      "audit_errors": [],
+      "questions_required": 0,
+      "questions_returned": 0,
+      "policy_action": "HOLD_NO_SIGNAL",
+      "execution_errors": [],
+      "decision_producer": "board_fallback",
+      "decision_contract_status": "valid",
+      "order_attempts": 0,
+      "orders_in_staging": 0,
+      "production_write_attempts": [],
+      "staging_database_removed": true,
+      "debate_ran": false
+    },
+    {
+      "run": "r6",
+      "passed": true,
+      "cycle_id": "bench-financial-cycle-742c8f038a18",
+      "endpoint_calls": 15,
+      "audit_status": "consistent",
+      "checked_claims": 35,
+      "audit_errors": [],
+      "questions_required": 0,
+      "questions_returned": 0,
+      "policy_action": "HOLD_NO_SIGNAL",
+      "execution_errors": [],
+      "decision_producer": "board_fallback",
+      "decision_contract_status": "valid",
+      "order_attempts": 0,
+      "orders_in_staging": 0,
+      "production_write_attempts": [],
+      "staging_database_removed": true,
+      "debate_ran": true
+    }
+  ],
+  "finding_decision_synthesizer_contract": {
+    "severity": "live defect on the deployed revision",
+    "claim": "FINANCIAL_OUTPUT_RULES replaces the agent OUTPUT section whenever financial_evidence_version==1 (set unconditionally at orchestrator.py:3264) and enumerates required fields WITHOUT the decision contract's board-linkage fields, which arrive only in the ~48k-char user message. The model reads the system list as exhaustive and omits them, so the Decision Synthesizer fails contract_errors every cycle and the orchestrator falls back to the Board verdict.",
+    "observed_in": [
+      "staging cycle r4",
+      "staging cycle r5",
+      "staging cycle r6"
+    ],
+    "errors": [
+      "source_board_ref must match the current Board artifact",
+      "source_board_action must match the current Board action",
+      "decision_relation must be preserve or override"
+    ],
+    "controlled_replay_before_fix": [
+      {
+        "label": "as-staging(no FIRM_CONTEXT)",
+        "rep": 0,
+        "valid_json": true,
+        "fields_present": {
+          "source_board_ref": false,
+          "source_board_action": false,
+          "decision_relation": false,
+          "attribution": false
+        }
+      },
+      {
+        "label": "as-staging(no FIRM_CONTEXT)",
+        "rep": 1,
+        "valid_json": true,
+        "fields_present": {
+          "source_board_ref": false,
+          "source_board_action": false,
+          "decision_relation": false,
+          "attribution": false
+        }
+      },
+      {
+        "label": "as-production(FIRM_CONTEXT+)",
+        "rep": 0,
+        "valid_json": true,
+        "fields_present": {
+          "source_board_ref": false,
+          "source_board_action": false,
+          "decision_relation": false,
+          "attribution": false
+        }
+      },
+      {
+        "label": "as-production(FIRM_CONTEXT+)",
+        "rep": 1,
+        "valid_json": true,
+        "fields_present": {
+          "source_board_ref": false,
+          "source_board_action": false,
+          "decision_relation": false,
+          "attribution": false
+        }
+      }
+    ],
+    "controlled_replay_after_fix": [
+      {
+        "label": "FIXED rules (+FIRM_CONTEXT)",
+        "rep": 0,
+        "valid_json": true,
+        "fields_present": {
+          "source_board_ref": true,
+          "source_board_action": true,
+          "decision_relation": true,
+          "attribution": true
+        },
+        "source_board_ref": "board:dd78f1103479b58a2627786a",
+        "decision_relation": "preserve",
+        "action": "HOLD"
+      },
+      {
+        "label": "FIXED rules (+FIRM_CONTEXT)",
+        "rep": 1,
+        "valid_json": true,
+        "fields_present": {
+          "source_board_ref": true,
+          "source_board_action": true,
+          "decision_relation": true,
+          "attribution": true
+        },
+        "source_board_ref": "board:dd78f1103479b58a2627786a",
+        "decision_relation": "preserve",
+        "action": "HOLD"
+      },
+      {
+        "label": "FIXED rules (staging)",
+        "rep": 0,
+        "valid_json": true,
+        "fields_present": {
+          "source_board_ref": true,
+          "source_board_action": true,
+          "decision_relation": true,
+          "attribution": true
+        },
+        "source_board_ref": "board:dd78f1103479b58a2627786a",
+        "decision_relation": "preserve",
+        "action": "HOLD"
+      },
+      {
+        "label": "FIXED rules (staging)",
+        "rep": 1,
+        "valid_json": true,
+        "fields_present": {
+          "source_board_ref": true,
+          "source_board_action": true,
+          "decision_relation": true,
+          "attribution": true
+        },
+        "source_board_ref": "board:dd78f1103479b58a2627786a",
+        "decision_relation": "preserve",
+        "action": "HOLD"
+      }
+    ],
+    "contract_errors_against_real_r5_board": {
+      "before": "3 errors in 4 of 4 replays",
+      "after": "0 errors in 4 of 4 replays"
+    },
+    "production_exposure": {
+      "rows_with_financial_evidence_version_1": 0,
+      "last_production_cycle_start_utc": "2026-09-11T17:20:44+00:00",
+      "nas_container_restart_utc": "2026-09-11T23:47:29Z",
+      "note": "No production cycle has yet run under the deployed revision; the next one would be the first."
+    },
+    "cost_when_it_fires": "four synthesizer calls per ticker (attempt+repair, twice) before the Board fallback"
+  },
+  "finding_case03_repair": {
+    "claim": "The remaining case03 repair failure is a FLAKY degenerate repetition loop, not a token limit and not a stable property of the prompt.",
+    "ruled_out": {
+      "context_window": "nemotron35 max_model_len=128000 (queried live); payload ~8.9k prompt + 8192 max output",
+      "harness_vs_production_max_tokens": "_safe_max_tokens returns 8192 for this exact payload, identical to the benchmark"
+    },
+    "trials": [
+      {
+        "maxTokens": 8192,
+        "rep": 0,
+        "elapsed": 19.4,
+        "chars": 1626,
+        "usage_out": 499,
+        "valid_json": true
+      },
+      {
+        "maxTokens": 8192,
+        "rep": 1,
+        "elapsed": 28.5,
+        "chars": 1337,
+        "usage_out": 415,
+        "valid_json": true
+      },
+      {
+        "maxTokens": 8192,
+        "rep": 2,
+        "elapsed": 32.7,
+        "chars": 2435,
+        "usage_out": 0,
+        "valid_json": false
+      },
+      {
+        "maxTokens": 2048,
+        "rep": 0,
+        "elapsed": 20.9,
+        "chars": 1090,
+        "usage_out": 330,
+        "valid_json": true
+      },
+      {
+        "maxTokens": 2048,
+        "rep": 1,
+        "elapsed": 28.2,
+        "chars": 2440,
+        "usage_out": 0,
+        "valid_json": false
+      },
+      {
+        "maxTokens": 2048,
+        "rep": 2,
+        "elapsed": 12.7,
+        "chars": 1283,
+        "usage_out": 388,
+        "valid_json": true
+      }
+    ],
+    "zero_usage_signal": "usage.outputTokens==0 correlated perfectly with truncated/invalid output in 8 of 8 trials, and a real count appeared in every completed one. Zero usage is a detectable failure signal, not merely unavailable telemetry.",
+    "no_stop_reason": "The prism-proxy response envelope carries no finish/stop reason field (keys: conversationId, estimatedCost, finalText, model, provider, text, thinking, usage)."
+  },
+  "limitations": [
+    "Two real-cycle runs, one ticker (AAPL), stored data, all agent tools disabled.",
+    "Both cycles produced questions_required=0, so compound-question coverage was NOT exercised in a real cycle.",
+    "Both cycles ended HOLD; acceptance does not demonstrate investment merit.",
+    "The staging harness posts directly to prism-proxy; the FIRM_CONTEXT prefix was tested separately and changed nothing.",
+    "tiktoken is absent from the local .venv (pinned in requirements, present in the container), so local context budgeting uses the 4 chars/token heuristic.",
+    "The fix is committed on a branch only. It is NOT merged and NOT deployed."
+  ]
+}
