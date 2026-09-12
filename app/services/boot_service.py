@@ -401,6 +401,40 @@ class BootService:
             logger.warning("[startup] Audit worker failed to start (non-fatal): %s", e)
 
     @classmethod
+    def _refresh_period(cls) -> str:
+        """`5d` most days, the wide window one day a week.
+
+        THE DEFECT THIS CLOSES (2026-09-12). When the per-ticker collectors
+        were narrowed to `max(date)` + an overlap
+        (`app/collectors/price_window.py`), this batch refresh was named as
+        the backstop that would still heal anything they skipped. It was never
+        one: both call sites below asked for `period="5d"`, and the only 6mo
+        call site is `startup_sp500_seed`, which fires when `price_history` is
+        EMPTY — once in the life of the store. So a ticker that lost a week in
+        May kept a current bar, cleared every freshness gate, and kept the hole
+        through four months of daily refreshes. Measured the same day: 41 of
+        715 yfinance tickers held 313 interior holes between them.
+
+        The batch path CAN fetch them — measured 2026-09-12 with a real
+        100-ticker `yf.download(..., period="6mo")` chunk, SDA came back with
+        all eight bars of its 05-06..05-15 hole, Close non-NaN, 95 of the 100
+        tickers complete over that window and the 5 failures genuinely
+        delisted symbols. Nobody had asked.
+
+        COST, honestly: the wide chunk downloads in 7.0 s against 4.2 s for
+        `5d` (100 tickers, measured), so ~+20 s across the 7 chunks of the
+        ~656-ticker refresh set, and the one bulk_write grows from ~4k
+        upserts to ~83k (~0.07 s per 252 rows measured, so ~20 s) — once a
+        week, post-close, on a worker thread. Every other day is unchanged.
+
+        One day in seven, not every day, and derived from the same stable-hash
+        clock the per-ticker sweep uses so the two cannot drift apart.
+        """
+        from app.collectors import price_window
+
+        return "6mo" if price_window.is_full_sweep_day("sp500-refresh", "yfinance") else "5d"
+
+    @classmethod
     async def _sp500_full_refresh(cls, period: str):
         """One shot: top up price_history for all S&P 500 tickers + recompute sector aggregates.
 
@@ -486,7 +520,7 @@ class BootService:
                     "(expected ~%d, threshold %d) — running immediate top-up",
                     today_count, expected, threshold,
                 )
-                await cls._sp500_full_refresh(period="5d")
+                await cls._sp500_full_refresh(period=cls._refresh_period())
         except Exception as e:
             logger.warning("[sp500-refresh] Immediate top-up failed (non-fatal): %s", e)
 
@@ -500,7 +534,7 @@ class BootService:
                     next_run.isoformat(), sleep_seconds / 3600,
                 )
                 await asyncio.sleep(sleep_seconds)
-                await cls._sp500_full_refresh(period="5d")
+                await cls._sp500_full_refresh(period=cls._refresh_period())
             except Exception as e:
                 logger.warning("[sp500-refresh] Daily refresh failed (will retry next cycle): %s", e)
                 await asyncio.sleep(3600)  # back off an hour before recomputing the next window
