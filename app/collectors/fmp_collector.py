@@ -16,6 +16,7 @@ import datetime
 import httpx
 from app.config import settings
 from app.db import mongo_store
+from app.collectors import price_window
 
 BASE_URL = "https://financialmodelingprep.com/api/v4"
 
@@ -157,19 +158,31 @@ async def collect_price_history(ticker: str, days_back: int = 365) -> int:
         logger.info(f"[fmp] No price data for {ticker}")
         return 0
 
+    # FMP's endpoint has no date range parameter — it returns the full series
+    # and we filter. Narrowing the cutoff still saves the writes, which are the
+    # expensive half (4.40 s of no-op round-trips per 252 bars, measured
+    # 2026-09-12), even though the payload arrives either way.
+    days_back = price_window.incremental_days_back(ticker, "fmp", days_back)
     cutoff = datetime.date.today() - datetime.timedelta(days=days_back)
 
-    count = 0
+    docs = []
     for day in historical:
         try:
             date_obj = datetime.date.fromisoformat(day.get("date", ""))
             if date_obj < cutoff:
                 continue
 
-            mongo_store.upsert_doc('price_history', {'ticker': ticker, 'date': date_obj, 'source': 'fmp'}, {'ticker': ticker, 'date': date_obj, 'open': float(day.get("open", 0)), 'high': float(day.get("high", 0)), 'low': float(day.get("low", 0)), 'close': float(day.get("close", 0)), 'volume': int(day.get("volume", 0)), 'source': 'fmp'}, insert_only=True)
-            count += 1
-        except Exception as e:
+            docs.append({'ticker': ticker, 'date': date_obj,
+                         'open': float(day.get("open", 0)), 'high': float(day.get("high", 0)),
+                         'low': float(day.get("low", 0)), 'close': float(day.get("close", 0)),
+                         'volume': int(day.get("volume", 0)), 'source': 'fmp'})
+        except Exception:
             continue
+
+    # ONE bulk_write instead of a round-trip per bar.
+    count = mongo_store.bulk_upsert(
+        'price_history', docs, key_field=("ticker", "date", "source"), insert_only=True
+    )
 
     logger.info(f"[fmp] {ticker}: {count} price rows written")
     return count
