@@ -27,7 +27,9 @@ def _worker_identity() -> str:
     """Which instance is this? Stamped on every command claim.
 
     Any process pointed at the shared database is an equal claimant for queued
-    cycles (`FOR UPDATE SKIP LOCKED` is atomic but instance-blind). On
+    cycles (the claiming `find_one_and_update` is atomic but instance-blind —
+    it was `FOR UPDATE SKIP LOCKED` before the 2026-08-19 Mongo cutover, with
+    the same property). On
     2026-08-05 a stale local container six weeks behind master silently took
     two scheduled cycles from the NAS and killed both; the logs named no
     instance, so answering "who ran this cycle" meant diffing container code

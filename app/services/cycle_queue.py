@@ -29,7 +29,7 @@ def enqueue_start_cycle(payload: dict, *, prefix: str) -> str:
     """Queue a START_CYCLE command and return its id.
 
     `prefix` identifies the producer in the command id (sch-cmd, sch-open, wd,
-    gov-...), which is what makes a queued cycle traceable back to whatever
+    sch-rsrch), which is what makes a queued cycle traceable back to whatever
     decided to start it.
     """
     cmd_id = f"{prefix}-{uuid.uuid4().hex[:8]}"
