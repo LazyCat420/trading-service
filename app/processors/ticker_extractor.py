@@ -14,6 +14,7 @@ Architecture:
 
 import re
 import json
+import functools
 import logging
 from dataclasses import dataclass
 from app.db import mongo_query, mongo_store
@@ -454,15 +455,40 @@ hedge macro alpha beta delta gamma vega blue chip small mid large cap
 """.split())
 
 
+@functools.lru_cache(maxsize=200_000)
+def _boundary_pattern(needle: str):
+    """The compiled boundary pattern for one alias. Cached — see below."""
+    return re.compile(rf"(?<!\w){re.escape(needle)}(?!\w)")
+
+
 def _boundary_search(needle: str, haystack_lower: str):
     """Find `needle` in already-lowercased text on word boundaries.
 
     `"first" in text` also fires on "firstly"; `"common" in text` fires on
     "commonwealth". Both were live phantom-ticker sources.
+
+    THE PATTERN IS CACHED, AND THAT IS THE WHOLE COST OF DISCOVERY
+    -------------------------------------------------------------
+    This is called once per (alias, article) — about 11,500 times per article,
+    because it linearly scans all ~13,950 `company_registry` aliases. It used
+    to build the pattern on every call: profiled at **173,481 `re.compile`
+    calls for 15 articles**, which also thrashes Python's own 512-entry regex
+    cache so nothing else in the process gets a hit either.
+
+    It matters far more than a CPU micro-optimisation normally would, because
+    `_detect_tickers_in_text` is SYNCHRONOUS and is awaited from inside the
+    news sweep's coroutines (`news_collector.py:691`). While it runs, the
+    event loop is blocked, so `asyncio.gather` over 15 articles and
+    `Semaphore(FEED_CONCURRENCY)` over 27 feeds are both decorative — every
+    feed stalls together. Measured on one live cycle: 176.7 s of a 887 s
+    discovery phase, 911 ms median per article, 3.3 s worst.
+
+    Benchmarked over 30 real articles from that cycle: 25.70 s -> 16.18 s
+    (1.59x) with an IDENTICAL symbol set on every article.
     """
     if not needle:
         return None
-    return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", haystack_lower)
+    return _boundary_pattern(needle).search(haystack_lower)
 
 
 def discriminating_name_words(company_name: str, symbol: str) -> list[str]:
