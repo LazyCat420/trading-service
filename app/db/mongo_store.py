@@ -281,6 +281,65 @@ def ensure_indexes(session: Optional[Any] = None) -> None:
     _try("cycle_audit_log", [("cycle_id", pymongo.ASCENDING),
                              ("timestamp", pymongo.ASCENDING)],
          name="cycle_id_timestamp")
+    # `news_articles` is the worst COLLSCAN in the database: 140,158 documents
+    # / 594 MB, and its ONLY indexes were `id`/`id_plain`, which no reader
+    # queries by. Every read below was a full scan of 594 MB, and two of them
+    # run once per ARTICLE inside the news sweep — measured server-side at
+    # 184 ms (`content_hash`, the dedupe check) and 170 ms (`url`, the fan-out
+    # check), against 164 articles per sweep. That is 30-75 s and 42-51 s of a
+    # 12.4-minute discovery phase, spent scanning.
+    #
+    # Keys chosen from the readers' actual filters, not from the schema:
+    #   {'ticker': t} sort collected_at DESC          -> ticker_collected_at
+    #   {'ticker': t, 'quality_status': {'$ne': ...}}
+    #        sort published_at DESC                    -> ticker_published_at
+    #   {'url': url}                                   -> url_1   (fan-out)
+    #   {'content_hash': h}                            -> content_hash_1 (dedupe)
+    #   {'$match': {'collected_at': {'$gte': cutoff}}} -> collected_at_-1
+    #   {'quality_status': 'pending_review'}           -> covered by the two
+    #                                                     compound prefixes
+    # NOT unique: 58% of rows share a content_hash by design (one article body
+    # stored once per attributed ticker) and 56% share a url. That is
+    # de-normalisation, not corruption — a unique index here would reject
+    # legitimate writes.
+    _try("news_articles", [("ticker", pymongo.ASCENDING),
+                           ("collected_at", pymongo.DESCENDING)],
+         name="ticker_collected_at")
+    _try("news_articles", [("ticker", pymongo.ASCENDING),
+                           ("published_at", pymongo.DESCENDING)],
+         name="ticker_published_at")
+    _try("news_articles", [("url", pymongo.ASCENDING)], name="url_1")
+    _try("news_articles", [("content_hash", pymongo.ASCENDING)], name="content_hash_1")
+    _try("news_articles", [("collected_at", pymongo.DESCENDING)], name="collected_at_-1")
+    # `insider_trades` is `asset_prices`' bug, second site: the writer at
+    # app/collectors/openinsider_collector.py:147 uses blind `insert_docs`
+    # under the comment "ON CONFLICT (id) DO NOTHING — insert_docs is
+    # ordered=False and swallows duplicate-key errors", but `natural_key` on
+    # `id` was created WITHOUT unique, so nothing ever raises and every
+    # collector pass appends another copy. Measured: 2,446 documents for 356
+    # distinct ids (85.4% redundant), with 45 ids stored 23 times each.
+    # The unique index is NOT declared here — it cannot build while the
+    # duplicates exist, and `_try` would swallow the failure and let a deploy
+    # report success. Dedupe first (scripts/, with a mongodump), then declare.
+    # This one is the reader index, which is safe today:
+    _try("insider_trades", [("ticker", pymongo.ASCENDING),
+                            ("trade_type", pymongo.ASCENDING),
+                            ("trade_date", pymongo.DESCENDING)],
+         name="ticker_type_date")
+    # `technicals` is 1,386,870 documents and its only index is (ticker, date),
+    # so a reader filtering on `date` alone leads with the wrong field and
+    # scans all 1.39M.
+    _try("technicals", [("date", pymongo.DESCENDING)], name="date_-1")
+    # `shared_desk`: the held-snapshot read added a per-cycle scan of ~2,200
+    # documents averaging 38 KB. Only `_id_` and a `desk_id` natural key today.
+    _try("shared_desk", [("cycle_id", pymongo.ASCENDING),
+                         ("ticker", pymongo.ASCENDING)],
+         name="cycle_id_ticker")
+    # `v3_guardrail_firings` had zero indexes beyond `_id_`, and it is now the
+    # primary A/B instrument — every forensics run filters it by cycle_id.
+    _try("v3_guardrail_firings", [("cycle_id", pymongo.ASCENDING),
+                                  ("created_at", pymongo.ASCENDING)],
+         name="cycle_id_created_at")
     # `watch_triage_log` had ZERO indexes and four readers, all leading on
     # created_at and/or ticker. 22,577 documents, every read a full scan.
     _try("watch_triage_log", [("ticker", pymongo.ASCENDING),
