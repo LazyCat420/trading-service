@@ -1218,7 +1218,36 @@ class SchedulerService:
                     replace_existing=True,
                     misfire_grace_time=300,
                     coalesce=True,
+                    # Explicit, not decorative: APScheduler's default IS 1, so
+                    # this changes nothing today — it pins the behaviour
+                    # against a future `job_defaults` entry that would silently
+                    # let this job overlap itself, which for a wake-budget
+                    # evaluator would spend the budget twice.
+                    max_instances=1,
                 )
+                # ⚠ THIS JOB DOES NOT FIT IN ITS OWN INTERVAL, and has not for
+                # at least a week. Measured 2026-09-13 over 7 days of
+                # execution_errors:
+                #
+                #   "maximum number of running instances reached" : 399 rows
+                #   distinct hours containing at least one skip   : 161 of 168
+                #   median gap between consecutive skips          : 19.3 min
+                #
+                # 96% of hours. The 15-minute schedule is a fiction: the
+                # evaluation runs essentially back to back and most scheduled
+                # fires are dropped on the floor. That matters because this is
+                # the energy-saver — it decides whether to wake the expensive
+                # cycle — so "evaluated every 15m" is what the wake logic and
+                # the daily budget both assume. See
+                # [[a-saturated-budget-reads-as-a-working-filter]].
+                #
+                # NOT fixed here, because the cause is not the scheduler. The
+                # prediction to test after this deploy: the evaluation's cost
+                # is dominated by the COLLSCANs this batch indexed
+                # (news_articles was 594 MB with no index a reader uses;
+                # watch_triage_log had none at all until yesterday). If the
+                # skip count does not fall, the cause is elsewhere and the
+                # interval needs widening or the evaluation needs profiling.
                 logger.info(
                     "[SCHEDULER] Registered Watch Desk evaluation (interval: %dm)",
                     _wd_minutes,
