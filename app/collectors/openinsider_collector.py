@@ -139,13 +139,26 @@ async def collect_cluster_buys(days: int = 30) -> int:
         ))
 
     if rows:
-        # `ON CONFLICT (id) DO NOTHING` — insert_docs (ordered=False) swallows
-        # duplicate-key errors, which is that semantic.
+        # `ON CONFLICT (id) DO NOTHING`. NOT insert_docs: that is only DO
+        # NOTHING if the server RAISES a duplicate-key error for it to
+        # swallow, and `insider_trades.natural_key` was created on (id, 1)
+        # WITHOUT `unique`. So nothing was ever raised, nothing was swallowed,
+        # and every pass appended another copy — 2,446 documents for 356 ids
+        # measured 2026-09-12, 45 ids stored 23 times each.
+        #
+        # `bulk_upsert(..., insert_only=True)` is $setOnInsert: DO NOTHING by
+        # construction rather than by dependence on an index, and the idiom
+        # already used by polygon_collector.py:94 and news_collector.py:767.
+        # insert_only matters beyond the duplicate count — a $set would
+        # overwrite `collected_at`, the one field whose first-written value
+        # reproduces the Postgres archive 246/246.
+        # See scripts/dedupe_insider_trades.py for the cleanup and the index.
         cols = ("id", "ticker", "insider_name", "insider_title", "trade_type",
                 "price", "qty", "value", "shares_owned", "delta_pct",
                 "trade_date", "filing_date", "source")
-        mongo_store.insert_docs('insider_trades',
-                                [dict(zip(cols, r)) for r in rows])
+        mongo_store.bulk_upsert('insider_trades',
+                                [dict(zip(cols, r)) for r in rows],
+                                key_field="id", insert_only=True)
         logger.info(f"[openinsider] Scraped and inserted {len(rows)} insider trades")
         return len(rows)
     return 0
