@@ -118,7 +118,18 @@ class ScraperServiceClient:
             # NOT counted as a failure: the scraper answered. A per-URL miss is
             # not an outage, and counting it would make the outage signal fire
             # on every paywalled article.
-            logger.warning(f"[scraper_client] Scrape failed for {url}: {data.get('error')}")
+            # DEBUG, not WARNING, and the level is the whole point. This branch
+            # is explicitly "not a failure" three lines above — the scraper
+            # answered, the caller has a fallback — yet WARNING is the threshold
+            # at which `DbLoggingHandler` writes a row to execution_errors AND a
+            # mirror to cycle_audit_log. Measured 2026-09-12 that made this ONE
+            # line 60,881 of the 72,732 warnings in seven days: ~8,700 database
+            # rows a day, 84% of both collections, for an event the code does
+            # not consider exceptional.
+            #
+            # The identical event in `news_collector.py:308` has always been at
+            # debug for the same reason. It stays fully visible on stdout.
+            logger.debug("[scraper_client] Scrape failed for %s: %s", url, data.get('error'))
             return data
         except Exception as e:
             self._note_failure(url, repr(e))

@@ -6,6 +6,7 @@ Pure MongoDB implementation.
 import logging
 from app.tools.registry import registry, PermissionLevel
 from app.db import mongo_store
+from app.quant.returns import one_vendor  # pin ONE vendor per price_history read
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ async def get_market_map_data(
 
             latest_prices = mongo_store.find_docs(
                 "price_history",
-                {"ticker": ticker},
+                one_vendor(ticker, {"ticker": ticker}),
                 sort=[("date", -1)],
                 limit=1,
             )

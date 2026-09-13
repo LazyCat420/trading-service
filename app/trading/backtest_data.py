@@ -43,9 +43,20 @@ def get_backtest_data(
     docs = mongo_store.find_docs(
         "price_history",
         query,
-        projection={"ticker": 1, "date": 1, "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1, "_id": 0},
+        # `source` is projected so the frame can be pinned BELOW. This read spans
+        # many tickers, so `one_vendor` (single-ticker) does not apply — the
+        # multi-ticker rule is `keep_dominant_source`, per ticker, because two
+        # tickers may legitimately have different dominant vendors.
+        projection={"ticker": 1, "date": 1, "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1, "source": 1, "_id": 0},
         sort=[("date", 1)]
     )
+    if docs:
+        # Backtests read OHLCV across a long window; interleaving an adjusted
+        # vendor with a raw one manufactures overnight jumps that never
+        # happened, which a backtest then "discovers" as edge.
+        from app.quant.returns import keep_dominant_source
+        _df = keep_dominant_source(pd.DataFrame(docs))
+        docs = _df.drop(columns=["source"], errors="ignore").to_dict("records")
 
     filtered_rows = []
     for d in docs:

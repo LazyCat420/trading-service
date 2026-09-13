@@ -23,6 +23,7 @@ from typing import Any
 from app.config import settings
 from app.utils.tz import utc_iso
 from app.db import mongo_query, mongo_store
+from app.quant.returns import one_vendor  # pin ONE vendor per price_history read
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ def get_current_state(bot_id: str = "") -> dict:
             stop_loss_pct = _safe_float(p[3], fallback=0.0)
 
             # Fetch live current price
-            price_row = mongo_query.find_row('price_history', {'ticker': ticker}, ['close'], sort=[('date', -1)])
+            price_row = mongo_query.find_row('price_history', one_vendor(ticker, {'ticker': ticker}), ['close'], sort=[('date', -1)])
             if not price_row:
                 price_row = mongo_query.find_row('asset_prices', {'symbol': ticker}, ['close'], sort=[('date', -1)])
 

@@ -9,6 +9,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.db import mongo_query, mongo_store
+from app.data.sector_taxonomy import normalise_sector
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,9 @@ async def load_sp500_universe(enrich: bool = False):
 
                 ticker_obj = yf.Ticker(ticker)
                 info = ticker_obj.info
+                # yfinance answers in Yahoo's vocabulary while `entry["sector"]`
+                # above is GICS. Both used to land in the same field, which is
+                # how `Healthcare` and `Health Care` became two sectors.
                 sector = info.get("sector", sector)
                 industry = info.get("industry", industry)
                 market_cap = info.get("marketCap", market_cap)
@@ -97,7 +101,7 @@ async def load_sp500_universe(enrich: bool = False):
             {
                 'ticker': ticker,
                 'name': name,
-                'sector': sector,
+                'sector': normalise_sector(sector),
                 'industry': industry,
                 'market_cap': market_cap,
                 'market_cap_tier': market_cap_tier,

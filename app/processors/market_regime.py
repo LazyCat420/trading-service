@@ -11,6 +11,7 @@ The regime affects how aggressive the bot should be:
 """
 
 from app.db import mongo_query
+from app.quant.returns import one_vendor  # pin ONE vendor per price_history read
 
 
 def get_market_regime() -> dict:
@@ -24,7 +25,7 @@ def get_market_regime() -> dict:
     # Get SPY price and moving averages
     spy_tech = mongo_query.find_row('technicals', {'ticker': 'SPY'}, ['sma_50', 'sma_200'], sort=[('date', -1)])
 
-    spy_price_row = mongo_query.find_row('price_history', {'ticker': 'SPY'}, ['close'], sort=[('date', -1)])
+    spy_price_row = mongo_query.find_row('price_history', one_vendor('SPY', {'ticker': 'SPY'}), ['close'], sort=[('date', -1)])
 
     # Fallback if no SPY data
     if not spy_price_row or not spy_tech:
@@ -41,7 +42,13 @@ def get_market_regime() -> dict:
     sma_200 = spy_tech[1] or spy_price
 
     # VIX check (from price_history if we have it, else estimate from ATR)
-    vix_row = mongo_query.find_row('price_history', {'$or': [{'ticker': '^VIX'}, {'ticker': 'VIX'}]}, ['close'], sort=[('date', -1)])
+    # Resolve the symbol FIRST, then pin. `one_vendor` takes one ticker, and an
+    # `$or` across two symbols cannot name a dominant vendor for both.
+    vix_row = None
+    for _vix_sym in ('^VIX', 'VIX'):
+        vix_row = mongo_query.find_row('price_history', one_vendor(_vix_sym, {'ticker': _vix_sym}), ['close'], sort=[('date', -1)])
+        if vix_row:
+            break
     vix = vix_row[0] if vix_row else None
 
     # Regime classification
@@ -50,7 +57,11 @@ def get_market_regime() -> dict:
     golden_cross = sma_50 > sma_200
 
     # SPY return over last 20 days
-    spy_20d = mongo_query.find_rows('price_history', {'ticker': 'SPY'}, ['close'], sort=[('date', -1)], limit=21)
+    # 21 ROWS, which is 21 DATES only when one vendor answers. Unpinned this
+    # returned 21 rows spanning 17 distinct dates (measured 2026-09-12,
+    # 2026-08-18..09-10), so the "20-day return" was a 17-day return and the
+    # denominator was whichever vendor the sort happened to leave last.
+    spy_20d = mongo_query.find_rows('price_history', one_vendor('SPY', {'ticker': 'SPY'}), ['close'], sort=[('date', -1)], limit=21)
 
     recent_return = 0
     if len(spy_20d) >= 2:

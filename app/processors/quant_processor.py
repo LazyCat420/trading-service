@@ -17,13 +17,14 @@ Functions:
 import numpy as np
 import pandas as pd
 from app.db import mongo_store, mongo_query
+from app.quant.returns import one_vendor  # pin ONE vendor per price_history read
 
 
 def _get_price_df(ticker: str, limit: int) -> pd.DataFrame:
     """Load price history as DataFrame directly from MongoDB."""
     docs = mongo_store.find_docs(
         "price_history",
-        {"ticker": ticker.upper()},
+        one_vendor(ticker.upper(), {"ticker": ticker.upper()}),
         sort=[("date", -1)],
         limit=limit,
     )
@@ -231,7 +232,7 @@ def get_risk_reward(
     """
     # Get current price if entry not specified
     if entry_price is None:
-        row = mongo_query.find_row('price_history', {'ticker': ticker}, ['close'], sort=[('date', -1)])
+        row = mongo_query.find_row('price_history', one_vendor(ticker, {'ticker': ticker}), ['close'], sort=[('date', -1)])
         if not row:
             return {"ticker": ticker, "error": "no price data"}
         entry_price = row[0]

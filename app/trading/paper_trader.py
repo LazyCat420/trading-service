@@ -24,6 +24,7 @@ from app.services.alert_service import record_fund_alert
 from app.services.parameter_store import get_param
 from app.db import mongo_query
 from app.db import mongo_store
+from app.quant.returns import one_vendor  # pin ONE vendor per price_history read
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +249,7 @@ def _ticker_liquidity(ticker: str) -> tuple[float | None, float | None]:
         ninety_days_ago = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=90)
         bars = mongo_query.find_rows(
             'price_history',
-            {'ticker': ticker, 'date': {'$gt': ninety_days_ago}, 'close': {'$gt': 0}, 'volume': {'$gt': 0}},
+            one_vendor(ticker, {'ticker': ticker, 'date': {'$gt': ninety_days_ago}, 'close': {'$gt': 0}, 'volume': {'$gt': 0}}),
             ['close', 'volume'],
             sort=[('date', 1)],
         )
@@ -307,7 +308,11 @@ def _get_current_price(ticker: str, *, now: datetime.datetime | None = None) -> 
     Checks price_history first, then asset_prices (crypto/commodity).
     """
     # Try price_history first (stocks)
-    price_row = mongo_query.find_row('price_history', {'ticker': ticker},
+    # This price MARKS THE BOOK. Unpinned, whichever vendor published last
+    # answers, and yfinance (adjusted) vs polygon (raw) differ by more than 1%
+    # on 10,883 of the collection's dual-vendor days — a vendor spread becomes
+    # P&L the moment entry is read one way and exit the other.
+    price_row = mongo_query.find_row('price_history', one_vendor(ticker, {'ticker': ticker}),
         ['close', 'date', 'price_as_of', 'price_as_of_source', 'observed_quote_price'],
         sort=[('date', -1), ('price_as_of', -1)])
 
@@ -499,7 +504,7 @@ async def buy(
 
     # General sanity: compare to recent historical price if available
     try:
-        hist_row = mongo_query.agg_row('price_history', {'ticker': ticker, 'date': {'$gt': (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30))}}, [('avg', 'close')])
+        hist_row = mongo_query.agg_row('price_history', one_vendor(ticker, {'ticker': ticker, 'date': {'$gt': (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30))}}), [('avg', 'close')])
         if hist_row and hist_row[0] and hist_row[0] > 0:
             avg_30d = float(hist_row[0])
             ratio = current_price / avg_30d

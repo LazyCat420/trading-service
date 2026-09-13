@@ -270,6 +270,25 @@ def ensure_indexes(session: Optional[Any] = None) -> None:
     # calls aborted at the 30s bridge deadline). A plain date index turns the
     # same command into 0.01-0.04s. Declared here so a reseed/rebuild gets it
     # back — an index created only by hand dies with the next backfill.
+    # The log pair. Every reader of BOTH filters on cycle_id — performance_audit
+    # (execution_errors + cycle_audit_log), the client's /run-cycle/audit/{id},
+    # collect_cycle_bundle — and until 2026-09-12 neither collection had an index
+    # on it. The only indexes were `id`/`id_plain`, which nothing queries by. So
+    # every audit read was a COLLSCAN of ~490,000 documents, twice per cycle.
+    _try("execution_errors", [("cycle_id", pymongo.ASCENDING),
+                              ("created_at", pymongo.DESCENDING)],
+         name="cycle_id_created_at")
+    _try("cycle_audit_log", [("cycle_id", pymongo.ASCENDING),
+                             ("timestamp", pymongo.ASCENDING)],
+         name="cycle_id_timestamp")
+    # `watch_triage_log` had ZERO indexes and four readers, all leading on
+    # created_at and/or ticker. 22,577 documents, every read a full scan.
+    _try("watch_triage_log", [("ticker", pymongo.ASCENDING),
+                              ("created_at", pymongo.DESCENDING)],
+         name="ticker_created_at")
+    _try("watch_triage_log", [("created_at", pymongo.DESCENDING)], name="created_at_-1")
+    _try("watch_triage_log", [("id", pymongo.ASCENDING)], name="id_1")
+
     _try("price_history", [("date", pymongo.ASCENDING)], name="date_1")
     # price_history natural key (ticker, date, source). It exists on the live
     # store under the backfill's name only, so a reseed would drop the index

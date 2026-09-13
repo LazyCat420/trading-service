@@ -31,6 +31,7 @@ from ..contracts.evidence import EvidencePacket
 
 # Import real queries
 from app.db import mongo_query
+from app.quant.returns import one_vendor  # pin ONE vendor per price_history read
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ async def build_evidence_packet(
         # 1. Fetch & Normalize Data
         # -- 1.1 Structural facts (Prices, fundamentals)
         try:
-            price_row = mongo_query.find_row('price_history', {'ticker': ticker}, ['date', 'close'], sort=[('date', -1)])
+            price_row = mongo_query.find_row('price_history', one_vendor(ticker, {'ticker': ticker}), ['date', 'close'], sort=[('date', -1)])
             if price_row:
                 d = normalize_structured_row(
                     "price_history",

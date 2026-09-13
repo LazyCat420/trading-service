@@ -13,6 +13,7 @@ import operator
 import pandas as pd
 from typing import Dict, List, Any
 from app.db import mongo_query
+from app.quant.returns import one_vendor  # pin ONE vendor per price_history read
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +102,7 @@ def compute_normalized_features(ticker: str) -> Dict[str, float]:
         # 2. Technicals (R/R, Z-Score, Vol, Drawdown, RSI)
         tech_row = mongo_query.find_row('technicals', {'ticker': ticker}, ['rsi_14', 'atr_14', 'support', 'resistance'], sort=[('date', -1)])
         
-        price_row = mongo_query.find_row('price_history', {'ticker': ticker}, ['close'], sort=[('date', -1)])
+        price_row = mongo_query.find_row('price_history', one_vendor(ticker, {'ticker': ticker}), ['close'], sort=[('date', -1)])
         
         if tech_row and price_row:
             rsi, atr, support, resistance = tech_row
@@ -125,7 +126,7 @@ def compute_normalized_features(ticker: str) -> Dict[str, float]:
             features["vol_norm"] = min(1.0, max(0.0, (raw_vol - 0.01) / 0.10))
 
         # 3. Z-Score (rolling)
-        price_rows = mongo_query.find_rows('price_history', {'ticker': ticker}, ['close'], sort=[('date', -1)], limit=60)
+        price_rows = mongo_query.find_rows('price_history', one_vendor(ticker, {'ticker': ticker}), ['close'], sort=[('date', -1)], limit=60)
         if len(price_rows) >= 20:
             closes = [r[0] for r in price_rows]
             mean_price = sum(closes) / len(closes)

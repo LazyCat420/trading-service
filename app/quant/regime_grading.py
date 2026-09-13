@@ -31,9 +31,15 @@ def market_closes(ticker: str) -> list[tuple]:
     """The SAME single-vendor series the HMM was fitted on."""
     from app.db import mongo_store
 
+    from app.quant.returns import one_vendor
+
+    # The docstring above promised a single-vendor series and the filter did not
+    # deliver one; the grader was scoring the HMM against a tape the HMM was
+    # never fitted on.
+    tk = ticker.upper()
     docs = mongo_store.find_docs(
         "price_history",
-        {"ticker": ticker.upper(), "close": {"$gt": 0}},
+        one_vendor(tk, {"ticker": tk, "close": {"$gt": 0}}),
         sort=[("date", 1)],
     )
     return [(d.get("date"), float(d.get("close"))) for d in docs if d.get("close") is not None]

@@ -12,7 +12,7 @@ it had already been shown, and would report skill that does not exist.
 """
 
 import math
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
@@ -81,6 +81,16 @@ def test_load_market_returns_never_reads_past_as_of(monkeypatch):
         return []
 
     monkeypatch.setattr(mongo_store, "find_docs", _find_docs)
+    # `load_market_returns` now pins the vendor, and `one_vendor` ->
+    # `dominant_source_for` performs a SECOND read (`aggregate`) that this test
+    # did not stub. Unstubbed it reaches the real client and the fail-closed
+    # conftest guard fires, which reads as a failure of the point-in-time bound
+    # rather than of the fixture. Two vendors so the pin is actually exercised;
+    # yfinance wins on depth and the assertions below still concern only `date`.
+    monkeypatch.setattr(mongo_store, "aggregate", lambda *a, **k: [
+        {"_id": "yfinance", "n": 900, "mx": datetime(2026, 1, 9)},
+        {"_id": "polygon", "n": 40, "mx": datetime(2026, 1, 9)},
+    ])
 
     as_of = date(2026, 1, 9)
     regime_hmm.load_market_returns("SPY", lookback_sessions=100, as_of=as_of)

@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.db import mongo_query, mongo_store
+from app.quant.returns import one_vendor  # pin ONE vendor per price_history read
 
 logger = logging.getLogger(__name__)
 
@@ -298,7 +299,7 @@ def _snapshot_market_data(ticker: str) -> tuple:
         logger.warning("watchlist: _snapshot_market_data fundamentals lookup failed for %s: %s", ticker, e)
 
     try:
-        price_row = mongo_query.find_row('price_history', {'ticker': ticker}, ['close', 'volume'], sort=[('date', -1)])
+        price_row = mongo_query.find_row('price_history', one_vendor(ticker, {'ticker': ticker}), ['close', 'volume'], sort=[('date', -1)])
         if price_row:
             price = price_row[0]
             volume = price_row[1]

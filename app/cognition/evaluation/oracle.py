@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Any
 from datetime import datetime, date, timedelta, timezone
 from app.db import mongo_store
+from app.quant.returns import one_vendor  # pin ONE vendor per price_history read
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ class DataCompletenessOracle:
             now_utc = datetime.now(timezone.utc)
 
             # 1. Price history
-            prices = mongo_store.find_docs("price_history", {"ticker": ticker_upper}, sort=[("date", -1)], limit=1)
+            prices = mongo_store.find_docs("price_history", one_vendor(ticker_upper, {"ticker": ticker_upper}), sort=[("date", -1)], limit=1)
             has_price = bool(prices and _is_recent(prices[0].get("date"), now_utc - timedelta(days=5)))
 
             # 2. Technicals

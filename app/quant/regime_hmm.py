@@ -81,12 +81,21 @@ def load_market_returns(
 
     end = as_of or date.today()
     start = end - timedelta(days=int(lookback_sessions * 1.6))
-    query = {
-        "ticker": ticker.strip().upper(),
+    from app.quant.returns import one_vendor
+
+    tk = ticker.strip().upper()
+    # ONE vendor, or the log-return series is not a return series. Measured
+    # 2026-09-12 on SPY over this exact window: 330 rows for 171 distinct dates,
+    # so 48% of the observations were a second vendor's print of a day already
+    # counted. yfinance publishes split/dividend-ADJUSTED closes and polygon
+    # publishes RAW, so interleaving them does not merely inject a spurious
+    # ~0.0 return — it manufactures jumps that never happened. 10,883 of the
+    # collection's dual-vendor days disagree by more than 1%.
+    docs = mongo_store.find_docs("price_history", one_vendor(tk, {
+        "ticker": tk,
         "date": {"$gte": start, "$lte": end},
         "close": {"$gt": 0},
-    }
-    docs = mongo_store.find_docs("price_history", query, sort=[("date", 1)])
+    }), sort=[("date", 1)])
     if len(docs) < 2:
         return np.array([]), []
     dates = [d.get("date") for d in docs]
@@ -297,7 +306,13 @@ def classify_regime(
     return {
         "ok": True,
         "ticker": ticker.strip().upper(),
-        "as_of": str(dates[-1]) if dates else None,
+        # NOT str(): `dates[-1]` is a BSON datetime from price_history, and
+        # str() makes '2026-09-10 00:00:00' — which BSON sorts BELOW every real
+        # Date, so a latest-by-as_of read returns a row from before the first
+        # string was ever written. 26 days of posteriors were invisible that
+        # way. It also broke the UPSERT KEY in `persist_posterior`, so each run
+        # inserted a second document instead of updating its own.
+        "as_of": dates[-1] if dates else None,
         "stale_sessions": stale_sessions,
         "is_stale": bool(stale_sessions is not None and stale_sessions >= STALE_AFTER_SESSIONS),
         "n_states": best["n_states"],

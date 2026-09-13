@@ -134,9 +134,20 @@ class DbLoggingHandler(logging.Handler):
                 "phase": phase, "ticker": ticker, "severity": severity,
                 "message": f"[{levelname}] {error_message[:500]}", "data": audit_data,
             }
-            # 1. Insert into execution_errors
-            mongo_store.insert_docs('execution_errors', [err_rec])
-            # 2. Duplicate to cycle_audit_log
+            # ONE write, not two. Until 2026-09-12 every WARNING+ record was
+            # inserted into BOTH collections in separate round trips — 72,732
+            # rows each in seven days, 185 MB, for one event.
+            #
+            # `cycle_audit_log` is the survivor because it is the one with live
+            # readers that need it: the client's `/run-cycle/audit/{cycle_id}`
+            # renders it with no limit, and `_audit_recovery` classifies it.
+            # `execution_errors` keeps the FULL payload the mirror truncated
+            # (error_message 1000 vs 500, stack_trace 4000 vs 500), so it is
+            # still written for ERROR and above, where a stack trace is the
+            # reason the row exists at all. A WARNING carries no traceback, so
+            # the mirror was pure duplication.
+            if levelname != "WARNING":
+                mongo_store.insert_docs('execution_errors', [err_rec])
             mongo_store.insert_docs('cycle_audit_log', [audit_rec])
         except Exception as e:
             self._note_drop(e)

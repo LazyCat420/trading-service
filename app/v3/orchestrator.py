@@ -30,6 +30,7 @@ from app.v3.desk_persistence import save_desk
 from app.db import mongo_query
 from app.db import mongo_store
 from datetime import timedelta
+from app.quant.returns import one_vendor  # pin ONE vendor per price_history read
 
 logger = logging.getLogger(__name__)
 
@@ -2781,7 +2782,7 @@ def _drop_implausible_levels(desk: SharedDesk) -> list[str]:
     _last_close = None
     try:
         from app.db import mongo_query
-        _row = mongo_query.find_row('price_history', {'ticker': desk.ticker}, ['close'], sort=[('date', -1)])
+        _row = mongo_query.find_row('price_history', one_vendor(desk.ticker, {'ticker': desk.ticker}), ['close'], sort=[('date', -1)])
         _last_close = float(_row[0]) if _row and _row[0] else None
     except Exception as _e:  # noqa: BLE001 — a price lookup must never block
         logger.debug("[V3] %s: stop/target sanity lookup failed: %s",

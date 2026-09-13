@@ -46,7 +46,15 @@ def get_market_map(days: int = 7):
         prices = mongo_store.find_docs("price_history", {
             "ticker": {"$in": sp500_tickers},
             "date": {"$gte": min_date, "$lte": max_date},
-        })
+        }, projection={"_id": 0})
+        if prices:
+            # Multi-ticker, so the per-ticker rule applies: without it a heatmap
+            # cell shows whichever vendor published last, and an adjusted close
+            # next to a raw one is a percentage move the market never made.
+            import pandas as _pd
+            from app.quant.returns import keep_dominant_source
+            _p = keep_dominant_source(_pd.DataFrame(prices))
+            prices = _p.drop(columns=["source"], errors="ignore").to_dict("records")
 
         dates_str = [d.isoformat() if hasattr(d, "isoformat") else str(d) for d in dates]
         data_map = defaultdict(list)

@@ -74,7 +74,15 @@ from typing import Any
 
 _MANIFEST = Path(__file__).with_name("schema_manifest.json")
 
-_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+#: A bare ISO date, OR a datetime repr whose time part is midnight
+#: ('2026-09-10 00:00:00', with an optional 'T' and optional microseconds).
+#: The second form is what `str(datetime(...))` produces, and it reached the
+#: store because `as_date` returned anything it could not parse UNTOUCHED —
+#: the documented policy, which here meant a `date` column silently holding a
+#: string that sorts below every real Date. Matching it is strictly safer than
+#: the alternative of stripping the time, because a NON-midnight time would
+#: mean the caller had a timestamp, not a date, and that still falls through.
+_ISO_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[ T]00:00:00(?:\.0+)?)?$")
 
 # Mongo query operators whose operand is a VALUE (or list of values) of the
 # field's own type, so a date belongs inside them. `$exists`/`$type`/`$size`

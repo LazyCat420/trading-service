@@ -9,6 +9,7 @@ import logging
 import numpy as np
 import pandas as pd
 from app.db import mongo_store
+from app.quant.returns import one_vendor  # pin ONE vendor per price_history read
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ def load_historical_data(ticker: str) -> pd.DataFrame:
     ticker = ticker.upper().strip()
     prices = mongo_store.find_docs(
         "price_history",
-        {"ticker": ticker},
+        one_vendor(ticker, {"ticker": ticker}),
         projection={"date": 1, "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1, "_id": 0},
         sort=[("date", 1)]
     )

@@ -8,12 +8,21 @@ closes already in the DB) instead of fanning out per-ticker Polygon calls.
 from __future__ import annotations
 
 import logging
+import time as _time
 from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+#: `dominant_source_for` memo: {ticker: (monotonic_stamp, source_or_None)}.
+#: Bounded by the ticker universe (~2,700), values are short strings.
+_DOMINANT_CACHE: dict[str, tuple[float, "str | None"]] = {}
+#: 15 minutes. The dominant vendor turns over only when one gains or loses a
+#: DAILY bar, so this is exact within a cycle while removing a per-call scan of
+#: every row a ticker owns.
+_DOMINANT_TTL_S = 900.0
 
 # Calendar-day multiplier so `lookback_days` trading rows survive weekends,
 # holidays, and ragged listings.
@@ -233,11 +242,24 @@ def dominant_source_for(ticker: str) -> str | None:
     """
     from app.db import mongo_store
 
+    # Cached, because this is now on hot paths. Closing the 32 unpinned reads
+    # (2026-09-12) put this call in `paper_trader`, `portfolio`, `scoring_engine`
+    # and `orchestrator` — per ticker, per cycle — and the `$group` underneath
+    # scans every row the ticker has (AAPL: 11,787). Which vendor is dominant
+    # changes when a vendor gains or loses a DAY, so a TTL well under a session
+    # is exact for every purpose this serves, and a stale entry can only pick
+    # the other real vendor, never an invented one.
+    now = _time.monotonic()
+    hit = _DOMINANT_CACHE.get(ticker)
+    if hit is not None and now - hit[0] < _DOMINANT_TTL_S:
+        return hit[1]
+
     stats = mongo_store.aggregate("price_history", [
         {"$match": {"ticker": ticker}},
         {"$group": {"_id": "$source", "n": {"$sum": 1}, "mx": {"$max": "$date"}}},
     ])
     if len(stats) <= 1:
+        _DOMINANT_CACHE[ticker] = (now, None)
         return None
 
     newest = max(r["mx"] for r in stats if r.get("mx") is not None)
@@ -249,13 +271,35 @@ def dominant_source_for(ticker: str) -> str | None:
         # freshness DESC, count DESC, source name ASC — same order as the SQL
         return (not fresh, -int(r.get("n") or 0), str(r["_id"] or ""))
 
-    return sorted(stats, key=_rank)[0]["_id"]
+    best = sorted(stats, key=_rank)[0]["_id"]
+    _DOMINANT_CACHE[ticker] = (now, best)
+    return best
 
 
 def _one_vendor(ticker: str, query: dict) -> dict:
     """Add the dominant-source pin to a single-ticker price_history filter."""
     src = dominant_source_for(ticker)
     return {**query, "source": src} if src is not None else query
+
+
+def one_vendor(ticker: str, query: dict) -> dict:
+    """Public name for `_one_vendor` — pin a single-ticker price_history read.
+
+    Use this at EVERY `price_history` read that asks about one ticker, rather
+    than reimplementing the precedence. Reimplementing it is how `outcome_tracker`
+    and `challenger` ended up with the same bug twice, and how the 2026-07-30 SQL
+    fix was lost again in the Mongo port.
+
+    Returns the query untouched when the ticker has only one vendor, so it is
+    safe to wrap a read that never needed pinning.
+
+    A read that legitimately spans vendors — a census OF the vendor split, a
+    row count answering "is there any data at all", a max(date) asking what the
+    collector still owes — must NOT use this. Those belong in the guard's
+    VENDOR_AGNOSTIC list with a written reason, because pinning them would make
+    the number they report wrong in the other direction.
+    """
+    return _one_vendor(ticker, query)
 
 
 def latest_close(ticker: str) -> float | None:

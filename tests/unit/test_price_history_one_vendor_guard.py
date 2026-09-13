@@ -51,6 +51,19 @@ VENDOR_AGNOSTIC: dict[str, str] = {
     "scripts/populate_sp500.py": "writer — inserts rows, sets source",
     "app/collectors/yfinance_collector.py": "writer — inserts rows, sets source",
     "app/data/sp500_price_collector.py": "writer — inserts rows, sets source",
+    # ---- closed 2026-09-12: reads that genuinely span vendors -------------
+    # Each of these reports a property OF the collection, not a price fed to a
+    # decision. Pinning them would make the number they report WRONG in the
+    # other direction, which is why they are named here instead of budgeted.
+    "app/processors/data_sanity.py": "counts BAD rows (close <= 0) across the whole collection — pinning would hide half the defects it exists to find",
+    "app/services/startup_tasks.py": "row count answering 'is there any price data at all' — a vendor cannot change whether the answer is zero",
+    "app/services/boot_service.py": "same count, scoped to today — 'did the collectors run', not 'what is the price'",
+    "app/processors/technical_processor.py": "the vendor census ITSELF ($group on $source) — pinning makes its output always 1",
+    "app/quant/technical_baseline.py": "count_docs(ticker) answering 'does this ticker have any history' — a gate, not a price",
+    "app/v3/invariants.py": "count of rows newer than a cutoff — a freshness invariant, satisfied by ANY vendor",
+    "app/collectors/data_rotator.py": "max(date) asking what the collector still owes; it must see the newest bar from ANY vendor or it refetches what it already has",
+    "app/autoresearch/auditors/data_audit.py": "coverage audit — row counts, the date-gap scan and the newest-bar probe. A day carried by either vendor is not a gap, so pinning would INVENT gaps",
+    "app/routers/market_router.py": "$group on $date for the distinct trading calendar — a duplicate vendor row cannot change a distinct set of dates",
 }
 
 # Query shapes that are vendor-immune by construction. A COUNT over DISTINCT
@@ -359,16 +372,21 @@ def _pins_source(call_src: str) -> bool:
     reads that never consider the vendor at all, which is the shape that
     actually shipped.
 
-    `_one_vendor(...)` counts too. It is the canonical pin helper from
-    `app.quant.returns` — it resolves the dominant vendor and merges
-    `{"source": src}` into the filter — so a read wrapped in it is pinned even
+    `one_vendor(...)` counts too — and its private alias `_one_vendor(...)`,
+    which the substring below matches as well. It is the canonical pin helper
+    from `app.quant.returns`: it resolves the dominant vendor and merges
+    `{"source": src}` into the filter, so a read wrapped in it is pinned even
     though the literal `source` no longer appears at the call site. Without
     this the scanner condemns correctly-pinned code, which is exactly the
     false positive that made `technical_processor.py` look like a regression.
+
+    The public name was added 2026-09-12 when the 32 budgeted reads were
+    closed; matching only the underscored one would have forced 18 call sites
+    to reach into a private helper to satisfy their own guard.
     """
     if "'source'" in call_src or '"source"' in call_src:
         return True
-    return "_one_vendor(" in call_src
+    return "one_vendor(" in call_src
 
 
 def _unpinned_mongo_reads(path: Path) -> list[tuple[int, str]]:
@@ -478,46 +496,19 @@ COMBINED_READ_FLOOR = 76
 # regress into this list". They regressed. The SQL fix was real; the Mongo port
 # reintroduced the unpinned read underneath it.
 KNOWN_UNPINNED_MONGO: dict[str, int] = {
-    "app/autoresearch/auditors/data_audit.py": 3,
-    "app/cognition/evaluation/oracle.py": 1,
-    "app/cognition/evidence/packet_builder.py": 1,
-    "app/collectors/data_rotator.py": 1,
-    "app/processors/data_sanity.py": 1,
-    "app/processors/market_regime.py": 3,
-    "app/processors/quant_processor.py": 2,
-    # Was budgeted 2 on the reading that its Mongo port had dropped the pin.
-    # It had not: both indicator reads go through `_one_vendor(...)`, and the
-    # scanner's text grep simply could not see through that helper. The one
-    # remaining read is the dominant-vendor CENSUS itself (`$group` on
-    # `$source`), which must stay vendor-agnostic to do its job.
-    "app/processors/technical_processor.py": 1,
-    "app/quant/regime_grading.py": 1,
-    "app/quant/regime_hmm.py": 1,
-    # 3 -> 2 on 2026-08-19: one of the three was a `distinct_values` over
-    # tickers, which the scanner now recognises as vendor-immune by
-    # construction (a duplicate vendor row cannot change a distinct set).
-    "app/quant/technical_baseline.py": 1,
-    "app/routers/market_router.py": 2,
-    # 2 -> 1 on 2026-08-28: NOT a fix. BootService carried duplicate copies of
-    # the FRED/market/SP500 startup tasks; they were consolidated into their
-    # one owner, app/services/startup_tasks.py, and the SP500 seed's
-    # price_history existence COUNT moved with the code. The entry below for
-    # startup_tasks.py is that same read, not a new one -- the repo-wide total
-    # is unchanged. (The read is `count` over all of price_history, asking only
-    # "is there any price data at all"; like the `distinct_values` case noted
-    # above it cannot be changed by a duplicate vendor row, but the scanner
-    # reads text, not intent.)
-    "app/services/boot_service.py": 1,
-    "app/services/startup_tasks.py": 1,
-    "app/tools/market_tools.py": 1,
-    "app/trading/backtest_data.py": 1,
-    "app/trading/paper_trader.py": 3,
-    "app/trading/portfolio.py": 1,
-    "app/trading/quant_edge_verifier.py": 1,
-    "app/trading/scoring_engine.py": 2,
-    "app/trading/watchlist.py": 1,
-    "app/v3/invariants.py": 1,
-    "app/v3/orchestrator.py": 1,
+    # EMPTY, and it must stay empty — 2026-09-12.
+    #
+    # This dict held 32 unpinned reads across 23 files for three weeks while
+    # this file PASSED, because a budget that equals the violation count is not
+    # a guard, it is a record. Its own comment said "These are NOT approved.
+    # Several are on live decision paths — paper_trader marks the book" and
+    # that remained true every day the suite was green.
+    #
+    # All 32 are closed: 18 now pin a vendor through
+    # `app.quant.returns.one_vendor` (single-ticker) or `keep_dominant_source`
+    # (multi-ticker), and the rest moved to VENDOR_AGNOSTIC with a written
+    # reason. A NEW entry here re-opens the hole; pin the read or justify it
+    # above instead.
 }
 
 
