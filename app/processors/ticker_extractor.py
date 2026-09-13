@@ -1614,8 +1614,38 @@ async def validate_unknown_tickers(tickers: list[str]) -> dict[str, bool]:
                 _save_rejected_to_db(sym)
 
         except Exception as e:
-            logger.warning(f"yfinance lookup failed for {sym}: {e}")
+            # SPLIT THE TWO FAILURES. They look identical in the log and mean
+            # opposite things, and conflating them cost ~7 repeat lookups per
+            # cycle at 20 s each against a median of ONE ticker analysed.
+            #
+            # MEASURED over 30 days: 239 "yfinance lookup failed" rows, 222
+            # distinct symbols, 93% of them seen exactly once — because the
+            # rejection was NEVER PERSISTED here. `_save_rejected_to_db` is
+            # called on every decided rejection above; this block wrote
+            # nothing, so GABGX/JUNK/NSSGA/BILLY/DRCC were re-looked-up on
+            # every future cycle that saw the word. KVHI failed four times and
+            # still has no `company_registry` row.
+            #
+            # But 96 of those 239 were `getaddrinfo() thread failed to start`
+            # — resource exhaustion, which says NOTHING about the symbol. KVHI
+            # is a real stock (KVH Industries). Caching a transport failure as
+            # a rejection would permanently ban real tickers, which is the
+            # opposite defect and a worse one: discovery's whole job is finding
+            # names not yet in the registry.
+            msg = str(e)
+            transient = any(k in msg for k in (
+                "getaddrinfo", "can't start new thread", "Connection",
+                "timed out", "Timeout", "Temporary failure",
+            ))
+            logger.warning(
+                "yfinance lookup failed for %s: %s (%s)",
+                sym, msg, "transient — NOT cached" if transient else "cached as rejected",
+            )
             results[sym] = False  # Assume not real on error
+            if not transient:
+                registry.add_rejected(sym)
+                FALSE_TICKERS.add(sym)
+                _save_rejected_to_db(sym)
 
         await asyncio.sleep(0.3)  # Rate limit yfinance while yielding event loop
 
