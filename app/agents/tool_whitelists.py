@@ -379,6 +379,20 @@ AGENT_BUDGET_OVERRIDES: dict[str, int] = {
     # precisely." — it ran out of turns before reading its own inputs. The
     # narration is not a parser bug; the loop ended one turn early.
     #
+    # ⚠ WHAT THIS EVIDENCE IS NOT. Nothing in this system records real budget
+    # exhaustion. Prism runs the agentic loop SERVER-side, so the SDK's own
+    # "Max iterations reached without a final answer." sentinel never fires —
+    # 0 occurrences across every stored text field in 30 days — and
+    # `stop_reason == "max_iterations"` is inferred from the reply's PROSE by
+    # `classify_output(...).exhausted` (base_agent.py:1232). The 243 "hit its
+    # turn wall" rows are therefore pattern matches, not measurements.
+    #
+    # What IS measured: failed runs consistently issue more tool calls than
+    # successful ones, and the failure text is verbatim narration of an
+    # intended next step. That makes the raise well-motivated and cheap to
+    # reverse; it does not make it proven. The A/B after this deploy is what
+    # settles it, and if firings do not fall, put these back.
+    #
     # DELIBERATELY NOT RAISED, and this is the other half of the measurement:
     # bull_agent (bad med 3.0 < 5), bear_agent (4.5 < 5), valuation (5.0 < 6),
     # fundamental (6.0 < 12) and quant (4.0 < 14) all fail WITHOUT exhausting
