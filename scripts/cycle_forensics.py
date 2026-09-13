@@ -247,8 +247,11 @@ def collect(cycle_id: str | None) -> dict:
         # The artifact-failure rules are the only ones that answer "did the
         # agent emit its artifact". They survive a different ticker set; the
         # HOLD_* families do not.
+        # Keyed by a STRING, not a tuple: a tuple key is not valid JSON and
+        # `json.dump(..., default=str)` silently wrote a file that would not
+        # parse back — the --json output was unreadable and nothing said so.
         "artifact_rules_per_agent": dict(collections.Counter(
-            (p["agent"], p["rule"]) for p in parsed
+            f'{p["agent"]}|{p["rule"]}' for p in parsed
             if p["rule"] in ("NARRATED_NO_ARTIFACT", "EMPTY_RESPONSE",
                              "TRUNCATED_JSON", "WRONG_SHAPE", "UNCLASSIFIED",
                              "PROSE_REPORT", "PSEUDO_TOOL_CALL"))),
@@ -511,7 +514,12 @@ def main() -> int:
     if args.json_out:
         with open(args.json_out, "w") as fh:
             json.dump(A, fh, indent=1, default=str)
-        print(f"  json -> {args.json_out}\n")
+        # Read it back. `default=str` will happily serialise a key type JSON
+        # cannot express, producing a file that cannot be parsed — which is
+        # exactly what a tuple key did here, silently.
+        with open(args.json_out) as fh:
+            json.load(fh)
+        print(f"  json -> {args.json_out} (re-read OK)\n")
     return 0
 
 
