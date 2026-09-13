@@ -57,7 +57,16 @@ def test_bull_defense_grounding():
 
 
 def test_agent_turn_budgets():
-    assert get_agent_budget_turns("v3_bull_agent", enable_tools=True) == 5
-    assert get_agent_budget_turns("v3_bear_agent", enable_tools=True) == 5
-    assert get_agent_budget_turns("v3_bull_defense", enable_tools=True) == 4
-    assert get_agent_budget_turns("v3_debate_judge", enable_tools=True) == 4
+    # Derived, not pinned. These four pinned 5/5/4/4 and went red on
+    # 2026-09-13 when bull_defense and debate_judge were raised to 6 and 7 on
+    # a measurement (their FAILED runs used more turns than they were allowed).
+    # A test that freezes a tuned constant fails for the tuning being done.
+    from app.agents.tool_whitelists import AGENT_BUDGET_OVERRIDES
+
+    for agent in ("v3_bull_agent", "v3_bear_agent", "v3_bull_defense",
+                  "v3_debate_judge"):
+        assert get_agent_budget_turns(agent, enable_tools=True) == \
+            AGENT_BUDGET_OVERRIDES[agent], f"{agent} does not read its override"
+        # The property that actually matters on Jetson: a tool-enabled v3 agent
+        # must never inherit the 9999 no-override sentinel.
+        assert 1 <= get_agent_budget_turns(agent, enable_tools=True) <= 40

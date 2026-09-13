@@ -340,7 +340,11 @@ AGENT_BUDGET_OVERRIDES: dict[str, int] = {
     # unreachable, and 34% of runs never got their mandatory whiteboard write in.
     # Removing the redundant step-1 whiteboard_read (the board is already in the
     # prompt) frees one turn; this adds the two the trace actually needs.
-    "v3_junior_analyst": 7,
+    # 9 (from 7) on 2026-09-13. The same measurement that justified 5->7 says
+    # 7 is now the normal path too: over 30 days, 60% of SUCCESSFUL runs ended
+    # at or above the cap and the p90 is 9. Highest firing count of any agent
+    # (92 output_rule firings).
+    "v3_junior_analyst": 9,
     # Raised from 7 on 2026-07-19: every *successful* run was landing on
     # exactly 7 loops, i.e. the ceiling was the normal path rather than an
     # edge case, and runs that hit it often emit a pseudo tool call instead
@@ -358,14 +362,38 @@ AGENT_BUDGET_OVERRIDES: dict[str, int] = {
     "v3_valuation_analyst": 6,
     "v3_bull_agent": 5,          # Small verify toolset (web search + market data)
     "v3_bear_agent": 5,          # Small verify toolset (web search + market data)
-    "v3_bull_defense": 4,        # Defense and concessions turn
+    # ── raised 2026-09-13 ────────────────────────────────────────────────
+    # MEASURED over 30 days, joining v3_agent_telemetry.loops_used to
+    # v3_guardrail_firings (the agent name lives inside `detail`, not a column):
+    #
+    #   agent                 bud  ok p90  ok@cap   bad med  bad p90  fire%
+    #   v3_bull_defense         4       4     26%       5.0        6    21%
+    #   v3_debate_judge         4       5     28%       5.0        7    21%
+    #   v3_board_of_directors   5       5     13%       6.0        6    23%
+    #   v3_decision_synthesizer 5       6     21%       9.0       12     8%
+    #
+    # The signature that matters is `bad med > bud`: a run that FAILED to emit
+    # its artifact used more turns than it was allowed. All four of these do.
+    # `v3_bull_defense`'s literal 88-character failure text is "I need to see
+    # the full bear rebuttal and judge sections to answer every point
+    # precisely." — it ran out of turns before reading its own inputs. The
+    # narration is not a parser bug; the loop ended one turn early.
+    #
+    # DELIBERATELY NOT RAISED, and this is the other half of the measurement:
+    # bull_agent (bad med 3.0 < 5), bear_agent (4.5 < 5), valuation (5.0 < 6),
+    # fundamental (6.0 < 12) and quant (4.0 < 14) all fail WITHOUT exhausting
+    # their budget, so more turns would buy nothing and cost a turn on every
+    # run. fundamental and quant sit at 4% and 1% at-cap — they have headroom,
+    # not a shortage. A budget raise helps and hurts at once; only raise where
+    # the exhaustion is measured.
+    "v3_bull_defense": 6,        # Defense and concessions turn
     "v3_delta_analyst": 5,
-    "v3_debate_judge": 4,        # Impartial judgment turn
+    "v3_debate_judge": 7,        # Impartial judgment turn
     "v3_regime_engine": 5,
-    "v3_board_of_directors": 5,  # No tools — reasoning from SharedDesk
+    "v3_board_of_directors": 7,  # No tools — reasoning from SharedDesk
     "v3_portfolio_manager": 5,   # Has a TOOL_WHITELIST; without an entry a
                                  # tool-enabled run inherits the 9999 default
-    "v3_decision_synthesizer": 5,
+    "v3_decision_synthesizer": 12,  # widest gap measured: bad p90 = 12
 }
 
 # Default budget for agents not in the override dict

@@ -43,7 +43,21 @@ _PINNED = [
     # 7 (from 5) on 2026-07-24: over 56 runs, 96% finished at the 5-6 loop
     # ceiling, so the budget WAS the normal path and step 3 of the documented
     # loop — "TRACE one lead depth-first" — was structurally unreachable.
-    ("v3_junior_analyst", 7, "2026-07-24 audit: 96% were at the old ceiling"),
+    # 9 (from 7) on 2026-09-13: the same measurement, repeated, says 7 became
+    # the normal path in turn. Over 30 days of v3_agent_telemetry, 60% of
+    # SUCCESSFUL runs ended at or above the cap and the p90 is 9 — the highest
+    # at-cap rate of any agent, and the highest guardrail firing count (92).
+    ("v3_junior_analyst", 9, "2026-09-13: 60% of successes at the cap, p90 = 9"),
+    # Raised 2026-09-13 on the `bad med > budget` signature — a run that FAILED
+    # to emit its artifact used MORE turns than it was allowed:
+    #   bull_defense  bad med 5.0 > 4   debate_judge        bad med 5.0 > 4
+    #   board         bad med 6.0 > 5   decision_synthesizer bad med 9.0 > 5
+    # bull_agent, bear_agent, valuation, fundamental and quant all fail WITHOUT
+    # exhausting their budget and were deliberately left alone.
+    ("v3_bull_defense", 6, "2026-09-13: failed runs used 5 turns against a cap of 4"),
+    ("v3_debate_judge", 7, "2026-09-13: failed runs p90 = 7 against a cap of 4"),
+    ("v3_board_of_directors", 7, "2026-09-13: failed runs used 6 turns against a cap of 5"),
+    ("v3_decision_synthesizer", 12, "2026-09-13: failed runs p90 = 12 against a cap of 5"),
     # 12 (from 7) on 2026-07-19: every SUCCESSFUL run landed on exactly 7
     # loops, and runs that hit it emitted a pseudo tool call instead of the
     # artifact. Multi-source lookups precede its report.

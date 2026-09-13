@@ -71,36 +71,86 @@ class V3AgentBudget:
         return max(0, self.max_tool_calls - self.current_tool_calls)
 
 
-# Default budgets per agent role — harmonized with tool_whitelists.py AGENT_BUDGET_OVERRIDES
-AGENT_ROLE_BUDGETS: dict[str, dict[str, int]] = {
-    "junior_analyst": {"max_turns": 7, "max_tool_calls": 15},
-    "fundamental_analyst": {"max_turns": 12, "max_tool_calls": 20},
-    "quant_analyst": {"max_turns": 14, "max_tool_calls": 20},
-    "valuation_analyst": {"max_turns": 6, "max_tool_calls": 10},
-    "bull_agent": {"max_turns": 5, "max_tool_calls": 10},
-    "bear_agent": {"max_turns": 5, "max_tool_calls": 10},
-    "bull_defense": {"max_turns": 4, "max_tool_calls": 10},
-    "debate_judge": {"max_turns": 4, "max_tool_calls": 5},
-    "delta_analyst": {"max_turns": 5, "max_tool_calls": 10},
-    "regime_engine": {"max_turns": 5, "max_tool_calls": 8},
-    "board_of_directors": {"max_turns": 5, "max_tool_calls": 5},
-    "portfolio_manager": {"max_turns": 5, "max_tool_calls": 10},
-    "decision_synthesizer": {"max_turns": 5, "max_tool_calls": 5},
+# ── ONE source of truth for turns ────────────────────────────────────────────
+#
+# ⚠ This block used to be `AGENT_ROLE_BUDGETS`, a second copy of the turn
+# budgets keyed WITHOUT the `v3_` prefix ("bull_defense", "decision_synthesizer")
+# under a comment claiming it was "harmonized with tool_whitelists.py
+# AGENT_BUDGET_OVERRIDES". It was not, and it could not be: `get_budget_for_role`
+# stripped `custom_v3_` and `custom_` but never a bare `v3_`, so every real agent
+# name missed and fell through to the default. Measured 2026-09-13:
+#
+#     mismatches: 14 of 14
+#
+# Not one entry was ever read. A hand-maintained copy of another module's table
+# does not drift slowly — this one was born dead and stayed dead, under a
+# comment asserting the opposite. The turn budget now comes from the single
+# table that the v3 runner actually uses, so the two cannot disagree again.
+# See [[an-allowlist-can-drift-both-ways-and-keep-its-count]].
+#
+# Tool-call caps have no other home, so they stay here — keyed by the SAME
+# canonical name, with `test_v3_budget_tables_agree` asserting set equality in
+# both directions so a new agent cannot be added to one and missed in the other.
+_DEFAULT_ROLE_BUDGET = {"max_turns": 7, "max_tool_calls": 10}
+
+AGENT_MAX_TOOL_CALLS: dict[str, int] = {
+    "v3_junior_analyst": 15,
+    "v3_fundamental_analyst": 20,
+    "v3_quant_analyst": 20,
+    "v3_valuation_analyst": 10,
+    "v3_bull_agent": 10,
+    "v3_bear_agent": 10,
+    "v3_bull_defense": 10,
+    "v3_debate_judge": 8,        # raised with its turn budget 4->7
+    "v3_delta_analyst": 10,
+    "v3_regime_engine": 8,
+    "v3_board_of_directors": 8,  # raised with its turn budget 5->7
+    "v3_portfolio_manager": 10,
+    "v3_decision_synthesizer": 14,  # raised with its turn budget 5->12;
+                                    # at 5 the TOOL cap would bind first
+                                    # and the turn raise would do nothing
+    "user_chat": 20,
 }
+
+
+def canonical_agent_name(role: str) -> str:
+    """Strip the wrapper prefixes an agent name can arrive with.
+
+    `custom_v3_bull_agent` and `v3_bull_agent` are the same agent. The old
+    version stripped `custom_v3_` down to the bare role, which is what made
+    every lookup miss.
+    """
+    from app.agents.tool_whitelists import AGENT_BUDGET_OVERRIDES
+
+    cleaned = (role or "").lower().strip()
+    if cleaned.startswith("custom_v3_"):
+        cleaned = "v3_" + cleaned[len("custom_v3_"):]
+    elif cleaned.startswith("custom_"):
+        cleaned = cleaned[len("custom_"):]
+    # A BARE role name ("bull_agent") resolves to the v3 agent of that name.
+    # Production has never used one — 30 days of `agent_traces` is 100% v3_-
+    # prefixed, 0 bare — but the old table was keyed this way and its tests
+    # were written to match it, which is exactly why a dead table read as a
+    # live one. Accepting both spellings against ONE table keeps those callers
+    # working without reviving a second source of truth.
+    if cleaned not in AGENT_BUDGET_OVERRIDES and f"v3_{cleaned}" in AGENT_BUDGET_OVERRIDES:
+        cleaned = f"v3_{cleaned}"
+    return cleaned
 
 
 def get_budget_for_role(role: str) -> V3AgentBudget:
     """Create a V3AgentBudget with role-specific limits."""
-    cleaned = role.lower().strip()
-    if cleaned.startswith("custom_v3_"):
-        cleaned = cleaned[10:]
-    elif cleaned.startswith("custom_"):
-        cleaned = cleaned[7:]
-    
-    config = AGENT_ROLE_BUDGETS.get(cleaned, {"max_turns": 7, "max_tool_calls": 10})
+    from app.agents.tool_whitelists import AGENT_BUDGET_OVERRIDES
+
+    cleaned = canonical_agent_name(role)
+    turns = AGENT_BUDGET_OVERRIDES.get(cleaned)
+    if turns is None or turns >= 9999:
+        # 9999 is the "no override" sentinel in that table; it is not a budget.
+        turns = _DEFAULT_ROLE_BUDGET["max_turns"]
     return V3AgentBudget(
-        max_turns=config["max_turns"],
-        max_tool_calls=config["max_tool_calls"],
+        max_turns=int(turns),
+        max_tool_calls=AGENT_MAX_TOOL_CALLS.get(
+            cleaned, _DEFAULT_ROLE_BUDGET["max_tool_calls"]),
     )
 
 

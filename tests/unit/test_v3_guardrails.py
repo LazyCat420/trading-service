@@ -84,17 +84,37 @@ class TestBudgetForRole:
         assert budget.max_turns == 12
 
     def test_prefix_cleaning_and_case_insensitivity(self):
-        budget_quant = get_budget_for_role("CUSTOM_V3_QUANT_ANALYST")
-        assert budget_quant.max_turns == 14
-        assert budget_quant.max_tool_calls == 20
+        """Case, whitespace and the custom_/custom_v3_ wrappers all resolve.
 
-        budget_junior = get_budget_for_role("custom_junior_analyst")
-        assert budget_junior.max_turns == 7
-        assert budget_junior.max_tool_calls == 15
+        Asserts against the SOURCE TABLE rather than pinned integers. This test
+        exists to prove the NAME is cleaned, not to freeze a budget: pinning
+        `junior_analyst == 7` made it fail on 2026-09-13 for the budget having
+        been correctly retuned, which teaches nothing and trains people to edit
+        the number until the test goes quiet.
+        """
+        from app.agents.tool_whitelists import AGENT_BUDGET_OVERRIDES
+        from app.v3.guardrails import AGENT_MAX_TOOL_CALLS
 
-        budget_bear = get_budget_for_role("  CUSTOM_V3_BEAR_AGENT  ")
-        assert budget_bear.max_turns == 5
-        assert budget_bear.max_tool_calls == 10
+        for spelling, canonical in (
+            ("CUSTOM_V3_QUANT_ANALYST", "v3_quant_analyst"),
+            ("custom_junior_analyst", "v3_junior_analyst"),
+            ("  CUSTOM_V3_BEAR_AGENT  ", "v3_bear_agent"),
+            ("v3_bear_agent", "v3_bear_agent"),
+            ("bear_agent", "v3_bear_agent"),
+        ):
+            got = get_budget_for_role(spelling)
+            assert got.max_turns == AGENT_BUDGET_OVERRIDES[canonical], (
+                f"{spelling!r} did not resolve to {canonical}")
+            assert got.max_tool_calls == AGENT_MAX_TOOL_CALLS[canonical], (
+                f"{spelling!r} did not resolve to {canonical}")
+
+        # Non-vacuity: the three agents above must not all share one budget, or
+        # a canonicaliser that returned a constant would pass the loop.
+        distinct = {get_budget_for_role(s).max_turns
+                    for s in ("v3_quant_analyst", "v3_junior_analyst", "v3_bear_agent")}
+        assert len(distinct) == 3, (
+            f"the agents compared share budgets {distinct} — this test cannot "
+            "tell a working canonicaliser from one that ignores its argument")
 
     def test_unknown_role_defaults(self):
         budget = get_budget_for_role("unknown_agent")
