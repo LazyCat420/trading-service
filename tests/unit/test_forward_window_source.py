@@ -71,8 +71,14 @@ def test_latest_close_rejects_nan_and_zero():
 # ── the invariant that actually prevents the bug ─────────────────────
 
 @pytest.mark.parametrize("fn", ["latest_close", "forward_window"])
-def test_every_helper_filters_by_source(fn):
+def test_every_helper_filters_by_source(fn, monkeypatch):
     """Pin the filter itself. Without it these are the buggy queries again.
+
+    This test OVERRIDES conftest's `default_single_vendor` fixture, which makes
+    `dominant_source_for` return None (no pin) so that the hundreds of tests
+    unrelated to vendors need not stub a second Mongo read. A test whose whole
+    subject is the pin must put a multi-vendor world back, or it asserts against
+    a world where pinning is correctly a no-op and fails for the wrong reason.
 
     The assertion is on the Mongo read now, not on the SQL helper's name: these
     functions call `mongo_store.find_docs("price_history", ...)`, and the pin
@@ -84,6 +90,8 @@ def test_every_helper_filters_by_source(fn):
     import ast
     import inspect
     import textwrap
+
+    monkeypatch.setattr(R, "dominant_source_for", lambda _t: "yfinance")
 
     src = inspect.getsource(getattr(R, fn))
     if "keep_dominant_source" in src:

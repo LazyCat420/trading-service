@@ -200,6 +200,37 @@ class _ProductionMongoReached(RuntimeError):
 
 
 @pytest.fixture(autouse=True)
+def default_single_vendor(request):
+    """`dominant_source_for` returns None unless a test says otherwise.
+
+    Closing the 32 unpinned `price_history` reads (2026-09-12) put
+    `app.quant.returns.one_vendor` on ~18 call sites. It resolves the dominant
+    vendor with a SECOND Mongo read (`mongo_store.aggregate`), so every test
+    that stubbed only `find_row`/`find_docs` suddenly reached the real client
+    and tripped `block_production_mongo` — 12 of them, in files that have
+    nothing to do with vendors (`test_paper_quote_provenance`,
+    `test_scoring_engine`, `test_cycle_contradictions`).
+
+    None is what the helper already returns for a single-vendor ticker, and it
+    means "no filter needed", so the pinned call degrades to the query the test
+    wrote. That keeps those tests testing what they are about.
+
+    THIS DOES NOT WEAKEN THE PIN. The pinning behaviour has its own dedicated
+    coverage that overrides this fixture explicitly:
+    `test_returns_vendor_consistency.py`, `test_factor_backtest_mongo_panel.py`,
+    `test_hmm_grading.py`, and the repo-wide scanner in
+    `test_price_history_one_vendor_guard.py`. Override with
+    `monkeypatch.setattr(returns, "dominant_source_for", lambda t: "yfinance")`
+    when a test needs the vendor actually resolved.
+    """
+    if request.node.get_closest_marker("real_mongo"):
+        yield
+        return
+    with patch("app.quant.returns.dominant_source_for", lambda _ticker: None):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def block_production_mongo(request):
     """Fail any test that reaches the real MongoDB client.
 
