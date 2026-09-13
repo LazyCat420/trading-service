@@ -49,6 +49,7 @@ class ScraperServiceClient:
         # below laundered a TOTAL outage (unresolvable host on
         # cycle-v3-1784769797) into a ✅ "collected 0 articles" sweep.
         self.failures = 0
+        self.misses = 0
         self.calls = 0
         self.last_error: str | None = None
 
@@ -62,6 +63,7 @@ class ScraperServiceClient:
         sweep is about to read.
         """
         self.failures = 0
+        self.misses = 0
         self.calls = 0
         self.last_error = None
 
@@ -128,7 +130,24 @@ class ScraperServiceClient:
             # not consider exceptional.
             #
             # The identical event in `news_collector.py:308` has always been at
-            # debug for the same reason. It stays fully visible on stdout.
+            # debug for the same reason.
+            #
+            # ⚠ It does NOT "stay fully visible on stdout", which is what this
+            # comment used to claim. `cycle_main.py:442` is
+            # `basicConfig(level=INFO, force=True)` and nothing in the repo
+            # lowers this logger — verified by grep for setLevel/basicConfig —
+            # so the line reaches no sink at all. That is acceptable for ONE
+            # miss and unacceptable for all of them: with `_note_failure`
+            # deliberately skipped here, a scraper returning success:false for
+            # 100% of URLs produced zero rows, zero log lines and a failure
+            # counter of 0. This module's own docstring records an earlier
+            # version that "laundered a TOTAL outage" the same way.
+            #
+            # So the miss is COUNTED even though it is not a failure, and
+            # `SweepRecord.total_miss` gives the caller one aggregate to alarm
+            # on — one line per sweep instead of the ~8,700 rows a day the
+            # WARNING cost.
+            self.misses += 1
             logger.debug("[scraper_client] Scrape failed for %s: %s", url, data.get('error'))
             return data
         except Exception as e:
@@ -185,12 +204,13 @@ class SweepRecord:
     a concurrent caller's failures never land in this sweep's count.
     """
 
-    __slots__ = ("_client", "_f0", "_c0")
+    __slots__ = ("_client", "_f0", "_c0", "_m0")
 
     def __init__(self, client: ScraperServiceClient):
         self._client = client
         self._f0 = client.failures
         self._c0 = client.calls
+        self._m0 = client.misses
 
     @property
     def failures(self) -> int:
@@ -199,6 +219,26 @@ class SweepRecord:
     @property
     def calls(self) -> int:
         return self._client.calls - self._c0
+
+    @property
+    def misses(self) -> int:
+        """Calls the scraper ANSWERED but that carried no usable content.
+
+        Not failures — the service was up and replied. But a sweep where every
+        call is a miss is an outage by any other name, and nothing could see it
+        before: `_note_failure` is deliberately skipped on that branch, so
+        `failures` stays 0 through a 100% miss rate.
+        """
+        return self._client.misses - self._m0
+
+    @property
+    def total_miss(self) -> bool:
+        """Every call this sweep made came back empty. Alarm on this."""
+        return self.calls > 0 and self.misses >= self.calls
+
+    @property
+    def miss_rate(self) -> float:
+        return (self.misses / self.calls) if self.calls else 0.0
 
     @property
     def failed(self) -> bool:
@@ -215,7 +255,8 @@ class SweepRecord:
 
     def __repr__(self) -> str:
         return (f"<SweepRecord {self.failures}/{self.calls} failed "
-                f"({self.failure_rate:.0%}) last={self.last_error!r}>")
+                f"({self.failure_rate:.0%}), {self.misses} miss "
+                f"({self.miss_rate:.0%}) last={self.last_error!r}>")
 
 
 scraper_client = ScraperServiceClient()
