@@ -1400,6 +1400,11 @@ async def run_v3_agent(
         token_usage = result.get("tokens_used", 0)
         cached_tokens = result.get("cached_tokens", 0)
         prompt_tokens = result.get("prompt_tokens", 0)
+        # The OUTPUT half of cost-per-decision. `usage_requests == 0` is the
+        # NOT-RECORDED sentinel: a recorded 0 marks a TRUNCATED generation and
+        # must not be folded together with "no usage block arrived".
+        completion_tokens = result.get("completion_tokens")
+        usage_requests = int(result.get("usage_requests") or 0)
         stop_reason = result.get("stop_reason", "completed")
         model_used = result.get("model_used")
         provider_used = result.get("provider")
@@ -1774,6 +1779,8 @@ async def run_v3_agent(
                               outcome.value,
                               sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
                               cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
+                              completion_tokens=completion_tokens,
+                              usage_requests=usage_requests,
                               model_used=model_used, provider=provider_used,
                               attempt_no=attempt_no,
                               failure_reason=rule.name if rule else UNCLASSIFIED.name,
@@ -1863,6 +1870,8 @@ async def run_v3_agent(
                 _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "AGENT_ERROR",
                                   sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
                                   cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
+                              completion_tokens=completion_tokens,
+                              usage_requests=usage_requests,
                                   model_used=model_used, provider=provider_used,
                                   attempt_no=attempt_no,
                                   failure_reason=SCHEMA_INVALID,
@@ -1925,6 +1934,8 @@ async def run_v3_agent(
                                   outcome.value,
                                   sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
                                   cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
+                              completion_tokens=completion_tokens,
+                              usage_requests=usage_requests,
                                   model_used=model_used, provider=provider_used,
                                   attempt_no=attempt_no,
                                   failure_reason=SCHEMA_INVALID,
@@ -2044,6 +2055,8 @@ async def run_v3_agent(
                 _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "AGENT_ERROR",
                                   sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
                                   cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
+                              completion_tokens=completion_tokens,
+                              usage_requests=usage_requests,
                                   model_used=model_used, provider=provider_used, attempt_no=attempt_no,
                                   failure_reason=SCHEMA_INVALID, error_message="; ".join(contract_failures))
                 return PhaseOutcome.AGENT_ERROR
@@ -2443,6 +2456,8 @@ async def run_v3_agent(
                               sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
                               artifact_size_bytes=artifact_size_bytes,
                               cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
+                              completion_tokens=completion_tokens,
+                              usage_requests=usage_requests,
                               model_used=model_used, provider=provider_used,
                               attempt_no=attempt_no)
 
@@ -2757,6 +2772,8 @@ def _record_telemetry(
     artifact_size_bytes: int = 0,
     cached_tokens: int = 0,
     prompt_tokens: int = 0,
+    completion_tokens: int | None = None,
+    usage_requests: int = 0,
     model_used: str | None = None,
     provider: str | None = None,
     attempt_no: int = 1,
@@ -2803,6 +2820,16 @@ def _record_telemetry(
         # multi-iteration run means prefix caching did nothing for this agent.
         "cached_tokens": cached_tokens,
         "prompt_tokens": prompt_tokens,
+        # Cost per decision has two halves. `usage_requests` counts the
+        # requests that actually REPORTED usage, so `usage_requests == 0`
+        # (completion_tokens None) is "never measured" while a recorded 0 is a
+        # TRUNCATED generation — an all-zero usage block is the only signal
+        # that exists for it, and folding the two makes truncations look free.
+        "completion_tokens": (
+            int(completion_tokens) if usage_requests > 0
+            and completion_tokens is not None else None
+        ),
+        "usage_requests": int(usage_requests or 0),
         "model_used": model_used,
         "provider": provider,
         # True when the run DIED and these numbers are what it had already

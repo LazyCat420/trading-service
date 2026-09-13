@@ -144,6 +144,31 @@ _CACHED_TOKEN_NESTED: tuple[tuple[str, str], ...] = (
 _seen_usage_keys: set[str] = set()
 
 
+def harness_usage_totals(harness) -> dict:
+    """Loop-wide OUTPUT-token accounting read off the SDK harness.
+
+    The SDK sums `outputTokens + reasoningOutputTokens` across every request of
+    the agentic loop into `harness.completion_tokens`, and counts the requests
+    that actually REPORTED a usage block into `harness.usage_requests`.
+
+    Why the count and not just the sum: a completion whose reported usage is
+    ALL ZEROS is a TRUNCATED generation, not a cheap one (measured 8/8:
+    ~200 chars out, all-zero usage, and no stop_reason saying so). A dict of
+    zeros is truthy so it accumulates as 0, while an ABSENT usage block leaves
+    `last_usage` at `{}` and `or 0` collapses to the same 0 — the two are then
+    the same row. `usage_requests == 0` is therefore the ONLY "not recorded"
+    sentinel, and `completion_tokens` is None in that case rather than a
+    confident zero that would score a truncation as free.
+    """
+    requests = int(getattr(harness, "usage_requests", 0) or 0)
+    if requests <= 0:
+        return {"completion_tokens": None, "usage_requests": 0}
+    return {
+        "completion_tokens": int(getattr(harness, "completion_tokens", 0) or 0),
+        "usage_requests": requests,
+    }
+
+
 def extract_cached_tokens(usage: dict | None) -> int:
     """Prompt tokens served from the provider's prefix cache, whatever it calls it.
 
@@ -618,7 +643,7 @@ async def run_agent(
     # in `agent_tool_telemetry` and a row saying tokens=0 loops=0. The caller
     # owning the dict reads it whatever exception it happens to catch.
     partial_cost: dict = cost_sink if cost_sink is not None else {}
-    for _k in ("tokens", "loops", "tool_calls"):
+    for _k in ("tokens", "loops", "tool_calls", "completion_tokens", "usage_requests"):
         partial_cost.setdefault(_k, 0)
 
     # Delays 5s/10s/20s/40s (~75s total) so agent calls survive a lazy-tool
@@ -1022,6 +1047,13 @@ async def run_agent(
                 # inflate the loop stats the box comparison is built on.
                 1,
                 {},
+                # NOT RECORDED, not zero: /chat returns a single fused
+                # `tokens_used` and no per-side usage block, so the output
+                # half is genuinely unmeasured on this transport. Reporting
+                # 0 here would book every toolless run as having generated
+                # nothing — the exact confusion `usage_requests` exists to
+                # prevent.
+                {"completion_tokens": None, "usage_requests": 0},
                 _chat.get("model_used") or resolved_model,
                 _chat.get("provider") or resolved_provider,
             )
@@ -1152,6 +1184,9 @@ async def run_agent(
             # per-attempt notion, so it keeps the largest seen.
             try:
                 partial_cost["tokens"] += int(getattr(harness, "total_tokens", 0) or 0)
+                _ut = harness_usage_totals(harness)
+                partial_cost["completion_tokens"] += int(_ut["completion_tokens"] or 0)
+                partial_cost["usage_requests"] += int(_ut["usage_requests"])
                 partial_cost["tool_calls"] += int(tool_call_count)
                 partial_cost["loops"] = max(
                     int(partial_cost.get("loops") or 0), int(tool_call_count) + 1
@@ -1165,6 +1200,7 @@ async def run_agent(
             elapsed_ms,
             tool_call_count + 1,
             dict(getattr(harness, "last_usage", {}) or {}),
+            harness_usage_totals(harness),
             # Prefer the stream's done-event model (prism's server-side
             # resolution) over what we asked for — a gateway-side swap makes
             # the requested name a lie (observed 07-31: silent switch to
@@ -1174,7 +1210,8 @@ async def run_agent(
         )
 
     try:
-        content, tokens, elapsed_ms, loops_used, last_usage, model_used, provider_used = await _agent_llm_call()
+        (content, tokens, elapsed_ms, loops_used, last_usage, usage_totals,
+         model_used, provider_used) = await _agent_llm_call()
     except BaseException as exc:
         # Carry the cost out with the exception. aresilient_call wraps the last
         # failure in a ResilientCallError, so the runner's `except` sees THAT
@@ -1258,5 +1295,12 @@ async def run_agent(
             or last_usage.get("inputTokens")
             or 0
         ),
+        # The OUTPUT side, summed across the WHOLE agentic loop (unlike
+        # prompt_tokens, which is the last request's snapshot). Cost per
+        # decision needs both halves. `usage_requests == 0` means NOT
+        # RECORDED and `completion_tokens` is then None — a recorded 0 is a
+        # TRUNCATED generation and must not read as a cheap one.
+        "completion_tokens": usage_totals["completion_tokens"],
+        "usage_requests": usage_totals["usage_requests"],
         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
     }

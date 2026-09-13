@@ -123,6 +123,11 @@ def _persist_entries(desk: SharedDesk, entries: list[dict]) -> None:
                 "artifact_size_bytes": entry.get("artifact_size_bytes", 0),
                 "cached_tokens": entry.get("cached_tokens", 0),
                 "prompt_tokens": entry.get("prompt_tokens", 0),
+                # The OUTPUT half. NULL, not 0, when nothing reported usage:
+                # `usage_requests == 0` is the not-recorded sentinel, and a
+                # recorded 0 is a TRUNCATED generation, not a cheap one.
+                "completion_tokens": entry.get("completion_tokens"),
+                "usage_requests": int(entry.get("usage_requests") or 0),
                 "sys_prompt_chars": entry.get("sys_prompt_chars", 0),
                 "user_prompt_chars": entry.get("user_prompt_chars", 0),
                 "model_used": entry.get("model_used") or None,
