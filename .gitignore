@@ -43,7 +43,7 @@ scratch/
 .scratch/
 logs/
 logs_local/
-data/
+/data/
 # ANCHORED. `memory/` matched every directory of that name at any depth,
 # including the tracked source package `app/services/memory/` — so `git add`
 # refused a path inside it and `git status` had to be trusted instead. A rule
