@@ -311,6 +311,7 @@ def _forbidden(name):
 
 # ── 2. the ADV lookup reads Mongo, and reads one vendor ───────────────────
 
+@pytest.mark.real_vendor_resolution
 def test_adv_comes_from_the_dominant_vendor_not_a_blend_of_both(store):
     """RED before the port (the lookup was SQL against the frozen archive, and
     the archive answers with July), and RED for a Mongo port that grouped by
@@ -329,6 +330,7 @@ def test_adv_comes_from_the_dominant_vendor_not_a_blend_of_both(store):
         "be ABSENT so the caller charges the default spread")
 
 
+@pytest.mark.real_vendor_resolution
 def test_the_adv_window_is_pushed_into_the_query(store, monkeypatch):
     """The 90-day bound must reach Mongo. A port that fetched every bar of
     every ticker and trimmed in Python answers correctly here — so this asserts

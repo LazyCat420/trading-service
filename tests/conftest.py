@@ -219,11 +219,17 @@ def default_single_vendor(request):
     coverage that overrides this fixture explicitly:
     `test_returns_vendor_consistency.py`, `test_factor_backtest_mongo_panel.py`,
     `test_hmm_grading.py`, and the repo-wide scanner in
-    `test_price_history_one_vendor_guard.py`. Override with
-    `monkeypatch.setattr(returns, "dominant_source_for", lambda t: "yfinance")`
-    when a test needs the vendor actually resolved.
+    `test_price_history_one_vendor_guard.py`.
+
+    TWO WAYS TO OPT OUT, and they are not interchangeable:
+      * `monkeypatch.setattr(returns, "dominant_source_for", lambda t: "yfinance")`
+        when the test wants a KNOWN vendor and does not model the store.
+      * `@pytest.mark.real_vendor_resolution` when the test installs a fake
+        store that already answers `aggregate` with real multi-vendor rows, and
+        wants the resolution to run against it for real.
     """
-    if request.node.get_closest_marker("real_mongo"):
+    if request.node.get_closest_marker("real_mongo") or \
+            request.node.get_closest_marker("real_vendor_resolution"):
         yield
         return
     with patch("app.quant.returns.dominant_source_for", lambda _ticker: None):
