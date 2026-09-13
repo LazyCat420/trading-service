@@ -110,6 +110,99 @@ _UNPARSED_TOOL_CALL_RE = re.compile(
 )
 
 
+# ── The two delimiter defects, and nothing else ──────────────────────────
+#
+# MEASURED 2026-09-12 over every full buffer this desk still holds: the 21
+# `raw_response` rows in `llm_audit_logs` that classify UNCLASSIFIED, plus the
+# v3 `model.output` blob in `pipeline_trace_blobs`. 14 of 21 (67%) died on
+# `Expecting ',' delimiter` and the majority of those are ONE lexical mistake,
+# in two mirror-image forms:
+#
+#   MISSING comma. The model closed a long string value and went straight to
+#   the next key. v3 `narrative_curator`, seven separate buffers, always the
+#   same boundary:
+#
+#       ..."insufficient to fully offset the capital intensity of the new
+#       strategy."\n  "key_themes": [
+#
+#   TRAILING comma. The model closed the last member of an object and left the
+#   separator behind. v3_bear_agent, 12,923 chars, and `v3_bull_defense` twice
+#   in `cycle_audit_log`:
+#
+#       ...but the burden here is on PURR to justify its risks, and it does
+#       not.",\n    },\n    "confidence": 68,
+#
+# Restoring a delimiter is NOT what `_malformed_fallback` refuses to do. That
+# refusal is about MANUFACTURING FIELDS — regex-scraping `action`/`confidence`
+# out of prose the model never structured. A comma carries no content: every
+# key, every value and every nesting level here was written by the model, and
+# the repaired object is accepted only if `json.loads` returns a non-empty
+# dict. If the buffer is broken in any other way it still fails and still
+# comes back UNCLASSIFIED, which is the correct answer for it.
+#
+# VERIFIED NOT TO RESCUE the five buffers that must stay unparseable: the
+# `planner_recovery`/`curator_recovery` prompt echoes (`{"action": "BUY" or
+# "SELL", ...}` — a TEMPLATE, not an artifact), `pillar_adjuster`'s unquoted
+# value (`"Correction on logic": The prompt asks to adjust by MAX 2.0.`),
+# `technical_analyst`'s thousands separators (`"avg_volume": 3,542,000`) and
+# its two pseudo tool calls. 8 of 22 recovered; 14 correctly still refused.
+
+#: `,` immediately before the `}` or `]` it should have been inside.
+_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+
+#: A closed string, a line break, then what is unmistakably the NEXT KEY —
+#: a quoted identifier followed by a colon. The line break is required: a
+#: comma omitted mid-line is not a shape seen in the data, and demanding it
+#: keeps this from firing inside anything the model wrote on one line.
+_MISSING_COMMA_RE = re.compile(
+    r'("[^"\\]*(?:\\.[^"\\]*)*")(\s*\n\s*)("[\w .\-]{1,64}"\s*:)'
+)
+
+
+def _repair_json_delimiters(fragment: str) -> str:
+    """Return `fragment` with the two measured delimiter defects corrected.
+
+    Lexical only. Adds and removes commas; never a key, a value or a brace.
+    """
+    return _MISSING_COMMA_RE.sub(
+        r"\1,\2\3", _TRAILING_COMMA_RE.sub(r"\1", fragment)
+    )
+
+
+def repair_delimiters_and_parse(cleaned: str) -> dict | None:
+    """The model's own object, with a dropped/stray comma put back — or None.
+
+    Walks the same depth-0 balanced spans the SDK ladder walks (both the
+    string-aware and the naive reading, in that order, exactly as
+    `lazycat.llm_json` does), and for each span that `json.loads` rejects,
+    tries the delimiter repair once. The FIRST span that yields a non-empty
+    dict wins; nothing else is attempted.
+    """
+    try:
+        from lazycat.llm_json import _balanced_end, _object_starts
+    except ImportError:  # pragma: no cover - the SDK is a hard dependency
+        return None
+
+    for string_aware in (True, False):
+        for start in _object_starts(cleaned, string_aware=string_aware):
+            end = _balanced_end(cleaned, start, string_aware=string_aware)
+            if end is None:
+                continue
+            fragment = cleaned[start : end + 1]
+            try:
+                json.loads(fragment)
+                continue  # already valid — not ours to touch
+            except ValueError:
+                pass
+            try:
+                recovered = json.loads(_repair_json_delimiters(fragment))
+            except ValueError:
+                continue
+            if isinstance(recovered, dict) and recovered:
+                return recovered
+    return None
+
+
 def _malformed_fallback(cleaned: str) -> dict | None:
     """Last-resort parser for markdown analysis reports.
 
@@ -133,6 +226,18 @@ def _malformed_fallback(cleaned: str) -> dict | None:
     case still reaches it.
     """
     if _LOOKS_LIKE_JSON.search(cleaned):
+        # Before declining: the model may have written the whole artifact and
+        # dropped exactly one comma. Putting a delimiter back is not scraping
+        # — see the block above for the measurement and for the five buffers
+        # this deliberately still refuses.
+        repaired = repair_delimiters_and_parse(cleaned)
+        if repaired is not None:
+            logger.warning(
+                "[text_utils] recovered a JSON object by restoring a comma "
+                "(%d chars, %d keys). No field was manufactured.",
+                len(cleaned), len(repaired),
+            )
+            return repaired
         logger.warning(
             "[text_utils] declining the prose fallback: the response contains "
             "a JSON object that failed to parse (%d chars). Scraping it with "
