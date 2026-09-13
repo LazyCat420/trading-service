@@ -200,7 +200,7 @@ class _ProductionMongoReached(RuntimeError):
 
 
 @pytest.fixture(autouse=True)
-def default_single_vendor(request):
+def default_single_vendor(request, monkeypatch):
     """`dominant_source_for` returns None unless a test says otherwise.
 
     Closing the 32 unpinned `price_history` reads (2026-09-12) put
@@ -227,6 +227,27 @@ def default_single_vendor(request):
       * `@pytest.mark.real_vendor_resolution` when the test installs a fake
         store that already answers `aggregate` with real multi-vendor rows, and
         wants the resolution to run against it for real.
+
+    ⚠ WHY THIS USES `monkeypatch` AND NOT `patch()`
+    ------------------------------------------------
+    It used `with patch(...)`, and that quietly broke four tests in the full
+    suite while every one of them passed alone.
+
+    Five test files call `monkeypatch.setattr` on this same attribute. Mixing
+    the two mechanisms corrupts the module permanently: `patch.__enter__` saves
+    the ORIGINAL and installs the lambda, the test's `monkeypatch.setattr` then
+    saves the LAMBDA, and the two restore stacks unwind independently — so the
+    last write back to `app.quant.returns.dominant_source_for` is the lambda,
+    and every later test in the session resolves every ticker to None. The
+    `real_vendor_resolution` marker does not save a test from this: the marker
+    only stops THIS fixture patching, it cannot undo damage an earlier test
+    already did.
+
+    Requesting `monkeypatch` here puts both writers on ONE undo stack. pytest
+    gives a test exactly one `monkeypatch` instance, this fixture sets first so
+    it saves the real function, the test sets second so it saves the lambda,
+    and the LIFO unwind restores them in the right order.
+    See [[a-function-local-import-defeats-a-module-attribute-patch]].
     """
     # Clear the memo BOTH SIDES of every test. `dominant_source_for` caches
     # per ticker for 15 minutes (production wants that; it scans every row a
@@ -243,8 +264,8 @@ def default_single_vendor(request):
         yield
         _returns._DOMINANT_CACHE.clear()
         return
-    with patch("app.quant.returns.dominant_source_for", lambda _ticker: None):
-        yield
+    monkeypatch.setattr(_returns, "dominant_source_for", lambda _ticker: None)
+    yield
     _returns._DOMINANT_CACHE.clear()
 
 
