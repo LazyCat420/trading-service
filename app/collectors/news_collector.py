@@ -272,7 +272,81 @@ async def _scrape_article_body_via_service(
     return ""
 
 
-async def _scrape_with_timeout(url: str, fallback_summary: str, timeout: float = 4.0,
+# --- Body-scrape sizing -------------------------------------------------------
+#
+# Measured 2026-09-12. `scraper_client` funnels EVERY article `/scrape` AND
+# every feed `/collect` through one MODULE-LEVEL `asyncio.Semaphore(5)` keyed by
+# the literal "news", and the scraper service rate-limits 1 req/s per domain.
+# One feed is one domain. `asyncio.wait_for` starts its clock BEFORE the
+# semaphore is acquired, so queue time is spent out of the fetch budget.
+#
+# Reproduced on an idle box (one feed, 15 URLs, semaphore 5, 4 s cap): bodies at
+# 0.83 / 1.63 / 2.84 / 3.76 s and ELEVEN hits on the 4.0 s cap. With 5 feeds
+# contending for the same 5 permits the live log reads `article bodies scraped 0`.
+#
+# The deadline is now sized against the queue it must traverse instead of being
+# a bare number. Worst case in flight is
+#     FEED_CONCURRENCY (5 feeds) x SCRAPE_ATTEMPTS_PER_FEED (5) = 25 calls
+# over 5 permits on 5 distinct domains paced at 1 req/s, i.e. a drain rate of
+# ~5/s => ~5 s of queue, plus the slowest observed service time (~3 s) => ~8 s.
+# 15 s carries ~2x headroom and still sits under the server's 30 s httpx leg, so
+# the `options["timeout"]` we hand the server stays receivable.
+#
+# The per-feed CAP is what makes that number sizable at all: without it a feed
+# can queue 15 same-domain URLs, which at 1 req/s needs ~15 s on its own and
+# leaves nothing for the other four feeds.
+SCRAPE_TIMEOUT_S = float(os.getenv("NEWS_SCRAPE_TIMEOUT_S", "15.0"))
+SCRAPE_ATTEMPTS_PER_FEED = int(os.getenv("NEWS_SCRAPE_ATTEMPTS_PER_FEED", "5"))
+SCRAPE_BREAKER_STRIKES = int(os.getenv("NEWS_SCRAPE_BREAKER_STRIKES", "3"))
+
+
+class _ScrapeBreaker:
+    """Stop attempting body scrapes once the scraper is clearly not answering.
+
+    Sweep-wide, not per-feed: the cost being avoided is 27 feeds each paying a
+    full deadline to a service that is down.
+
+    It keeps its OWN counter on purpose. `asyncio.wait_for` CANCELS
+    `scraper_client.scrape`; `CancelledError` is a BaseException, so the
+    client's `except Exception` never runs and neither `misses` nor `failures`
+    moves. `SweepRecord.total_miss` / `.miss_rate` are blind to exactly this
+    failure mode — worse, `calls` was already incremented before the cancel, so
+    every timeout DILUTES `miss_rate` downward. A breaker built on that ledger
+    would never fire during the outage it exists for.
+    """
+
+    def __init__(self, strikes: int = SCRAPE_BREAKER_STRIKES):
+        self.strikes = max(1, strikes)
+        self.consecutive = 0
+        self.tripped = False
+        self.skipped = 0
+
+    def allow(self) -> bool:
+        return not self.tripped
+
+    def record(self, ok: bool) -> None:
+        if ok:
+            self.consecutive = 0
+            return
+        self.consecutive += 1
+        if self.consecutive >= self.strikes:
+            self.tripped = True
+
+    def note_skip(self) -> None:
+        self.skipped += 1
+
+
+_SWEEP_BREAKER = _ScrapeBreaker()
+
+
+def _reset_sweep_breaker() -> _ScrapeBreaker:
+    """Start a fresh breaker for a sweep. Called by `collect_all`."""
+    global _SWEEP_BREAKER
+    _SWEEP_BREAKER = _ScrapeBreaker()
+    return _SWEEP_BREAKER
+
+
+async def _scrape_with_timeout(url: str, fallback_summary: str, timeout: float | None = None,
                                stats: dict | None = None, engine: str = "http") -> str:
     """Scrape article body with a strict timeout, falling back to the API summary.
 
@@ -292,7 +366,14 @@ async def _scrape_with_timeout(url: str, fallback_summary: str, timeout: float =
 
     The escalating path still exists where a budget can actually receive it:
     body_upgrade calls with a ~20s budget.
+
+    `timeout=None` takes SCRAPE_TIMEOUT_S, which is sized against the shared
+    Semaphore(5) + 1-req/s-per-domain queue above rather than guessed. The old
+    hard-coded 4.0 default could not clear its own queue: four bodies arrived
+    and every later URL in the fan-out paid the full cap for nothing.
     """
+    if timeout is None:
+        timeout = SCRAPE_TIMEOUT_S
     try:
         body = await asyncio.wait_for(
             _scrape_article_body_via_service(url, engine=engine, timeout_s=timeout),
@@ -303,8 +384,12 @@ async def _scrape_with_timeout(url: str, fallback_summary: str, timeout: float =
                 stats["scraped"] = stats.get("scraped", 0) + 1
             return body
     except asyncio.TimeoutError:
+        if stats is not None:
+            stats["timeout"] = stats.get("timeout", 0) + 1
         logger.debug("[news] Scrape timeout (%.1fs) for URL: %s, using API summary", timeout, url)
     except Exception as e:
+        if stats is not None:
+            stats["error"] = stats.get("error", 0) + 1
         logger.debug("[news] Scrape failed for URL %s: %s, using API summary", url, e)
     if stats is not None:
         stats["fallback"] = stats.get("fallback", 0) + 1
@@ -369,7 +454,43 @@ def sanitize_for_ticker_extraction(text: str) -> str:
 
 
 async def _detect_tickers_in_text(text: str) -> set[str]:
-    """Detect stock tickers mentioned in article text."""
+    """Detect stock tickers mentioned in article text.
+
+    ⚠ DO NOT move this onto a worker thread with `asyncio.to_thread`. It was
+    considered and REJECTED on 2026-09-12, with measurements:
+
+    1. This function is already `async`; the CPU is not here. Timed over 60 live
+       `news_articles` rows on this box:
+           sanitize_for_ticker_extraction   median   0.4 ms   (total  0.18 s)
+           extract_tickers                  median 694.1 ms   (total 52.9 s)
+       So 99.7% of the cost is inside `ticker_extractor.extract_tickers`, which
+       is synchronous and reached through `get_ticker_symbols`. Offloading the
+       only piece that lives in this module (the sanitizer) buys 0.4 ms and
+       nothing else. That is why the discovery phase spends ~177 s of 887 s here
+       and why feeds complete in clean waves of five: the loop is blocked.
+
+    2. `extract_tickers` cannot safely run on a thread TODAY.
+       `CompanyRegistry` (ticker_extractor.py:825) holds plain dicts and sets
+       with NO lock of any kind, and `extract_tickers` iterates two of them
+       live (`registry._by_name.items()` at :1227, `registry._by_alias.items()`
+       at :1245) while `validate_unknown_tickers` — reached from this very
+       call, and from the two other `_detect_tickers_in_text` call sites — calls
+       `registry.add_company()` / `add_rejected()`, which write those same
+       dicts. On the event loop that is serialised and safe. On a thread it is
+       not. Reproduced here:
+
+           RuntimeError: dictionary changed size during iteration
+             ticker_extractor.py:1227 in extract_tickers
+
+       i.e. the offload converts a slow sweep into a sweep that raises
+       mid-extraction and loses the article.
+
+    The offload is the right fix, but it must be UNLOCKED in
+    `app/processors/ticker_extractor.py` first — either a `threading.RLock`
+    around the CompanyRegistry mutators and the two iteration sites, or
+    snapshotting (`list(registry._by_name.items())`) inside `extract_tickers`.
+    That file is owned elsewhere; this module must not offload before it lands.
+    """
     symbols = await get_ticker_symbols(sanitize_for_ticker_extraction(text))
     return set(symbols)
 
@@ -612,7 +733,8 @@ def safe_emit(emit_cb, step: str, detail: str, status: str = "ok", data: dict | 
         pass
 
 
-async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_foreign: bool = False) -> int:
+async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_foreign: bool = False,
+                       breaker: "_ScrapeBreaker | None" = None) -> int:
     """
     Fetch and parse a single RSS feed via scraper-service, write articles to news_articles.
     Returns number of new articles written.
@@ -620,6 +742,8 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
     from app.services.scraper_client import scraper_client
 
     count = 0
+    if breaker is None:
+        breaker = _SWEEP_BREAKER
     try:
         items = await scraper_client.collect(
             source="news",
@@ -630,9 +754,10 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
         )
 
         scrape_stats: dict = {}
+        scrape_attempts = 0
 
         async def process_rss_article(article):
-            nonlocal count
+            nonlocal count, scrape_attempts
             title = article.get("title", "").strip()
             if not title:
                 return []
@@ -668,10 +793,27 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
             # STRICT QUALITY GATE & BODY SCRAPING (fast timeout to avoid stalling feed)
             api_summary = summary
             summary = ""
+            # Gate rate measured 2026-09-12 over the newest 1,000 live rss rows:
+            # 0 summaries under 150 chars (median 2,400), 114 containing "..." —
+            # so the gate fires on ~11% of items, ~1.7 of the 15 a feed fans out,
+            # ~46 across the 27-feed sweep. Not 405. The cap below is therefore
+            # slack for a pathological feed, not a throttle on the normal case.
             if url and (len(api_summary) < 150 or "..." in api_summary):
-                body = await _scrape_with_timeout(url, api_summary, timeout=4.0, stats=scrape_stats)
-                if body and len(body) >= 150:
-                    summary = body
+                if not breaker.allow():
+                    breaker.note_skip()
+                    scrape_stats["skipped_breaker"] = scrape_stats.get("skipped_breaker", 0) + 1
+                elif scrape_attempts >= SCRAPE_ATTEMPTS_PER_FEED:
+                    scrape_stats["skipped_cap"] = scrape_stats.get("skipped_cap", 0) + 1
+                else:
+                    # Reserve the slot BEFORE the await: all 15 coroutines are
+                    # already in flight under `gather`, so a post-await count
+                    # caps nothing.
+                    scrape_attempts += 1
+                    body = await _scrape_with_timeout(url, api_summary, stats=scrape_stats)
+                    got = bool(body and len(body) >= 150 and body != api_summary)
+                    breaker.record(ok=got)
+                    if got:
+                        summary = body
 
             if not summary:
                 summary = api_summary
@@ -797,9 +939,14 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
         if scrape_stats:
             _scraped = scrape_stats.get("scraped", 0)
             _fellback = scrape_stats.get("fallback", 0)
+            _timeouts = scrape_stats.get("timeout", 0)
+            _skipped = scrape_stats.get("skipped_breaker", 0) + scrape_stats.get("skipped_cap", 0)
             _log = logger.warning if _fellback > _scraped else logger.info
-            _log("[news] %s: article bodies scraped %d, API-summary fallbacks %d (%.0fs cap)",
-                 feed_name, _scraped, _fellback, 4.0)
+            _log("[news] %s: article bodies scraped %d, API-summary fallbacks %d "
+                 "(%d timeouts, %d skipped, %.0fs cap, cap %d/feed, breaker=%s)",
+                 feed_name, _scraped, _fellback, _timeouts, _skipped,
+                 SCRAPE_TIMEOUT_S, SCRAPE_ATTEMPTS_PER_FEED,
+                 "TRIPPED" if breaker.tripped else "ok")
 
     except Exception as e:
         logger.error(f"[news] {feed_name} FAILED: {type(e).__name__}: {e}", exc_info=True)
@@ -830,6 +977,11 @@ async def collect_all(limit_feeds: int | None = None, emit_cb: any = None) -> in
             limit_feeds, len(skipped), ", ".join(skipped),
         )
 
+    # Fresh breaker per sweep. Deliberately NOT threaded through as a kwarg:
+    # `collect_feed` is monkey-patched with 2-arg stubs in several suites, and
+    # `collect_all` swallows the resulting TypeError into its `failed` counter —
+    # a sweep that quietly collects 0. `collect_feed` reads the module global.
+    _reset_sweep_breaker()
     sem = asyncio.Semaphore(FEED_CONCURRENCY)
 
     async def _one(name: str, url: str, is_foreign: bool) -> int:
