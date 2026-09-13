@@ -87,11 +87,33 @@ def _fmt(ms) -> str:
     return f"{ms/1000:.1f}s" if ms < 120_000 else f"{ms/60000:.1f}m"
 
 
+def _build_sha() -> str:
+    """The sha whose cap table / code this report is scoring WITH."""
+    import subprocess
+    try:
+        return subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                              cwd=os.path.dirname(os.path.dirname(
+                                  os.path.abspath(__file__))),
+                              capture_output=True, text=True, timeout=5
+                              ).stdout.strip() or "(unknown)"
+    except Exception:
+        return "(unknown)"
+
+
 def _zero_note(n: int, total_scanned: int) -> str:
-    """A zero is only good news if something was scanned to produce it."""
-    if n == 0 and total_scanned == 0:
-        return "  (FILTER MATCHED NOTHING — verify before believing)"
-    return ""
+    """A zero is only good news if something was scanned to produce it.
+
+    ⚠ The first version only fired when the COLLECTION was empty, which is the
+    one case that is not suspicious. A filter matching 0 of 5,000 SCANNED rows
+    is the original `severity` bug's exact signature, and it stayed silent.
+    """
+    if n:
+        return ""
+    if total_scanned == 0:
+        return "  (nothing scanned — the cycle wrote no rows here)"
+    return (f"  ⚠ 0 of {total_scanned:,} scanned matched — a filter that "
+            "matches nothing is the shape of a wrong field name, not a clean "
+            "result. Verify before believing.")
 
 
 def collect(cycle_id: str | None) -> dict:
@@ -162,7 +184,16 @@ def collect(cycle_id: str | None) -> dict:
     # `classify_output(...).exhausted` (base_agent.py:1232).
     #
     # So this section is pressure, not proof. Read it next to `guardrails`.
+    # ⚠ These caps come from the CHECKED-OUT build, not the build that ran the
+    # cycle. Caps changed on 2026-09-13 for exactly the agents under test
+    # (junior 7->9, bull_defense 4->6, judge 4->7, board 5->7, synth 5->12), so
+    # scoring an older cycle with them UNDER-reports its real pressure and makes
+    # the A-vs-B delta mostly the constant. The build sha is recorded alongside
+    # so a reader can see whether the comparison is apples to apples.
     from app.agents.tool_whitelists import AGENT_BUDGET_OVERRIDES
+    out["cap_table_build"] = _build_sha()
+    out["cap_table"] = {k: v for k, v in AGENT_BUDGET_OVERRIDES.items()
+                        if k.startswith("v3_") and v < 9999}
     at_cap = []
     for name, b in by_agent.items():
         cap = AGENT_BUDGET_OVERRIDES.get(name)
@@ -177,18 +208,50 @@ def collect(cycle_id: str | None) -> dict:
     fires = list(db["v3_guardrail_firings"].find({"cycle_id": cid}))
     parsed = []
     for f in fires:
-        detail = str(f.get("detail") or "")
-        m = re.search(r"'agent':\s*'([^']+)'", detail)
-        rep = re.search(r"'repaired':\s*(True|False|None)", detail)
-        parsed.append({"rule": str(f.get("guardrail") or "").replace("output_rule:", ""),
-                       "agent": m.group(1) if m else None,
-                       "ticker": f.get("ticker"),
-                       "repaired": rep.group(1) if rep else None})
+        # `detail` has TWO encodings — 1,571 rows store a dict, 393 store a JSON
+        # STRING. A regex for `'agent': '...'` matches Python's dict repr and
+        # finds NOTHING in JSON (double quotes, lowercase true): measured, it
+        # recovered the agent on 0 of 393 while json.loads recovers 112.
+        detail = f.get("detail")
+        if isinstance(detail, str):
+            try:
+                detail = json.loads(detail)
+            except (ValueError, TypeError):
+                m = re.search(r"'agent':\s*'([^']+)'", detail)
+                rep = re.search(r"'repaired':\s*(True|False|None)", detail)
+                detail = {"agent": m.group(1) if m else None,
+                          **({"repaired": rep.group(1) == "True"} if rep else {})}
+        if not isinstance(detail, dict):
+            detail = {}
+        parsed.append({
+            "rule": str(f.get("guardrail") or "").replace("output_rule:", ""),
+            "agent": detail.get("agent"),
+            "ticker": f.get("ticker"),
+            # `repaired` ABSENT and `repaired` FALSE are different facts. The
+            # HOLD_* policy rules (HOLD_NO_POSITION, HOLD_DEGRADED_NO_DECISION,
+            # HOLD_POLICY_BLOCKED_*, DROPPED_IMPLAUSIBLE_LEVEL) have no repair
+            # concept at all — 954 of 1,964 firings. Counting them as
+            # "unrepaired" inflated the number ~26x AND made it track the
+            # DECISION MIX, so it moved with stock selection rather than repair
+            # health.
+            "repairable": "repaired" in detail,
+            "repaired": detail.get("repaired"),
+        })
+    repairable = [p for p in parsed if p["repairable"]]
     out["guardrails"] = {
         "count": len(parsed),
         "by_rule": dict(collections.Counter(p["rule"] for p in parsed)),
         "by_agent": dict(collections.Counter(p["agent"] for p in parsed)),
-        "unrepaired": sum(1 for p in parsed if p["repaired"] != "True"),
+        "repairable": len(repairable),
+        "unrepaired": sum(1 for p in repairable if p["repaired"] is not True),
+        # The artifact-failure rules are the only ones that answer "did the
+        # agent emit its artifact". They survive a different ticker set; the
+        # HOLD_* families do not.
+        "artifact_rules_per_agent": dict(collections.Counter(
+            (p["agent"], p["rule"]) for p in parsed
+            if p["rule"] in ("NARRATED_NO_ARTIFACT", "EMPTY_RESPONSE",
+                             "TRUNCATED_JSON", "WRONG_SHAPE", "UNCLASSIFIED",
+                             "PROSE_REPORT", "PSEUDO_TOOL_CALL"))),
     }
 
     # ── failures, grouped by SHAPE — the count carries no bits ──────────────
@@ -222,23 +285,49 @@ def collect(cycle_id: str | None) -> dict:
 
     # ── duplicate work, scoped to the cycle — never a wall-clock window ─────
     dupes = {}
+    # ⚠ `agent_traces` has NO `ticker` field — 0 of 341 rows on a 6-ticker
+    # cycle. The ticker is inside `goal` ("ORCL: execute_task"), and the real
+    # per-run discriminator is `agent_attempt_id`. Keying on
+    # (run_id, agent_name, loop_step) therefore merges every ticker's run of the
+    # same agent: measured 341 rows -> 92 keys -> "249 redundant", against a
+    # TRUE redundancy of 0. It is invisible on a 1-ticker cycle and SCALES WITH
+    # TICKER COUNT, so an A/B whose legs analysed different numbers of stocks
+    # would show a spurious change in a BLOCK A headline.
     for coll, key in (("analysis_results", ("cycle_id", "ticker")),
                       ("shared_desk", ("cycle_id", "ticker", "phase")),
-                      ("agent_traces", ("run_id", "agent_name", "loop_step")),
+                      ("agent_traces", ("agent_attempt_id", "loop_step")),
                       ("v3_agent_telemetry", ("cycle_id", "ticker", "agent_name",
                                               "attempt_no"))):
         rows = list(db[coll].find({"$or": [{"cycle_id": cid}, {"run_id": cid}]},
                                   {k: 1 for k in key}))
         c = collections.Counter(tuple(r.get(k) for k in key) for r in rows)
-        dupes[coll] = {"rows": len(rows), "keys": len(c),
-                       "redundant": len(rows) - len(c)}
-    if tickers:
-        rows = list(db["asset_prices"].find({"symbol": {"$in": tickers}},
+        entry = {"rows": len(rows), "keys": len(c),
+                 "redundant": len(rows) - len(c)}
+        # A key field that is absent collapses every row into one bucket and
+        # manufactures duplicates. Say so instead of reporting the number.
+        missing = [k for k in key
+                   if rows and not any(r.get(k) is not None for r in rows)]
+        if missing:
+            entry["UNUSABLE"] = f"key field(s) absent on every row: {missing}"
+        dupes[coll] = entry
+    # ⚠ `asset_prices` holds only 37 MACRO/CRYPTO symbols (BTC, GSPC, COPPER,
+    # DX...). Querying it with equity tickers returns 0 rows and printed a clean
+    # "0 redundant" — a vacuous zero in the very tool written to stop reporting
+    # vacuous zeros. Scoped to the symbols it actually carries, and labelled.
+    ap_syms = set(db["asset_prices"].distinct("symbol"))
+    overlap = [t for t in tickers if t in ap_syms]
+    if overlap:
+        rows = list(db["asset_prices"].find({"symbol": {"$in": overlap}},
                     {"symbol": 1, "asset_class": 1, "date": 1}))
         c = collections.Counter((r.get("symbol"), r.get("asset_class"),
                                  str(r.get("date"))[:10]) for r in rows)
-        dupes["asset_prices(this cycle's tickers)"] = {
+        dupes[f"asset_prices({'/'.join(overlap)})"] = {
             "rows": len(rows), "keys": len(c), "redundant": len(rows) - len(c)}
+    else:
+        dupes["asset_prices"] = {
+            "rows": 0, "keys": 0, "redundant": 0,
+            "UNUSABLE": f"none of this cycle's tickers are in asset_prices "
+                        f"(it carries {len(ap_syms)} macro/crypto symbols only)"}
     out["duplicates"] = dupes
 
     # ── BLOCK A: pass/fail properties, decidable at n=1 ─────────────────────
@@ -327,7 +416,8 @@ def report(d: dict) -> None:
 
     g = d["guardrails"]
     print(f"\n  GUARDRAIL FIRINGS  {g['count']}  "
-          f"({g['unrepaired']} not repaired)")
+          f"({g['unrepaired']} of {g['repairable']} REPAIRABLE not repaired; "
+          f"{g['count'] - g['repairable']} rules have no repair concept)")
     if g["count"]:
         print(f"       by rule  {g['by_rule']}")
         print(f"       by agent {g['by_agent']}")
@@ -344,9 +434,25 @@ def report(d: dict) -> None:
 
     print("\n  DUPLICATE WORK")
     for coll, v in d["duplicates"].items():
+        if v.get("UNUSABLE"):
+            print(f"       {coll:<36} ⚠ NOT MEASURED — {v['UNUSABLE']}")
+            continue
         flag = "  ⚠" if v["redundant"] else ""
         print(f"       {coll:<36} {v['rows']:>6} rows / {v['keys']:>6} keys "
               f"-> {v['redundant']:>6} redundant{flag}")
+
+    # BLOCK A and BLOCK B were only printed by compare(), so a single-cycle run
+    # showed no rates at all — the mode most people use showed the least.
+    print("\n  BLOCK A — pass/fail properties (n=1 is sufficient)")
+    for k, v in sorted(d["block_a"].items()):
+        print(f"       {k:<34} {str(v)[:60]}")
+    print(f"\n  BLOCK B — per decision (n={d['n_decisions']}). "
+          "A SINGLE cycle cannot establish these; see the band in compare mode.")
+    for k, v in d["block_b"].items():
+        print(f"       {k:<34} {v:>12.1f}")
+    print(f"\n  scored with the cap table from build {d.get('cap_table_build')} "
+          "— if that is not the build that RAN this cycle, the tool-call "
+          "pressure section is not comparable.")
     print()
 
 
