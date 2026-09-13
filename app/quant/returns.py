@@ -202,9 +202,16 @@ def load_close_returns(ticker: str, lookback_days: int = 500) -> np.ndarray:
     from app.db import mongo_store
 
     ticker = ticker.strip().upper()
+    # Pinned. This is the read that fed GARCH, and it was the last unpinned one
+    # in the repo: an unpinned `limit=501` on a dual-vendor ticker returns 501
+    # ROWS over ~250 DATES with adjusted and raw closes interleaved, and nothing
+    # below touches `source` before np.diff(np.log(...)). The SQL revision of
+    # this function pinned inside the subquery; the 2026-08-18 Mongo port
+    # dropped the filter, and the guard could not see it because this module
+    # defines keep_dominant_source and was escaped whole.
     docs = mongo_store.find_docs(
         "price_history",
-        {"ticker": ticker},
+        _one_vendor(ticker, {"ticker": ticker}),
         sort=[("date", -1)],
         limit=int(lookback_days) + 1,
     )

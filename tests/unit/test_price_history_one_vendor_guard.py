@@ -38,32 +38,42 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 SCAN_ROOTS = ("app", "scripts")
 
-# Reads that genuinely do not need a vendor pin. Every entry needs a reason;
-# "it was already like that" is not one. Keyed by path suffix.
-VENDOR_AGNOSTIC: dict[str, str] = {
+# Reads that genuinely do not need a vendor pin — with the MEASURED count of
+# reads each one is allowed to have.
+#
+# ⚠ This was `dict[str, str]` and a bare `pytest.skip` until 2026-09-12, and
+# that is strictly weaker than the ratchet it replaced. `KNOWN_UNPINNED_MONGO`
+# asserted `len(bad) == budget`, so a NEW unpinned read in a listed file failed;
+# a skip stops reading the file at all. Proven by sabotage: with the skip in
+# place, deleting BOTH vendor pins from `technical_processor.py` — the module
+# that serves `financial_technical_snapshot.close` to the agents — left the
+# suite green at 1269 passed. An exemption must cost a number, or it is a
+# blindfold. See [[an-allowlist-can-drift-both-ways-and-keep-its-count]].
+#
+# Entries are `(sql_reads, mongo_reads, reason)` and both counts are asserted
+# EXACTLY, in both directions: a new unpinned read reds, and so does fixing one
+# without lowering the number, which keeps the reason honest.
+#
+# Nine entries that stood here on 2026-09-12 are gone because the SCANNER was
+# taught their shape instead — a `$group` on `$source` is the vendor census, a
+# MAX/MIN `agg_row` is vendor-immune, and a writer sets `source` rather than
+# filtering on it. A rule the scanner understands is worth more than a file it
+# is told to ignore.
+VENDOR_AGNOSTIC: dict[str, tuple[int, int, str]] = {
     # Measures the vendor split ITSELF: it counts (ticker,date) days carried by
     # more than one source, so pinning a single vendor would make the number it
     # reports always zero. Reads nothing into a trading decision.
-    "scripts/quality_census.py": "audit — counts multi-vendor coverage by design",
-    # Writers: these POPULATE price_history, so `source` is a column they set,
-    # not a filter they apply.
-    "scripts/backfill_price_history.py": "writer — inserts rows, sets source",
-    "scripts/populate_sp500.py": "writer — inserts rows, sets source",
-    "app/collectors/yfinance_collector.py": "writer — inserts rows, sets source",
-    "app/data/sp500_price_collector.py": "writer — inserts rows, sets source",
-    # ---- closed 2026-09-12: reads that genuinely span vendors -------------
-    # Each of these reports a property OF the collection, not a price fed to a
-    # decision. Pinning them would make the number they report WRONG in the
-    # other direction, which is why they are named here instead of budgeted.
-    "app/processors/data_sanity.py": "counts BAD rows (close <= 0) across the whole collection — pinning would hide half the defects it exists to find",
-    "app/services/startup_tasks.py": "row count answering 'is there any price data at all' — a vendor cannot change whether the answer is zero",
-    "app/services/boot_service.py": "same count, scoped to today — 'did the collectors run', not 'what is the price'",
-    "app/processors/technical_processor.py": "the vendor census ITSELF ($group on $source) — pinning makes its output always 1",
-    "app/quant/technical_baseline.py": "count_docs(ticker) answering 'does this ticker have any history' — a gate, not a price",
-    "app/v3/invariants.py": "count of rows newer than a cutoff — a freshness invariant, satisfied by ANY vendor",
-    "app/collectors/data_rotator.py": "max(date) asking what the collector still owes; it must see the newest bar from ANY vendor or it refetches what it already has",
-    "app/autoresearch/auditors/data_audit.py": "coverage audit — row counts, the date-gap scan and the newest-bar probe. A day carried by either vendor is not a gap, so pinning would INVENT gaps",
-    "app/routers/market_router.py": "$group on $date for the distinct trading calendar — a duplicate vendor row cannot change a distinct set of dates",
+    "scripts/quality_census.py": (1, 0, "audit — counts multi-vendor coverage by design"),
+    # ---- reads that genuinely span vendors --------------------------------
+    # Each reports a property OF the collection, not a price fed to a decision.
+    # Pinning them would make the number they report wrong in the other
+    # direction, which is why they are named here instead of budgeted.
+    "app/processors/data_sanity.py": (0, 1, "counts BAD rows (close <= 0) across the whole collection — pinning would hide half the defects it exists to find"),
+    "app/services/startup_tasks.py": (0, 1, "row count answering 'is there any price data at all' — a vendor cannot change whether the answer is zero"),
+    "app/services/boot_service.py": (0, 1, "same count, scoped to today — 'did the collectors run', not 'what is the price'"),
+    "app/quant/technical_baseline.py": (0, 1, "count_docs(ticker) answering 'does this ticker have any history' — a gate, not a price"),
+    "app/v3/invariants.py": (0, 1, "count of rows newer than a cutoff — a freshness invariant, satisfied by ANY vendor"),
+    "app/autoresearch/auditors/data_audit.py": (0, 3, "coverage audit — row counts, the date-gap scan and the newest-bar probe. A day carried by either vendor is not a gap, so pinning would INVENT gaps"),
 }
 
 # Query shapes that are vendor-immune by construction. A COUNT over DISTINCT
@@ -312,10 +322,18 @@ def test_the_scanner_flags_a_known_bad_query():
 @pytest.mark.parametrize("path", _python_files(), ids=lambda p: p.name)
 def test_every_price_history_read_pins_one_vendor(path: Path):
     rel = str(path.relative_to(REPO))
-    if rel in VENDOR_AGNOSTIC:
-        pytest.skip(f"allow-listed: {VENDOR_AGNOSTIC[rel]}")
-
     bad = _unpinned_reads(path)
+    if rel in VENDOR_AGNOSTIC:
+        expected, _, reason = VENDOR_AGNOSTIC[rel]
+        assert len(bad) == expected, (
+            f"{rel} is allow-listed for EXACTLY {expected} vendor-agnostic SQL "
+            f"read(s) ({reason}) but the scanner sees {len(bad)}:\n"
+            + "\n".join(f"  line {n}: {q}" for n, q in bad)
+            + "\n\nIf a read was added, pin it. If one was fixed or deleted, "
+            "lower the number in VENDOR_AGNOSTIC in the same commit."
+        )
+        return
+
     budget = KNOWN_UNPINNED.get(rel, 0)
     detail = "\n".join(f"  line {n}: {q}" for n, q in bad)
 
@@ -386,7 +404,34 @@ def _pins_source(call_src: str) -> bool:
     """
     if "'source'" in call_src or '"source"' in call_src:
         return True
+    # `$group: {_id: "$source"}` IS the vendor census. Pinning a vendor in the
+    # read that decides which vendor is dominant makes its answer always 1 —
+    # the Mongo counterpart of `group by source` in `_PINNED`.
+    if "'$source'" in call_src or '"$source"' in call_src:
+        return True
     return "one_vendor(" in call_src
+
+
+def _lines_inside_functions_that_pin(tree: ast.AST) -> frozenset[int]:
+    """Line numbers covered by a function that calls `keep_dominant_source`.
+
+    The pandas pin happens after the read, on the DataFrame the read produced,
+    so it cannot be seen in the call's own arguments. The enclosing function is
+    the smallest unit where "this read's rows reach the helper" is decidable
+    without dataflow analysis, and it is strictly narrower than the module-wide
+    text check it replaces — which exempted `load_close_returns` for eleven
+    weeks because a sibling function mentioned the helper.
+    """
+    lines: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = "\n".join(ast.unparse(stmt) for stmt in node.body)
+        if "keep_dominant_source" not in body:
+            continue
+        end = getattr(node, "end_lineno", None) or node.lineno
+        lines.update(range(node.lineno, end + 1))
+    return frozenset(lines)
 
 
 def _unpinned_mongo_reads(path: Path) -> list[tuple[int, str]]:
@@ -400,10 +445,17 @@ def _unpinned_mongo_reads(path: Path) -> list[tuple[int, str]]:
     except (SyntaxError, UnicodeDecodeError):
         return []
 
-    # A module that pins per-ticker in pandas is pinned, same rule the SQL
-    # scan applies — the filter is just downstream of the read.
-    if "keep_dominant_source" in module_text:
-        return []
+    # A read that pins per-ticker in pandas is pinned, same rule the SQL scan
+    # applies — the filter is just downstream of the read.
+    #
+    # ⚠ This was a MODULE-WIDE text check until 2026-09-12, and that is how
+    # `returns.py:205` (`load_close_returns`, the GARCH series on the desk
+    # prompt) sat unpinned and invisible: the module DEFINES
+    # keep_dominant_source, so the scanner returned [] for the whole file. An
+    # escape granted by a module's own vocabulary exempts the reads it was
+    # never meant to cover. Scoped to the ENCLOSING FUNCTION, the exemption
+    # covers exactly the reads whose frame actually reaches the helper.
+    pinning_lines = _lines_inside_functions_that_pin(tree)
 
     bad: list[tuple[int, str]] = []
     for node in ast.walk(tree):
@@ -426,6 +478,8 @@ def _unpinned_mongo_reads(path: Path) -> list[tuple[int, str]]:
         src = " ".join(ast.unparse(node).split())
         if _pins_source(src):
             continue
+        if node.lineno in pinning_lines:
+            continue
         # `distinct_values('price_history', 'ticker'|'date', ...)` is
         # vendor-immune by construction: a second vendor's print for the same
         # ticker-day adds a duplicate ROW, and a distinct set of tickers or
@@ -436,12 +490,15 @@ def _unpinned_mongo_reads(path: Path) -> list[tuple[int, str]]:
                 and isinstance(node.args[1], ast.Constant)
                 and node.args[1].value in ("ticker", "date")):
             continue
-        # A pure MAX/MIN/COUNT DISTINCT over `date` is vendor-immune.
-        if fn.attr == "agg_row" and all(
-            op in _MONGO_IMMUNE_AGGS
-            for op in re.findall(r"\('(\w+)'", src)
-        ) and re.findall(r"\('(\w+)'", src):
-            continue
+        # A pure MAX/MIN/COUNT DISTINCT over `date` is vendor-immune. Read the
+        # agg SPEC (the third argument), not `src` — unparsing the whole call
+        # puts `('price_history'` in range of the same regex, so every agg_row
+        # failed the `all(...)` and the rule below had never once fired.
+        if fn.attr == "agg_row" and len(node.args) > 2:
+            spec = " ".join(ast.unparse(node.args[2]).split())
+            ops = re.findall(r"\('(\w+)'", spec)
+            if ops and all(op in _MONGO_IMMUNE_AGGS for op in ops):
+                continue
 
         bad.append((node.lineno, src[:140]))
     return sorted(bad)
@@ -561,10 +618,19 @@ def test_the_mongo_scanner_flags_a_known_bad_call(tmp_path):
 @pytest.mark.parametrize("path", _python_files(), ids=lambda p: p.name)
 def test_every_mongo_price_history_read_pins_one_vendor(path: Path):
     rel = str(path.relative_to(REPO))
-    if rel in VENDOR_AGNOSTIC:
-        pytest.skip(f"allow-listed: {VENDOR_AGNOSTIC[rel]}")
-
     bad = _unpinned_mongo_reads(path)
+    if rel in VENDOR_AGNOSTIC:
+        _, expected, reason = VENDOR_AGNOSTIC[rel]
+        assert len(bad) == expected, (
+            f"{rel} is allow-listed for EXACTLY {expected} vendor-agnostic "
+            f"Mongo read(s) ({reason}) but the scanner sees {len(bad)}:\n"
+            + "\n".join(f"  line {n}: {q}" for n, q in bad)
+            + "\n\nIf a read was added, pin it with one_vendor(). If one was "
+            "fixed or deleted, lower the number in VENDOR_AGNOSTIC in the same "
+            "commit."
+        )
+        return
+
     budget = KNOWN_UNPINNED_MONGO.get(rel, 0)
     detail = "\n".join(f"  line {n}: {q}" for n, q in bad)
 
