@@ -17,7 +17,11 @@ class TestLlmPreflight:
     async def test_two_dead_attempts_abort(self, monkeypatch):
         from app.services import llm_preflight as pf
 
-        async def resolver(agent):
+        # **kw: the pre-flight now passes force_refresh=True, because a gate
+        # that decides whether a cycle may start must ask the box, not the
+        # cache. A positional-only stub silently became 'resolver
+        # unavailable — proceeding', which is the opposite of this test.
+        async def resolver(agent, **kw):
             return "m", "p"
 
         async def dead(**kw):
@@ -38,7 +42,11 @@ class TestLlmPreflight:
         from app.services import llm_preflight as pf
         import app.services.prism_agent_caller as pac
 
-        async def resolver(agent):
+        # **kw: the pre-flight now passes force_refresh=True, because a gate
+        # that decides whether a cycle may start must ask the box, not the
+        # cache. A positional-only stub silently became 'resolver
+        # unavailable — proceeding', which is the opposite of this test.
+        async def resolver(agent, **kw):
             return "m", "p"
 
         async def empty(**kw):
@@ -54,7 +62,11 @@ class TestLlmPreflight:
         from app.services import llm_preflight as pf
         import app.services.prism_agent_caller as pac
 
-        async def resolver(agent):
+        # **kw: the pre-flight now passes force_refresh=True, because a gate
+        # that decides whether a cycle may start must ask the box, not the
+        # cache. A positional-only stub silently became 'resolver
+        # unavailable — proceeding', which is the opposite of this test.
+        async def resolver(agent, **kw):
             return "m", "p"
 
         async def alive(**kw):
@@ -151,7 +163,7 @@ class TestLlmPreflight:
         from app.services import llm_preflight as pf
         import app.services.prism_agent_caller as pac
 
-        async def offline_resolver(agent):
+        async def offline_resolver(agent, **kw):  # **kw: force_refresh=True
             raise pac.ModelUnavailableError(
                 "VLLM endpoint offline: http://10.0.0.16:5591/vllm-shim/gold-spark "
                 "(RuntimeError: HTTP 502 with no usable model list)"

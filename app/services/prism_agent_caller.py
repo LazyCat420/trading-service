@@ -159,9 +159,48 @@ def _extract_token_usage(resp: Any, response_text: str) -> int:
     return len(response_text or "") // 4
 
 #: How long a cached model id may still be served AFTER the probe fails.
-#: A box's model id changes only when someone reloads it, so a stale answer is
-#: nearly always the right answer; an hour bounds how long we can be wrong.
-_STALE_MODEL_GRACE_S = 3600
+#:
+#: This was 3600 under the reasoning that "a box's model id changes only when
+#: someone reloads it, so a stale answer is nearly always the right answer".
+#: THAT PREMISE IS INVERTED, and 2026-09-12 is what it costs: **a reload is
+#: exactly what makes the probe fail**, because the box is down while it swaps.
+#: So the grace window opens precisely when the cached name has just become
+#: wrong, and it then answers with the OLD model for a full hour.
+#:
+#: Observed: the operator loaded GLM on Gold Spark; the box served
+#: `GLM-5.3-Flash-EXL3`, while this cache went on handing out
+#: `deepseek-v4-flash-0731` — "serving the cached id … from 515s ago rather
+#: than failing the call" — and every call asking for a model the box no
+#: longer has came back `502 vllm-shim upstream failure`.
+#:
+#: 120s is deliberately shorter than any model load. It still rides out the
+#: in-process stall this fallback was built for (2026-08-06: our own container
+#: was busy, the box answered in 37ms), because that stall is seconds, not
+#: minutes. It cannot ride out a reload, which is the point.
+_STALE_MODEL_GRACE_S = 120
+
+#: How long a cached id is served WITHOUT probing at all. Must stay <= the
+#: grace above, or the two disagree: an entry could be "fresh enough to skip
+#: the probe" while also being "too stale to serve after one fails", so the
+#: same age is trusted on the happy path and rejected on the sad one. It was
+#: 300 against a 3600 grace, which hid that; at a 120 grace it surfaces
+#: immediately. Both are now well under any model load, which is the property
+#: that matters — neither can span a reload.
+_MODEL_CACHE_TTL_S = 60
+
+
+def invalidate_model_cache(url: str | None = None) -> None:
+    """Forget a cached model id, so the next resolve re-probes the box.
+
+    Call this the moment the downstream says the model is not servable. A 502
+    from the shim means the shim is UP and the upstream changed under it —
+    that is positive evidence of a swap, not a transient network blip, and
+    continuing to serve the cached name just repeats the failed call.
+    """
+    if url is None:
+        _dynamic_model_cache.clear()
+    else:
+        _dynamic_model_cache.pop(url, None)
 
 
 class ModelUnavailableError(RuntimeError):
@@ -209,7 +248,7 @@ async def get_live_model_from_vllm(url: str, force_refresh: bool = False) -> str
     """
     now = time.time()
     cached = _dynamic_model_cache.get(url)
-    if not force_refresh and cached and now - cached[1] < 300:  # 5 minute TTL
+    if not force_refresh and cached and now - cached[1] < _MODEL_CACHE_TTL_S:
         return cached[0]
 
     last_error: Exception | None = None
@@ -577,6 +616,12 @@ async def resolve_default_model_for_agent(
         try:
             discovered_model = await get_live_model_from_vllm(ep.url, force_refresh=force_refresh)
         except (ModelUnavailableError, RuntimeError, Exception) as exc:
+            # The box was REACHED and had nothing servable, or the shim reported
+            # an upstream failure: either way the cached id for this url is now
+            # known-bad, so drop it rather than let the grace window serve it to
+            # the next caller.
+            if isinstance(exc, ModelUnavailableError) or "upstream failure" in str(exc):
+                invalidate_model_cache(ep.url)
             logger.warning(
                 "[SmartRouting] Endpoint '%s' unavailable (%s) — attempting fallback if available.",
                 ep_key, exc

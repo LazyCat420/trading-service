@@ -66,7 +66,12 @@ async def llm_can_answer() -> tuple[bool, str]:
             resolve_default_model_for_agent,
         )
 
-        model, provider = await resolve_default_model_for_agent(PROBE_AGENT_NAME)
+        # force_refresh for the same reason as the tool probe below: this is
+        # the gate that decides whether a cycle may start, so it must ask the
+        # box, not the cache. Without it the gate can pass on the id of a model
+        # that was unloaded an hour ago.
+        model, provider = await resolve_default_model_for_agent(
+            PROBE_AGENT_NAME, force_refresh=True)
     except Exception as exc:
         # Two resolver failures are POSITIVE evidence, not ambiguity.
         #
@@ -161,8 +166,13 @@ async def tool_calls_are_parsed(endpoint_key: str = "") -> tuple[bool, str]:
         from app.services.prism_agent_caller import llm, resolve_default_model_for_agent
         from app.utils.text_utils import _UNPARSED_TOOL_CALL_RE
 
+        # force_refresh: a pre-flight exists to establish what the box can
+        # serve RIGHT NOW. Resolving from cache lets a cycle start against a
+        # model id the box stopped serving — which is how a GLM reload kept
+        # being called as `deepseek-v4-flash-0731` on 2026-09-12.
         model, _provider = await resolve_default_model_for_agent(
-            PROBE_AGENT_NAME, endpoint_override=endpoint_key or None)
+            PROBE_AGENT_NAME, force_refresh=True,
+            endpoint_override=endpoint_key or None)
         key = endpoint_key or "dgx_spark"
         ep = llm._endpoints.get(key)
         if not ep or not ep.url:

@@ -228,12 +228,24 @@ def default_single_vendor(request):
         store that already answers `aggregate` with real multi-vendor rows, and
         wants the resolution to run against it for real.
     """
+    # Clear the memo BOTH SIDES of every test. `dominant_source_for` caches
+    # per ticker for 15 minutes (production wants that; it scans every row a
+    # ticker owns). Across tests it is cross-contamination: one test resolves
+    # "AAA" against its fake store, the next builds a DIFFERENT fake store for
+    # the same ticker and silently gets the first one's answer.
+    #
+    # That is exactly how these two tests passed alone and failed in the full
+    # suite — an ORDER-DEPENDENT red that a selected run cannot reproduce.
+    from app.quant import returns as _returns
+    _returns._DOMINANT_CACHE.clear()
     if request.node.get_closest_marker("real_mongo") or \
             request.node.get_closest_marker("real_vendor_resolution"):
         yield
+        _returns._DOMINANT_CACHE.clear()
         return
     with patch("app.quant.returns.dominant_source_for", lambda _ticker: None):
         yield
+    _returns._DOMINANT_CACHE.clear()
 
 
 @pytest.fixture(autouse=True)

@@ -70,15 +70,24 @@ def test_latest_close_rejects_nan_and_zero():
 
 # ── the invariant that actually prevents the bug ─────────────────────
 
+@pytest.mark.real_vendor_resolution
 @pytest.mark.parametrize("fn", ["latest_close", "forward_window"])
-def test_every_helper_filters_by_source(fn, monkeypatch):
+def test_every_helper_filters_by_source(fn):
     """Pin the filter itself. Without it these are the buggy queries again.
 
-    This test OVERRIDES conftest's `default_single_vendor` fixture, which makes
-    `dominant_source_for` return None (no pin) so that the hundreds of tests
-    unrelated to vendors need not stub a second Mongo read. A test whose whole
-    subject is the pin must put a multi-vendor world back, or it asserts against
-    a world where pinning is correctly a no-op and fails for the wrong reason.
+    Carries `real_vendor_resolution`, so conftest's `default_single_vendor`
+    stands aside and the real resolver runs against `_patch_reads`, which
+    already stubs `aggregate` with two vendors. A test whose whole subject is
+    the pin must put a multi-vendor world back, or it asserts against a world
+    where pinning is correctly a no-op and fails for the wrong reason.
+
+    It must NOT do that with `monkeypatch.setattr` on `dominant_source_for`.
+    conftest patches the same attribute with `patch()`, and the two teardowns
+    interleave: `patch.__exit__` restores the real function, then monkeypatch
+    restores what it saw at setup — the conftest LAMBDA — leaving the module
+    permanently stubbed for every later test in the process. That is what made
+    `test_residual_alpha_report_reads_mongo` fail in the full suite while
+    passing alone: an ORDER-DEPENDENT red, invisible to a selected run.
 
     The assertion is on the Mongo read now, not on the SQL helper's name: these
     functions call `mongo_store.find_docs("price_history", ...)`, and the pin
@@ -90,8 +99,6 @@ def test_every_helper_filters_by_source(fn, monkeypatch):
     import ast
     import inspect
     import textwrap
-
-    monkeypatch.setattr(R, "dominant_source_for", lambda _t: "yfinance")
 
     src = inspect.getsource(getattr(R, fn))
     if "keep_dominant_source" in src:

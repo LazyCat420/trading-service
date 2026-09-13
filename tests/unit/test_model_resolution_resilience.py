@@ -87,7 +87,12 @@ class TestATransientFailureCostsARefreshNotACall:
 
     @pytest.mark.asyncio
     async def test_a_timeout_falls_back_to_the_cached_id(self):
-        pac._dynamic_model_cache[URL] = (MODEL, time.time() - 600)  # stale, in grace
+        # Derived, not hardcoded: this was `- 600` against a 3600s grace, and
+        # went red the moment the grace was cut to 120 for the GLM reload.
+        # Midway between "needs a probe" and "past the grace" is the only age
+        # that tests this branch regardless of the constants.
+        _age = (pac._MODEL_CACHE_TTL_S + pac._STALE_MODEL_GRACE_S) / 2
+        pac._dynamic_model_cache[URL] = (MODEL, time.time() - _age)
 
         with _client(side_effect=httpx.ReadTimeout("")):
             assert await pac.get_live_model_from_vllm(URL) == MODEL
@@ -105,7 +110,12 @@ class TestATransientFailureCostsARefreshNotACall:
 
     @pytest.mark.asyncio
     async def test_a_cache_older_than_the_grace_window_raises(self):
-        """An hour bounds how long we can be wrong about a reloaded box."""
+        """The grace bounds how long we can be wrong about a RELOADED box.
+
+        It was an hour, which spans any reload — so the window opened exactly
+        when the cached id had just become wrong. See
+        test_model_cache_survives_a_reload.py.
+        """
         pac._dynamic_model_cache[URL] = (MODEL, time.time() - pac._STALE_MODEL_GRACE_S - 60)
 
         with _client(side_effect=httpx.ReadTimeout("")):
