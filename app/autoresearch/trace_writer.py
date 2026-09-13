@@ -87,6 +87,13 @@ def write_agent_trace(
         result_summary = ("ERROR: " if failed else "") + str(tool_result)[:500]
 
         _rec = {
+            # `cycle_id` and `ticker` are BOTH in scope here and neither was
+            # stored: 0 of 22,608 rows carried a cycle_id (measured 2026-09-12),
+            # so every per-cycle count of agent_traces was zero and the only way
+            # to reach a cycle's traces was to hop through eval_scores.run_id.
+            # `run_id` already holds the cycle id when there is one, but a query
+            # for {"cycle_id": X} cannot know that.
+            "cycle_id": cycle_id, "ticker": ticker,
             "id": str(uuid.uuid4()), "run_id": run_id, "agent_name": agent_name,
             "task_type": "analysis", "goal": f"{ticker or '?'}: execute_task",
             "tool_name": tool_name, "tool_args": args_str, "tool_result_summary": result_summary,

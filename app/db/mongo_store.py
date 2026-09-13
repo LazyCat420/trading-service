@@ -288,6 +288,11 @@ def ensure_indexes(session: Optional[Any] = None) -> None:
          name="ticker_created_at")
     _try("watch_triage_log", [("created_at", pymongo.DESCENDING)], name="created_at_-1")
     _try("watch_triage_log", [("id", pymongo.ASCENDING)], name="id_1")
+    # agent_traces gained a cycle_id in 2026-09-12; index it so the per-cycle
+    # read it now makes possible is not a scan of 22,608 documents.
+    _try("agent_traces", [("cycle_id", pymongo.ASCENDING),
+                          ("created_at", pymongo.ASCENDING)],
+         name="cycle_id_created_at")
 
     _try("price_history", [("date", pymongo.ASCENDING)], name="date_1")
     # price_history natural key (ticker, date, source). It exists on the live

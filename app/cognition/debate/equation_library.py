@@ -259,7 +259,7 @@ def update_backtest_stats(
 ) -> None:
     """Update performance stats for an equation after a backtest run."""
     try:
-        mongo_store.update_docs('quant_equation_library', {'name': name}, {'$set': {'avg_pnl_pct': pnl_pct, 'win_rate_pct': win_rate, 'sharpe_ratio': sharpe, 'backtest_results': json.dumps(backtest_results), 'updated_at': datetime.now(timezone.utc)}})
+        mongo_store.update_docs('quant_equation_library', {'name': name}, {'$set': {'avg_pnl_pct': pnl_pct, 'win_rate_pct': win_rate, 'sharpe_ratio': sharpe, 'backtest_results': backtest_results, 'updated_at': datetime.now(timezone.utc)}})
     except Exception as e:
         logger.error("[EQ_LIBRARY] update_backtest_stats failed: %s", e)
 

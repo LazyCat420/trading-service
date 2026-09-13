@@ -368,7 +368,7 @@ def run_component_health_evaluation() -> dict:
             # no column defaults, and BOTH readers of this collection sort on
             # it — omitting it would break the failing-streak read and the
             # history ordering. Write it explicitly.
-            mongo_store.insert_docs('component_health_reports', [{'component': COMPONENT_HMM, 'evaluated_at': datetime.now(timezone.utc), 'window_start': metrics.get("window_start"), 'window_end': metrics.get("window_end"), 'observations': metrics.get("observations"), 'verdict': verdict, 'failure_kinds': json.dumps(failures), 'consecutive_failing': streak, 'metrics': json.dumps(metrics, default=str), 'action': action, 'note': note}])
+            mongo_store.insert_docs('component_health_reports', [{'component': COMPONENT_HMM, 'evaluated_at': datetime.now(timezone.utc), 'window_start': metrics.get("window_start"), 'window_end': metrics.get("window_end"), 'observations': metrics.get("observations"), 'verdict': verdict, 'failure_kinds': failures, 'consecutive_failing': streak, 'metrics': metrics, 'action': action, 'note': note}])
         except Exception as e:  # noqa: BLE001
             logger.warning("[ComponentHealth] report write failed: %s", e)
 

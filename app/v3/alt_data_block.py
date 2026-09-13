@@ -64,7 +64,16 @@ def build_alt_data_block(ticker: str) -> str:
             sentiments = [float(d["sentiment_score"]) for d in social_docs if d.get("sentiment_score") is not None]
             avg_sent = sum(sentiments) / len(sentiments) if sentiments else None
             total_eng = sum(int(d.get("like_count") or 0) + int(d.get("repost_count") or 0) for d in social_docs)
-            sent_str = f", avg sentiment {avg_sent:+.2f}" if avg_sent is not None else ""
+            # Say WHY there is no number. `sentiment_score` is written as None
+            # by both collectors and NOTHING has ever scored it — 11,431 of
+            # 11,431 rows are null, in every era (measured 2026-09-12). Printing
+            # the post count with sentiment silently absent reads to the desk as
+            # "chatter with no strong sentiment", which is a claim. It is not
+            # measured, and that is a different thing.
+            if avg_sent is not None:
+                sent_str = f", avg sentiment {avg_sent:+.2f}"
+            else:
+                sent_str = ", sentiment NOT SCORED (no scorer runs; treat volume only)"
             parts.append(
                 f"- Social chatter (7d): {count} posts{sent_str}, "
                 f"{total_eng:,} total engagements. Treat as crowd positioning, not truth."
