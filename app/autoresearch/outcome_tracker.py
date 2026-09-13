@@ -329,6 +329,44 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
         except Exception as e:  # noqa: BLE001 — provenance, never blocks
             logger.debug("[OUTCOME] model snapshot failed: %s", e)
 
+        # Whether the name was already HELD, per ticker. `claim_type` needs it
+        # to tell a KEEP decision from an avoided-decline forecast, and the
+        # decision artifact does not carry it — it lives on the desk, under
+        # `cycle_metadata.held`. `app/v3/challenger.py:114` already merges it
+        # exactly this way; this recorder did not, and that single omission is
+        # why HOLDs were ungradeable.
+        #
+        # Measured 2026-09-12, before this fix: of 1,557 decisions in 90 days
+        # only SEVEN had a claim_type, because `hold_reason_held` was None on
+        # all 1,557 and only 7 BUYs carried `entry_mode == 'enter_now'`. 502 of
+        # those HOLDs have `cycle_metadata.held is False` and become gradeable
+        # the moment the field is passed. A contract that cannot see 99.6% of
+        # the desk's output reads as a quiet system, not a broken one.
+        #
+        # Snapshotted per cycle like `models_by_ticker` above, for the same
+        # reason: one read, and no chance of two rows in one cycle disagreeing.
+        held_by_ticker: dict = {}
+        try:
+            import json as _hjson
+            for doc in mongo_store.find_docs(
+                'shared_desk', {'cycle_id': cycle_id},
+                projection={'ticker': 1, 'desk_data': 1},
+            ) or []:
+                desk = doc.get('desk_data')
+                if isinstance(desk, str):
+                    # `desk_data` is JSON TEXT on roughly half the rows — the
+                    # cutover left the writers split. Tolerate both shapes here
+                    # rather than assume the one this cycle happened to write.
+                    try:
+                        desk = _hjson.loads(desk)
+                    except (ValueError, TypeError):
+                        continue
+                if isinstance(desk, dict):
+                    held_by_ticker[doc.get('ticker')] = (
+                        desk.get('cycle_metadata') or {}).get('held')
+        except Exception as e:  # noqa: BLE001 — provenance, never blocks a cycle
+            logger.warning('[OUTCOME] held snapshot unavailable: %s', e)
+
         raw_rows = mongo_query.find_rows(
             'analysis_results',
             {'cycle_id': cycle_id, 'confidence': {'$ne': None}},
@@ -374,6 +412,10 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
             )
 
             outcome_id = f"do-{uuid.uuid4().hex[:12]}"
+            # One evaluation, used for both the label and the state. Computing
+            # it twice invites the two to disagree if the inputs ever become
+            # non-deterministic, and the pair must always agree by construction.
+            _claim = claim_type(action, {**result, 'hold_reason_held': held_by_ticker.get(ticker)})
             _models = models_by_ticker.get(ticker)
             models_used = _mjson.dumps(_models) if _models else None
             now_utc = datetime.now(timezone.utc)
@@ -388,8 +430,8 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
                 'entry_price_source': entry_ref['source'],
                 'decision_as_of': decision_as_of,
                 'outcome_contract_version': CONTRACT_VERSION,
-                'claim_type': claim_type(action, result),
-                'outcome_evidence_state': 'pending' if claim_type(action, result) else 'unsupported_claim',
+                'claim_type': _claim,
+                'outcome_evidence_state': 'pending' if _claim else 'unsupported_claim',
                 'created_at': now_utc,
                 'skill_versions': skill_versions_by_ticker.get(ticker) or None,
                 'overridden_from': overridden_from,
