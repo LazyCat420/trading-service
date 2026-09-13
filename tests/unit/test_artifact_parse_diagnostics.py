@@ -47,8 +47,28 @@ def test_a_raw_newline_inside_a_string_names_itself(caplog):
     assert "control character" in msg.lower() or "Invalid control" in msg
 
 
-def test_a_trailing_comma_names_itself(caplog):
-    msg = _fail(caplog, '{"summary": "ok", "tags": ["#hold"],}')
+def test_a_trailing_comma_no_longer_needs_naming(caplog):
+    """Superseded 2026-09-12: it is RECOVERED, so there is nothing to explain.
+
+    A stray comma before the closing brace was one of the two delimiter
+    defects behind UNCLASSIFIED (75% of all output-rule repair failures over
+    the 30 days to 2026-09-12). `text_utils._repair_json_delimiters` now puts
+    it back, and the model's own keys come through. This test is kept, pointed
+    at the new behaviour, rather than deleted: the diagnostic it used to pin
+    is still the right answer for every OTHER decode error above.
+    """
+    out = _parse_artifact('{"summary": "ok", "tags": ["#hold"],}',
+                          "quant_report", "v3_quant_analyst")
+    assert out is not None, "a dropped comma must not cost the artifact"
+    assert out["summary"] == "ok"
+    assert out["tags"] == ["#hold"]
+    assert not [r for r in caplog.records
+                if "Failed to parse artifact" in r.getMessage()]
+
+
+def test_a_comma_cannot_rescue_a_value_the_model_never_closed(caplog):
+    """The boundary of that repair, held by the same diagnostic as before."""
+    msg = _fail(caplog, '{"summary": "ok", "tags": ["#hold"], "confidence": }')
     assert "json.loads:" in msg
 
 

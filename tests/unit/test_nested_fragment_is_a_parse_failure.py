@@ -66,12 +66,37 @@ def test_unknown_artifact_types_are_never_narrowed():
 
 
 # ── end to end through the parser ────────────────────────────────────────
+# The trailing comma left this list on 2026-09-12. It is no longer a mangle
+# that has to be CAUGHT — it is one that is REPAIRED, and it has its own test
+# below. The two that remain cannot be fixed without inventing content: a
+# truncation is missing the model's own text, and an unescaped quote has
+# already destroyed the string boundary.
 MANGLES = [
     (lambda o: _truncate(o), "truncated at the token ceiling"),
-    (lambda o: _truncate(o) + ",\n}", "trailing comma"),
     (lambda o: json.dumps(o, indent=2).replace("18x forward", '"18x" forward', 1),
      "unescaped quote in the prose"),
 ]
+
+
+def _trailing_comma(obj) -> str:
+    """The model closed its last member and left the separator behind."""
+    return _truncate(obj) + ",\n}"
+
+
+def test_a_trailing_comma_returns_the_whole_report_not_a_fragment():
+    """The invariant this file exists for, under the repaired shape.
+
+    UNCLASSIFIED was 75% of every output-rule repair failure over the 30 days
+    to 2026-09-12, and a stray comma was one of its two dominant forms —
+    v3_bear_agent, 12,923 chars, `...it does not.",\\n    },\\n  "confidence": 68`.
+    What must NEVER come back is a nested block: this asserts the OUTER
+    object, with every required field, and not `metrics` alone.
+    """
+    got = _parse_artifact(_trailing_comma(FUNDAMENTAL), "fundamental_report",
+                          "v3_fundamental_analyst")
+
+    assert got == FUNDAMENTAL
+    assert not _is_wrong_shape("fundamental_report", got)
 
 
 @pytest.mark.parametrize("mangle,label", MANGLES)

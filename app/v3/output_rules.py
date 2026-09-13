@@ -104,6 +104,44 @@ _NARRATION_MARKERS = (
 )
 
 
+# The same tell, in the form that only counts AT THE TOP OF THE BUFFER.
+#
+# MEASURED 2026-09-12 over the 486 `[V3Runner] Failed to parse artifact` HEADs
+# in `cycle_audit_log`. Ten classified PROSE_REPORT; three of them are the
+# model announcing it is missing an input, and all three OPEN the buffer:
+#
+#   "I need to see the full bear rebuttal and judge sections to answer every
+#    point precisely."                                   v3_bull_defense, 88 ch
+#   "I need to read the Bear's rebuttal to answer it properly."
+#                                            v3_bull_defense, twice, 57 ch
+#
+# and in `llm_audit_logs`, the same verb family on the analyst path:
+#
+#   "I need to analyze this OHLCV data comprehensively. Let me first check..."
+#   "I need to gather current market context and technical indicators to
+#    ensure my analysis is properly v..."
+#
+# Calling these PROSE_REPORT sends the "Convert what you already wrote into
+# the artifact" directive to a reply with nothing in it to convert, and — via
+# base_agent inferring `max_iterations` from `.exhausted` — undercounts the
+# turn wall they actually hit.
+#
+# WHY A WINDOW, and not a member of the tuple above. `_NARRATION_MARKERS` is
+# matched against the WHOLE lowercased buffer, and "i need to see" is ordinary
+# analyst prose in the middle of a real report — this desk has a published
+# bear artifact containing "but I need to see cash capex peak before I get
+# comfortable". Adding it unpositioned would relabel genuine reports as
+# narration. Position is what separates the two, and this file already draws
+# that exact distinction for `_PROVIDER_ERROR_MARKER`.
+_NARRATION_OPENERS = (
+    "i need to see",
+    "i need to read",
+    "i need to gather",
+    "i need to analyze",
+)
+_NARRATION_OPENER_WINDOW = 120
+
+
 @dataclass(frozen=True)
 class OutputRule:
     """A named failure class plus the remediation to inject.
@@ -465,6 +503,12 @@ def classify_output(text: str | None, *, wrong_shape: bool = False) -> OutputRul
 
     lowered = stripped.lower()
     if any(marker in lowered for marker in _NARRATION_MARKERS):
+        return NARRATED_NO_ARTIFACT
+
+    # Checked by POSITION, like the provider apology above — see
+    # _NARRATION_OPENERS for why these cannot join the tuple.
+    opening = lowered[:_NARRATION_OPENER_WINDOW]
+    if any(marker in opening for marker in _NARRATION_OPENERS):
         return NARRATED_NO_ARTIFACT
 
     return PROSE_REPORT
