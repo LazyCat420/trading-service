@@ -65,7 +65,15 @@ async def test_collect_cluster_buys_success(mock_fetch, mock_db):
     # Was `executemany` — the SQL batch write. The collector inserts into
     # `insider_trades` through mongo_store now, so assert on the collection
     # and the documents rather than on a driver method that no longer runs.
-    mock_db.insert_docs.assert_called_once()
-    collection, docs = mock_db.insert_docs.call_args[0][:2]
+    # ...and since 2026-09-12 through `bulk_upsert(insert_only=True)`, not
+    # `insert_docs`: insert_docs is only DO NOTHING behind a UNIQUE index, and
+    # `natural_key` on (id, 1) was created without one, so every pass appended
+    # a copy (2,446 documents for 356 ids). See
+    # tests/unit/test_openinsider_collector_insert_only.py.
+    mock_db.insert_docs.assert_not_called()
+    mock_db.bulk_upsert.assert_called_once()
+    collection, docs = mock_db.bulk_upsert.call_args[0][:2]
     assert collection == "insider_trades"
     assert len(docs) == count
+    assert mock_db.bulk_upsert.call_args.kwargs["insert_only"] is True
+    assert mock_db.bulk_upsert.call_args.kwargs["key_field"] == "id"
