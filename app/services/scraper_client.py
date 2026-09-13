@@ -150,6 +150,27 @@ class ScraperServiceClient:
             self.misses += 1
             logger.debug("[scraper_client] Scrape failed for %s: %s", url, data.get('error'))
             return data
+        except asyncio.CancelledError:
+            # A TIMEOUT LANDS HERE, NOT BELOW, and that made `total_miss` blind
+            # to the single most common failure in this system.
+            #
+            # `news_collector` wraps this call in `asyncio.wait_for(...)`. On
+            # expiry that CANCELS this coroutine, and `asyncio.CancelledError`
+            # inherits from BaseException, not Exception — so the handler below
+            # never runs. Measured after one timed-out scrape:
+            #
+            #     calls=1  misses=0  failures=0  miss_rate=0.00  total_miss=False
+            #
+            # `calls` had already incremented, so every timeout DILUTED the miss
+            # rate downward and a 100% timeout outage read as perfectly healthy.
+            # An alarm that is quiet during the outage it was written for is
+            # worse than no alarm.
+            #
+            # Counted as a miss, never as a failure (the service may be fine and
+            # simply slower than our deadline), and RE-RAISED immediately —
+            # swallowing a cancellation breaks task cancellation everywhere.
+            self.misses += 1
+            raise
         except Exception as e:
             self._note_failure(url, repr(e))
             logger.error(f"[scraper_client] Unexpected error scraping {url}: {e!r}")

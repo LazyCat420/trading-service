@@ -113,3 +113,72 @@ def test_misses_and_failures_stay_distinct(client):
     assert sweep.total_miss is False, (
         "4 misses + 1 hard failure over 5 calls is not a total miss"
     )
+
+
+def test_a_timed_out_scrape_counts_as_a_miss(client, monkeypatch):
+    """A TIMEOUT is the most common failure here, and it landed nowhere.
+
+    `news_collector` wraps `scrape` in `asyncio.wait_for`. On expiry that
+    CANCELS the coroutine, and `asyncio.CancelledError` inherits from
+    BaseException — so the `except Exception` handler never ran. `calls` had
+    already incremented, so every timeout diluted `miss_rate` DOWNWARD and a
+    100% timeout outage read as perfectly healthy:
+
+        calls=1  misses=0  failures=0  miss_rate=0.00  total_miss=False
+
+    An alarm that goes quiet during the outage it was written for is worse than
+    no alarm at all.
+    """
+    import asyncio as _aio
+
+    sweep = client.sweep()
+
+    class _Hang:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, *a, **k):
+            await _aio.sleep(10)
+
+    monkeypatch.setattr(client, "base_url", "http://stub", raising=False)
+    monkeypatch.setattr("app.services.scraper_client.httpx.AsyncClient",
+                        lambda *a, **k: _Hang())
+
+    async def _drive():
+        with pytest.raises(_aio.TimeoutError):
+            await _aio.wait_for(client.scrape("http://x"), timeout=0.05)
+
+    _aio.run(_drive())
+
+    assert sweep.calls == 1
+    assert sweep.misses == 1, (
+        "a timed-out scrape was not counted — CancelledError is a "
+        "BaseException and slipped past `except Exception`"
+    )
+    assert sweep.failures == 0, "a timeout is not a service failure"
+    assert sweep.total_miss is True, (
+        "every call timed out and total_miss is still False — the alarm is "
+        "blind to the failure it exists for"
+    )
+
+
+def test_the_cancellation_is_re_raised_not_swallowed(client, monkeypatch):
+    """Counting must not break cancellation. Swallowing it would hang callers."""
+    import asyncio as _aio
+
+    class _Hang:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, *a, **k):
+            await _aio.sleep(10)
+
+    monkeypatch.setattr("app.services.scraper_client.httpx.AsyncClient",
+                        lambda *a, **k: _Hang())
+
+    async def _drive():
+        task = _aio.ensure_future(client.scrape("http://x"))
+        await _aio.sleep(0)
+        task.cancel()
+        with pytest.raises(_aio.CancelledError):
+            await task
+
+    _aio.run(_drive())
