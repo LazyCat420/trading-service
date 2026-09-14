@@ -99,24 +99,36 @@ def _cycle_triggers(cycle_ids: list[str]) -> dict[str, dict]:
         return {}
 
 
-def _page_agent_outcomes(cycle_ids: list[str]) -> dict[str, dict[str, Any]]:
-    """{cycle_id: {agent_name: outcome}} for a whole page in ONE aggregate.
+def _derive_cycle_box(providers: set[str], models: set[str]) -> tuple[str, str]:
+    has_jetson = any(p == "vllm" or "jetson" in str(p).lower() for p in providers)
+    has_spark = any(p == "vllm-2" or "spark" in str(p).lower() for p in providers)
+    if not has_jetson and not has_spark:
+        for m in models:
+            m_lower = str(m).lower()
+            if "nemotron" in m_lower or "qwen" in m_lower:
+                has_jetson = True
+            elif "glm" in m_lower or "deepseek" in m_lower:
+                has_spark = True
+    if has_jetson and has_spark:
+        return "both", "Both"
+    if has_jetson:
+        return "jetson", "Jetson"
+    if has_spark:
+        return "spark", "Gold Spark"
+    return "unknown", "Unknown"
+
+
+def _page_agent_outcomes_and_models(cycle_ids: list[str]) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """{cycle_id: {agent_name: outcome}} AND {cycle_id: {models, providers, box, box_label}}
+    for a whole page in ONE aggregate.
 
     Mirrors what the per-cycle `_cycle_agent_rows` fed the list: rows sorted
     (created_at, attempt_no) ascending, the LAST row per agent wins — hence
     the `$sort` ahead of `$group`/`$last`. `agent_count` is the number of
     keys, i.e. distinct agent_name, as before.
-
-    One deliberate correction: the per-cycle loop published the row's PHASE
-    under `outcomes` — `(agent_name, phase, outcome, ...)[1]` by tuple-index
-    drift — which is why its `== "SUCCESS"` completion check never fired (no
-    phase is SUCCESS; INIT / RESEARCH_DONE / DEBATE_DONE / post_decision are
-    the values). The key is named outcomes; it now carries the outcome. No
-    client reads it (cycleKinds.js / PipelineReplaysPanel.jsx / useCycleRuns.js
-    read status, ticker_count, total_ms, agent_count, trigger).
     """
     if not cycle_ids:
-        return {}
+        return {}, {}
     try:
         docs = mongo_store.aggregate("v3_agent_telemetry", [
             {"$match": {"cycle_id": {"$in": cycle_ids}}},
@@ -124,17 +136,45 @@ def _page_agent_outcomes(cycle_ids: list[str]) -> dict[str, dict[str, Any]]:
             {"$group": {
                 "_id": {"cycle_id": "$cycle_id", "agent": "$agent_name"},
                 "outcome": {"$last": "$outcome"},
+                "models": {"$addToSet": "$model_used"},
+                "providers": {"$addToSet": "$provider"},
             }},
         ])
     except Exception as e:
         logger.warning("[cycles] mongo agent outcomes failed: %s", e)
-        return {}
+        return {}, {}
     out: dict[str, dict[str, Any]] = {}
+    models_by_cycle: dict[str, set[str]] = {}
+    providers_by_cycle: dict[str, set[str]] = {}
     for d in docs or []:
         key = d.get("_id")
         if not isinstance(key, dict) or not key.get("cycle_id"):
             continue
-        out.setdefault(key["cycle_id"], {})[key.get("agent")] = d.get("outcome")
+        cid = key["cycle_id"]
+        out.setdefault(cid, {})[key.get("agent")] = d.get("outcome")
+        for m in (d.get("models") or []):
+            if m:
+                models_by_cycle.setdefault(cid, set()).add(m)
+        for p in (d.get("providers") or []):
+            if p:
+                providers_by_cycle.setdefault(cid, set()).add(p)
+
+    model_info: dict[str, dict[str, Any]] = {}
+    for cid in cycle_ids:
+        c_models = sorted(list(models_by_cycle.get(cid) or set()))
+        c_providers = sorted(list(providers_by_cycle.get(cid) or set()))
+        box, box_label = _derive_cycle_box(set(c_providers), set(c_models))
+        model_info[cid] = {
+            "models": c_models,
+            "providers": c_providers,
+            "box": box,
+            "box_label": box_label,
+        }
+    return out, model_info
+
+
+def _page_agent_outcomes(cycle_ids: list[str]) -> dict[str, dict[str, Any]]:
+    out, _ = _page_agent_outcomes_and_models(cycle_ids)
     return out
 
 
@@ -307,7 +347,8 @@ def _summary_status(raw: Any) -> str:
     return "completed" if raw == "done" else "failed"
 
 
-def _summary_row(doc: dict, outcomes: dict, actions: dict, triggers: dict) -> dict:
+def _summary_row(doc: dict, outcomes: dict, actions: dict, triggers: dict,
+                 model_info: dict | None = None) -> dict:
     cycle_id = doc.get("cycle_id")
     started, finished = doc.get("started_at"), doc.get("finished_at")
 
@@ -324,6 +365,7 @@ def _summary_row(doc: dict, outcomes: dict, actions: dict, triggers: dict) -> di
         or [t for t in cycle_actions if t]
     )
     cycle_outcomes = outcomes.get(cycle_id) or {}
+    m_info = (model_info or {}).get(cycle_id) or {}
 
     return {
         "cycle_id": cycle_id,
@@ -341,11 +383,15 @@ def _summary_row(doc: dict, outcomes: dict, actions: dict, triggers: dict) -> di
         # client must be able to tell "we don't know" from "nobody
         # triggered it".
         "trigger": triggers.get(cycle_id) or None,
+        "models": m_info.get("models") or [],
+        "providers": m_info.get("providers") or [],
+        "box": m_info.get("box") or "unknown",
+        "box_label": m_info.get("box_label") or "Unknown",
     }
 
 
 def _live_row(cycle_id: str, live_state: dict, outcomes: dict, actions: dict,
-              triggers: dict) -> dict:
+              triggers: dict, model_info: dict | None = None) -> dict:
     """The cycle pipeline_state says is running, which has no summary row
     yet. Its status is 'running' by construction: the SUCCESS-outcome /
     has-actions completion heuristic the old list applied to every row is
@@ -365,6 +411,23 @@ def _live_row(cycle_id: str, live_state: dict, outcomes: dict, actions: dict,
     except Exception:
         total_ms = 0
     cycle_outcomes = outcomes.get(cycle_id) or {}
+
+    m_info = (model_info or {}).get(cycle_id) or {}
+    models = m_info.get("models") or []
+    providers = m_info.get("providers") or []
+    box = m_info.get("box") or "unknown"
+    box_label = m_info.get("box_label") or "Unknown"
+
+    if box == "unknown":
+        v3_meta = live_state.get("v3_metadata") or {}
+        telemetry = v3_meta.get("agent_telemetry") or []
+        raw_models = [t.get("model_used") for t in telemetry if t.get("model_used")]
+        raw_providers = [t.get("provider") for t in telemetry if t.get("provider")]
+        if raw_models or raw_providers:
+            models = sorted(list(set(raw_models)))
+            providers = sorted(list(set(raw_providers)))
+            box, box_label = _derive_cycle_box(set(providers), set(models))
+
     return {
         "cycle_id": cycle_id,
         "started_at": _iso(started),
@@ -378,6 +441,10 @@ def _live_row(cycle_id: str, live_state: dict, outcomes: dict, actions: dict,
         "outcomes": cycle_outcomes,
         "actions": actions.get(cycle_id) or {},
         "trigger": triggers.get(cycle_id) or None,
+        "models": models,
+        "providers": providers,
+        "box": box,
+        "box_label": box_label,
     }
 
 
@@ -423,16 +490,16 @@ def list_cycles(
         side_ids = ([live_cycle_id] if prepend_live else []) + page_ids
 
         triggers = _cycle_triggers(side_ids)
-        outcomes = _page_agent_outcomes(side_ids)
+        outcomes, model_info = _page_agent_outcomes_and_models(side_ids)
         actions = _page_actions(side_ids)
 
         cycles = []
         if prepend_live:
-            cycles.append(_live_row(live_cycle_id, live_state, outcomes, actions, triggers))
+            cycles.append(_live_row(live_cycle_id, live_state, outcomes, actions, triggers, model_info))
         for d in docs:
             if not d.get("cycle_id"):
                 continue
-            cycles.append(_summary_row(d, outcomes, actions, triggers))
+            cycles.append(_summary_row(d, outcomes, actions, triggers, model_info))
 
         # Total for pagination (opt-out: see include_total). The prepended
         # live row is a real row on page 0, so it is counted.

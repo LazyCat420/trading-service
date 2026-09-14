@@ -30,7 +30,7 @@ import pytest
 CYCLE_KEYS = {
     "cycle_id", "started_at", "finished_at", "total_ms", "status", "tickers",
     "ticker_count", "agent_count", "outcomes", "actions", "trigger",
-    "summary_status",
+    "summary_status", "models", "providers", "box", "box_label",
 }
 
 T0 = datetime(2026, 9, 6, 12, 0, 0, tzinfo=timezone.utc)
