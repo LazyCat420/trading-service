@@ -602,6 +602,29 @@ class SharedDesk:
         # Research prose absorbs the cut; verdicts always render.
         verdict_sections: list[str] = []
 
+        # Market Regime: placed FIRST so governing macro directives are NEVER
+        # swallowed by research prose tail-truncation. Deciders (Board & Synthesizer)
+        # receive a dedicated packet separately without truncation (include_regime=False).
+        if include_regime and self.regime_classification:
+            regime = self.regime_classification.get("regime", "?")
+            conf = self.regime_classification.get("confidence", 0)
+            rationale = self.regime_classification.get("rationale", "")
+            text = f"## Market Regime: {regime} ({conf}% confidence)\n{rationale}"
+            factors = self.regime_classification.get("factors") or {}
+            if isinstance(factors, dict) and factors:
+                rendered = ", ".join(
+                    f"{k}={v}" for k, v in factors.items() if isinstance(v, (int, float))
+                )
+                if rendered:
+                    text += f"\n**Regime Factors (0-1):** {rendered}"
+            tags = self.regime_classification.get("market_context_tags") or []
+            if tags:
+                text += "\n**Market Context Tags:** " + ", ".join(str(t) for t in tags[:8])
+            directive = self.regime_classification.get("board_directive", "")
+            if directive:
+                text += f"\n**Regime Engine's Directive to the Board:** {directive}"
+            sections.append(text)
+
         # Research artifacts
         if self.desk_note:
             summary = self.desk_note.get("summary", "")
@@ -934,26 +957,6 @@ class SharedDesk:
                     )
                 verdict_sections.append(text)
 
-        # The Board receives this artifact separately, without tail truncation.
-        if include_regime and self.regime_classification:
-            regime = self.regime_classification.get("regime", "?")
-            conf = self.regime_classification.get("confidence", 0)
-            rationale = self.regime_classification.get("rationale", "")
-            text = f"## Market Regime: {regime} ({conf}% confidence)\n{rationale}"
-            factors = self.regime_classification.get("factors") or {}
-            if isinstance(factors, dict) and factors:
-                rendered = ", ".join(
-                    f"{k}={v}" for k, v in factors.items() if isinstance(v, (int, float))
-                )
-                if rendered:
-                    text += f"\n**Regime Factors (0-1):** {rendered}"
-            tags = self.regime_classification.get("market_context_tags") or []
-            if tags:
-                text += "\n**Market Context Tags:** " + ", ".join(str(t) for t in tags[:8])
-            directive = self.regime_classification.get("board_directive", "")
-            if directive:
-                text += f"\n**Regime Engine's Directive to the Board:** {directive}"
-            sections.append(text)
 
         # Agent-applied data tags (grouped by the artifact that raised them)
         if self.artifact_tags:

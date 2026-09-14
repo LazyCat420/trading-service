@@ -263,18 +263,23 @@ def check_benchmark_timings(cycle_id):
     """
     row = mongo_query.find_row(
         "cycle_benchmarks", {"cycle_id": cycle_id},
-        ["collect_ms", "analyze_ms", "trade_ms", "total_tokens", "cache_hit_pct"])
+        ["total_ms", "collect_ms", "analyze_ms", "trade_ms", "total_tokens", "cache_hit_pct"])
     if not row:
         return ("phase timings recorded", INFO, "no benchmark row yet", {})
-    collect, analyze, trade, tokens, cache = row
+    total_ms, collect, analyze, trade, tokens, cache = row
     missing = [n for n, v in
-               (("collect_ms", collect), ("analyze_ms", analyze), ("trade_ms", trade))
+               (("collect_ms", collect), ("analyze_ms", analyze))
                if v is None]
     status = PASS if not missing else WARN
+    timing_desc = f"total={total_ms or 0:,}ms (collect={collect or 0:,}ms, analyze={analyze or 0:,}ms"
+    if trade is not None:
+        timing_desc += f", trade={trade:,}ms)"
+    else:
+        timing_desc += ", trade=paper/observe)"
     return ("phase timings recorded", status,
-            f"missing: {', '.join(missing) or 'none'}"
+            f"{timing_desc} | missing: {', '.join(missing) or 'none'}"
             + f" | tokens={tokens or 0:,} collector_skip={cache or 0}%",
-            {"missing": missing, "tokens": tokens, "collector_skip_pct": cache})
+            {"total_ms": total_ms, "missing": missing, "tokens": tokens, "collector_skip_pct": cache})
 
 
 def check_confidence_is_monotonic(cycle_id):

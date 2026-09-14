@@ -773,7 +773,7 @@ async def run_v3_agent(
         from app.v3.data_trace import record as trace_data
         desk_context = desk.get_compressed_context(
             include_debate=include_debate_context,
-            include_regime=agent_name != "v3_board_of_directors",
+            include_regime=agent_name not in ("v3_board_of_directors", "v3_decision_synthesizer"),
         )
         trace_data(cycle_id, desk.ticker, agent_name, "desk.compressed",
                    data={"context":desk_context}, include_debate=include_debate_context,
@@ -805,11 +805,12 @@ async def run_v3_agent(
         _KEEP = 0
         dynamic_sections: list[tuple[int, str]] = []
 
-        if agent_name == "v3_board_of_directors":
+        if agent_name in ("v3_board_of_directors", "v3_decision_synthesizer"):
             from app.v3.board_evidence import regime_packet
             packet, receipt = regime_packet(desk.regime_classification)
             dynamic_sections.append((_KEEP, packet))
-            trace_data(cycle_id, desk.ticker, agent_name, "board.regime_delivery",
+            stage = "board.regime_delivery" if agent_name == "v3_board_of_directors" else "synthesizer.regime_delivery"
+            trace_data(cycle_id, desk.ticker, agent_name, stage,
                        data=receipt, attempt=attempt_no)
 
         from app.services.research_work import completed_answer_block
