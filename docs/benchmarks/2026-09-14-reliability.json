@@ -1,0 +1,485 @@
+{
+  "metric_contract_version": 2,
+  "release": {
+    "trading-service": "abb9aa28",
+    "trading-client": "d7e72ecd",
+    "lazycat-sdk": "13d46b0",
+    "scraper_source": "abb9aa28"
+  },
+  "validation": {
+    "service_passed": 8101,
+    "service_skipped": 141,
+    "service_seconds": 355.56,
+    "final_targeted_passed": 29,
+    "sdk_final_passed": 17
+  },
+  "capabilities": {
+    "runs": [
+      {
+        "elapsed_s": 1.836,
+        "discovery": {
+          "version": 1,
+          "endpoints": [
+            {
+              "box": "jetson",
+              "model": "nemotron35",
+              "observed_at": "2026-09-14T17:52:06.411929+00:00",
+              "context_tokens": 128000,
+              "tools": true,
+              "structured_output": true,
+              "eligible": true,
+              "reason": "verified",
+              "provider": "vllm"
+            },
+            {
+              "box": "dgx_spark",
+              "model": "GLM-5.3-Flash-EXL3",
+              "observed_at": "2026-09-14T17:52:06.430213+00:00",
+              "context_tokens": 850000,
+              "tools": true,
+              "structured_output": true,
+              "eligible": true,
+              "reason": "verified",
+              "provider": "vllm-2"
+            }
+          ],
+          "eligible": true
+        }
+      },
+      {
+        "elapsed_s": 1.671,
+        "discovery": {
+          "version": 1,
+          "endpoints": [
+            {
+              "box": "jetson",
+              "model": "nemotron35",
+              "observed_at": "2026-09-14T17:52:08.105160+00:00",
+              "context_tokens": 128000,
+              "tools": true,
+              "structured_output": true,
+              "eligible": true,
+              "reason": "verified",
+              "provider": "vllm"
+            },
+            {
+              "box": "dgx_spark",
+              "model": "GLM-5.3-Flash-EXL3",
+              "observed_at": "2026-09-14T17:52:08.120533+00:00",
+              "context_tokens": 850000,
+              "tools": true,
+              "structured_output": true,
+              "eligible": true,
+              "reason": "verified",
+              "provider": "vllm-2"
+            }
+          ],
+          "eligible": true
+        }
+      },
+      {
+        "elapsed_s": 1.647,
+        "discovery": {
+          "version": 1,
+          "endpoints": [
+            {
+              "box": "jetson",
+              "model": "nemotron35",
+              "observed_at": "2026-09-14T17:52:09.767128+00:00",
+              "context_tokens": 128000,
+              "tools": true,
+              "structured_output": true,
+              "eligible": true,
+              "reason": "verified",
+              "provider": "vllm"
+            },
+            {
+              "box": "dgx_spark",
+              "model": "GLM-5.3-Flash-EXL3",
+              "observed_at": "2026-09-14T17:52:09.781677+00:00",
+              "context_tokens": 850000,
+              "tools": true,
+              "structured_output": true,
+              "eligible": true,
+              "reason": "verified",
+              "provider": "vllm-2"
+            }
+          ],
+          "eligible": true
+        }
+      }
+    ],
+    "median_s": 1.671,
+    "chat": {
+      "response": "{\"ok\":true}",
+      "model_used": "nemotron35",
+      "provider": "vllm",
+      "tokens_used": 33,
+      "completion_tokens": 6,
+      "usage_requests": 1,
+      "prompt_tokens": 27
+    }
+  },
+  "historical_reconciliation": [
+    {
+      "cycle_id": "cycle-v3-1789360974",
+      "usage": {
+        "contract_version": 2,
+        "model_runs": 11,
+        "measured_runs": 11,
+        "complete_runs": 0,
+        "completion_tokens_measured": 22654,
+        "coverage": "partial"
+      },
+      "audit_checks": {
+        "A1_models_served": [
+          "GLM-5.3-Flash-EXL3"
+        ],
+        "A2_tool_call_pressure_agents": [
+          "v3_bear_agent",
+          "v3_board_of_directors",
+          "v3_bull_defense"
+        ],
+        "A3_duplicate_rows": 0,
+        "A4_guardrail_firings": 2,
+        "A5_unrepaired_firings": 0,
+        "A6_severity_filter_alive": true,
+        "A7_agent_error_outcomes": 0,
+        "A8_completion_tokens_recorded": true,
+        "A9_completion_usage_coverage": "partial"
+      }
+    },
+    {
+      "cycle_id": "cycle-v3-1789359002",
+      "usage": {
+        "contract_version": 2,
+        "model_runs": 11,
+        "measured_runs": 11,
+        "complete_runs": 0,
+        "completion_tokens_measured": 25528,
+        "coverage": "partial"
+      },
+      "audit_checks": {
+        "A1_models_served": [
+          "GLM-5.3-Flash-EXL3"
+        ],
+        "A2_tool_call_pressure_agents": [
+          "v3_bear_agent",
+          "v3_debate_judge",
+          "v3_decision_synthesizer",
+          "v3_junior_analyst"
+        ],
+        "A3_duplicate_rows": 0,
+        "A4_guardrail_firings": 1,
+        "A5_unrepaired_firings": 0,
+        "A6_severity_filter_alive": true,
+        "A7_agent_error_outcomes": 0,
+        "A8_completion_tokens_recorded": true,
+        "A9_completion_usage_coverage": "partial"
+      }
+    }
+  ],
+  "browser": {
+    "url": "http://10.0.0.16:3030/",
+    "title": "vllm-trading-bot",
+    "errors": [],
+    "evidence": "Output tokens: 22,654 \u00b7 partial coverage \u00b7 11/11 model runs measured \u00b7 Repairs recovered: 2/2"
+  },
+  "canary": {
+    "cycle_id": "reliability-canary-20260914T175240Z",
+    "summary": {
+      "status": "done",
+      "elapsed_ms": 1724630,
+      "build_sha": "abb9aa28",
+      "trade_flag": false,
+      "collect_flag": true,
+      "analysis_results_count": 1,
+      "collector_ok": 2,
+      "collector_error": 0,
+      "collector_skipped": 4,
+      "collector_late": 0,
+      "collector_failures": [],
+      "primary_failure_reason": null
+    },
+    "evidence": {
+      "version": 2,
+      "cycle_id": "reliability-canary-20260914T175240Z",
+      "status": "done",
+      "build_sha": "abb9aa28",
+      "model_discovery": {
+        "version": 1,
+        "endpoints": [
+          {
+            "box": "jetson",
+            "model": "nemotron35",
+            "observed_at": "2026-09-14T17:52:41.684583+00:00",
+            "context_tokens": 128000,
+            "tools": true,
+            "structured_output": true,
+            "eligible": true,
+            "reason": "verified",
+            "provider": "vllm"
+          },
+          {
+            "box": "dgx_spark",
+            "model": "GLM-5.3-Flash-EXL3",
+            "observed_at": "2026-09-14T17:52:41.669590+00:00",
+            "context_tokens": 850000,
+            "tools": true,
+            "structured_output": true,
+            "eligible": true,
+            "reason": "verified",
+            "provider": "vllm-2"
+          }
+        ],
+        "eligible": true
+      },
+      "decision_count": 1,
+      "summary_count_matches": true,
+      "usage": {
+        "model_runs": 11,
+        "measured_runs": 11,
+        "complete_runs": 11,
+        "completion_tokens_measured": 29336,
+        "coverage": "complete",
+        "total_tokens_recorded": 1254924
+      },
+      "artifact_recovery": {
+        "repairable_events": 3,
+        "recovered_events": 3,
+        "unrecovered_events": 0
+      },
+      "models": [
+        {
+          "provider": "vllm-2",
+          "model": "GLM-5.3-Flash-EXL3",
+          "runs": 11,
+          "elapsed_ms": 1629233,
+          "tokens": 1254924,
+          "outcomes": {
+            "SUCCESS": 11
+          },
+          "attempts": 15
+        }
+      ],
+      "decisions": [
+        {
+          "ticker": "BHP",
+          "action": "HOLD",
+          "confidence": 72,
+          "policy_action": "HOLD_NO_SIGNAL",
+          "hold_reason": "AVOID",
+          "trade_attempted": false,
+          "trade_executed": false,
+          "financial_quality_metrics": {
+            "final_decision": {
+              "first_response_accepted": false,
+              "repair_attempted": true,
+              "repair_succeeded": true,
+              "final_accepted": true,
+              "repair_valid_answer_regressions": [],
+              "final_valid_answer_regressions": [],
+              "prevented_answer_regressions": [],
+              "initial_action": "HOLD",
+              "final_action": "HOLD",
+              "execution_authority": "eligible_for_further_gates",
+              "limitation": "Evidence consistency is not investment merit; blocked proposals are model failures and safety successes."
+            },
+            "trade_decision": {
+              "first_response_accepted": true,
+              "repair_attempted": false,
+              "repair_succeeded": false,
+              "final_accepted": true,
+              "repair_valid_answer_regressions": [],
+              "final_valid_answer_regressions": [],
+              "prevented_answer_regressions": [],
+              "initial_action": "HOLD",
+              "final_action": "HOLD",
+              "execution_authority": "eligible_for_further_gates",
+              "limitation": "Evidence consistency is not investment merit; blocked proposals are model failures and safety successes."
+            }
+          },
+          "financial_execution_validation": null,
+          "financial_evidence_present": true
+        }
+      ],
+      "limits": [
+        "Recorded token totals may have incomplete historical coverage.",
+        "Recovered output and lifecycle completion do not establish decision quality.",
+        "Latency summed over concurrent agents is not cycle wall time."
+      ],
+      "truncated": false
+    },
+    "reconciliation": [
+      {
+        "agent": "v3_regime_engine",
+        "outcome": "SUCCESS",
+        "attempts": 1,
+        "purposes": [
+          "initial"
+        ],
+        "completion_tokens": 1294,
+        "sum_attempt_output": 1294,
+        "token_usage": 7064,
+        "sum_attempt_total": 7064,
+        "usage_requests": 1,
+        "coverage": "complete",
+        "verified_identities": 1
+      },
+      {
+        "agent": "v3_junior_analyst",
+        "outcome": "SUCCESS",
+        "attempts": 1,
+        "purposes": [
+          "initial"
+        ],
+        "completion_tokens": 3505,
+        "sum_attempt_output": 3505,
+        "token_usage": 115671,
+        "sum_attempt_total": 115671,
+        "usage_requests": 1,
+        "coverage": "complete",
+        "verified_identities": 1
+      },
+      {
+        "agent": "v3_fundamental_analyst",
+        "outcome": "SUCCESS",
+        "attempts": 1,
+        "purposes": [
+          "initial"
+        ],
+        "completion_tokens": 3633,
+        "sum_attempt_output": 3633,
+        "token_usage": 110423,
+        "sum_attempt_total": 110423,
+        "usage_requests": 1,
+        "coverage": "complete",
+        "verified_identities": 1
+      },
+      {
+        "agent": "v3_quant_analyst",
+        "outcome": "SUCCESS",
+        "attempts": 1,
+        "purposes": [
+          "initial"
+        ],
+        "completion_tokens": 2993,
+        "sum_attempt_output": 2993,
+        "token_usage": 57738,
+        "sum_attempt_total": 57738,
+        "usage_requests": 1,
+        "coverage": "complete",
+        "verified_identities": 1
+      },
+      {
+        "agent": "v3_valuation_analyst",
+        "outcome": "SUCCESS",
+        "attempts": 1,
+        "purposes": [
+          "initial"
+        ],
+        "completion_tokens": 2619,
+        "sum_attempt_output": 2619,
+        "token_usage": 49749,
+        "sum_attempt_total": 49749,
+        "usage_requests": 1,
+        "coverage": "complete",
+        "verified_identities": 1
+      },
+      {
+        "agent": "v3_bull_agent",
+        "outcome": "SUCCESS",
+        "attempts": 1,
+        "purposes": [
+          "initial"
+        ],
+        "completion_tokens": 1974,
+        "sum_attempt_output": 1974,
+        "token_usage": 37972,
+        "sum_attempt_total": 37972,
+        "usage_requests": 1,
+        "coverage": "complete",
+        "verified_identities": 1
+      },
+      {
+        "agent": "v3_bear_agent",
+        "outcome": "SUCCESS",
+        "attempts": 2,
+        "purposes": [
+          "initial",
+          "repair"
+        ],
+        "completion_tokens": 4172,
+        "sum_attempt_output": 4172,
+        "token_usage": 81298,
+        "sum_attempt_total": 81298,
+        "usage_requests": 2,
+        "coverage": "complete",
+        "verified_identities": 2
+      },
+      {
+        "agent": "v3_bull_defense",
+        "outcome": "SUCCESS",
+        "attempts": 2,
+        "purposes": [
+          "initial",
+          "repair"
+        ],
+        "completion_tokens": 3286,
+        "sum_attempt_output": 3286,
+        "token_usage": 118848,
+        "sum_attempt_total": 118848,
+        "usage_requests": 2,
+        "coverage": "complete",
+        "verified_identities": 2
+      },
+      {
+        "agent": "v3_debate_judge",
+        "outcome": "SUCCESS",
+        "attempts": 2,
+        "purposes": [
+          "initial",
+          "repair"
+        ],
+        "completion_tokens": 2109,
+        "sum_attempt_output": 2109,
+        "token_usage": 164941,
+        "sum_attempt_total": 164941,
+        "usage_requests": 2,
+        "coverage": "complete",
+        "verified_identities": 2
+      },
+      {
+        "agent": "v3_board_of_directors",
+        "outcome": "SUCCESS",
+        "attempts": 2,
+        "purposes": [
+          "initial",
+          "correction"
+        ],
+        "completion_tokens": 3252,
+        "sum_attempt_output": 3252,
+        "token_usage": 46360,
+        "sum_attempt_total": 46360,
+        "usage_requests": 2,
+        "coverage": "complete",
+        "verified_identities": 2
+      },
+      {
+        "agent": "v3_decision_synthesizer",
+        "outcome": "SUCCESS",
+        "attempts": 1,
+        "purposes": [
+          "initial"
+        ],
+        "completion_tokens": 499,
+        "sum_attempt_output": 499,
+        "token_usage": 464860,
+        "sum_attempt_total": 464860,
+        "usage_requests": 1,
+        "coverage": "complete",
+        "verified_identities": 1
+      }
+    ]
+  }
+}
