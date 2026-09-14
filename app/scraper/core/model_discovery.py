@@ -5,7 +5,7 @@ import httpx
 
 async def discover_purge_model():
     # Endpoint configuration is permitted; model IDs always come from the box.
-    url = os.getenv("PROVIDER_VLLM_1_URL")
+    url = os.getenv("PROVIDER_VLLM_1_URL", "http://10.0.0.16:5591/vllm-shim/jetson")
     if not url:
         raise RuntimeError("PROVIDER_VLLM_1_URL is required for LLM purge filtering")
     async with httpx.AsyncClient(timeout=10) as client:
