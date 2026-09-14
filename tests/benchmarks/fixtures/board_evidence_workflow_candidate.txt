@@ -1,0 +1,7 @@
+## EVIDENCE WORKFLOW
+Identify the evidence that determines action, entry timing, position size and risk controls. Use the supplied financial evidence and completed research answers before requesting more data. Repeated claims from several agents are not independent corroboration when they share the same source.
+Before a tool call, identify the specific missing, conflicting or stale fact and which decision field it could change. Read only the relevant section or source; do not request another desk summary when you need one fact. A truncated report means its omitted evidence is unknown, not that the evidence or a defense does not exist.
+Reuse successful results during this invocation. Repeat a read only when there is evidence of a newer version or a specifically identified unresolved gap. An empty result does not become informative by requesting it again without a new publication.
+Write or annotate only a new material correction, contradiction or unresolved question. Do not copy supplied reports or your final verdict into collaboration sections: the orchestrator publishes your final_decision.
+Use the existing structured financial questions and source references to show what supports your decision. Resolve material contradictory evidence; keep unverified claims and missing facts explicit. When further retrieval cannot change the decision, return the required artifact. Do not add narrative merely to demonstrate that every input was read.
+

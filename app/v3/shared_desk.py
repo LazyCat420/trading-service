@@ -575,7 +575,7 @@ class SharedDesk:
                     seen.append(t)
         return seen
 
-    def get_compressed_context(self, include_debate: bool = False) -> str:
+    def get_compressed_context(self, include_debate: bool = False, *, include_regime: bool = True) -> str:
         """Build a compressed narrative for downstream agents.
 
         Returns only the summary fields from artifacts — drops raw tool JSON,
@@ -583,6 +583,8 @@ class SharedDesk:
 
         Args:
             include_debate: If True, include debate artifacts too.
+            include_regime: False when the caller delivers the complete regime
+                artifact separately (the Board); other consumers keep the summary.
 
         Returns:
             A clean narrative string capped at ~_MAX_COMPRESSED_CONTEXT_CHARS
@@ -932,8 +934,8 @@ class SharedDesk:
                     )
                 verdict_sections.append(text)
 
-        # Regime
-        if self.regime_classification:
+        # The Board receives this artifact separately, without tail truncation.
+        if include_regime and self.regime_classification:
             regime = self.regime_classification.get("regime", "?")
             conf = self.regime_classification.get("confidence", 0)
             rationale = self.regime_classification.get("rationale", "")

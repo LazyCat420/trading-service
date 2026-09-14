@@ -771,7 +771,10 @@ async def run_v3_agent(
         prompt_split = bool(getattr(_settings, "V3_PROMPT_SPLIT", True))
 
         from app.v3.data_trace import record as trace_data
-        desk_context = desk.get_compressed_context(include_debate=include_debate_context)
+        desk_context = desk.get_compressed_context(
+            include_debate=include_debate_context,
+            include_regime=agent_name != "v3_board_of_directors",
+        )
         trace_data(cycle_id, desk.ticker, agent_name, "desk.compressed",
                    data={"context":desk_context}, include_debate=include_debate_context,
                    attempt=attempt_no)
@@ -801,6 +804,13 @@ async def run_v3_agent(
         # still received every one) AND silently defeated KV-cache reuse.
         _KEEP = 0
         dynamic_sections: list[tuple[int, str]] = []
+
+        if agent_name == "v3_board_of_directors":
+            from app.v3.board_evidence import regime_packet
+            packet, receipt = regime_packet(desk.regime_classification)
+            dynamic_sections.append((_KEEP, packet))
+            trace_data(cycle_id, desk.ticker, agent_name, "board.regime_delivery",
+                       data=receipt, attempt=attempt_no)
 
         from app.services.research_work import completed_answer_block
         desk.cycle_metadata['research_answers_context'] = completed_answer_block(desk)
