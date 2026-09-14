@@ -102,13 +102,6 @@ def _cycle_triggers(cycle_ids: list[str]) -> dict[str, dict]:
 def _derive_cycle_box(providers: set[str], models: set[str]) -> tuple[str, str]:
     has_jetson = any(p == "vllm" or "jetson" in str(p).lower() for p in providers)
     has_spark = any(p == "vllm-2" or "spark" in str(p).lower() for p in providers)
-    if not has_jetson and not has_spark:
-        for m in models:
-            m_lower = str(m).lower()
-            if "nemotron" in m_lower or "qwen" in m_lower:
-                has_jetson = True
-            elif "glm" in m_lower or "deepseek" in m_lower:
-                has_spark = True
     if has_jetson and has_spark:
         return "both", "Both"
     if has_jetson:
@@ -1063,3 +1056,12 @@ async def score_evidence(cycle_id: str):
         projection={'_id':0,'agent_name':1,'model_used':1,'provider':1,'outcome':1,'failure_reason':1}, limit=1000)
     return {'tool_evidence':evidence, 'agent_attempts':attempts,
             'basis':'Retained evidence for this cycle; historical report scores are not recalculated.'}
+
+
+@router.get("/{cycle_id}/evidence")
+def cycle_evidence(cycle_id: str):
+    from app.services.cycle_evidence import read_cycle_evidence
+    result = read_cycle_evidence(cycle_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Completed cycle evidence unavailable")
+    return result

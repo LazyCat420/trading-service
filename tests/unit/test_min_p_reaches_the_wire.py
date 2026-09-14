@@ -61,6 +61,8 @@ async def _run_tool_using_agent(model: str, provider: str):
         new_callable=AsyncMock,
         return_value=(model, provider),
     ):
+        harness_cls.return_value.last_model = model
+        harness_cls.return_value.last_provider = provider
         harness_cls.return_value.run = AsyncMock(return_value='{"ok": true}')
         await run_agent(
             agent_name="v3_junior_analyst",

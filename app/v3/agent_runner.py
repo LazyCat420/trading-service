@@ -703,6 +703,8 @@ async def run_v3_agent(
     # Declared before the try below so every failure handler can read it even
     # when the failure lands before the run_agent call is reached.
     _cost_sink: dict = {"tokens": 0, "loops": 0, "tool_calls": 0}
+    _usage_results = []
+    from app.v3.usage_accounting import summarize_usage
 
     # Check for custom agent override execution
     if hasattr(agent_module, "run_custom_agent"):
@@ -1397,6 +1399,7 @@ async def run_v3_agent(
         elapsed_ms = int((time.monotonic() - t_start) * 1000)
         final_text = result.get("response", "")
         loops_used = result.get("loops_used", 1)
+        _usage_results.append(result)
         token_usage = result.get("tokens_used", 0)
         cached_tokens = result.get("cached_tokens", 0)
         prompt_tokens = result.get("prompt_tokens", 0)
@@ -1650,6 +1653,7 @@ async def run_v3_agent(
                             enable_tools=False,
                             model_override=model_override,
                             prism_overrides=prism_overrides,
+                            usage_purpose="repair",
                             cost_sink=_cost_sink,  # the repair's spend joins the run's
                             soft_deadline_s=timeout_seconds * 0.5,
                             deadline_monotonic=t_start + timeout_seconds,
@@ -1658,6 +1662,7 @@ async def run_v3_agent(
                     )
                     repair_text = repair_result.get("response", "")
                     # Every attempt's spend counts, including the ones thrown away.
+                    _usage_results.append(repair_result)
                     token_usage += repair_result.get("tokens_used", 0)
                     trace_data(cycle_id, desk.ticker, agent_name, "artifact.repair",
                                data={"prompt": repair_prompt, "response": repair_text,
@@ -1777,10 +1782,9 @@ async def run_v3_agent(
             # about the same buffer.
             _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage,
                               outcome.value,
+                          **summarize_usage(_usage_results, _cost_sink),
                               sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
                               cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
-                              completion_tokens=completion_tokens,
-                              usage_requests=usage_requests,
                               model_used=model_used, provider=provider_used,
                               attempt_no=attempt_no,
                               failure_reason=rule.name if rule else UNCLASSIFIED.name,
@@ -1868,10 +1872,9 @@ async def run_v3_agent(
                     status="error",
                 )
                 _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "AGENT_ERROR",
+                          **summarize_usage(_usage_results, _cost_sink),
                                   sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
                                   cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
-                              completion_tokens=completion_tokens,
-                              usage_requests=usage_requests,
                                   model_used=model_used, provider=provider_used,
                                   attempt_no=attempt_no,
                                   failure_reason=SCHEMA_INVALID,
@@ -1932,10 +1935,9 @@ async def run_v3_agent(
                 )
                 _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage,
                                   outcome.value,
+                          **summarize_usage(_usage_results, _cost_sink),
                                   sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
                                   cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
-                              completion_tokens=completion_tokens,
-                              usage_requests=usage_requests,
                                   model_used=model_used, provider=provider_used,
                                   attempt_no=attempt_no,
                                   failure_reason=SCHEMA_INVALID,
@@ -2014,7 +2016,7 @@ async def run_v3_agent(
                             max_tokens=_safe_max_tokens(agent_name=agent_name,
                                 system_prompt=system_prompt, user_prompt=repair_prompt, tool_whitelist=None),
                             enable_tools=False, model_override=model_override,
-                            prism_overrides=prism_overrides, cost_sink=_cost_sink,
+                            prism_overrides=prism_overrides, cost_sink=_cost_sink, usage_purpose="correction",
                             soft_deadline_s=remaining * 0.5,
                             deadline_monotonic=t_start + timeout_seconds,
                         ), cycle_id), timeout=remaining)
@@ -2030,6 +2032,7 @@ async def run_v3_agent(
                             candidate, render_errors = render_reasoning_artifact(candidate, financial_record)
                             timing_merge_errors += render_errors
                             financial_attempts.append(assess_attempt(candidate, financial_record, artifact_type, timing_merge_errors))
+                        _usage_results.append(correction)
                         token_usage += correction.get("tokens_used", 0)
                         elapsed_ms = int((time.monotonic() - t_start) * 1000)
                         from app.v3.decision_contract import correction_errors
@@ -2053,10 +2056,9 @@ async def run_v3_agent(
                      data={"kind": "decision_contract_rejected", "agent": agent_name,
                            "errors": contract_failures})
                 _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "AGENT_ERROR",
+                          **summarize_usage(_usage_results, _cost_sink),
                                   sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
                                   cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
-                              completion_tokens=completion_tokens,
-                              usage_requests=usage_requests,
                                   model_used=model_used, provider=provider_used, attempt_no=attempt_no,
                                   failure_reason=SCHEMA_INVALID, error_message="; ".join(contract_failures))
                 return PhaseOutcome.AGENT_ERROR
@@ -2090,10 +2092,11 @@ async def run_v3_agent(
                             max_tokens=_safe_max_tokens(agent_name=agent_name,
                                 system_prompt=review_system, user_prompt=repair_prompt, tool_whitelist=None),
                             enable_tools=False, model_override=model_override,
-                            prism_overrides=prism_overrides, cost_sink=_cost_sink,
+                            prism_overrides=prism_overrides, cost_sink=_cost_sink, usage_purpose="correction",
                             soft_deadline_s=remaining * 0.5,
                             deadline_monotonic=t_start + timeout_seconds,
                         ), cycle_id), timeout=remaining)
+                        _usage_results.append(correction)
                         token_usage += correction.get('tokens_used', 0)
                         elapsed_ms = int((time.monotonic() - t_start) * 1000)
                         candidate = _parse_artifact(correction.get('response', ''), artifact_type, agent_name)
@@ -2453,11 +2456,10 @@ async def run_v3_agent(
             # 88). Stamping only the failure would leave the row that actually
             # produced the artifact claiming to be a first attempt.
             _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "SUCCESS", quality_score,
+                          **summarize_usage(_usage_results, _cost_sink),
                               sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
                               artifact_size_bytes=artifact_size_bytes,
                               cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
-                              completion_tokens=completion_tokens,
-                              usage_requests=usage_requests,
                               model_used=model_used, provider=provider_used,
                               attempt_no=attempt_no)
 
@@ -2513,6 +2515,7 @@ async def run_v3_agent(
         )
         _spent_loops, _spent_tokens = _spent(_cost_sink)
         _record_telemetry(desk, agent_name, elapsed_ms, _spent_loops, _spent_tokens, "TIMED_OUT",
+                          **summarize_usage(_usage_results, _cost_sink),
                           sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
                           prompt_tokens=_spent_tokens,
                           attempt_no=attempt_no,
@@ -2535,6 +2538,7 @@ async def run_v3_agent(
         )
         _spent_loops, _spent_tokens = _spent(_cost_sink)
         _record_telemetry(desk, agent_name, elapsed_ms, _spent_loops, _spent_tokens, "CANCELLED",
+                          **summarize_usage(_usage_results, _cost_sink),
                           prompt_tokens=_spent_tokens,
                           attempt_no=attempt_no,
                           failure_reason=REASON_CANCELLED,
@@ -2578,6 +2582,7 @@ async def run_v3_agent(
                           # the 20k invariant actually read; leaving it 0 while
                           # token_usage was populated would keep the crash free
                           # in exactly the ledgers that matter.
+                          **summarize_usage(_usage_results, _cost_sink),
                           prompt_tokens=_spent_tokens,
                           attempt_no=attempt_no,
                           failure_reason=_reason,
@@ -2774,6 +2779,9 @@ def _record_telemetry(
     prompt_tokens: int = 0,
     completion_tokens: int | None = None,
     usage_requests: int = 0,
+    usage_coverage: str = "unknown",
+    usage_attempts: list | None = None,
+    usage_contract_version: int = 2,
     model_used: str | None = None,
     provider: str | None = None,
     attempt_no: int = 1,
@@ -2830,6 +2838,9 @@ def _record_telemetry(
             and completion_tokens is not None else None
         ),
         "usage_requests": int(usage_requests or 0),
+        "usage_coverage": usage_coverage,
+        "usage_attempts": usage_attempts or [],
+        "usage_contract_version": usage_contract_version,
         "model_used": model_used,
         "provider": provider,
         # True when the run DIED and these numbers are what it had already

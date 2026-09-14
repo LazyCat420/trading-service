@@ -193,7 +193,7 @@ class TestCycleStampsItsId:
         # behaviour under test is unchanged either way. Stub the probe to GO so
         # the assertion below measures trace-id stamping and nothing else.
         async def _preflight_ok():
-            return True, "stubbed: this test is about the trace id"
+            return {"eligible": True, "endpoints": []}
 
         with patch.dict(
             "sys.modules",
@@ -201,7 +201,7 @@ class TestCycleStampsItsId:
         ), patch.object(PipelineService, "save_state"), patch.object(
             PipelineService, "_state", {}
         ), patch(
-            "app.services.llm_preflight.llm_can_answer", _preflight_ok
+            "app.services.model_capabilities.discover_cycle_models", _preflight_ok
         ), patch(
             # The tool probe makes a real HTTP call to the box. Unstubbed it
             # reached the live Gold Spark from the test suite and returned its

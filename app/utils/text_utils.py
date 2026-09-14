@@ -164,9 +164,28 @@ def _repair_json_delimiters(fragment: str) -> str:
 
     Lexical only. Adds and removes commas; never a key, a value or a brace.
     """
-    return _MISSING_COMMA_RE.sub(
-        r"\1,\2\3", _TRAILING_COMMA_RE.sub(r"\1", fragment)
-    )
+    # Tokenize first: quoted strings (including escaped quotes) are opaque.
+    tokens = list(re.finditer(r'"(?:[^"\\]|\\.)*"|\s+|.', fragment, re.S))
+    out = []
+    for i, token in enumerate(tokens):
+        value = token.group()
+        following = i + 1
+        while following < len(tokens) and tokens[following].group().isspace():
+            following += 1
+        next_value = tokens[following].group() if following < len(tokens) else ""
+        if value == "," and next_value in ("}", "]"):
+            continue
+        out.append(value)
+        # Only restore the measured string-value / next-key newline boundary.
+        if value.startswith('"') and next_value.startswith('"'):
+            gap = fragment[token.end():tokens[following].start()]
+            after_key = following + 1
+            while after_key < len(tokens) and tokens[after_key].group().isspace():
+                after_key += 1
+            if "\n" in gap and after_key < len(tokens) and tokens[after_key].group() == ":":
+                out.append(",")
+    return "".join(out)
+
 
 
 def repair_delimiters_and_parse(cleaned: str) -> dict | None:

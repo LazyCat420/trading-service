@@ -164,26 +164,10 @@ class TestItFailsOpenOnAmbiguity:
 
 
 class TestItIsWiredIntoTheCycle:
-    def test_the_pipeline_runs_it_before_any_agent(self):
-        """The pre-flight block lives in `_run_all_v3`, not `start_cycle` — the
-        probe has to sit where the agents are about to run."""
+    def test_all_box_discovery_runs_before_any_agent(self):
         import inspect
-
         from app.services.pipeline_service import PipelineService
-
-        src = inspect.getsource(PipelineService._run_all_v3)
-        assert "tool_calls_are_parsed" in src
-        assert src.index("llm_can_answer()") < src.index("tool_calls_are_parsed()")
-
-    def test_a_failed_tool_probe_reaches_the_abort_path(self):
-        """Both probes must feed the same abort, or the new verdict is
-        computed and dropped."""
-        import inspect
-
-        from app.services.pipeline_service import PipelineService
-
-        src = inspect.getsource(PipelineService._run_all_v3)
-        probe = src.index("tool_calls_are_parsed()")
-        abort = src.index("if not _llm_ok:", probe)
-        assert abort > probe
-        assert "LLM_PREFLIGHT_FAILED" in src[abort:abort + 1200]
+        source = inspect.getsource(PipelineService._run_all_v3)
+        assert source.index("discover_cycle_models()") < source.index("Explicit ticker request honored")
+        assert '_llm_ok = discovery["eligible"]' in source
+        assert 'if not _llm_ok:' in source

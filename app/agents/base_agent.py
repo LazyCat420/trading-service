@@ -248,7 +248,6 @@ _BASE_AGENT_ACCEPTS_MIN_P = _base_agent_accepts_min_p()
 #: Model-name markers for providers that never had the speculative-decoding
 #: problem. Matched on the MODEL, not the provider, because prism routes on the
 #: model name and `provider` is "vllm" by default even for an overridden model.
-_CLOUD_MODEL_MARKERS = ("gpt-", "claude-", "gemini-")
 
 
 def min_p_for(provider: str | None, model: str | None) -> float | None:
@@ -275,12 +274,10 @@ def min_p_for(provider: str | None, model: str | None) -> float | None:
     Fail-safe by omission: an unknown provider gets None and keeps today's
     behaviour, so a new endpoint cannot silently inherit a sampling override.
     """
-    if any(marker in (model or "").lower() for marker in _CLOUD_MODEL_MARKERS):
-        return None
     # `provider` is None on the model_override path, where BaseAgent falls back
     # to "vllm" itself — so the fallback here must match BaseAgent's, or that
     # path keeps the broken default.
-    return 0.0 if (provider or "vllm").startswith("vllm") else None
+    return 0.0 if provider and provider.startswith("vllm") else None
 
 
 def transport_for(enable_tools: bool, agent_tools: list | None) -> str:
@@ -558,6 +555,7 @@ async def run_agent(
     parent_conversation_id: str | None = None,
     parent_agent_session_id: str | None = None,
     model_override: str | None = None,
+    usage_purpose: str = "initial",
     prism_overrides: dict | None = None,
     cost_sink: dict | None = None,
     soft_deadline_s: float | None = None,
@@ -643,6 +641,12 @@ async def run_agent(
     # in `agent_tool_telemetry` and a row saying tokens=0 loops=0. The caller
     # owning the dict reads it whatever exception it happens to catch.
     partial_cost: dict = cost_sink if cost_sink is not None else {}
+    from app.v3.usage_accounting import usage_attempt, summarize_usage
+    _local_attempts = []
+    def _account_attempt(value):
+        entry = usage_attempt(value, purpose="retry" if _local_attempts and usage_purpose == "initial" else usage_purpose)
+        _local_attempts.append(entry)
+        partial_cost.setdefault("usage_attempts", []).append(entry)
     for _k in ("tokens", "loops", "tool_calls", "completion_tokens", "usage_requests"):
         partial_cost.setdefault(_k, 0)
 
@@ -942,37 +946,38 @@ async def run_agent(
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
-        resolved_model = model_override
-        resolved_provider = None
-        if not resolved_model:
-            from app.services.prism_agent_caller import resolve_default_model_for_agent
-            # Fail-closed: proceeding without a model hands the choice to the
-            # SDK's hardcoded default (lazycat/agent.py — the Jetson's model),
-            # and prism routes by model NAME, so a 2-second Gold Spark blip
-            # rerouted a 62k-token junior-analyst payload onto the 65k Jetson
-            # where the ContextExhaustionGuard refused it before iteration 1
-            # (cycle-v3-1785905061, 2026-08-04). Raising instead lets the
-            # aresilient_call backoff (~75s) ride out the blip.
-            try:
-                resolved_model, resolved_provider = await resolve_default_model_for_agent(
-                    agent_name,
-                    force_refresh=_resolution_state["force_refresh"],
-                    endpoint_override=endpoint_override,
-                )
-                logger.info("[BaseAgent] Dynamically resolved default model for %s: %s (provider: %s)", agent_name, resolved_model, resolved_provider)
-            except Exception as e:
-                _resolution_state["force_refresh"] = True
-                logger.warning(
-                    "[BaseAgent] Model resolution failed for %s: %s — retrying "
-                    "via aresilient_call rather than falling back to the SDK "
-                    "default model.", agent_name, e,
-                )
-                raise
-        
+        from app.services.prism_agent_caller import resolve_default_model_for_agent, ModelContractError
+        resolved_model, resolved_provider = await resolve_default_model_for_agent(
+            agent_name, force_refresh=bool(model_override) or _resolution_state["force_refresh"],
+            endpoint_override=endpoint_override)
+        if model_override and model_override != resolved_model:
+            raise ModelContractError("Model override does not match fresh endpoint discovery")
+        if not resolved_model or not resolved_provider:
+            raise ModelContractError("Model and provider must both be discovered before dispatch")
+        # Context follows the selected endpoint, never an unrelated cached model.
+        from app.services.prism_agent_caller import llm, ENDPOINT_PROVIDERS
+        endpoint = next((ep for key, ep in llm._endpoints.items()
+                         if ENDPOINT_PROVIDERS.get(key) == resolved_provider), None)
+        if endpoint and endpoint.max_model_len:
+            from app.services.context_gate import estimate_tokens
+            input_estimate = estimate_tokens(system_prompt + full_prompt + str(agent_tools or []))
+            room = endpoint.max_model_len - input_estimate - 1024
+            if room < 4096:
+                raise ModelContractError("Selected endpoint cannot fit this prompt and output allowance")
+            kwargs["max_tokens"] = min(kwargs["max_tokens"], room)
+
         if resolved_model:
             kwargs["model"] = resolved_model
         if resolved_provider:
             kwargs["provider"] = resolved_provider
+        def _verify_identity(served_model, served_provider):
+            if ((served_model and served_model != resolved_model)
+                    or (served_provider and served_provider != resolved_provider)):
+                from app.services.prism_agent_caller import invalidate_model_cache
+                invalidate_model_cache()
+                _resolution_state["force_refresh"] = True
+                raise RuntimeError("Provider served a different model/endpoint than requested; rediscovery required")
+
         _model_holder["model"] = resolved_model
         _model_holder["provider"] = resolved_provider
 
@@ -1002,6 +1007,7 @@ async def run_agent(
             from app.services.prism_agent_caller import chat_toolless
 
             _active_agents.add(agent_name)
+            _chat = {}
             try:
                 _chat = await chat_toolless(
                     provider=resolved_provider or "vllm",
@@ -1013,12 +1019,14 @@ async def run_agent(
                     # OUTPUT_TOKENS, and callers legitimately pass small
                     # budgets (call_prism_agent expresses those as a
                     # conciseness directive instead, for the same reason).
-                    max_tokens=max(4096, int(max_tokens or 8192)),
+                    max_tokens=max(4096, int(kwargs["max_tokens"])),
                     timeout_seconds=300.0,
                 )
             finally:
                 _active_agents.discard(agent_name)
-
+                _account_attempt({**_chat, "requested_model": resolved_model, "requested_provider": resolved_provider, "usage_complete": bool(_chat)})
+                partial_cost["tokens"] += int(_chat.get("tokens_used") or 0)
+            _verify_identity(_chat.get("model_used"), _chat.get("provider"))
             _text = _chat.get("response") or ""
             # Same fail-closed marker check the /agent branch does: prism
             # returns harness errors as ordinary assistant text, so without
@@ -1047,13 +1055,8 @@ async def run_agent(
                 # inflate the loop stats the box comparison is built on.
                 1,
                 {},
-                # NOT RECORDED, not zero: /chat returns a single fused
-                # `tokens_used` and no per-side usage block, so the output
-                # half is genuinely unmeasured on this transport. Reporting
-                # 0 here would book every toolless run as having generated
-                # nothing — the exact confusion `usage_requests` exists to
-                # prevent.
-                {"completion_tokens": None, "usage_requests": 0},
+                # Preserve the chat transport's measured output usage.
+                {"completion_tokens": _chat.get("completion_tokens"), "usage_requests": _chat.get("usage_requests", 0)},
                 _chat.get("model_used") or resolved_model,
                 _chat.get("provider") or resolved_provider,
             )
@@ -1099,6 +1102,8 @@ async def run_agent(
         
         _active_agents.add(agent_name)
         
+        harness = None
+        _stream_completed = False
         try:
             harness = AgentHarness(
                 agent=agent,
@@ -1124,6 +1129,8 @@ async def run_agent(
 
             t0 = time.time()
             final_text = await harness.run(full_prompt)
+            _stream_completed = True
+            _verify_identity(getattr(harness, "last_model", None), getattr(harness, "last_provider", None))
             from app.services.learning.policy import content_hash
             learning_identity.clear()
             learning_identity.update({
@@ -1185,6 +1192,13 @@ async def run_agent(
             try:
                 partial_cost["tokens"] += int(getattr(harness, "total_tokens", 0) or 0)
                 _ut = harness_usage_totals(harness)
+                _account_attempt({**_ut, "tokens_used": int(getattr(harness, "total_tokens", 0) or 0),
+                    "model_used": getattr(harness, "last_model", None), "provider": getattr(harness, "last_provider", None),
+                    "requested_model": resolved_model, "requested_provider": resolved_provider,
+                    "usage_complete": _stream_completed and getattr(harness, "total_requests", None) == _ut["usage_requests"],
+                    "total_requests": getattr(harness, "total_requests", None),
+                    "prompt_tokens": getattr(harness, "prompt_tokens", None),
+                    "reasoning_tokens": getattr(harness, "reasoning_tokens", None)})
                 partial_cost["completion_tokens"] += int(_ut["completion_tokens"] or 0)
                 partial_cost["usage_requests"] += int(_ut["usage_requests"])
                 partial_cost["tool_calls"] += int(tool_call_count)
@@ -1274,7 +1288,7 @@ async def run_agent(
         "cycle_id": cycle_id,
         "bot_id": bot_id,
         "response": content,
-        "tokens_used": tokens,
+        "tokens_used": sum(a.get("tokens_used", 0) for a in _local_attempts) if _local_attempts else tokens,
         "execution_ms": elapsed_ms,
         "loops_used": loops_used,
         "stop_reason": stop_reason,
@@ -1300,7 +1314,6 @@ async def run_agent(
         # decision needs both halves. `usage_requests == 0` means NOT
         # RECORDED and `completion_tokens` is then None — a recorded 0 is a
         # TRUNCATED generation and must not read as a cheap one.
-        "completion_tokens": usage_totals["completion_tokens"],
-        "usage_requests": usage_totals["usage_requests"],
+        **summarize_usage([{"usage_attempts": _local_attempts}]),
         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
     }

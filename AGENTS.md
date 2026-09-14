@@ -306,3 +306,17 @@ prevented answer regressions, and order-boundary enforcement. A blocked
 proposal is not a model-authored HOLD. See
 [the edge-case handoff](docs/handoffs/financial-edge-cases-2026-09-11.md) for the
 latest audit, release verification, remaining model failure, and next steps.
+
+## 17. Dynamic routing and measured usage (2026-09-14)
+
+Production model IDs are discovered from each enabled endpoint at cycle admission.
+Never add model IDs or model-family allowlists to agent selection or deploy scripts.
+Keep provider and endpoint paired with the discovered ID. Capability probes establish
+tool parsing, structured output and advertised context capacity. Failed discovery
+cannot fall back to an obsolete model ID. Context limits belong to the selected
+endpoint. Retries must refresh invalid identities within their existing deadline.
+
+Usage contract v2 preserves initial, retry, repair and correction attempts. Null is
+unknown; zero is measured zero. Publish partial coverage when any attempt lacks
+usage. Successful repair does not mean the initial artifact succeeded, and successful
+cycle completion does not establish financial decision quality.

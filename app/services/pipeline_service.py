@@ -1,4 +1,5 @@
 import asyncio
+import os
 import json
 import logging
 import time
@@ -1086,6 +1087,8 @@ class PipelineService:
                     "collector_late": cstats.get("late", 0),
                     "collector_late_names": cstats.get("late_names", []),
                     "collector_failures": cstats["failures"],
+                    "model_discovery": cls._state.get("model_discovery"),
+                    "build_sha": os.getenv("GIT_SHA", "unknown"),
                     "report_generated": report_generated,
                     "trigger_type": "v3",
                     "started_at": cls._state.get("started_at"),
@@ -1312,24 +1315,15 @@ class PipelineService:
         # only POSITIVE proof of a dead endpoint aborts (probe machinery
         # failures proceed — a broken probe must not block all trading).
         try:
-            from app.services.llm_preflight import (
-                llm_can_answer,
-                tool_calls_are_parsed,
-            )
-
-            _llm_ok, _llm_detail = await llm_can_answer()
-            if _llm_ok:
-                # A box can be alive and answering and still be unable to
-                # EXECUTE anything: cycle-v3-1788565070 ran 117 agent runs and
-                # 12 decisions on a server with no tool-call parser, because
-                # every call came back as text. `llm_can_answer` passed it
-                # correctly on its own terms — it asks whether the model
-                # answers, not whether the tools work.
-                _llm_ok, _tool_detail = await tool_calls_are_parsed()
-                if not _llm_ok:
-                    _llm_detail = _tool_detail
-        except Exception as _pf_err:  # noqa: BLE001
-            _llm_ok, _llm_detail = True, f"probe-skipped: {_pf_err}"
+            from app.services.model_capabilities import discover_cycle_models
+            discovery = await discover_cycle_models()
+            cls._state["model_discovery"] = discovery
+            cls.emit("starting", "MODEL_DISCOVERY", "Verified serving models and capabilities",
+                     data={"kind": "model_discovery", **discovery})
+            _llm_ok = discovery["eligible"]
+            _llm_detail = str(discovery)
+        except Exception as _pf_err:
+            _llm_ok, _llm_detail = False, f"model discovery unavailable: {type(_pf_err).__name__}"
         if not _llm_ok:
             logger.error("[PipelineService] LLM pre-flight failed — aborting %s: %s",
                          cycle_id, _llm_detail)

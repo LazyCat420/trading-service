@@ -11,7 +11,7 @@ def _endpoint_stub(**boxes):
     eps = {
         k: types.SimpleNamespace(
             name=k, url=f"http://{k}:8000", enabled=v,
-            requests_running=0, requests_waiting=0, max_concurrent=6, model=None,
+            requests_running=0, requests_waiting=0, max_concurrent=6, model=None, validation_required=True,
         )
         for k, v in boxes.items()
     }
@@ -23,7 +23,7 @@ class TestSmartRouting:
     async def test_both_boxes_online_delegates_hard_to_dgx_and_light_to_jetson(self, monkeypatch):
         """When both DGX Spark and Jetson are online, hard tasks go to DGX and light to Jetson."""
         monkeypatch.setattr(pac, "llm", _endpoint_stub(jetson=True, dgx_spark=True))
-        monkeypatch.setattr(settings, "DECISION_MODEL_PATTERN", "deepseek|nemotron")
+
 
         async def mock_get_live_model(url, force_refresh=False):
             if "dgx_spark" in url or "dgx" in url:
@@ -46,7 +46,7 @@ class TestSmartRouting:
     async def test_dgx_offline_automatically_delegates_all_to_jetson(self, monkeypatch):
         """When DGX Spark is offline, hard tasks seamlessly fall back to Jetson."""
         monkeypatch.setattr(pac, "llm", _endpoint_stub(jetson=True, dgx_spark=True))
-        monkeypatch.setattr(settings, "DECISION_MODEL_PATTERN", "deepseek|nemotron")
+
 
         async def mock_get_live_model(url, force_refresh=False):
             if "dgx_spark" in url or "dgx" in url:
@@ -64,7 +64,7 @@ class TestSmartRouting:
     async def test_jetson_offline_automatically_delegates_all_to_dgx(self, monkeypatch):
         """When Jetson is offline, light/collector tasks seamlessly delegate to DGX Spark."""
         monkeypatch.setattr(pac, "llm", _endpoint_stub(jetson=True, dgx_spark=True))
-        monkeypatch.setattr(settings, "DECISION_MODEL_PATTERN", "deepseek|nemotron")
+
 
         async def mock_get_live_model(url, force_refresh=False):
             if "jetson" in url:
@@ -95,7 +95,7 @@ class TestSmartRouting:
     async def test_contract_check_runs_on_fallback_box(self, monkeypatch):
         """When fallback routes to Jetson, Jetson's model is verified against DECISION_MODEL_PATTERN."""
         monkeypatch.setattr(pac, "llm", _endpoint_stub(jetson=True, dgx_spark=True))
-        monkeypatch.setattr(settings, "DECISION_MODEL_PATTERN", "deepseek_only")
+
 
         async def mock_get_live_model(url, force_refresh=False):
             if "dgx" in url:
@@ -104,6 +104,9 @@ class TestSmartRouting:
 
         monkeypatch.setattr(pac, "get_live_model_from_vllm", mock_get_live_model)
 
+        async def measured_capability(key, model, **kw):
+            return {"eligible": False, "reason": "fixture capability result"}
+        monkeypatch.setattr("app.services.model_capabilities.validate_endpoint", measured_capability)
         with pytest.raises(pac.ModelContractError):
             await pac.resolve_default_model_for_agent("v3_regime_engine")
 
@@ -111,7 +114,7 @@ class TestSmartRouting:
     async def test_glm_on_dgx_spark_selected_when_pattern_allows_glm(self, monkeypatch):
         """When pattern includes glm, GLM-5.3-Flash-EXL3 on DGX Spark is successfully selected."""
         monkeypatch.setattr(pac, "llm", _endpoint_stub(jetson=True, dgx_spark=True))
-        monkeypatch.setattr(settings, "DECISION_MODEL_PATTERN", "deepseek|nemotron|glm")
+
 
         async def mock_get_live_model(url, force_refresh=False):
             if "dgx" in url:
@@ -128,7 +131,7 @@ class TestSmartRouting:
     async def test_dgx_spark_contract_mismatch_falls_back_to_jetson_nemotron(self, monkeypatch):
         """When DGX Spark has an unapproved model, it seamlessly falls back to Nemotron on Jetson."""
         monkeypatch.setattr(pac, "llm", _endpoint_stub(jetson=True, dgx_spark=True))
-        monkeypatch.setattr(settings, "DECISION_MODEL_PATTERN", "deepseek|nemotron|glm")
+
 
         async def mock_get_live_model(url, force_refresh=False):
             if "dgx" in url:
@@ -138,6 +141,9 @@ class TestSmartRouting:
         monkeypatch.setattr(pac, "get_live_model_from_vllm", mock_get_live_model)
 
         # DGX fails contract -> falls back to Jetson nemotron35 which matches nemotron!
+        async def measured_capability(key, model, **kw):
+            return {"eligible": key == "jetson", "reason": "fixture capability result"}
+        monkeypatch.setattr("app.services.model_capabilities.validate_endpoint", measured_capability)
         model, provider = await pac.resolve_default_model_for_agent("v3_regime_engine")
         assert provider == "vllm"
         assert model == "nemotron35"
@@ -146,7 +152,7 @@ class TestSmartRouting:
     async def test_both_boxes_fail_contract_raises_contract_error(self, monkeypatch):
         """When all candidate boxes fail the contract pattern, ModelContractError is raised."""
         monkeypatch.setattr(pac, "llm", _endpoint_stub(jetson=True, dgx_spark=True))
-        monkeypatch.setattr(settings, "DECISION_MODEL_PATTERN", "deepseek|nemotron")
+
 
         async def mock_get_live_model(url, force_refresh=False):
             if "dgx" in url:
@@ -155,5 +161,15 @@ class TestSmartRouting:
 
         monkeypatch.setattr(pac, "get_live_model_from_vllm", mock_get_live_model)
 
+        async def measured_capability(key, model, **kw):
+            return {"eligible": False, "reason": "fixture capability result"}
+        monkeypatch.setattr("app.services.model_capabilities.validate_endpoint", measured_capability)
         with pytest.raises(pac.ModelContractError):
             await pac.resolve_default_model_for_agent("v3_regime_engine")
+
+
+@pytest.fixture(autouse=True)
+def capabilities_verified_by_default(monkeypatch):
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr("app.services.model_capabilities.validate_endpoint",
+                        AsyncMock(return_value={"eligible": True, "reason": "fixture verified"}))

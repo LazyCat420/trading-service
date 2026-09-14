@@ -67,7 +67,7 @@ def mock_harness_run():
     ) as chat_call, patch(
         "app.services.prism_agent_caller.resolve_default_model_for_agent",
         new_callable=AsyncMock,
-        return_value=(None, None),
+        return_value=("test-model", "vllm"),
     ):
         class _BothSeams:
             @property
@@ -179,7 +179,7 @@ async def test_tool_less_calls_do_not_reach_the_agent_harness(mock_harness_run):
             new_callable=AsyncMock,
             return_value={
                 "response": '{"ok": true}', "tokens_used": 1,
-                "loops_used": 1, "model_used": "m", "provider": "vllm",
+                "loops_used": 1, "model_used": "test-model", "provider": "vllm",
             },
         ) as chat:
             result = await _call_run_agent(enable_tools=False)

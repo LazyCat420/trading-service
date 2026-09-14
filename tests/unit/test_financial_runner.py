@@ -118,8 +118,8 @@ async def test_real_pipeline_dispatch_accepts_a_correct_control_and_blocks_a_for
          patch('app.services.result_saver.save_analysis_result'), \
          patch('app.services.pipeline_state.PipelineStateDB.append_events'), \
          patch('app.services.pipeline_state.PipelineStateDB.save_state'), \
-         patch('app.services.llm_preflight.llm_can_answer',new_callable=AsyncMock,return_value=(True,'mocked')), \
-         patch('app.services.llm_preflight.tool_calls_are_parsed',new_callable=AsyncMock,return_value=(True,'mocked')), \
+         patch('app.services.model_capabilities.discover_cycle_models',new_callable=AsyncMock,return_value={'eligible': True, 'endpoints': []}), \
+         patch('app.services.llm_preflight.tool_calls_are_parsed',new_callable=AsyncMock,return_value={'eligible': True, 'endpoints': []}), \
          patch('app.trading.paper_trader.buy',new_callable=AsyncMock) as buy, \
          patch('app.trading.paper_trader.sell',new_callable=AsyncMock) as sell:
         pipeline.return_value=deepcopy(result)

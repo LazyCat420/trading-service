@@ -86,16 +86,17 @@ class TestATransientFailureCostsARefreshNotACall:
     """The property the outage argues for."""
 
     @pytest.mark.asyncio
-    async def test_a_timeout_falls_back_to_the_cached_id(self):
+    async def test_a_timeout_invalidates_the_cached_id(self):
         # Derived, not hardcoded: this was `- 600` against a 3600s grace, and
         # went red the moment the grace was cut to 120 for the GLM reload.
         # Midway between "needs a probe" and "past the grace" is the only age
         # that tests this branch regardless of the constants.
-        _age = (pac._MODEL_CACHE_TTL_S + pac._STALE_MODEL_GRACE_S) / 2
+        _age = pac._MODEL_CACHE_TTL_S + 1
         pac._dynamic_model_cache[URL] = (MODEL, time.time() - _age)
 
         with _client(side_effect=httpx.ReadTimeout("")):
-            assert await pac.get_live_model_from_vllm(URL) == MODEL
+            with pytest.raises(pac.ModelUnavailableError):
+                await pac.get_live_model_from_vllm(URL)
 
     @pytest.mark.asyncio
     async def test_an_empty_cache_still_raises(self):
@@ -116,19 +117,20 @@ class TestATransientFailureCostsARefreshNotACall:
         when the cached id had just become wrong. See
         test_model_cache_survives_a_reload.py.
         """
-        pac._dynamic_model_cache[URL] = (MODEL, time.time() - pac._STALE_MODEL_GRACE_S - 60)
+        pac._dynamic_model_cache[URL] = (MODEL, time.time() - pac._MODEL_CACHE_TTL_S - 60)
 
         with _client(side_effect=httpx.ReadTimeout("")):
             with pytest.raises(RuntimeError):
                 await pac.get_live_model_from_vllm(URL)
 
     @pytest.mark.asyncio
-    async def test_force_refresh_still_degrades_rather_than_failing(self):
+    async def test_force_refresh_never_returns_stale_discovery(self):
         """force_refresh means "re-check", not "fail if you cannot"."""
         pac._dynamic_model_cache[URL] = (MODEL, time.time() - 10)
 
         with _client(side_effect=httpx.ConnectTimeout("")):
-            assert await pac.get_live_model_from_vllm(URL, force_refresh=True) == MODEL
+            with pytest.raises(pac.ModelUnavailableError):
+                await pac.get_live_model_from_vllm(URL, force_refresh=True)
 
 
 class TestTheErrorSaysWhatWentWrong:

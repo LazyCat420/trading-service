@@ -1,3 +1,6 @@
+from contextvars import ContextVar
+from urllib.parse import urlparse
+import time
 """
 News Collector -- Fetches financial news from RSS feeds + web sources.
 
@@ -257,7 +260,7 @@ async def _scrape_article_body_via_service(
     BUDGET, and the two callers have budgets an order of magnitude apart. See
     `_scrape_with_timeout`.
     """
-    from app.services.scraper_client import scraper_client
+    from app.services.scraper_client import scraper_client, last_scrape_outcome
 
     options: dict = {"max_chars": max_chars}
     if timeout_s:
@@ -267,9 +270,10 @@ async def _scrape_article_body_via_service(
         # Chromium — for a response nobody will read.
         options["timeout"] = int(timeout_s * 1000)
     res = await scraper_client.scrape(url, engine=engine, options=options)
+    outcome = last_scrape_outcome.get() or {"reason": "unknown", "service_failure": False}
     if res and res.get("success") and res.get("content"):
-        return res["content"]
-    return ""
+        return _ScrapedBody(res["content"], outcome)
+    return _ScrapedBody("", outcome)
 
 
 # --- Body-scrape sizing -------------------------------------------------------
@@ -300,50 +304,62 @@ SCRAPE_ATTEMPTS_PER_FEED = int(os.getenv("NEWS_SCRAPE_ATTEMPTS_PER_FEED", "5"))
 SCRAPE_BREAKER_STRIKES = int(os.getenv("NEWS_SCRAPE_BREAKER_STRIKES", "3"))
 
 
+class _ScrapedBody(str):
+    def __new__(cls, text, outcome):
+        obj = super().__new__(cls, text)
+        obj.outcome = outcome
+        return obj
+
+
 class _ScrapeBreaker:
-    """Stop attempting body scrapes once the scraper is clearly not answering.
-
-    Sweep-wide, not per-feed: the cost being avoided is 27 feeds each paying a
-    full deadline to a service that is down.
-
-    It keeps its OWN counter on purpose. `asyncio.wait_for` CANCELS
-    `scraper_client.scrape`; `CancelledError` is a BaseException, so the
-    client's `except Exception` never runs and neither `misses` nor `failures`
-    moves. `SweepRecord.total_miss` / `.miss_rate` are blind to exactly this
-    failure mode — worse, `calls` was already incremented before the cancel, so
-    every timeout DILUTES `miss_rate` downward. A breaker built on that ledger
-    would never fire during the outage it exists for.
-    """
-
-    def __init__(self, strikes: int = SCRAPE_BREAKER_STRIKES):
+    """Domain isolation; global strikes require a confirmed connection outage."""
+    def __init__(self, strikes=SCRAPE_BREAKER_STRIKES, cooldown_s=30.0):
         self.strikes = max(1, strikes)
+        self.cooldown_s = cooldown_s
         self.consecutive = 0
         self.tripped = False
         self.skipped = 0
+        self.retry_at = 0.0
+        self.domains = {}
 
-    def allow(self) -> bool:
-        return not self.tripped
+    def allow(self, domain=""):
+        if domain:
+            return self.allow() and self.domains.setdefault(domain, _ScrapeBreaker(self.strikes, self.cooldown_s)).allow()
+        if not self.tripped:
+            return True
+        now = time.monotonic()
+        if now >= self.retry_at:
+            self.retry_at = now + self.cooldown_s  # one half-open probe
+            return True
+        return False
 
-    def record(self, ok: bool) -> None:
+    def record(self, ok, domain="", service_failure=False):
+        if domain:
+            self.domains.setdefault(domain, _ScrapeBreaker(self.strikes, self.cooldown_s)).record(ok)
+            if ok or service_failure:
+                self.record(ok)
+            return
         if ok:
             self.consecutive = 0
-            return
-        self.consecutive += 1
-        if self.consecutive >= self.strikes:
-            self.tripped = True
+            self.tripped = False
+            self.retry_at = 0.0
+        else:
+            self.consecutive += 1
+            if self.consecutive >= self.strikes:
+                self.tripped = True
+                self.retry_at = time.monotonic() + self.cooldown_s
 
-    def note_skip(self) -> None:
+    def note_skip(self):
         self.skipped += 1
 
 
-_SWEEP_BREAKER = _ScrapeBreaker()
+_SWEEP_BREAKER = ContextVar("news_sweep_breaker", default=None)
 
 
-def _reset_sweep_breaker() -> _ScrapeBreaker:
-    """Start a fresh breaker for a sweep. Called by `collect_all`."""
-    global _SWEEP_BREAKER
-    _SWEEP_BREAKER = _ScrapeBreaker()
-    return _SWEEP_BREAKER
+def _reset_sweep_breaker():
+    breaker = _ScrapeBreaker()
+    _SWEEP_BREAKER.set(breaker)
+    return breaker
 
 
 async def _scrape_with_timeout(url: str, fallback_summary: str, timeout: float | None = None,
@@ -374,16 +390,20 @@ async def _scrape_with_timeout(url: str, fallback_summary: str, timeout: float |
     """
     if timeout is None:
         timeout = SCRAPE_TIMEOUT_S
+    outcome = {"reason": "unknown", "service_failure": False}
     try:
         body = await asyncio.wait_for(
             _scrape_article_body_via_service(url, engine=engine, timeout_s=timeout),
             timeout=timeout,
         )
-        if body:
+        outcome = getattr(body, "outcome", outcome)
+        if body and len(body) >= 150 and body != fallback_summary:
             if stats is not None:
                 stats["scraped"] = stats.get("scraped", 0) + 1
             return body
+        outcome = {**outcome, "reason": outcome.get("reason") if not body else "unchanged_or_short"}
     except asyncio.TimeoutError:
+        outcome = {"reason": "deadline", "service_failure": False}
         if stats is not None:
             stats["timeout"] = stats.get("timeout", 0) + 1
         logger.debug("[news] Scrape timeout (%.1fs) for URL: %s, using API summary", timeout, url)
@@ -393,7 +413,7 @@ async def _scrape_with_timeout(url: str, fallback_summary: str, timeout: float |
         logger.debug("[news] Scrape failed for URL %s: %s, using API summary", url, e)
     if stats is not None:
         stats["fallback"] = stats.get("fallback", 0) + 1
-    return fallback_summary
+    return _ScrapedBody(fallback_summary, outcome)
 
 
 def _extract_text_from_html(html: str, max_chars: int = 15000) -> str:
@@ -743,7 +763,7 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
 
     count = 0
     if breaker is None:
-        breaker = _SWEEP_BREAKER
+        breaker = _SWEEP_BREAKER.get() or _ScrapeBreaker()
     try:
         items = await scraper_client.collect(
             source="news",
@@ -799,7 +819,7 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
             # ~46 across the 27-feed sweep. Not 405. The cap below is therefore
             # slack for a pathological feed, not a throttle on the normal case.
             if url and (len(api_summary) < 150 or "..." in api_summary):
-                if not breaker.allow():
+                if not breaker.allow(urlparse(url).hostname or "unknown"):
                     breaker.note_skip()
                     scrape_stats["skipped_breaker"] = scrape_stats.get("skipped_breaker", 0) + 1
                 elif scrape_attempts >= SCRAPE_ATTEMPTS_PER_FEED:
@@ -811,7 +831,11 @@ async def collect_feed(feed_name: str, feed_url: str, emit_cb: any = None, is_fo
                     scrape_attempts += 1
                     body = await _scrape_with_timeout(url, api_summary, stats=scrape_stats)
                     got = bool(body and len(body) >= 150 and body != api_summary)
-                    breaker.record(ok=got)
+                    outcome = getattr(body, "outcome", {})
+                    breaker.record(ok=got, domain=urlparse(url).hostname or "unknown",
+                                   service_failure=bool(outcome.get("service_failure")))
+                    reason = outcome.get("reason", "body" if got else "summary_fallback")
+                    scrape_stats[reason] = scrape_stats.get(reason, 0) + 1
                     if got:
                         summary = body
 
@@ -981,7 +1005,7 @@ async def collect_all(limit_feeds: int | None = None, emit_cb: any = None) -> in
     # `collect_feed` is monkey-patched with 2-arg stubs in several suites, and
     # `collect_all` swallows the resulting TypeError into its `failed` counter —
     # a sweep that quietly collects 0. `collect_feed` reads the module global.
-    _reset_sweep_breaker()
+    sweep_token = _SWEEP_BREAKER.set(_ScrapeBreaker())
     sem = asyncio.Semaphore(FEED_CONCURRENCY)
 
     async def _one(name: str, url: str, is_foreign: bool) -> int:
@@ -1017,9 +1041,12 @@ async def collect_all(limit_feeds: int | None = None, emit_cb: any = None) -> in
                 )
                 return 0
 
-    counts = await asyncio.gather(
-        *(_one(n, u, f) for n, u, f in feeds_to_check), return_exceptions=True
-    )
+    try:
+        counts = await asyncio.gather(
+            *(_one(n, u, f) for n, u, f in feeds_to_check), return_exceptions=True
+        )
+    finally:
+        _SWEEP_BREAKER.reset(sweep_token)
     total = sum(c for c in counts if isinstance(c, int))
 
     logger.info(

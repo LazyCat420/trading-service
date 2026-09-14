@@ -128,6 +128,9 @@ def _persist_entries(desk: SharedDesk, entries: list[dict]) -> None:
                 # recorded 0 is a TRUNCATED generation, not a cheap one.
                 "completion_tokens": entry.get("completion_tokens"),
                 "usage_requests": int(entry.get("usage_requests") or 0),
+                "usage_coverage": entry.get("usage_coverage", "unknown"),
+                "usage_attempts": entry.get("usage_attempts", []),
+                "usage_contract_version": entry.get("usage_contract_version"),
                 "sys_prompt_chars": entry.get("sys_prompt_chars", 0),
                 "user_prompt_chars": entry.get("user_prompt_chars", 0),
                 "model_used": entry.get("model_used") or None,

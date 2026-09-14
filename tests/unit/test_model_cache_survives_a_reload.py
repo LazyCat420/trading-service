@@ -31,17 +31,20 @@ import pytest
 from app.services import prism_agent_caller as pac
 
 
-def test_the_grace_window_is_shorter_than_a_model_load():
-    """An hour spans any reload; the fallback then answers with the old model.
-
-    The stall this fallback exists for (2026-08-06) was OUR container being
-    busy while the box answered in 37ms — seconds, not minutes. A window that
-    rides out a reload is not bounding the error, it is hiding it.
-    """
-    assert pac._STALE_MODEL_GRACE_S <= 300, (
-        f"grace is {pac._STALE_MODEL_GRACE_S}s — long enough to serve the "
-        f"pre-reload model id through an entire model swap"
-    )
+@pytest.mark.asyncio
+async def test_a_failed_fresh_probe_never_serves_cached_identity(monkeypatch):
+    import time
+    from unittest.mock import AsyncMock, MagicMock
+    url = "http://box.invalid"
+    pac._dynamic_model_cache[url] = ("removed-model", time.time())
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock()
+    client.get = AsyncMock(side_effect=TimeoutError("reloading"))
+    monkeypatch.setattr(pac.httpx, "AsyncClient", lambda **kwargs: client)
+    with pytest.raises(pac.ModelUnavailableError):
+        await pac.get_live_model_from_vllm(url, force_refresh=True)
+    assert url not in pac._dynamic_model_cache
 
 
 def test_a_known_bad_model_id_is_dropped_not_re_served():

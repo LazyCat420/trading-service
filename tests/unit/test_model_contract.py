@@ -21,7 +21,7 @@ def _endpoint_stub(**boxes):
     eps = {
         k: types.SimpleNamespace(
             name=k, url=f"http://{k}:8000", enabled=True,
-            requests_running=0, requests_waiting=0, max_concurrent=6, model=None,
+            requests_running=0, requests_waiting=0, max_concurrent=6, model=None, validation_required=True,
         )
         for k in boxes or {"dgx_spark": True, "jetson": True}
     }
@@ -40,9 +40,12 @@ class TestModelContract:
             return "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit"
 
         monkeypatch.setattr(pac, "get_live_model_from_vllm", serves_qwen)
+        async def measured_capability(key, model, **kw):
+            return {"eligible": False, "reason": "fixture capability result"}
+        monkeypatch.setattr("app.services.model_capabilities.validate_endpoint", measured_capability)
         with pytest.raises(pac.ModelContractError) as exc:
             await pac.resolve_default_model_for_agent("v3_regime_engine")
-        assert "Qwen3.6" in str(exc.value) and "DECISION_MODEL_PATTERN" in str(exc.value)
+        assert "fixture capability result" in str(exc.value)
 
     @pytest.mark.asyncio
     async def test_deepseek_on_dgx_spark_passes(self, monkeypatch):
@@ -78,7 +81,7 @@ class TestModelContract:
         from app.config.config import settings
 
         monkeypatch.setattr(pac, "llm", _endpoint_stub(dgx_spark=True))
-        monkeypatch.setattr(settings, "DECISION_MODEL_PATTERN", "")
+
 
         async def serves_qwen(url, force_refresh=False):
             return "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit"
@@ -184,3 +187,10 @@ class TestBatchScreenerEmptyFrame:
         assert isinstance(out, tuple) and len(out) == 2
         msg, results = out
         assert results == [] and "Failed" in msg
+
+
+@pytest.fixture(autouse=True)
+def capabilities_verified_by_default(monkeypatch):
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr("app.services.model_capabilities.validate_endpoint",
+                        AsyncMock(return_value={"eligible": True, "reason": "fixture verified"}))

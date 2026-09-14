@@ -85,7 +85,7 @@ class TestRunAgentReturnsIt:
         with patch.object(AgentHarness, "run", new=_fake_run), patch(
             "app.services.prism_agent_caller.resolve_default_model_for_agent",
             new_callable=AsyncMock,
-            return_value=(None, None),
+            return_value=("unit-test-model", "vllm"),
         ):
             from app.agents.base_agent import run_agent
 

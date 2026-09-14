@@ -60,12 +60,12 @@ class TestTheScriptText:
         found = vs.deploy_env_violations(CONDEMNED_93330E6)
         assert len(found) == 2, found
         assert any("SOLO_JETSON_MODE" in f for f in found)
-        assert any("glm" in f for f in found)
+        assert any("DECISION_MODEL_PATTERN" in f for f in found)
 
     def test_the_half_fix_is_still_caught(self, vs):
         """Defaulting the pin to false is not the same as removing it."""
         found = vs.deploy_env_violations(HALF_FIXED_21BC4B6)
-        assert len(found) == 1 and "SOLO_JETSON_MODE" in found[0], found
+        assert len(found) == 2 and "SOLO_JETSON_MODE" in found[0], found
 
     def test_the_real_deploy_script_is_clean(self, vs):
         assert vs.deploy_env_violations((REPO / "deploy.sh").read_text()) == []
@@ -77,14 +77,14 @@ class TestTheScriptText:
 class TestTheContainerEnv:
     def test_the_09_02_env_fails_both_ways(self, vs):
         statuses = {c: s for c, s, _ in vs.routing_env_verdicts(NAS_ENV_2026_09_02)}
-        assert list(statuses.values()).count(vs.FAIL) == 2, statuses
+        assert list(statuses.values()).count(vs.FAIL) == 1, statuses
 
     def test_a_clean_env_passes(self, vs):
         assert vs.FAIL not in [s for _, s, _ in vs.routing_env_verdicts(CLEAN_ENV)]
 
     def test_a_pattern_without_glm_fails_even_without_the_flag(self, vs):
         env = dict(CLEAN_ENV, DECISION_MODEL_PATTERN="deepseek|nemotron")
-        assert vs.FAIL in [s for _, s, _ in vs.routing_env_verdicts(env)]
+        assert vs.WARN in [s for _, s, _ in vs.routing_env_verdicts(env)]
 
 
 class TestTheLiveRoutes:

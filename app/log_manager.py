@@ -123,6 +123,8 @@ class LogManager(SDKLogManager):
                         'collector_skipped': summary.get("collector_skipped", 0),
                         'collector_error': summary.get("collector_error", 0),
                         'collector_failures': summary.get("collector_failures") or [],
+                        'model_discovery': summary.get('model_discovery'),
+                        'build_sha': summary.get('build_sha'),
                         'status': summary.get("status", "unknown"),
                         'finished_at': summary.get("ended_at"),
                         'elapsed_ms': summary.get("elapsed_ms", 0),

@@ -44,7 +44,7 @@ async def _run(deadline_monotonic):
     harness = AsyncMock(side_effect=PrismTransientHarnessError(STALL))
     with patch("lazycat.agent.AgentHarness.run", harness), \
          patch("app.services.prism_agent_caller.resolve_default_model_for_agent",
-               new=AsyncMock(return_value=(None, None))), \
+               new=AsyncMock(return_value=("test-model", "vllm"))), \
          patch("app.agents.tool_whitelists.get_agent_tools", return_value=[{"name": "get_market_data"}]), \
          patch("lazycat.resilience.asyncio.sleep", new=AsyncMock()):
         try:

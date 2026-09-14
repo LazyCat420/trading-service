@@ -158,49 +158,21 @@ def _extract_token_usage(resp: Any, response_text: str) -> int:
     # Fallback: rough estimate from output length (better than nothing).
     return len(response_text or "") // 4
 
-#: How long a cached model id may still be served AFTER the probe fails.
-#:
-#: This was 3600 under the reasoning that "a box's model id changes only when
-#: someone reloads it, so a stale answer is nearly always the right answer".
-#: THAT PREMISE IS INVERTED, and 2026-09-12 is what it costs: **a reload is
-#: exactly what makes the probe fail**, because the box is down while it swaps.
-#: So the grace window opens precisely when the cached name has just become
-#: wrong, and it then answers with the OLD model for a full hour.
-#:
-#: Observed: the operator loaded GLM on Gold Spark; the box served
-#: `GLM-5.3-Flash-EXL3`, while this cache went on handing out
-#: `deepseek-v4-flash-0731` — "serving the cached id … from 515s ago rather
-#: than failing the call" — and every call asking for a model the box no
-#: longer has came back `502 vllm-shim upstream failure`.
-#:
-#: 120s is deliberately shorter than any model load. It still rides out the
-#: in-process stall this fallback was built for (2026-08-06: our own container
-#: was busy, the box answered in 37ms), because that stall is seconds, not
-#: minutes. It cannot ride out a reload, which is the point.
-_STALE_MODEL_GRACE_S = 120
-
-#: How long a cached id is served WITHOUT probing at all. Must stay <= the
-#: grace above, or the two disagree: an entry could be "fresh enough to skip
-#: the probe" while also being "too stale to serve after one fails", so the
-#: same age is trusted on the happy path and rejected on the sad one. It was
-#: 300 against a 3600 grace, which hid that; at a 120 grace it surfaces
-#: immediately. Both are now well under any model load, which is the property
-#: that matters — neither can span a reload.
+# Normal dispatch caches discovery briefly; forced probes never use stale data.
 _MODEL_CACHE_TTL_S = 60
 
 
 def invalidate_model_cache(url: str | None = None) -> None:
-    """Forget a cached model id, so the next resolve re-probes the box.
-
-    Call this the moment the downstream says the model is not servable. A 502
-    from the shim means the shim is UP and the upstream changed under it —
-    that is positive evidence of a swap, not a transient network blip, and
-    continuing to serve the cached name just repeats the failed call.
-    """
+    """Invalidate observations after a routing failure; rediscovery determines its cause."""
     if url is None:
         _dynamic_model_cache.clear()
+        _model_catalog.clear()
     else:
         _dynamic_model_cache.pop(url, None)
+        _model_catalog.pop(url, None)
+    for ep in llm._endpoints.values():
+        if url is None or ep.url == url:
+            ep.model, ep.max_model_len = None, None
 
 
 class ModelUnavailableError(RuntimeError):
@@ -223,75 +195,63 @@ class ModelUnavailableError(RuntimeError):
     """
 
 
+_model_probe_locks = {}
+_model_catalog = {}
+
+
 async def get_live_model_from_vllm(url: str, force_refresh: bool = False) -> str:
-    """Resolve the model a vLLM box is serving. Cached 5 min; degrades to stale.
+    """One endpoint catalog for identity and context. Failed probes never serve stale IDs."""
+    lock_key = (id(asyncio.get_running_loop()), url)
+    lock = _model_probe_locks.setdefault(lock_key, asyncio.Lock())
+    observed = _dynamic_model_cache.get(url)
+    async with lock:
+        cached = _dynamic_model_cache.get(url)
+        if cached and time.time() - cached[1] < _MODEL_CACHE_TTL_S:
+            if not force_refresh or cached is not observed:
+                return cached[0]
+        last_error = None
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    response = await client.get(f"{url.rstrip('/')}/v1/models")
+                    if response.status_code != 200:
+                        raise RuntimeError(f"HTTP {response.status_code} during model discovery")
+                    models = response.json().get("data") or []
+                # No name heuristics and no arbitrary models[0] on a multi-model server.
+                usable = [m for m in models if isinstance(m, dict) and m.get("id")
+                          and m.get("task", "generate") not in ("embed", "embedding", "rerank")]
+                if len(usable) != 1:
+                    raise ValueError(f"expected one unambiguous generation model, found {len(usable)}")
+                row = usable[0]
+                model = str(row["id"])
+                context = row.get("max_model_len") or row.get("context_length")
+                context = int(context) if context else None
+                _model_catalog[url] = {"model": model, "context_tokens": context,
+                    "discovered_at": datetime.now(timezone.utc).isoformat()}
+                _dynamic_model_cache[url] = (model, time.time())
+                for ep in llm._endpoints.values():
+                    if ep.url == url:
+                        ep.model = model
+                        ep.max_model_len = context
+                        ep.last_model_sync = time.monotonic()
+                if context:
+                    from app.config.context_budget import register_model_context
+                    register_model_context(model, context)
+                return model
+            except Exception as exc:
+                last_error = exc
+        invalidate_model_cache(url)
+        _model_catalog.pop(url, None)
+        raise ModelUnavailableError(f"No verified model at endpoint: {type(last_error).__name__}: {str(last_error) or '<no message>'}")
 
-    ON THE CRITICAL PATH. `resolve_default_model_for_agent` calls this for
-    EVERY agent, so whatever this raises, that agent's run raises too.
 
-    WHY IT DEGRADES INSTEAD OF RAISING. 2026-08-06, the first real gatekeeper
-    shadow failed with `VLLM endpoint offline: http://10.0.0.30:8000
-    (error: )` — an httpx timeout, whose message is empty. Seconds later the
-    same box answered a direct probe in 37ms, and measured afterwards it never
-    exceeded 70ms: 0/30 probes over 2s, idle AND under 8 concurrent
-    generations. So the box was not slow. The 2s budget expired inside a
-    container that was mid-cycle, which points at this process, not the
-    endpoint.
-
-    The mechanism is NOT proven — that is stated plainly rather than papered
-    over. What is certain is the shape of the failure: a probe whose result is
-    cached for five minutes took down a call while a perfectly good answer sat
-    in the cache. So a failed refresh now falls back to the last known model id
-    for up to an hour, loudly, and only an empty cache is fatal. A genuinely
-    dead box still fails — one layer down, at prism, with a real error message
-    instead of an empty one.
-    """
-    now = time.time()
-    cached = _dynamic_model_cache.get(url)
-    if not force_refresh and cached and now - cached[1] < _MODEL_CACHE_TTL_S:
-        return cached[0]
-
-    last_error: Exception | None = None
-    # Two attempts: the observed failure was transient, and a retry costs at
-    # most a few seconds against a value good for the next five minutes.
-    for attempt in (1, 2):
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{url}/v1/models")
-                if resp.status_code == 200:
-                    models = resp.json().get("data", [])
-                    if models:
-                        model_id = models[0].get("id")
-                        if model_id:
-                            _dynamic_model_cache[url] = (model_id, now)
-                            return model_id
-                last_error = RuntimeError(
-                    f"HTTP {resp.status_code} with no usable model list"
-                )
-        except Exception as e:  # noqa: BLE001 — retried, then degraded below
-            last_error = e
-            # The type matters: an httpx timeout stringifies to "", so the old
-            # message read "(error: )" and said nothing about what went wrong.
-            logger.warning(
-                "[VLLM] model probe attempt %d/2 failed for %s: %s: %s",
-                attempt, url, type(e).__name__, str(e) or "<no message>",
-            )
-
-    if cached and now - cached[1] < _STALE_MODEL_GRACE_S:
-        logger.warning(
-            "[VLLM] model probe failed for %s (%s: %s) — serving the cached id "
-            "%s from %.0fs ago rather than failing the call.",
-            url, type(last_error).__name__, str(last_error) or "<no message>",
-            cached[0], now - cached[1],
-        )
-        return cached[0]
-
-    if last_error is None:
-        raise ModelUnavailableError(f"No models found at vLLM endpoint: {url}")
-    raise ModelUnavailableError(
-        f"VLLM endpoint offline: {url} "
-        f"({type(last_error).__name__}: {str(last_error) or '<no message>'})"
-    )
+async def resolve_requested_model(agent_name, model_override=None, endpoint_override=None):
+    """Overrides are validated against fresh discovery and never infer a provider."""
+    model, provider = await resolve_default_model_for_agent(
+        agent_name, force_refresh=bool(model_override), endpoint_override=endpoint_override)
+    if model_override and model_override != model:
+        raise ModelContractError("Requested model does not match the discovered endpoint model")
+    return model, provider
 
 # Endpoint key -> the prism provider slug that reaches it. Both halves of
 # the pair have to move together: `provider` is what prism routes on, and
@@ -523,6 +483,10 @@ async def chat_toolless(
         # everywhere else and a shadow that reported only output would look
         # artificially cheap next to the primary.
         "tokens_used": (usage.get("inputTokens") or 0) + (usage.get("outputTokens") or 0),
+        "completion_tokens": (int(usage.get("outputTokens") or 0) + int(usage.get("reasoningOutputTokens") or 0)) if usage else None,
+        "usage_requests": 1 if usage else 0,
+        "prompt_tokens": usage.get("inputTokens"),
+        "usage": usage,
         "loops_used": 1,
         "model_used": done.get("model"),
         "provider": done.get("provider"),
@@ -549,7 +513,7 @@ async def resolve_default_model_for_agent(
        must not land on the 128K box (measured 2026-09-02/03: fundamental
        analyst on the Jetson → EMPTY RESPONSE after 13 loops / 565 s).
     3. FALLBACK — an endpoint that is unconfigured, disabled, unreachable, or
-       (for decision agents) serving a model outside DECISION_MODEL_PATTERN is
+       (for decision agents) failing the capability contract is
        skipped and the next candidate is tried. Nothing is available → raise.
 
     There is deliberately NO static pin. SOLO_JETSON_MODE (2026-09-02 →
@@ -599,9 +563,6 @@ async def resolve_default_model_for_agent(
             )
             candidates.reverse()
 
-    pattern = (getattr(_settings, "DECISION_MODEL_PATTERN", "") or "").strip().lower()
-    patterns = [p.strip() for p in pattern.split("|") if p.strip()]
-
     discovered_model = None
     chosen_endpoint = None
     chosen_provider = None
@@ -629,21 +590,11 @@ async def resolve_default_model_for_agent(
             last_error = exc
             continue
 
-        # Decision agents are contract-checked on WHICHEVER box answers,
-        # including the fallback/overflow box. Collectors are model-agnostic.
-        if not is_collector and patterns:
-            model_lower = str(discovered_model).lower()
-            if not any(p in model_lower for p in patterns):
-                contract_err = ModelContractError(
-                    f"{ep_key} is serving {discovered_model!r}, which does not match "
-                    f"DECISION_MODEL_PATTERN={pattern!r}. Refusing to run {agent_name} "
-                    f"against a model the decision agents were not built for."
-                )
-                logger.warning(
-                    "[SmartRouting] Endpoint '%s' model contract violation: %s — attempting fallback if available.",
-                    ep_key, contract_err
-                )
-                last_error = contract_err
+        if getattr(ep, "validation_required", False):
+            from app.services.model_capabilities import validate_endpoint
+            capability = await validate_endpoint(ep_key, discovered_model)
+            if not capability.get("eligible"):
+                last_error = ModelContractError(f"{ep_key}: {capability.get('reason')}")
                 continue
 
         chosen_endpoint = ep_key
@@ -732,23 +683,10 @@ async def call_prism_agent(
         from app.v3.guardrails import get_budget_for_role
         max_iter = get_budget_for_role(agent_id).max_turns
 
-        default_model, default_provider = await resolve_default_model_for_agent(
-            fallback_agent_name or agent_id, endpoint_override=endpoint_override
+        default_model, default_provider = await resolve_requested_model(
+            fallback_agent_name or agent_id, model_override, endpoint_override
         )
-        model = model_override or default_model
-        
-        if model_override:
-            name_lower = model_override.lower()
-            if "gpt-" in name_lower:
-                provider = "openai"
-            elif "claude-" in name_lower:
-                provider = "anthropic"
-            elif "gemini-" in name_lower:
-                provider = "google"
-            else:
-                provider = default_provider
-        else:
-            provider = default_provider
+        model, provider = default_model, default_provider
         
         # vLLM will reject requests if (prompt_tokens + max_tokens > max_model_len).
         # We subtract the estimated prompt tokens from max_tokens to give the largest possible budget without crashing.
@@ -951,6 +889,7 @@ class VLLMEndpoint:
     #: Jetson). None until the first sync. Never defaulted: the 2026-09-03
     #: endpoint view invented 128000 for the 1M box via getattr.
     max_model_len: int | None = None
+    validation_required: bool = True
 
 #: Metric NAME → (VLLMEndpoint attribute, converter). Names are matched
 #: EXACTLY against the token before '{' or whitespace — never by prefix.
@@ -1035,28 +974,18 @@ class PrismLLMShim:
         self._metrics_task = None
         
     async def _sync_endpoint_model(self, ep: VLLMEndpoint, force: bool = False) -> str | None:
-        import httpx
-        import time
-        if not ep or not getattr(ep, "url", None):
+        if not ep or not ep.url:
             return None
-        now_time = time.monotonic()
-        last_sync = getattr(ep, "last_model_sync", 0.0)
-        if force or now_time - last_sync > 5.0:
-            setattr(ep, "last_model_sync", now_time)
-            try:
-                async with httpx.AsyncClient(timeout=3.0) as client:
-                    r = await client.get(f"{ep.url}/v1/models")
-                    if r.status_code == 200:
-                        data = r.json()
-                        models = data.get("data", [])
-                        if models:
-                            new_model = models[0]["id"]
-                            ep.model = new_model
-                            raw_len = models[0].get("max_model_len")
-                            ep.max_model_len = int(raw_len) if raw_len else None
-            except Exception as e:
-                logger.debug("[PrismLLMShim] Failed to sync model for %s: %s", ep.name, e)
-        return getattr(ep, "model", None)
+        try:
+            model = await get_live_model_from_vllm(ep.url, force_refresh=force)
+            ep.model = model
+            ep.max_model_len = (_model_catalog.get(ep.url) or {}).get("context_tokens")
+            ep.last_model_sync = time.monotonic()
+            return model
+        except ModelUnavailableError:
+            ep.model = None
+            ep.max_model_len = None
+            return None
 
     def reset_kill_switch(self):
         self._killed = False
@@ -1155,23 +1084,10 @@ class PrismLLMShim:
         priority_val = priority.value if hasattr(priority, "value") else int(priority)
 
         async with concurrency_controller.track(label=agent_name, tokens=est_tokens, priority=priority_val):
-            default_model, default_provider = await resolve_default_model_for_agent(
-                agent_name, endpoint_override=endpoint_override
+            default_model, default_provider = await resolve_requested_model(
+                agent_name, model_override, endpoint_override
             )
-            model = model_override or default_model
-            
-            if model_override:
-                name_lower = model_override.lower()
-                if "gpt-" in name_lower:
-                    provider = "openai"
-                elif "claude-" in name_lower:
-                    provider = "anthropic"
-                elif "gemini-" in name_lower:
-                    provider = "google"
-                else:
-                    provider = default_provider
-            else:
-                provider = default_provider
+            model, provider = default_model, default_provider
 
             from app.v3.guardrails import get_budget_for_role
             max_iter = get_budget_for_role(agent_name).max_turns

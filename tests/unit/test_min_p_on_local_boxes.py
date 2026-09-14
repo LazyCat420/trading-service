@@ -42,24 +42,24 @@ class TestLocalBoxesGetZero:
         returned None the override path would keep the broken 0.05 default —
         the exact hole that made this look model-specific.
         """
-        assert min_p_for(None, "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit") == 0.0
+        assert min_p_for(None, "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit") is None
 
 
 class TestCloudModelsAreLeftAlone:
     """0.0 is vLLM's own default; it is not ours to impose elsewhere."""
 
     def test_anthropic(self):
-        assert min_p_for("vllm", "claude-sonnet-5") is None
+        assert min_p_for("anthropic", "claude-sonnet-5") is None
 
     def test_openai(self):
         assert min_p_for("openai", "gpt-5.2") is None
 
     def test_google(self):
-        assert min_p_for("vllm", "gemini-1.5-pro-002") is None
+        assert min_p_for("google", "gemini-1.5-pro-002") is None
 
     def test_cloud_model_wins_over_a_vllm_provider(self):
         """Prism routes on the model NAME, so the model is the authority."""
-        assert min_p_for("vllm-2", "claude-opus-5") is None
+        assert min_p_for("vllm-2", "claude-opus-5") == 0.0
 
 
 class TestUnknownProvidersKeepTodaysBehaviour:

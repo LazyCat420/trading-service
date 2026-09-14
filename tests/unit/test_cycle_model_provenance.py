@@ -22,19 +22,9 @@ def test_derive_cycle_box_both():
     assert label == "Both"
 
 
-def test_derive_cycle_box_fallback_model_name():
-    # If provider string is empty/None but model name identifies the hardware:
-    box_j, label_j = _derive_cycle_box(set(), {"nemotron35"})
-    assert box_j == "jetson"
-    assert label_j == "Jetson"
-
-    box_s, label_s = _derive_cycle_box(set(), {"GLM-5.3-Flash-EXL3"})
-    assert box_s == "spark"
-    assert label_s == "Gold Spark"
-
-    box_both, label_both = _derive_cycle_box(set(), {"nemotron35", "GLM-5.3-Flash-EXL3"})
-    assert box_both == "both"
-    assert label_both == "Both"
+def test_model_names_do_not_establish_hardware():
+    for models in ({"nemotron35"}, {"GLM-5.3-Flash-EXL3"}, {"nemotron35", "GLM-5.3-Flash-EXL3"}):
+        assert _derive_cycle_box(set(), models) == ("unknown", "Unknown")
 
 
 def test_derive_cycle_box_unknown():

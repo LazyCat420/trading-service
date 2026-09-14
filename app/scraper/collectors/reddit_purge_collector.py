@@ -286,13 +286,12 @@ class RedditPurgeCollector:
             "x-username": PRISM_USERNAME,
         }
 
-        model = ollama_model or os.getenv("PURGE_MODEL", "vllm/cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit")
-        provider = "vllm"
-        resolved_model = model
-        if "/" in model:
-            parts = model.split("/", 1)
-            provider = parts[0]
-            resolved_model = parts[1]
+        # Legacy diagnostic overrides must agree with fresh endpoint discovery.
+        # Namespace slashes belong to model IDs and cannot identify a provider.
+        from app.scraper.core.model_discovery import discover_purge_model
+        resolved_model, provider = await discover_purge_model()
+        if ollama_model and ollama_model not in (resolved_model, f"{provider}/{resolved_model}"):
+            raise ValueError("Requested purge model does not match discovered endpoint")
 
         for i in range(0, len(candidates), batch_size):
             batch = candidates[i:i+batch_size]

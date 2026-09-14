@@ -25,7 +25,7 @@ def _box(key, *, enabled=True, running=0, waiting=0, cap=6):
     return types.SimpleNamespace(
         name=key, url=f"http://{key}:8000", enabled=enabled,
         requests_running=running, requests_waiting=waiting,
-        max_concurrent=cap, model=None,
+        max_concurrent=cap, model=None, validation_required=True,
     )
 
 
@@ -47,7 +47,8 @@ def _serving(dgx="GLM-5.3-Flash-EXL3", jetson="nemotron35"):
 
 @pytest.fixture(autouse=True)
 def _pattern(monkeypatch):
-    monkeypatch.setattr(settings, "DECISION_MODEL_PATTERN", "deepseek|nemotron|glm")
+    pass
+
 
 
 class TestSaturation:
@@ -107,6 +108,9 @@ class TestOverflow:
         ))
         monkeypatch.setattr(pac, "get_live_model_from_vllm",
                             _serving(jetson="cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit"))
+        async def measured_capability(key, model, **kw):
+            return {"eligible": key == "dgx_spark", "reason": "fixture capability result"}
+        monkeypatch.setattr("app.services.model_capabilities.validate_endpoint", measured_capability)
         model, provider = await pac.resolve_default_model_for_agent("v3_regime_engine")
         assert (model, provider) == ("GLM-5.3-Flash-EXL3", "vllm-2"), \
             "an unapproved model on the overflow box must fall through to the DGX queue"
@@ -274,3 +278,10 @@ class TestStartupReadiness:
         src = inspect.getsource(startup_tasks.startup_vllm_discovery)
         assert "_resolved_models(" in src
         assert "Model not yet resolved for active endpoint" not in src
+
+
+@pytest.fixture(autouse=True)
+def capabilities_verified_by_default(monkeypatch):
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr("app.services.model_capabilities.validate_endpoint",
+                        AsyncMock(return_value={"eligible": True, "reason": "fixture verified"}))

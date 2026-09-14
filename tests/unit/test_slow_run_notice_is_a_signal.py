@@ -121,7 +121,7 @@ class TestTheNoticeIsActuallyWiredIntoARun:
         with caplog.at_level(logging.WARNING, logger="app.agents.base_agent"), \
              patch("lazycat.agent.AgentHarness", _FakeHarness), \
              patch("app.services.prism_agent_caller.resolve_default_model_for_agent",
-                   new=AsyncMock(return_value=(None, None))), \
+                   new=AsyncMock(return_value=("test-model", "vllm"))), \
              patch("app.agents.tool_whitelists.get_agent_tools",
                    return_value=[{"name": "get_market_data"}]):
             try:
@@ -163,7 +163,7 @@ class TestTheNoticeIsActuallyWiredIntoARun:
         with caplog.at_level(logging.WARNING, logger="app.agents.base_agent"), \
              patch("lazycat.agent.AgentHarness", _FakeHarness), \
              patch("app.services.prism_agent_caller.resolve_default_model_for_agent",
-                   new=AsyncMock(return_value=(None, None))), \
+                   new=AsyncMock(return_value=("test-model", "vllm"))), \
              patch("app.agents.tool_whitelists.get_agent_tools",
                    return_value=[{"name": "get_market_data"}]):
             try:

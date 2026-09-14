@@ -128,14 +128,7 @@ def deploy_env_violations(text: str) -> list[str]:
             out.append(f"line {lineno}: writes SOLO_JETSON_MODE — the static pin is gone; "
                        "take a box out by leaving its PROVIDER_VLLM_*_URL unset")
         if "DECISION_MODEL_PATTERN=" in line:
-            value = line.split("DECISION_MODEL_PATTERN=", 1)[1]
-            value = value.split("'")[0].split('"')[0]
-            # ${DECISION_MODEL_PATTERN:-deepseek|nemotron} → deepseek|nemotron
-            if ":-" in value:
-                value = value.split(":-", 1)[1].rstrip("}")
-            if "glm" not in value.lower():
-                out.append(f"line {lineno}: DECISION_MODEL_PATTERN={value!r} has no 'glm' — "
-                           "the DGX Spark serves GLM-5.3-Flash-EXL3 and would be refused")
+            out.append(f"line {lineno}: hardcoded DECISION_MODEL_PATTERN is forbidden; use discovered capabilities")
     return out
 
 
@@ -150,14 +143,10 @@ def routing_env_verdicts(env: dict) -> list[tuple[str, str, str]]:
     else:
         out.append((claim, PASS, "no SOLO_JETSON_MODE in the container environment"))
 
-    claim = "The decision-model contract admits the DGX Spark's model"
-    pattern = (env.get("DECISION_MODEL_PATTERN") or "")
-    if not pattern:
-        out.append((claim, WARN, "DECISION_MODEL_PATTERN is unset; the code default applies"))
-    elif "glm" not in pattern.lower():
-        out.append((claim, FAIL, f"DECISION_MODEL_PATTERN={pattern!r} has no 'glm'"))
-    else:
-        out.append((claim, PASS, f"DECISION_MODEL_PATTERN={pattern}"))
+    claim = "No hardcoded model-family selection"
+    pattern = env.get("DECISION_MODEL_PATTERN")
+    out.append((claim, WARN if pattern else PASS,
+                "retired DECISION_MODEL_PATTERN present but ignored" if pattern else "capability-based dynamic discovery"))
 
     out.append(("Declared box capacity", INFO,
                 f"DGX_MAX_CONCURRENT={env.get('DGX_MAX_CONCURRENT')} "
@@ -500,7 +489,7 @@ async def main() -> int:
     rep.add("The deploy script writes no routing pin",
             FAIL if violations else PASS,
             "; ".join(violations) if violations else
-            "no SOLO_JETSON_MODE, and DECISION_MODEL_PATTERN admits glm")
+            "no hardcoded model selection")
     if args.skip_remote:
         rep.add("Deployment", INFO, "skipped (--skip-remote)")
     else:

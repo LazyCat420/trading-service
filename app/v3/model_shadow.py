@@ -171,21 +171,33 @@ async def _run_and_record(
         ep = llm._endpoints.get(endpoint)
         if not ep or not ep.url:
             raise RuntimeError(f"endpoint {endpoint!r} is not configured")
+        model = await get_live_model_from_vllm(ep.url)
+        from app.services.context_gate import estimate_tokens
+        if not ep.max_model_len:
+            raise RuntimeError("Shadow endpoint context limit is unknown")
+        room = ep.max_model_len - estimate_tokens(system_prompt + user_prompt) - 1024
+        if room < 4096:
+            raise RuntimeError("Shadow prompt exceeds selected endpoint context")
         result = await asyncio.wait_for(
             _prism_chat(
                 provider=ENDPOINT_PROVIDERS[endpoint],
-                model=await get_live_model_from_vllm(ep.url),
+                model=model,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 # The primary's budget was sized against Gold Spark's 1M
                 # window; reusing it here can push prompt+output past 65k and
                 # produce a context rejection that looks like a model failure.
                 # Floor 4096 is prism's ContextExhaustionGuard minimum.
-                max_tokens=max(4096, min(max_tokens, 8192)),
+                max_tokens=min(room, max(4096, min(max_tokens, 8192))),
                 timeout_seconds=timeout_seconds,
             ),
             timeout=timeout_seconds,
         )
+        if (result.get("model_used") and result["model_used"] != model) or (
+            result.get("provider") and result["provider"] != ENDPOINT_PROVIDERS[endpoint]):
+            from app.services.prism_agent_caller import invalidate_model_cache
+            invalidate_model_cache(ep.url)
+            raise RuntimeError("Shadow served identity differs from requested endpoint")
         elapsed = int((_time.monotonic() - t0) * 1000)
         text = result.get("response") or ""
         tokens = result.get("tokens_used") or 0

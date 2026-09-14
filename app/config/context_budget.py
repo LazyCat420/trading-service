@@ -232,16 +232,6 @@ def get_context_budget(model_id: str | None = None) -> ContextBudget:
     if model_id and model_id in _budget_cache:
         return _budget_cache[model_id]
 
-    # Try partial match (model IDs can be long paths)
-    if model_id:
-        for cached_id, budget in _budget_cache.items():
-            if model_id in cached_id or cached_id in model_id:
-                return budget
-
-    # Return any cached budget if we have one (all models are same in this setup)
-    if _budget_cache:
-        return next(iter(_budget_cache.values()))
-
     return _DEFAULT_BUDGET
 
 

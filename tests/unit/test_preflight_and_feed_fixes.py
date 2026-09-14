@@ -91,10 +91,9 @@ class TestLlmPreflight:
 
         def _box(k):
             return types.SimpleNamespace(
-                name=k, url=f"http://{k}:8000", enabled=True, model=None,
+                name=k, url=f"http://{k}:8000", enabled=True, model=None, validation_required=True,
                 requests_running=0, requests_waiting=0, max_concurrent=6)
 
-        monkeypatch.setattr(settings, "DECISION_MODEL_PATTERN", "deepseek|nemotron|glm")
         monkeypatch.setattr(pac, "llm", types.SimpleNamespace(
             _endpoints={"dgx_spark": _box("dgx_spark"), "jetson": _box("jetson")}))
 
@@ -102,6 +101,9 @@ class TestLlmPreflight:
             return "cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit"
 
         monkeypatch.setattr(pac, "get_live_model_from_vllm", both_wrong)
+        async def measured_capability(key, model, **kw):
+            return {"eligible": False, "reason": "fixture capability result"}
+        monkeypatch.setattr("app.services.model_capabilities.validate_endpoint", measured_capability)
         ok, detail = await pf.llm_can_answer()
         assert ok is False and "model contract violated" in detail
 
@@ -115,10 +117,9 @@ class TestLlmPreflight:
 
         def _box(k):
             return types.SimpleNamespace(
-                name=k, url=f"http://{k}:8000", enabled=True, model=None,
+                name=k, url=f"http://{k}:8000", enabled=True, model=None, validation_required=True,
                 requests_running=0, requests_waiting=0, max_concurrent=6)
 
-        monkeypatch.setattr(settings, "DECISION_MODEL_PATTERN", "deepseek|nemotron|glm")
         monkeypatch.setattr(pac, "llm", types.SimpleNamespace(
             _endpoints={"dgx_spark": _box("dgx_spark"), "jetson": _box("jetson")}))
 
@@ -133,6 +134,9 @@ class TestLlmPreflight:
 
         monkeypatch.setattr(pac, "get_live_model_from_vllm", dgx_wrong)
         monkeypatch.setattr(pac, "chat_toolless", alive)
+        async def measured_capability(key, model, **kw):
+            return {"eligible": key == "jetson", "reason": "fixture capability result"}
+        monkeypatch.setattr("app.services.model_capabilities.validate_endpoint", measured_capability)
         ok, detail = await pf.llm_can_answer()
         assert ok is True, detail
         assert seen.get("provider") == "vllm" and seen.get("model") == "nemotron35"
@@ -202,10 +206,8 @@ class TestLlmPreflight:
         import app.services.prism_agent_caller as pac
 
         src = inspect.getsource(pac.get_live_model_from_vllm)
-        assert "raise RuntimeError(" not in src, (
-            "the exhaustion raises must be ModelUnavailableError, not RuntimeError"
-        )
-        assert src.count("raise ModelUnavailableError(") == 2
+        # HTTP failures are retried internally; the sole outward exhaustion is typed.
+        assert src.count("raise ModelUnavailableError(") == 1
         assert issubclass(pac.ModelUnavailableError, RuntimeError), (
             "must stay a RuntimeError subclass so existing handlers keep working"
         )
@@ -216,8 +218,8 @@ class TestLlmPreflight:
         from app.services.pipeline_service import PipelineService
 
         src = inspect.getsource(PipelineService._run_all_v3)
-        assert "llm_can_answer" in src
-        assert src.index("llm_can_answer") < src.index("Explicit ticker request honored")
+        assert "discover_cycle_models" in src
+        assert src.index("discover_cycle_models") < src.index("Explicit ticker request honored")
 
 
 def _no_sleep(monkeypatch):
@@ -364,3 +366,10 @@ class TestCorpusOrderingContracts:
 
         src = inspect.getsource(watch_desk)
         assert '"provider_unverified"' in src and '"query_fallback"' in src
+
+
+@pytest.fixture(autouse=True)
+def capabilities_verified_by_default(monkeypatch):
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr("app.services.model_capabilities.validate_endpoint",
+                        AsyncMock(return_value={"eligible": True, "reason": "fixture verified"}))

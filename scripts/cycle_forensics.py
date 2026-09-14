@@ -149,7 +149,15 @@ def collect(cycle_id: str | None) -> dict:
     tel = list(db["v3_agent_telemetry"].find({"cycle_id": cid}, {
         "agent_name": 1, "ticker": 1, "elapsed_ms": 1, "prompt_tokens": 1,
         "token_usage": 1, "loops_used": 1, "outcome": 1, "model_used": 1,
-        "attempt_no": 1}))
+        "attempt_no": 1, "completion_tokens": 1, "usage_requests": 1,
+        "usage_coverage": 1, "usage_attempts": 1, "usage_contract_version": 1}))
+    tel = [r for r in tel if r.get("model_used") or r.get("token_usage") or r.get("elapsed_ms")]
+    measured = [r for r in tel if r.get("usage_requests", 0) > 0 and r.get("completion_tokens") is not None]
+    out["usage"] = {"contract_version": 2, "model_runs": len(tel),
+        "measured_runs": len(measured),
+        "complete_runs": sum(r.get("usage_coverage") == "complete" for r in tel),
+        "completion_tokens_measured": sum(r["completion_tokens"] for r in measured) if measured else None,
+        "coverage": "complete" if tel and all(r.get("usage_coverage") == "complete" for r in tel) else "partial" if measured else "unknown"}
     by_agent: dict = collections.defaultdict(
         lambda: {"n": 0, "ms": 0.0, "tokens": 0, "loops": []})
     for r in tel:
@@ -337,7 +345,7 @@ def collect(cycle_id: str | None) -> dict:
     models = {m for m in out["agent_cost"]["models"] if m not in ("None", "")}
     out["block_a"] = {
         "A1_models_served": sorted(models),
-        "A2_turn_exhausted_agents": sorted(d["agent"] for d in at_cap),
+        "A2_tool_call_pressure_agents": sorted(d["agent"] for d in at_cap),
         "A3_duplicate_rows": sum(v["redundant"] for v in dupes.values()),
         "A4_guardrail_firings": len(parsed),
         "A5_unrepaired_firings": out["guardrails"]["unrepaired"],
@@ -345,10 +353,8 @@ def collect(cycle_id: str | None) -> dict:
         "A7_agent_error_outcomes": sum(
             n for o, n in out["agent_cost"]["outcomes"].items()
             if o and o != "SUCCESS"),
-        "A8_completion_tokens_recorded": any(
-            int(r.get("completion_tokens") or 0) > 0
-            for r in db["llm_audit_logs"].find({"cycle_id": cid},
-                                               {"completion_tokens": 1})),
+        "A8_completion_tokens_recorded": bool(measured),
+        "A9_completion_usage_coverage": out["usage"]["coverage"],
     }
 
     # ── BLOCK B: per-decision rates, with the historical band ───────────────
@@ -356,7 +362,7 @@ def collect(cycle_id: str | None) -> dict:
         "elapsed_min_per_decision": (summ.get("elapsed_ms") or 0) / 60000 / n_dec,
         "agent_min_per_decision": out["agent_cost"]["agent_ms"] / 60000 / n_dec,
         "tokens_per_decision": out["agent_cost"]["tokens"] / n_dec,
-        "traces_per_decision": len(tel) / n_dec,
+        "model_runs_per_decision": len(tel) / n_dec,
         "errors_per_decision": len(errs) / n_dec,
         "firings_per_decision": len(parsed) / n_dec,
     }
@@ -379,8 +385,8 @@ def historical_band(db, exclude: set[str]) -> dict:
         cid = r["cycle_id"]
         nd = max(1, int(r.get("analysis_results_count") or 1))
         acc["elapsed_min_per_decision"].append((r.get("elapsed_ms") or 0) / 60000 / nd)
-        acc["traces_per_decision"].append(
-            db["v3_agent_telemetry"].count_documents({"cycle_id": cid}) / nd)
+        acc["model_runs_per_decision"].append(
+            db["v3_agent_telemetry"].count_documents({"cycle_id": cid, "$or": [{"model_used": {"$nin": [None, ""]}}, {"elapsed_ms": {"$gt": 0}}]}) / nd)
         acc["errors_per_decision"].append(
             db["execution_errors"].count_documents({"cycle_id": cid}) / nd)
         acc["firings_per_decision"].append(
@@ -394,6 +400,7 @@ def report(d: dict) -> None:
     print(f"  decisions      {d['n_decisions']}   "
           f"buy {d['buy_count']} / hold {d['hold_count']}")
     print(f"  elapsed        {_fmt(d['elapsed_ms'])}")
+    print(f"  output usage   {d.get('usage')}")
     if d.get("primary_failure_reason"):
         print(f"  ⚠ primary_failure_reason: {d['primary_failure_reason']}")
 

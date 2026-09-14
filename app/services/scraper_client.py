@@ -1,6 +1,10 @@
 import asyncio
 import logging
 import os
+import time
+from contextvars import ContextVar
+
+last_scrape_outcome = ContextVar("last_scrape_outcome", default=None)
 from typing import Any
 
 import httpx
@@ -96,16 +100,22 @@ class ScraperServiceClient:
         Returns the parsed result dict (with ``success``/``content`` keys) or None
         on failure — same contract as the in-process version it replaced.
         """
+        last_scrape_outcome.set({"reason": "unknown", "service_failure": False})
+        started = time.monotonic()
         sem = self._get_semaphore("news")
         payload = {"url": url, "engine": engine, "options": options or {}}
         self.calls += 1
         try:
             async with sem:
+                queued_ms = int((time.monotonic() - started) * 1000)
                 async with httpx.AsyncClient(timeout=self._TIMEOUT_S, headers=self._headers) as client:
                     resp = await client.post(f"{self.base_url}/scrape", json=payload)
                     resp.raise_for_status()
                     data = resp.json()
 
+            last_scrape_outcome.set({"reason": "body" if data.get("success") else "domain_miss",
+                                     "service_failure": False, "queue_ms": queued_ms,
+                                     "elapsed_ms": int((time.monotonic() - started) * 1000)})
             if data.get("success"):
                 return data
             # Return the payload rather than None even on failure. AutoEngine
@@ -172,6 +182,10 @@ class ScraperServiceClient:
             self.misses += 1
             raise
         except Exception as e:
+            service_failure = isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout))
+            last_scrape_outcome.set({"reason": "service_unreachable" if service_failure else "request_error",
+                                    "service_failure": service_failure,
+                                    "elapsed_ms": int((time.monotonic() - started) * 1000)})
             self._note_failure(url, repr(e))
             logger.error(f"[scraper_client] Unexpected error scraping {url}: {e!r}")
             return None

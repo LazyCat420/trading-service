@@ -95,7 +95,7 @@ class TestItIsWiredIntoTheRealCallPath:
     def test_the_chat_branch_floors_the_token_budget(self):
         """Prism's ContextExhaustionGuard rejects budgets under 4096."""
         src = inspect.getsource(base_agent.run_agent)
-        assert "max(4096, int(max_tokens or 8192))" in src
+        assert 'max(4096, int(kwargs["max_tokens"]))' in src
 
     def test_the_chat_branch_reports_one_loop(self):
         """/chat is single-shot. Inflating the count would corrupt the loop
@@ -125,17 +125,19 @@ class TestTheRouteIsTakenNotJustChosen:
             new_callable=AsyncMock,
             return_value={
                 "response": '{"ok": true}', "tokens_used": 1, "loops_used": 1,
-                "model_used": "m", "provider": "vllm", "execution_ms": 5,
+                "model_used": "test-model", "provider": "vllm", "execution_ms": 5,
             },
         ) as chat, patch(
             "app.agents.tool_whitelists.get_agent_tools", return_value=tools or [],
         ), patch(
             "app.services.prism_agent_caller.resolve_default_model_for_agent",
             new_callable=AsyncMock,
-            return_value=("cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit", "vllm"),
+            return_value=("test-model", "vllm"),
         ):
             harness_run = AsyncMock(return_value='{"ok": true}')
             harness_cls.return_value.run = harness_run
+            harness_cls.return_value.last_model = "test-model"
+            harness_cls.return_value.last_provider = "vllm"
             await run_agent(
                 agent_name="v3_junior_analyst", ticker="_AUDIT_TEST",
                 cycle_id="cycle-test", bot_id="bot-test",
