@@ -51,7 +51,7 @@ def build_evidence(summary, telemetry, results, firings):
         "usage": {"model_runs": len(rows), "measured_runs": len(measured), "complete_runs": complete,
             "completion_tokens_measured": sum(r["completion_tokens"] for r in measured) if measured else None,
             "coverage": "complete" if rows and complete == len(rows) else "partial" if measured else "unknown",
-            "total_tokens_measured": sum(r.get("token_usage") or 0 for r in rows) if rows else None},
+            "total_tokens_recorded": sum(r.get("token_usage") or 0 for r in rows) if rows else None},
         "artifact_recovery": {"repairable_events": len(repairable), "recovered_events": repaired,
                               "unrecovered_events": len(repairable) - repaired},
         "models": [{"provider": p, "model": m, **v, "outcomes": dict(v["outcomes"])} for (p,m),v in models.items()],
