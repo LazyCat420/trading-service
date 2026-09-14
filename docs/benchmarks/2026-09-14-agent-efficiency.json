@@ -1,0 +1,138 @@
+{
+  "sample": "Latest 350 telemetry rows; model-attributed rows only; active cycle excluded; rows may include retries and multiple tickers. Not a random sample or controlled comparison.",
+  "runs": 295,
+  "cycles": 14,
+  "from": "2026-09-11 16:18:57.794000",
+  "to": "2026-09-14 18:21:22.768000",
+  "ranking": [
+    {
+      "agent": "v3_debate_judge",
+      "runs": 25,
+      "median_recorded_tokens": 79755,
+      "median_elapsed_seconds": 176.8,
+      "outcomes": {
+        "SUCCESS": 24,
+        "AGENT_ERROR": 1
+      },
+      "complete_usage_runs": 1
+    },
+    {
+      "agent": "v3_board_of_directors",
+      "runs": 30,
+      "median_recorded_tokens": 79658.5,
+      "median_elapsed_seconds": 121.1,
+      "outcomes": {
+        "SUCCESS": 28,
+        "AGENT_ERROR": 2
+      },
+      "complete_usage_runs": 1
+    },
+    {
+      "agent": "v3_junior_analyst",
+      "runs": 28,
+      "median_recorded_tokens": 72691.5,
+      "median_elapsed_seconds": 202.4,
+      "outcomes": {
+        "SUCCESS": 28
+      },
+      "complete_usage_runs": 1
+    },
+    {
+      "agent": "v3_bear_agent",
+      "runs": 25,
+      "median_recorded_tokens": 65182,
+      "median_elapsed_seconds": 240.0,
+      "outcomes": {
+        "SUCCESS": 24,
+        "AGENT_ERROR": 1
+      },
+      "complete_usage_runs": 1
+    },
+    {
+      "agent": "v3_fundamental_analyst",
+      "runs": 29,
+      "median_recorded_tokens": 58375,
+      "median_elapsed_seconds": 207.1,
+      "outcomes": {
+        "SUCCESS": 28,
+        "AGENT_ERROR": 1
+      },
+      "complete_usage_runs": 1
+    },
+    {
+      "agent": "v3_valuation_analyst",
+      "runs": 28,
+      "median_recorded_tokens": 57392.5,
+      "median_elapsed_seconds": 142.2,
+      "outcomes": {
+        "SUCCESS": 28
+      },
+      "complete_usage_runs": 1
+    },
+    {
+      "agent": "v3_quant_analyst",
+      "runs": 28,
+      "median_recorded_tokens": 56907.5,
+      "median_elapsed_seconds": 153.1,
+      "outcomes": {
+        "SUCCESS": 28
+      },
+      "complete_usage_runs": 1
+    },
+    {
+      "agent": "v3_bull_defense",
+      "runs": 24,
+      "median_recorded_tokens": 47759.0,
+      "median_elapsed_seconds": 201.4,
+      "outcomes": {
+        "SUCCESS": 24
+      },
+      "complete_usage_runs": 1
+    },
+    {
+      "agent": "v3_decision_synthesizer",
+      "runs": 40,
+      "median_recorded_tokens": 46528.0,
+      "median_elapsed_seconds": 115.3,
+      "outcomes": {
+        "SUCCESS": 33,
+        "AGENT_ERROR": 6,
+        "DATA_GAP": 1
+      },
+      "complete_usage_runs": 1
+    },
+    {
+      "agent": "v3_bull_agent",
+      "runs": 25,
+      "median_recorded_tokens": 40690,
+      "median_elapsed_seconds": 157.2,
+      "outcomes": {
+        "SUCCESS": 23,
+        "DATA_GAP": 1,
+        "AGENT_ERROR": 1
+      },
+      "complete_usage_runs": 1
+    },
+    {
+      "agent": "v3_regime_engine",
+      "runs": 13,
+      "median_recorded_tokens": 6772,
+      "median_elapsed_seconds": 53.5,
+      "outcomes": {
+        "SUCCESS": 13
+      },
+      "complete_usage_runs": 1
+    }
+  ],
+  "synthesis_trace": {
+    "cycle_id": "reliability-canary-20260914T175240Z",
+    "total_tokens": 464860,
+    "completion_tokens": 499,
+    "cycle_total_tokens": 1254924,
+    "provider_payloads": 13,
+    "whiteboard_reads": 18,
+    "serialized_message_characters_across_requests": 1964858,
+    "serialized_message_characters_final_request": 194872,
+    "character_reprocessing_ratio": 10.0828133338807
+  }
+}
