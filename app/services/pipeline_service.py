@@ -1239,6 +1239,24 @@ class PipelineService:
                 except Exception as ph_err:
                     logger.warning("[PipelineService] phase-ms derivation failed (non-fatal): %s", ph_err)
 
+                if not phase_ms["collecting"]:
+                    sum_precollect_ms = sum(
+                        (r.get("cycle_metadata") or {}).get("precollect_ms", 0) or 0
+                        for r in (results or []) if isinstance(r, dict)
+                    )
+                    if sum_precollect_ms > 0:
+                        phase_ms["collecting"] = sum_precollect_ms
+
+                # Hardware Box Scorecard (per-endpoint latency/tokens and slowest calls)
+                try:
+                    from app.monitoring.box_scorecard import generate_box_scorecard, print_box_scorecard
+                    box_sc = generate_box_scorecard(cycle_id)
+                    if box_sc:
+                        print_box_scorecard(box_sc)
+                        summary["box_scorecard"] = box_sc
+                except Exception as sc_err:
+                    logger.debug("[PipelineService] box_scorecard generation skipped: %s", sc_err)
+
                 # One writer, not two. The conversion left this block writing
                 # the same benchmark twice: once under writes_mongo() and again
                 # under writes_pg(), which now also lands in Mongo. The second

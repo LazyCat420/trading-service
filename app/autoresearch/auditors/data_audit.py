@@ -274,6 +274,54 @@ def _audit_news(ticker: str) -> dict:
     except Exception as e:
         return {"rows": 0, "quality": "error", "error": str(e)}
 
+def _audit_reddit(ticker: str) -> dict:
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        rows, min_d, max_d = mongo_query.agg_row(
+            'reddit_posts', {'ticker': ticker},
+            [('count', None), ('min', 'created_utc'), ('max', 'created_utc')])
+        recent = mongo_query.count('reddit_posts',
+                                   {'ticker': ticker,
+                                    'created_utc': {'$gt': cutoff}})
+        age = _age_days(max_d)
+        score = min(1.0, recent / 3) if recent else 0
+        return {
+            "rows": rows,
+            "recent_7d": recent,
+            "date_range": [_safe_iso(min_d), _safe_iso(max_d)],
+            "age_days": age,
+            "quality": _grade(score),
+            "quality_score": round(score, 3),
+        }
+    except Exception as e:
+        logger.warning("audit reddit failed for %s: %s", ticker, e)
+        return {"rows": 0, "quality": "error", "error": str(e)}
+
+
+def _audit_youtube(ticker: str) -> dict:
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=14)
+        rows, min_d, max_d = mongo_query.agg_row(
+            'youtube_transcripts', {'ticker': ticker},
+            [('count', None), ('min', 'published_at'), ('max', 'published_at')])
+        recent = mongo_query.count('youtube_transcripts',
+                                   {'ticker': ticker,
+                                    'published_at': {'$gt': cutoff}})
+        age = _age_days(max_d)
+        score = min(1.0, recent / 2) if recent else 0
+        return {
+            "rows": rows,
+            "recent_14d": recent,
+            "date_range": [_safe_iso(min_d), _safe_iso(max_d)],
+            "age_days": age,
+            "quality": _grade(score),
+            "quality_score": round(score, 3),
+        }
+    except Exception as e:
+        logger.warning("audit youtube failed for %s: %s", ticker, e)
+        return {"rows": 0, "quality": "error", "error": str(e)}
+
+
 def _audit_data_quality(tickers: list[str]) -> dict:
     if not tickers:
         return {"avg_score": 0, "gaps": [], "per_ticker": {}}
@@ -287,6 +335,8 @@ def _audit_data_quality(tickers: list[str]) -> dict:
                 _audit_technicals(ticker),
                 _audit_fundamentals(ticker),
                 _audit_news(ticker),
+                _audit_reddit(ticker),
+                _audit_youtube(ticker),
             ]
             # Missing categories count as 0 — the old average silently
             # dropped them, so a ticker with no fundamentals and no news
@@ -297,9 +347,19 @@ def _audit_data_quality(tickers: list[str]) -> dict:
             ]
             avg = sum(cat_scores) / len(cats) if cats else 0
             scores.append(avg)
-            per_ticker[ticker] = {"score": round(avg, 3)}
+            per_ticker[ticker] = {
+                "score": round(avg, 3),
+                "categories": {
+                    "price_history": cats[0].get("quality_score", 0),
+                    "technicals": cats[1].get("quality_score", 0),
+                    "fundamentals": cats[2].get("quality_score", 0),
+                    "news": cats[3].get("quality_score", 0),
+                    "reddit": cats[4].get("quality_score", 0),
+                    "youtube": cats[5].get("quality_score", 0),
+                },
+            }
             missing = []
-            for name, cat in zip(["price_history", "technicals", "fundamentals", "news"], cats):
+            for name, cat in zip(["price_history", "technicals", "fundamentals", "news", "reddit", "youtube"], cats):
                 if cat.get("rows", 0) == 0:
                     missing.append(name)
             if missing:

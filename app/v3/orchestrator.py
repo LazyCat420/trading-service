@@ -126,10 +126,15 @@ async def run_v3_pipeline(
         # vendor refusal logged as a warning) as well as the slowest measured
         # one. Its warnings are worth attributing to a named stage.
         t0_precollect = time.monotonic()
+        precollect_stats = {}
         with tool_context(cycle_id=cycle_id, ticker=ticker, phase="precollect"):
-            data_report = await build_ticker_data_report(ticker, emit=emit, cycle_id=cycle_id, force_refresh=force_refresh)
+            data_report = await build_ticker_data_report(
+                ticker, emit=emit, cycle_id=cycle_id,
+                force_refresh=force_refresh, stats_sink=precollect_stats,
+            )
         precollect_ms = int((time.monotonic() - t0_precollect) * 1000)
         desk.cycle_metadata["precollect_ms"] = precollect_ms
+        desk.cycle_metadata["collector_latencies"] = precollect_stats.get("collector_latencies", {})
         emit(
             "analyzing", f"v3_precollect_ok_{ticker}",
             f"📥 {ticker}: Market & news pre-collection complete ({precollect_ms}ms)",
@@ -575,6 +580,7 @@ async def run_v3_pipeline(
             desk.cycle_metadata['prior_research_answers_context'] = context
 
     # Execute independent context builders in parallel.
+    t0_ctx = time.monotonic()
     await asyncio.gather(
         _build_macro_task(),
         _build_quant_math_task(),
@@ -591,6 +597,9 @@ async def run_v3_pipeline(
         _build_research_answers_task(),
         return_exceptions=True,
     )
+    ctx_assembly_ms = int((time.monotonic() - t0_ctx) * 1000)
+    desk.cycle_metadata["context_assembly_ms"] = ctx_assembly_ms
+    logger.info("[V3] %s: 13 context blocks assembled in %dms", ticker, ctx_assembly_ms)
 
     # Deterministic Data Readiness Gate (shadow evaluation before Phase 0 triage)
     try:

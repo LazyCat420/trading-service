@@ -142,7 +142,13 @@ def assemble_report(
     return report
 
 
-async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str | None = None, force_refresh: bool = False) -> str:
+async def build_ticker_data_report(
+    ticker: str,
+    emit: Any = None,
+    cycle_id: str | None = None,
+    force_refresh: bool = False,
+    stats_sink: dict | None = None,
+) -> str:
     """Collect core stock datasets in parallel and format them into a markdown report."""
     ticker = ticker.upper().strip()
     
@@ -161,6 +167,7 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
     # log and the cycle_run_summaries collector_* counters (which read 0
     # forever because nothing ever recorded them).
     _outcomes: dict[str, str] = {}   # name -> ok|error|late (pending = timed out)
+    _collector_latencies: dict[str, int] = {}
     # Flipped once the pre-collect deadline passes. Stragglers are deliberately
     # NOT cancelled (their data warms the next cycle), but they keep running
     # inside run_with_telemetry and used to emit a plain `_ok` on completion —
@@ -170,27 +177,34 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
     _deadline_passed = {"v": False}
 
     async def run_with_telemetry(name: str, coroutine: Any):
+        t0_c = time.monotonic()
         _emit(f"precollect_{name}_start", f"Scraping {name}...", "running")
         try:
             res = await coroutine
+            dur_ms = int((time.monotonic() - t0_c) * 1000)
+            _collector_latencies[name] = dur_ms
             outcome, step, status, detail = classify_collector_outcome(
                 name, res, _deadline_passed["v"]
             )
             _outcomes[name] = outcome
             if outcome == "error":
                 logger.warning(
-                    "[V3][precollect] %s/%s returned no data (%r) — recording as "
-                    "error, not ok", ticker, name, res,
+                    "[V3][precollect] %s/%s returned no data (%r) in %dms — recording as "
+                    "error, not ok", ticker, name, res, dur_ms,
                 )
-            _emit(f"precollect_{name}_{step}", detail.format(name=name), status)
+            _emit(f"precollect_{name}_{step}", f"{detail.format(name=name)} ({dur_ms}ms)", status)
             return res
         except asyncio.CancelledError:
+            dur_ms = int((time.monotonic() - t0_c) * 1000)
+            _collector_latencies[name] = dur_ms
             raise
         except Exception as e:
+            dur_ms = int((time.monotonic() - t0_c) * 1000)
+            _collector_latencies[name] = dur_ms
             _outcomes[name] = "error"
-            logger.warning("[V3][precollect] %s/%s failed: %s: %s",
-                           ticker, name, type(e).__name__, e)
-            _emit(f"precollect_{name}_err", f"Failed {name}: {e}", "error")
+            logger.warning("[V3][precollect] %s/%s failed in %dms: %s: %s",
+                           ticker, name, dur_ms, type(e).__name__, e)
+            _emit(f"precollect_{name}_err", f"Failed {name} ({dur_ms}ms): {e}", "error")
             return None
 
     # 1a. Prior research: ALWAYS seed from the latest stored thesis so research
@@ -355,6 +369,14 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
     from app.v3 import collector_stats
     collector_stats.record(cycle_id, ticker, ok=ok, errored=errored,
                            timed_out=timed_out, skipped=skipped)
+
+    if stats_sink is not None:
+        stats_sink["collector_latencies"] = dict(_collector_latencies)
+        stats_sink["collect_ms"] = collect_ms
+        stats_sink["ok"] = list(ok)
+        stats_sink["errored"] = list(errored)
+        stats_sink["timed_out"] = list(timed_out)
+        stats_sink["skipped"] = list(skipped)
         
     # 2. Fetch Formatted Markdown via existing tools
     from app.tools.finance_tools import get_market_data, get_finnhub_news, get_technical_indicators

@@ -129,54 +129,8 @@ def generate_box_scorecard(cycle_id: str) -> dict:
 
 
 def print_box_scorecard(scorecard: dict) -> None:
-    """Print a human-readable box scorecard to the logger."""
+    """Log structured box scorecard as pure JSON (no ASCII art)."""
     if not scorecard:
         return
-
-    lines = ["", "╔═══════════════════════════════════════════════════════════════╗"]
-    lines.append("║              BOX PERFORMANCE SCORECARD                        ║")
-    lines.append("╠═══════════════════════════════════════════════════════════════╣")
-
-    for ep_name, stats in scorecard.items():
-        if ep_name.startswith("_"):
-            continue
-
-        lines.append(f"║  {ep_name.upper():20s}  ({stats.get('model', '?')[:30]})")
-        lines.append(
-            f"║    Calls: {stats['calls']:>5,d}  │  Tokens: {stats['total_tokens']:>10,d}  "
-            f"│  Time: {stats['total_time_s']:>6.0f}s"
-        )
-        lines.append(
-            f"║    Prompt: {stats['prompt_tokens']:>8,d}  │  Completion: {stats['completion_tokens']:>8,d}  "
-            f"│  Tok/s: {stats['aggregate_tok_per_sec']:>6.1f}"
-        )
-        lines.append(
-            f"║    Avg Latency: {stats['avg_latency_ms']:>6,d}ms  │  Queue Wait: {stats['avg_queue_wait_ms']:>5,d}ms  "
-            f"│  Min/Max: {stats['min_latency_ms']:,}/{stats['max_latency_ms']:,}ms"
-        )
-        lines.append("║")
-
-    agg = scorecard.get("_aggregate", {})
-    if agg:
-        lines.append(
-            "╠═══════════════════════════════════════════════════════════════╣"
-        )
-        lines.append(
-            f"║  TOTAL: {agg.get('total_calls', 0):>5,d} calls  │  "
-            f"{agg.get('total_tokens', 0):>12,d} tokens  │  "
-            f"{agg.get('total_time_s', 0):>6.0f}s"
-        )
-
-    slowest = scorecard.get("_slowest", [])
-    if slowest:
-        lines.append("║  Slowest calls:")
-        for s in slowest[:3]:
-            lines.append(
-                f"║    {s['agent_step']:30s} {s['ticker']:6s} "
-                f"{s['execution_ms']:>8,d}ms ({s['endpoint']})"
-            )
-
-    lines.append("╚═══════════════════════════════════════════════════════════════╝")
-
-    for line in lines:
-        logger.info("[BOX_SCORECARD] %s", line)
+    import json
+    logger.info("[BOX_SCORECARD] %s", json.dumps(scorecard, default=str))

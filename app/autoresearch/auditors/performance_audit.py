@@ -13,6 +13,25 @@ logger = logging.getLogger(__name__)
 
 
 def _audit_performance(cycle_id: str, cycle_summary: dict) -> dict:
+    box_scorecard = cycle_summary.get("box_scorecard")
+    if not box_scorecard and cycle_id:
+        try:
+            from app.monitoring.box_scorecard import generate_box_scorecard
+            box_scorecard = generate_box_scorecard(cycle_id)
+        except Exception as e:
+            logger.debug("[performance_audit] box_scorecard lookup failed: %s", e)
+            box_scorecard = {}
+
+    bench_row = None
+    if cycle_id:
+        try:
+            bench_row = mongo_query.find_row(
+                "cycle_benchmarks", {"cycle_id": cycle_id},
+                ["collect_ms", "analyze_ms", "trade_ms", "avg_ticker_ms"],
+            )
+        except Exception:
+            pass
+
     return {
         "total_ms": cycle_summary.get("elapsed_ms", 0),
         "tickers_analyzed": cycle_summary.get("analysis_results_count", 0),
@@ -24,6 +43,13 @@ def _audit_performance(cycle_id: str, cycle_summary: dict) -> dict:
         "collector_failures": cycle_summary.get("collector_failures", []),
         "trade_executed": cycle_summary.get("trade_executed", 0),
         "status": cycle_summary.get("status", "unknown"),
+        "phase_ms": {
+            "collect_ms": bench_row[0] if bench_row else None,
+            "analyze_ms": bench_row[1] if bench_row else None,
+            "trade_ms": bench_row[2] if bench_row else None,
+            "avg_ticker_ms": bench_row[3] if bench_row else None,
+        },
+        "box_scorecard": box_scorecard or {},
     }
 
 #: How a stored line is named in `recovery_stats.by_type`. Ordered: the first
