@@ -317,11 +317,14 @@ def ensure_indexes(session: Optional[Any] = None) -> None:
     # ordered=False and swallows duplicate-key errors", but `natural_key` on
     # `id` was created WITHOUT unique, so nothing ever raises and every
     # collector pass appends another copy. Measured: 2,446 documents for 356
-    # distinct ids (85.4% redundant), with 45 ids stored 23 times each.
-    # The unique index is NOT declared here — it cannot build while the
-    # duplicates exist, and `_try` would swallow the failure and let a deploy
-    # report success. Dedupe first (scripts/, with a mongodump), then declare.
-    # This one is the reader index, which is safe today:
+    # `asset_prices` and `insider_trades` are deduped, and natural_key_unique
+    # prevents re-inflation on subsequent collector passes:
+    _try("asset_prices", [("symbol", pymongo.ASCENDING),
+                          ("asset_class", pymongo.ASCENDING),
+                          ("date", pymongo.ASCENDING)],
+         unique=True, name="natural_key_unique")
+    _try("insider_trades", [("id", pymongo.ASCENDING)],
+         unique=True, name="natural_key_unique")
     _try("insider_trades", [("ticker", pymongo.ASCENDING),
                             ("trade_type", pymongo.ASCENDING),
                             ("trade_date", pymongo.DESCENDING)],

@@ -16,6 +16,8 @@ import re
 import json
 import functools
 import logging
+import threading
+import asyncio
 from dataclasses import dataclass
 from app.db import mongo_query, mongo_store
 
@@ -831,6 +833,7 @@ class CompanyRegistry:
     """
 
     def __init__(self):
+        self._lock = threading.RLock()
         self._by_symbol: dict[str, Company] = {}  # "V" → Company
         self._by_name: dict[str, Company] = {}  # "visa" → Company
         self._by_alias: dict[str, Company] = {}  # "visa inc" → Company
@@ -839,43 +842,61 @@ class CompanyRegistry:
 
     def lookup_symbol(self, sym: str) -> Company | None:
         """Look up by ticker symbol (case-insensitive)."""
-        return self._by_symbol.get(sym.upper())
+        with self._lock:
+            return self._by_symbol.get(sym.upper())
 
     def lookup_name(self, name: str) -> Company | None:
         """Look up by company name or alias (case-insensitive)."""
         key = name.lower().strip()
-        return self._by_name.get(key) or self._by_alias.get(key)
+        with self._lock:
+            return self._by_name.get(key) or self._by_alias.get(key)
 
     def is_known(self, sym: str) -> bool:
         """Is this symbol in the registry?"""
-        return sym.upper() in self._by_symbol
+        with self._lock:
+            return sym.upper() in self._by_symbol
 
     def is_rejected(self, sym: str) -> bool:
         """Was this symbol confirmed as not a real stock?"""
-        return sym.upper() in self._rejected
+        with self._lock:
+            return sym.upper() in self._rejected
 
     def is_single_letter(self, sym: str) -> bool:
         """Single-letter tickers need extra context to confirm."""
-        c = self._by_symbol.get(sym.upper())
-        return c.single_letter if c else len(sym) == 1
+        with self._lock:
+            c = self._by_symbol.get(sym.upper())
+            return c.single_letter if c else len(sym) == 1
 
     def add_company(self, company: Company):
         """Register a company in all lookup indexes."""
-        self._by_symbol[company.symbol.upper()] = company
-        if label_is_usable(company.name):
-            self._by_name[company.name.lower()] = company
-        for alias in company.aliases:
-            if not label_is_usable(alias):
-                continue
-            self._by_alias[alias.lower()] = company
+        with self._lock:
+            self._by_symbol[company.symbol.upper()] = company
+            if label_is_usable(company.name):
+                self._by_name[company.name.lower()] = company
+            for alias in company.aliases:
+                if not label_is_usable(alias):
+                    continue
+                self._by_alias[alias.lower()] = company
 
     def add_rejected(self, sym: str):
         """Mark a symbol as confirmed not a real stock."""
-        self._rejected.add(sym.upper())
+        with self._lock:
+            self._rejected.add(sym.upper())
+
+    def name_items(self) -> list[tuple[str, Company]]:
+        """Thread-safe snapshot of (name, Company) pairs."""
+        with self._lock:
+            return list(self._by_name.items())
+
+    def alias_items(self) -> list[tuple[str, Company]]:
+        """Thread-safe snapshot of (alias, Company) pairs."""
+        with self._lock:
+            return list(self._by_alias.items())
 
     @property
     def size(self) -> int:
-        return len(self._by_symbol)
+        with self._lock:
+            return len(self._by_symbol)
 
     def load(self):
         """Load registry from MongoDB cache or scrape fresh."""
@@ -1224,7 +1245,7 @@ def extract_tickers(
         )
 
     # ── Layer 1b: Company name matching ──
-    for name_key, company in registry._by_name.items():
+    for name_key, company in registry.name_items():
         # Word-boundary, not substring: "apple" must not match "applebee's",
         # and "common" must not match "commonwealth" — the very word that put
         # 2,342 articles under FCF/MSBT.
@@ -1242,7 +1263,7 @@ def extract_tickers(
                     context_snippet=snippet.strip(),
                 )
 
-    for alias_key, company in registry._by_alias.items():
+    for alias_key, company in registry.alias_items():
         _am = _boundary_search(alias_key, text_lower) if len(alias_key) > 2 else None
         if _am:
             sym = company.symbol
@@ -1715,7 +1736,7 @@ async def extract_and_validate(
 
     Returns: List of TickerMatch with confidence >= 0.40, sorted descending.
     """
-    matches = extract_tickers(text, title=title, source=source)
+    matches = await asyncio.to_thread(extract_tickers, text, title=title, source=source)
 
     # Filter out extremely low confidence
     candidates = [m for m in matches if m.confidence >= 0.40]

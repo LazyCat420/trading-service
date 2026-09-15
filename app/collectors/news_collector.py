@@ -476,40 +476,9 @@ def sanitize_for_ticker_extraction(text: str) -> str:
 async def _detect_tickers_in_text(text: str) -> set[str]:
     """Detect stock tickers mentioned in article text.
 
-    ⚠ DO NOT move this onto a worker thread with `asyncio.to_thread`. It was
-    considered and REJECTED on 2026-09-12, with measurements:
-
-    1. This function is already `async`; the CPU is not here. Timed over 60 live
-       `news_articles` rows on this box:
-           sanitize_for_ticker_extraction   median   0.4 ms   (total  0.18 s)
-           extract_tickers                  median 694.1 ms   (total 52.9 s)
-       So 99.7% of the cost is inside `ticker_extractor.extract_tickers`, which
-       is synchronous and reached through `get_ticker_symbols`. Offloading the
-       only piece that lives in this module (the sanitizer) buys 0.4 ms and
-       nothing else. That is why the discovery phase spends ~177 s of 887 s here
-       and why feeds complete in clean waves of five: the loop is blocked.
-
-    2. `extract_tickers` cannot safely run on a thread TODAY.
-       `CompanyRegistry` (ticker_extractor.py:825) holds plain dicts and sets
-       with NO lock of any kind, and `extract_tickers` iterates two of them
-       live (`registry._by_name.items()` at :1227, `registry._by_alias.items()`
-       at :1245) while `validate_unknown_tickers` — reached from this very
-       call, and from the two other `_detect_tickers_in_text` call sites — calls
-       `registry.add_company()` / `add_rejected()`, which write those same
-       dicts. On the event loop that is serialised and safe. On a thread it is
-       not. Reproduced here:
-
-           RuntimeError: dictionary changed size during iteration
-             ticker_extractor.py:1227 in extract_tickers
-
-       i.e. the offload converts a slow sweep into a sweep that raises
-       mid-extraction and loses the article.
-
-    The offload is the right fix, but it must be UNLOCKED in
-    `app/processors/ticker_extractor.py` first — either a `threading.RLock`
-    around the CompanyRegistry mutators and the two iteration sites, or
-    snapshotting (`list(registry._by_name.items())`) inside `extract_tickers`.
-    That file is owned elsewhere; this module must not offload before it lands.
+    Note: `ticker_extractor.extract_and_validate()` offloads CPU-heavy extraction
+    to worker threads via `asyncio.to_thread()`, unlocked by thread-safe snapshotting
+    and `threading.RLock` inside `CompanyRegistry`.
     """
     symbols = await get_ticker_symbols(sanitize_for_ticker_extraction(text))
     return set(symbols)

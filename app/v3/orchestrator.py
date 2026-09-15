@@ -2593,6 +2593,7 @@ async def _persist_trade_verdict(
                     # from the DB (08-04 audit).
                     endpoint_name=(_providers[-1] if _providers else ""),
                     prompt_tokens=sum(int(e.get("prompt_tokens") or 0) for e in _telemetry),
+                    completion_tokens=sum(int(e.get("completion_tokens") or 0) for e in _telemetry),
                 )
             except Exception as audit_err:
                 logger.warning("[V3] %s: decision audit log failed (non-fatal): %s", ticker, audit_err)

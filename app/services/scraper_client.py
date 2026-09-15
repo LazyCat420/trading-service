@@ -105,10 +105,11 @@ class ScraperServiceClient:
         sem = self._get_semaphore("news")
         payload = {"url": url, "engine": engine, "options": options or {}}
         self.calls += 1
+        timeout_s = (options.get("timeout") / 1000.0) if (options and options.get("timeout")) else self._TIMEOUT_S
         try:
             async with sem:
                 queued_ms = int((time.monotonic() - started) * 1000)
-                async with httpx.AsyncClient(timeout=self._TIMEOUT_S, headers=self._headers) as client:
+                async with httpx.AsyncClient(timeout=timeout_s, headers=self._headers) as client:
                     resp = await client.post(f"{self.base_url}/scrape", json=payload)
                     resp.raise_for_status()
                     data = resp.json()

@@ -173,7 +173,7 @@ def main() -> int:
             "_id": r["_id"], "id": r.get("id"), "ticker": tk, "action": act,
             "matched_source": src, "matched_date": when, "status": status,
             "set": {
-                "decision_as_of": when,
+                "decision_as_of": ca,
                 "entry_date": when,
                 "entry_price_source": src,
                 "claim_type": ct,
