@@ -813,6 +813,13 @@ async def run_v3_agent(
             trace_data(cycle_id, desk.ticker, agent_name, stage,
                        data=receipt, attempt=attempt_no)
 
+        if agent_name == "v3_decision_synthesizer":
+            from app.v3.synthesis_evidence import build_synthesis_packet
+            synth_packet, synth_receipt = build_synthesis_packet(desk)
+            dynamic_sections.append((_KEEP, synth_packet))
+            trace_data(cycle_id, desk.ticker, agent_name, "synthesizer.evidence_delivery",
+                       data=synth_receipt, attempt=attempt_no)
+
         from app.services.research_work import completed_answer_block
         desk.cycle_metadata['research_answers_context'] = completed_answer_block(desk)
         for key in ('research_answers_context', 'prior_research_answers_context'):
@@ -1145,24 +1152,28 @@ async def run_v3_agent(
                 f"## Previous Cycle's SharedDesk (Manila Envelope)\n{previous_desk_context}",
             ))
 
-        if desk_context and desk_context != "No artifacts on desk yet.":
+        if desk_context and desk_context != "No artifacts on desk yet." and agent_name != "v3_decision_synthesizer":
             dynamic_sections.append((_KEEP, f"## SharedDesk Context Summary\n{desk_context}"))
 
         # Current whiteboard summary (changes per agent within a cycle)
-        try:
-            from app.agents.whiteboard import whiteboard
-            # for_agent_prompt=True drops the sections the SharedDesk already
-            # delivers in its own _KEEP block above. Those duplicates were 87%
-            # of this block and pushed the whiteboard's unique payload —
-            # market_context, signals, and the annotations — off the end of the
-            # 8,000-char cap on 93% of boards.
-            wb_summary = await whiteboard.summarize(
-                ticker=desk.ticker, cycle_id=cycle_id, for_agent_prompt=True
-            )
-            if wb_summary:
-                dynamic_sections.append((6, wb_summary))
-        except Exception as wb_err:
-            logger.warning("[V3Runner] Failed to fetch whiteboard summary: %s", wb_err)
+        # v3_decision_synthesizer receives all artifacts and annotations in its
+        # complete synthesis packet, so skip the truncated whiteboard summary to
+        # avoid triggering false whiteboard_read loops.
+        if agent_name != "v3_decision_synthesizer":
+            try:
+                from app.agents.whiteboard import whiteboard
+                # for_agent_prompt=True drops the sections the SharedDesk already
+                # delivers in its own _KEEP block above. Those duplicates were 87%
+                # of this block and pushed the whiteboard's unique payload —
+                # market_context, signals, and the annotations — off the end of the
+                # 8,000-char cap on 93% of boards.
+                wb_summary = await whiteboard.summarize(
+                    ticker=desk.ticker, cycle_id=cycle_id, for_agent_prompt=True
+                )
+                if wb_summary:
+                    dynamic_sections.append((6, wb_summary))
+            except Exception as wb_err:
+                logger.warning("[V3Runner] Failed to fetch whiteboard summary: %s", wb_err)
 
         # Tool execution scores remain diagnostics, not model instructions.
 

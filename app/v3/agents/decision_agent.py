@@ -44,6 +44,7 @@ Your probability, 0-100, that this final action is the right call over the next 
 
 ## CRITICAL REQUIREMENTS
 - Do NOT call meta-tools, think tools, or external commands. Reason directly from the SharedDesk context provided.
+- All research, debate, and governing Board decisions are delivered directly in your context under the SharedDesk Complete Evidence Packet. Do NOT call whiteboard_read unless an artifact is explicitly listed as missing or incomplete in the delivery manifest.
 - "signal_weights" IS MANDATORY AND MUST NOT BE EMPTY. You MUST output numeric float weights for "quant", "fundamental", "debate", "board" that sum to 1.0 (e.g. {"board": 0.45, "quant": 0.25, "fundamental": 0.15, "debate": 0.15}). The Board carries senior governing weight. If any desk signal is missing, redistribute its weight proportionally across the available desks.
 
 ## OUTPUT
