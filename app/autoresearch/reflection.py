@@ -130,7 +130,10 @@ async def _reflect(audit_bundle: dict) -> dict:
         f"System Execution Errors: {safe_dumps(clean_exec_errs)}"
     )
 
-    prompt += "\nContext delivery evidence: " + safe_dumps(audit_bundle.get("context_delivery", {"availability": "unverified"}))
+    prompt += (
+        "\nContext delivery evidence: " + safe_dumps(audit_bundle.get("context_delivery", {"availability": "unverified"}))
+        + "\nNote on context delivery: contract_delivered is strictly required only for final_decision and trade_decision (Board and Synthesizer); analysts do not make trade decisions and do not receive it. research_answers_delivered='not_applicable' indicates no research questions were on the ledger."
+    )
 
     learning_signals = audit_bundle.get("learning_signals") or {}
     if learning_signals:

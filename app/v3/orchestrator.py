@@ -62,6 +62,7 @@ async def run_v3_pipeline(
 
     agent_locale: str = "default",
     prism_overrides: dict | None = None,
+    force_refresh: bool = False,
 ) -> dict[str, Any]:
     """Run the full V3 Pure Agentic Linear Pipeline for a single ticker.
 
@@ -124,11 +125,14 @@ async def run_v3_pipeline(
         # and it is the noisiest stage in the cycle (six collectors, every
         # vendor refusal logged as a warning) as well as the slowest measured
         # one. Its warnings are worth attributing to a named stage.
+        t0_precollect = time.monotonic()
         with tool_context(cycle_id=cycle_id, ticker=ticker, phase="precollect"):
-            data_report = await build_ticker_data_report(ticker, emit=emit, cycle_id=cycle_id)
+            data_report = await build_ticker_data_report(ticker, emit=emit, cycle_id=cycle_id, force_refresh=force_refresh)
+        precollect_ms = int((time.monotonic() - t0_precollect) * 1000)
+        desk.cycle_metadata["precollect_ms"] = precollect_ms
         emit(
             "analyzing", f"v3_precollect_ok_{ticker}",
-            f"📥 {ticker}: Market & news pre-collection complete",
+            f"📥 {ticker}: Market & news pre-collection complete ({precollect_ms}ms)",
             status="ok",
         )
     except Exception as e:

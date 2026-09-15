@@ -2592,10 +2592,15 @@ class PipelineService:
 
                 lease_task = asyncio.create_task(renew_research_leases()) if questions else None
                 try:
-                    result = await run_v3_pipeline(ticker=ticker_name, cycle_id=cycle_id, bot_id=get_active_bot_id(), emit=emit, agent_locale=agent_locale, prism_overrides=prism_overrides, active_directives=cycle_directives, cycle_candidates=cycle_candidates,
+                    result = await run_v3_pipeline(
+                        ticker=ticker_name, cycle_id=cycle_id, bot_id=get_active_bot_id(), emit=emit,
+                        agent_locale=agent_locale, prism_overrides=prism_overrides,
+                        active_directives=cycle_directives, cycle_candidates=cycle_candidates,
                         analysis_mode="full" if questions else kwargs.get("analysis_mode", "auto"),
                         research_questions=questions,
-                        trigger_type=(kwargs.get("watch_trigger") or {}).get("type") or kwargs.get("trigger_type") or "manual")
+                        trigger_type=(kwargs.get("watch_trigger") or {}).get("type") or kwargs.get("trigger_type") or "manual",
+                        force_refresh=bool(kwargs.get("force_refresh") or kwargs.get("collect", False)),
+                    )
                 finally:
                     if lease_task:
                         lease_task.cancel()

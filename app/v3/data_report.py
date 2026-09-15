@@ -142,7 +142,7 @@ def assemble_report(
     return report
 
 
-async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str | None = None) -> str:
+async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str | None = None, force_refresh: bool = False) -> str:
     """Collect core stock datasets in parallel and format them into a markdown report."""
     ticker = ticker.upper().strip()
     
@@ -197,6 +197,7 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
     # builds on past work instead of starting from scratch. Within 48h the
     # fast-path additionally skips the heavy scrapers; older theses still get
     # injected (age-labeled) but fresh data is collected in full.
+    # If force_refresh=True, always collect full fresh datasets.
     previous_analysis_md = ""
     is_fast_path = False
 
@@ -221,7 +222,7 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
         logger.debug("[data_report] mongo thesis read failed: %s", me)
 
     if recent and recent[0]:
-        if recent[2]:
+        if recent[2] and not force_refresh:
             is_fast_path = True
             previous_analysis_md = (
                 f"## 0. PREVIOUS ANALYSIS (FAST-PATH)\n"
@@ -235,13 +236,14 @@ async def build_ticker_data_report(ticker: str, emit: Any = None, cycle_id: str 
             prior_text = recent[0]
             if len(prior_text) > 2500:
                 prior_text = prior_text[:2500] + "\n[... prior thesis truncated ...]"
+            prefix_label = "PREVIOUS ANALYSIS ON FILE (FORCE REFRESH)" if force_refresh else "PRIOR RESEARCH ON FILE"
             previous_analysis_md = (
-                f"## 0. PRIOR RESEARCH ON FILE (dated {recent[1]})\n"
+                f"## 0. {prefix_label} (dated {recent[1]})\n"
                 f"*This stock was researched before. The thesis below may be stale — verify its claims "
                 f"against today's fresh data, note what changed, and build on it rather than starting over:*\n\n"
                 f"{prior_text}\n\n"
             )
-            _emit("precollect_prior", "Prior research found — seeding report with last thesis.", "ok")
+            _emit("precollect_prior", "Prior research found — seeding report and collecting fresh datasets.", "ok")
 
     _FULL_COLLECTORS = ("yfinance_price", "yfinance_fund", "finnhub_news",
                         "multi_api_news", "reddit", "youtube")
