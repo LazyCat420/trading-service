@@ -2051,6 +2051,8 @@ async def run_v3_agent(
                         if financial_record is not None:
                             from app.v3.financial_repair import merge_repair
                             from app.v3.financial_reasoning import render_reasoning_artifact
+                            if candidate.get("reasoning_steps") == original_artifact.get("reasoning_steps"):
+                                candidate.pop("reasoning", None)
                             candidate, timing_merge_errors = merge_repair(original_artifact, candidate, financial_record)
                             candidate, render_errors = render_reasoning_artifact(candidate, financial_record)
                             timing_merge_errors += render_errors
@@ -2078,13 +2080,16 @@ async def run_v3_agent(
                      f"{agent_name}: decision contract rejected", status="error",
                      data={"kind": "decision_contract_rejected", "agent": agent_name,
                            "errors": contract_failures})
-                _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, "AGENT_ERROR",
+                outcome = (
+                    PhaseOutcome.DATA_GAP if is_retry else PhaseOutcome.AGENT_ERROR
+                )
+                _record_telemetry(desk, agent_name, elapsed_ms, loops_used, token_usage, outcome.value,
                           **summarize_usage(_usage_results, _cost_sink),
                                   sys_prompt_chars=sys_prompt_chars, user_prompt_chars=user_prompt_chars,
                                   cached_tokens=cached_tokens, prompt_tokens=prompt_tokens,
                                   model_used=model_used, provider=provider_used, attempt_no=attempt_no,
                                   failure_reason=SCHEMA_INVALID, error_message="; ".join(contract_failures))
-                return PhaseOutcome.AGENT_ERROR
+                return outcome
             desk.cycle_metadata.setdefault("decision_contract_repair_errors", {}).pop(artifact_type, None)
             artifact = effective_decision(artifact, board_source)
             artifact["decision_contract_version"] = 1

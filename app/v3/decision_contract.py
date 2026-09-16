@@ -180,9 +180,16 @@ def correction_errors(original: dict, candidate: Any, **kwargs) -> list[str]:
     """A contract correction cannot quietly make a different investment decision."""
     if not isinstance(candidate, dict):
         return ['correction did not produce a JSON object']
-    protected = ('action', 'confidence', 'reasoning', 'position_size_pct',
+    protected = ['action', 'confidence', 'position_size_pct',
                  'stop_loss', 'take_profit', 'signal_weights', 'override_evidence',
-                 'research_answers', 'resolution_condition')
+                 'research_answers', 'resolution_condition']
+    if original.get('financial_reasoning_version') == 2:
+        # Under financial_reasoning v2, reasoning is deterministically rendered from reasoning_steps.
+        # Verify preservation of reasoning_steps; do not reject when model token duplication alters prose.
+        if candidate.get('reasoning_steps') != original.get('reasoning_steps'):
+            return ['correction changed reasoning_steps'] + contract_errors(candidate, **kwargs)
+    else:
+        protected.append('reasoning')
     errors = [f'correction changed {key}' for key in protected
               if candidate.get(key) != original.get(key)]
     return errors + contract_errors(candidate, **kwargs)
@@ -208,4 +215,14 @@ def unique_nonentry_timing_correction(original: dict) -> dict | None:
         return None
     minimum = min(len(patch) for patch in candidates)
     smallest = [patch for patch in candidates if len(patch) == minimum]
-    return smallest[0] if len(smallest) == 1 else None
+    if len(smallest) == 1:
+        return smallest[0]
+    if original.get('action') == 'HOLD':
+        monitor_patches = [p for p in smallest if p.get('trigger_purpose') == 'monitor']
+        if len(monitor_patches) == 1:
+            from app.trading.order_triggers import dynamic_trigger_is_evaluable
+            trig = original.get('dynamic_trigger')
+            if isinstance(trig, dict) and dynamic_trigger_is_evaluable(trig.get('type')):
+                return monitor_patches[0]
+    return None
+

@@ -143,6 +143,17 @@ Your context may include "Previous Cycle's SharedDesk (Manila Envelope)".
 - NEVER default to "Prior cycle HOLD validated" or repeat a prior cycle's hold simply because the prior cycle held.
 - If current market price, technical support (e.g. price above major SMAs), margin structure, or risk/reward are constructive, you MUST evaluate freshly on TODAY's setup. A repeated hold without substantive new deterioration is an evasion of decision-making.
 
+## TIMING & TRIGGER CONTRACT
+- If action is "BUY":
+  - Enter immediately: entry_mode="enter_now", trigger_purpose="none", dynamic_trigger=null.
+  - Enter conditionally on price/indicator: entry_mode="enter_on_condition", trigger_purpose="entry", dynamic_trigger={"type": "<type>", "value": <level>}.
+- If action is "HOLD":
+  - MUST use entry_mode="watch_only".
+  - If watching a dynamic trigger (e.g. catalyst, support/resistance, moving average): trigger_purpose="monitor", dynamic_trigger={"type": "<type>", "value": <level>}. NEVER use trigger_purpose="entry" on HOLD!
+  - If not watching a dynamic trigger: trigger_purpose="none", dynamic_trigger=null.
+- If action is "SELL":
+  - entry_mode="enter_now", trigger_purpose="none", dynamic_trigger=null.
+
 ## OUTPUT
 Return your concise decision rationale in the reasoning field, then ONLY the raw JSON — no markdown fences; start with { and end with }."""
 

@@ -135,3 +135,21 @@ def test_paging_failure_never_breaks_the_abort(saved_desks):
 
     assert result is not None
     assert desk.phase == DeskPhase.ABORTED
+
+
+async def test_retry_degrade_to_data_gap_prevents_breaker_abort(saved_desks, paged):
+    """When a phase retry degrades to DATA_GAP, the circuit breaker must not abort."""
+    desk = SharedDesk(ticker="BTC", cycle_id="cycle-retry-degrade")
+    breaker = CircuitBreaker(max_retries_per_phase=1)
+
+    # Attempt 1: AGENT_ERROR, consumes retry
+    assert breaker.should_retry("board_of_directors", PhaseOutcome.AGENT_ERROR) is True
+    breaker.record_outcome("board_of_directors", PhaseOutcome.AGENT_ERROR)
+
+    # Attempt 2 (is_retry=True): degrades to DATA_GAP
+    result = _check_abort(desk, breaker, "board_of_directors", PhaseOutcome.DATA_GAP)
+
+    assert result is None
+    paged.assert_not_called()
+    assert desk.phase != DeskPhase.ABORTED
+

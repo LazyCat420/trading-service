@@ -29,10 +29,49 @@ def test_sell_labels_can_be_recovered_but_not_the_sell_decision_itself():
     assert unique_nonentry_timing_correction({'action':'SELL'})=={'entry_mode':'enter_now','trigger_purpose':'none'}
     assert unique_nonentry_timing_correction({'reasoning':'Maybe sell'}) is None
 
+def test_hold_evaluable_trigger_resolves_to_monitor():
+    original = {**ORIGINAL, 'dynamic_trigger': {'type': 'price_below', 'value': 100}}
+    assert unique_nonentry_timing_correction(original) == {'entry_mode': 'watch_only', 'trigger_purpose': 'monitor'}
+
+    original_watch = {**ORIGINAL, 'entry_mode': 'watch_only', 'dynamic_trigger': {'type': 'sma_20_rise', 'value': 33.99}}
+    assert unique_nonentry_timing_correction(original_watch) == {'trigger_purpose': 'monitor'}
+
+def test_btc_cycle_board_hold_trigger_reproduced_and_fixed():
+    btc_attempt_1 = {
+        **ORIGINAL,
+        'action': 'HOLD',
+        'entry_mode': 'watch_only',
+        'trigger_purpose': None,
+        'dynamic_trigger': {'type': 'sma_20_rise', 'value': 33.99},
+    }
+    patch = unique_nonentry_timing_correction(btc_attempt_1)
+    assert patch == {'trigger_purpose': 'monitor'}
+    normalized = {**btc_attempt_1, **patch}
+    assert correction_errors(btc_attempt_1, normalized) == []
+
+def test_financial_reasoning_v2_correction_preserves_steps_and_ignores_duplicate_prose():
+    orig = {
+        **ORIGINAL,
+        'action': 'HOLD',
+        'entry_mode': 'watch_only',
+        'trigger_purpose': 'entry',
+        'dynamic_trigger': {'type': 'sma_20_rise', 'value': 33.99},
+        'reasoning_steps': ['close'],
+        'financial_reasoning_version': 2,
+        'reasoning': 'Close price is 30.0 [close]',
+    }
+    candidate = {
+        **orig,
+        'trigger_purpose': 'monitor',
+        'reasoning': 'Close price is 30.0 [close] Close price is 30.0 [close]',
+    }
+    errors = correction_errors(orig, candidate)
+    assert errors == []
+
 @pytest.mark.parametrize('original', [
     {**ORIGINAL,'action':'BUY'},
     {**ORIGINAL,'entry_mode':'watch_only'},
-    {**ORIGINAL,'dynamic_trigger':{'type':'price_below','value':100}}, # monitor/research tie
+    {**ORIGINAL,'entry_mode':'watch_only','dynamic_trigger':'not-a-dict'},
     {**ORIGINAL,'trigger_purpose':'monitor','dynamic_trigger':{'type':'price_below','value':-1}},
 ])
 def test_ambiguous_valid_or_unrepairable_input_is_not_normalized(original):
@@ -48,8 +87,8 @@ async def test_ambiguous_case_keeps_one_model_repair_and_strict_preservation(cha
     from app.v3.shared_desk import SharedDesk
     from app.v3.agent_runner import run_v3_agent
     from app.v3.agents import board_of_directors as board
-    original={**ORIGINAL,'entry_mode':'watch_only','dynamic_trigger':{'type':'price_below','value':100}}
-    fixed={**original,'trigger_purpose':'monitor'}
+    original={**ORIGINAL,'entry_mode':'watch_only','dynamic_trigger':'not-a-dict'}
+    fixed={**ORIGINAL,'entry_mode':'watch_only','trigger_purpose':'monitor','dynamic_trigger':{'type':'price_below','value':100}}
     if change_question:fixed['resolution_condition']={'open_question':'new','resolving_fact':'new'}
     desk=SharedDesk(ticker='EVLT',cycle_id='nonentry-label-regression')
     desk.cycle_metadata={'decision_contract_version':1,'held':False}
@@ -65,3 +104,4 @@ async def test_ambiguous_case_keeps_one_model_repair_and_strict_preservation(cha
     else:
         assert desk.final_decision['trigger_purpose']=='monitor'
         assert desk.final_decision['resolution_condition'] is None
+
