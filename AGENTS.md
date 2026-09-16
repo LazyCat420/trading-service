@@ -320,3 +320,12 @@ Usage contract v2 preserves initial, retry, repair and correction attempts. Null
 unknown; zero is measured zero. Publish partial coverage when any attempt lacks
 usage. Successful repair does not mean the initial artifact succeeded, and successful
 cycle completion does not establish financial decision quality.
+
+Small V3 panels share healthy endpoints regardless of admission source: Junior
+Analyst and Bull/Bear/Defense prefer Jetson; other panel roles prefer DGX.
+`box_for_agent()` is the shared preference for dispatch and concurrency admission.
+Preferences are not pins: non-collector roles can overflow in either direction,
+and unavailable or incapable endpoints fall through to the other box. Base-agent
+routing supplies the measured input plus minimum output/headroom before selection,
+so a preferred or overflow endpoint that cannot fit the prompt is skipped.
+Single-ticker dependencies remain sequential; independent ticker work can overlap.

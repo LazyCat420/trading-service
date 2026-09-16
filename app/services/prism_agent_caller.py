@@ -338,27 +338,29 @@ ENDPOINT_PROVIDERS: dict[str, str] = {
     "dgx_spark": "vllm-2",
 }
 
-#: Agent names containing any of these run as LIGHT work: Jetson first, DGX
-#: Spark as fallback, and no DECISION_MODEL_PATTERN contract (they are
-#: model-agnostic by design). Everything else is a decision agent: DGX Spark
-#: first, Jetson as fallback/overflow, contract enforced on whichever box
-#: answers. ONE table — the 2026-09-03 fix carried two copies of this tuple
-#: and the routing rule was read from whichever a reader found first.
-#: "translator" was missing until 2026-09-03: the foreign-feed translator
-#: (news_collector._translate_foreign_text) resolved as a DECISION agent and
-#: would have taken a 1M-context GLM slot for a three-sentence translation.
+# Background collector roles retain their Jetson preference. V3 panel roles
+# share the two boxes even for a single scheduled/watch-desk ticker; admission
+# source does not participate in routing. These are preferences, never pins.
 COLLECTOR_KEYWORDS: tuple[str, ...] = (
     "janitor", "curator", "summarizer", "scout", "purge",
     "maintenance", "consensus", "ticker_validator", "translator",
 )
 
 
+JETSON_PANEL_ROLES = frozenset({
+    "v3_junior_analyst", "v3_bull_agent", "v3_bear_agent", "v3_bull_defense",
+})
+
+
 def box_for_agent(agent_name: str | None) -> str:
-    """The endpoint a run is ROUTED to by role: collectors Jetson-first, decision
-    agents DGX-first (see the preference rule below). Used to pick the
-    concurrency pool BEFORE the call, so a saturated box is capped on its own
-    numbers. Mirrors, does not replace, the routing."""
-    return "jetson" if is_collector_agent(agent_name) else "dgx_spark"
+    """Shared preference for dispatch and the orchestrator's admission pool.
+
+    Initial research and debate prefer Jetson; financial/quantitative analysis,
+    the judge, Board and synthesis prefer DGX. Either can fall back to the
+    other verified endpoint; model identities are always discovered live.
+    """
+    name = (agent_name or "").lower()
+    return "jetson" if is_collector_agent(name) or name in JETSON_PANEL_ROLES else "dgx_spark"
 
 
 def is_collector_agent(agent_name: str | None) -> bool:
@@ -502,36 +504,16 @@ async def resolve_default_model_for_agent(
     agent_name: str,
     force_refresh: bool = False,
     endpoint_override: str | None = None,
+    minimum_context_tokens: int = 0,
 ) -> tuple[str, str]:
-    """Resolve (model, provider) for an agent. ONE routing mechanism:
+    """Route every admission source by role preference, overflow and fallback.
 
-    1. PREFERENCE by role — decision agents prefer dgx_spark (Gold Spark, 1M
-       context), collector agents (COLLECTOR_KEYWORDS) prefer jetson.
-    2. OVERFLOW — a decision agent whose preferred DGX box is saturated
-       (box_is_saturated) and whose Jetson is not goes to the Jetson first.
-       Both saturated: stay queued on the DGX — a 490k-token analyst prompt
-       must not land on the 128K box (measured 2026-09-02/03: fundamental
-       analyst on the Jetson → EMPTY RESPONSE after 13 loops / 565 s).
-    3. FALLBACK — an endpoint that is unconfigured, disabled, unreachable, or
-       (for decision agents) failing the capability contract is
-       skipped and the next candidate is tried. Nothing is available → raise.
-
-    There is deliberately NO static pin. SOLO_JETSON_MODE (2026-09-02 →
-    2026-09-03) made the Jetson the only candidate and could never let the DGX
-    back in when it returned; every decision agent ran on nemotron35 for two
-    days with zero GLM rows in v3_agent_telemetry. "Take a box out" is done by
-    leaving its PROVIDER_VLLM_*_URL unset, which step 3 already honours.
-
-    `endpoint_override` names a box directly ("jetson" / "dgx_spark") and skips
-    both preference and overflow. It exists so a caller can vary the MODEL
-    without varying the agent NAME (the per-role A/B shadow). An unknown
-    override RAISES: a silent fallback would run both arms of an A/B on the
-    same box while the telemetry still claimed a split.
+    A small panel uses both healthy boxes without first saturating one. Model
+    discovery, capability verification and prompt fit are checked on whichever
+    endpoint is selected, including overflow. Explicit benchmark overrides
+    remain strict: silently falling back would invalidate the comparison.
     """
     from app.services.prism_agent_caller import llm
-    from app.config.config import settings as _settings
-
-    is_collector = is_collector_agent(agent_name)
 
     if endpoint_override:
         if endpoint_override not in ENDPOINT_PROVIDERS:
@@ -540,27 +522,19 @@ async def resolve_default_model_for_agent(
                 f"expected one of {sorted(ENDPOINT_PROVIDERS)}"
             )
         candidates = [(endpoint_override, ENDPOINT_PROVIDERS[endpoint_override])]
-    elif is_collector:
-        candidates = [
-            ("jetson", ENDPOINT_PROVIDERS["jetson"]),
-            ("dgx_spark", ENDPOINT_PROVIDERS["dgx_spark"]),
-        ]
     else:
-        candidates = [
-            ("dgx_spark", ENDPOINT_PROVIDERS["dgx_spark"]),
-            ("jetson", ENDPOINT_PROVIDERS["jetson"]),
-        ]
-        dgx = llm._endpoints.get("dgx_spark")
-        jet = llm._endpoints.get("jetson")
+        preferred = box_for_agent(agent_name)
+        alternate = "jetson" if preferred == "dgx_spark" else "dgx_spark"
+        candidates = [(key, ENDPOINT_PROVIDERS[key]) for key in (preferred, alternate)]
+        primary, secondary = llm._endpoints.get(preferred), llm._endpoints.get(alternate)
         if (
-            dgx is not None and jet is not None and jet.enabled and jet.url
-            and box_is_saturated(dgx) and not box_is_saturated(jet)
+            not is_collector_agent(agent_name)
+            and primary is not None and secondary is not None
+            and secondary.enabled and secondary.url
+            and box_is_saturated(primary) and not box_is_saturated(secondary)
         ):
-            logger.info(
-                "[SmartRouting] dgx_spark saturated (running=%d waiting=%d cap=%d) — "
-                "overflowing %s to jetson",
-                dgx.requests_running, dgx.requests_waiting, dgx.max_concurrent, agent_name,
-            )
+            logger.info("[SmartRouting] %s saturated — overflowing %s to %s",
+                        preferred, agent_name, alternate)
             candidates.reverse()
 
     discovered_model = None
@@ -588,6 +562,16 @@ async def resolve_default_model_for_agent(
                 ep_key, exc
             )
             last_error = exc
+            continue
+
+        if minimum_context_tokens and (
+            not ep.max_model_len or ep.max_model_len < minimum_context_tokens
+        ):
+            last_error = ModelContractError(
+                f"{ep_key}: context capacity {ep.max_model_len} cannot fit "
+                f"{minimum_context_tokens} required tokens"
+            )
+            logger.warning("[SmartRouting] %s — trying another endpoint", last_error)
             continue
 
         if getattr(ep, "validation_required", False):

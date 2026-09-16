@@ -947,9 +947,12 @@ async def run_agent(
             "temperature": temperature,
         }
         from app.services.prism_agent_caller import resolve_default_model_for_agent, ModelContractError
+        from app.services.context_gate import estimate_tokens
+        input_estimate = estimate_tokens(system_prompt + full_prompt + str(agent_tools or []))
         resolved_model, resolved_provider = await resolve_default_model_for_agent(
             agent_name, force_refresh=bool(model_override) or _resolution_state["force_refresh"],
-            endpoint_override=endpoint_override)
+            endpoint_override=endpoint_override,
+            minimum_context_tokens=input_estimate + 4096 + 1024)
         if model_override and model_override != resolved_model:
             raise ModelContractError("Model override does not match fresh endpoint discovery")
         if not resolved_model or not resolved_provider:
@@ -959,8 +962,6 @@ async def run_agent(
         endpoint = next((ep for key, ep in llm._endpoints.items()
                          if ENDPOINT_PROVIDERS.get(key) == resolved_provider), None)
         if endpoint and endpoint.max_model_len:
-            from app.services.context_gate import estimate_tokens
-            input_estimate = estimate_tokens(system_prompt + full_prompt + str(agent_tools or []))
             room = endpoint.max_model_len - input_estimate - 1024
             if room < 4096:
                 raise ModelContractError("Selected endpoint cannot fit this prompt and output allowance")

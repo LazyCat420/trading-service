@@ -60,6 +60,6 @@ async def discover_cycle_models():
             return {**{k: v for k, v in receipt.items() if not k.startswith('_')}, 'provider': ENDPOINT_PROVIDERS.get(key)}
         except Exception as exc:
             return {'box': key, 'provider': ENDPOINT_PROVIDERS.get(key), 'eligible': False,
-                    'reason': f'discovery failed: {type(exc).__name__}'}
+                    'reason': f'discovery failed: {type(exc).__name__}: {str(exc)[:300]}'}
     rows = await asyncio.gather(*(discover(k, ep) for k, ep in llm._endpoints.items() if ep.enabled and ep.url))
     return {'version': 1, 'endpoints': rows, 'eligible': any(r['eligible'] for r in rows)}
