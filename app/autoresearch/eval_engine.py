@@ -272,15 +272,18 @@ def process_and_store_trace(trace: TraceRecord):
 
 def evaluate_confidence_calibration(ticker: str | None = None, limit: int = 20) -> Dict[str, Any]:
     try:
-        if ticker:
-            rows = mongo_query.find_rows('decision_outcomes', {**learning_query(), 'ticker': ticker, 'resolved_at': {'$ne': None}, 'outcome': {'$in': ['WIN', 'LOSS']}}, ['confidence', 'outcome', 'pnl_pct'], sort=[('resolved_at', -1)], limit=limit)
-        else:
-            rows = mongo_query.find_rows('decision_outcomes', {**learning_query(), 'resolved_at': {'$ne': None}, 'outcome': {'$in': ['WIN', 'LOSS']}}, ['confidence', 'outcome', 'pnl_pct'], sort=[('resolved_at', -1)], limit=limit)
+        from app.trading.attribution.outcome_reader import get_learning_cohort_outcomes
 
-        if len(rows) < 3:
+        cohort = get_learning_cohort_outcomes(ticker=ticker, limit=limit)
+        valid_outcomes = [
+            o for o in cohort
+            if o.get("resolved_at") is not None and o.get("outcome") in ("WIN", "LOSS")
+        ]
+
+        if len(valid_outcomes) < 3:
             return {
                 "calibration_score": 50.0,
-                "sample_count": len(rows),
+                "sample_count": len(valid_outcomes),
                 "status": "insufficient_data",
             }
 
@@ -288,7 +291,9 @@ def evaluate_confidence_calibration(ticker: str | None = None, limit: int = 20) 
         win_confs = []
         loss_confs = []
 
-        for conf, outcome, pnl_pct in rows:
+        for doc in valid_outcomes:
+            conf = doc.get("confidence")
+            outcome = doc.get("outcome")
             normalized_conf = (conf or 50) / 100.0
             if outcome == "WIN":
                 calibration_scores.append(normalized_conf)
@@ -304,7 +309,7 @@ def evaluate_confidence_calibration(ticker: str | None = None, limit: int = 20) 
 
         result = {
             "calibration_score": round(cal_score, 1),
-            "sample_count": len(rows),
+            "sample_count": len(valid_outcomes),
             "status": "ok",
             "avg_confidence_on_wins": round(sum(win_confs) / len(win_confs), 1) if win_confs else None,
             "avg_confidence_on_losses": round(sum(loss_confs) / len(loss_confs), 1) if loss_confs else None,
@@ -314,7 +319,7 @@ def evaluate_confidence_calibration(ticker: str | None = None, limit: int = 20) 
 
         logger.info(
             "Confidence calibration: %.1f%% (%d samples, %d W / %d L)",
-            cal_score, len(rows), len(win_confs), len(loss_confs),
+            cal_score, len(valid_outcomes), len(win_confs), len(loss_confs),
         )
         return result
 

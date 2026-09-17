@@ -54,8 +54,8 @@ def benchmark_observation(benchmark_symbol: str, as_of: datetime, source: str | 
 
 
 def learning_query() -> dict:
-    """Only the resolver below may stamp verified v2/v3 price-pair provenance."""
-    return {**exclude_synthetic(), 'outcome_contract_version': {'$in': [2, CONTRACT_VERSION]},
+    """Only the resolver below may stamp verified v2/v3/v4 price-pair provenance."""
+    return {**exclude_synthetic(), 'outcome_contract_version': {'$in': [2, 3, CONTRACT_VERSION, 4]},
             'outcome_evidence_state': 'verified', 'horizon_days': HORIZON_DAYS,
             'claim_type': {'$in': ['immediate_directional', 'flat_wait']},
             'entry_price': {'$gt': 0}, 'exit_price': {'$gt': 0},
@@ -143,7 +143,7 @@ def exit_observation(ticker: str, decision_as_of: datetime, source: str,
 
 def verified_pair(row: dict, exit_ref: dict, *, as_of: datetime | None = None) -> bool:
     """Validate independently of a database match before grading or memory writeback."""
-    if (row.get('outcome_contract_version') not in (2, CONTRACT_VERSION)
+    if (row.get('outcome_contract_version') not in (2, 3, 4, CONTRACT_VERSION)
         or row.get('claim_type') not in ('immediate_directional', 'flat_wait')
         or is_synthetic_cycle(row.get('cycle_id'))):
         return False
