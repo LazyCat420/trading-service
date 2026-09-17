@@ -103,7 +103,7 @@ def get_control_plane_operational_metrics() -> dict[str, Any]:
     now = datetime.datetime.now(datetime.timezone.utc)
 
     # 1. Deployed Commit SHA
-    commit_sha = os.getenv("GIT_COMMIT_SHA") or os.getenv("COMMIT_SHA")
+    commit_sha = os.getenv("GIT_COMMIT_SHA") or os.getenv("COMMIT_SHA") or os.getenv("GIT_SHA")
     if not commit_sha:
         try:
             commit_sha = subprocess.check_output(
