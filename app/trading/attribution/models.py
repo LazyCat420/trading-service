@@ -292,6 +292,92 @@ class DecisionOutcomeRecord(CanonicalAttributionModel):
     def validate_utc(cls, v: Optional[datetime.datetime]) -> Optional[datetime.datetime]:
         return _ensure_utc(v)
 
+    def to_v4(self, ticker: str = "UNKNOWN", claim_type_val: Optional[str] = None) -> Any:
+        """Adapts legacy v3 record to canonical v4 contract."""
+        from app.trading.attribution.outcome_contract import (
+            BenchmarkSpec,
+            DecisionOutcomeRecordV4,
+            HorizonSpec,
+            MaturityStatus,
+            OutcomeClaimType,
+            PriceObservation,
+        )
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        resolved_dt = self.resolved_at or now
+
+        # Map maturity status
+        status_map = {
+            OutcomeMaturityStatus.PENDING: MaturityStatus.NOT_YET_DUE,
+            OutcomeMaturityStatus.MATURE: MaturityStatus.MATURE_VERIFIED,
+            OutcomeMaturityStatus.UNRESOLVED: MaturityStatus.DUE_UNRESOLVED,
+            OutcomeMaturityStatus.CONTAMINATED: MaturityStatus.EXCLUDED,
+            OutcomeMaturityStatus.CANCELED: MaturityStatus.EXCLUDED,
+        }
+        v4_status = status_map.get(self.maturity_status, MaturityStatus.DUE_UNRESOLVED)
+
+        # Build observations if present
+        p_entry_obs = None
+        if self.entry_observation and "price" in self.entry_observation:
+            p_entry_obs = PriceObservation(
+                price=float(self.entry_observation["price"]),
+                date=self.resolved_at or now,
+                source=self.entry_observation.get("source", "legacy"),
+            )
+
+        p_horiz_obs = None
+        if self.horizon_observation and "price" in self.horizon_observation:
+            p_horiz_obs = PriceObservation(
+                price=float(self.horizon_observation["price"]),
+                date=self.resolved_at or now,
+                source=self.horizon_observation.get("source", "legacy"),
+            )
+
+        bm_entry_obs = None
+        if self.benchmark_entry and "price" in self.benchmark_entry:
+            bm_entry_obs = PriceObservation(
+                price=float(self.benchmark_entry["price"]),
+                date=self.resolved_at or now,
+                source=self.benchmark_entry.get("source", "legacy"),
+            )
+
+        bm_horiz_obs = None
+        if self.benchmark_horizon and "price" in self.benchmark_horizon:
+            bm_horiz_obs = PriceObservation(
+                price=float(self.benchmark_horizon["price"]),
+                date=self.resolved_at or now,
+                source=self.benchmark_horizon.get("source", "legacy"),
+            )
+
+        bm_spec = BenchmarkSpec.resolve(ticker=ticker)
+        horizon_spec = HorizonSpec(horizon_value=self.horizon_days)
+
+        c_type = OutcomeClaimType.PROPOSAL_DIRECTION
+        if claim_type_val == "flat_wait":
+            c_type = OutcomeClaimType.FLAT_WAIT
+
+        return DecisionOutcomeRecordV4(
+            outcome_id=f"out-{self.decision_id}-v4",
+            decision_id=self.decision_id,
+            evaluation_contract_version=4,
+            claim_type=c_type,
+            action_classification="LEGACY_V3_ADAPTED",
+            ticker=ticker,
+            horizon_spec=horizon_spec,
+            benchmark_spec=bm_spec,
+            entry_observation=p_entry_obs,
+            horizon_observation=p_horiz_obs,
+            benchmark_entry=bm_entry_obs,
+            benchmark_horizon=bm_horiz_obs,
+            maturity_status=v4_status,
+            decision_return=self.decision_return,
+            benchmark_return=self.benchmark_return,
+            forecast_alpha=self.decision_alpha,
+            created_at=resolved_dt - datetime.timedelta(days=self.horizon_days),
+            maturity_date=resolved_dt,
+            resolved_at=self.resolved_at,
+        )
+
 
 class AttributionReport(CanonicalAttributionModel):
     """Represents a derived causal diagnosis of trade / decision performance."""
@@ -337,4 +423,25 @@ class RiskReservation(CanonicalAttributionModel):
     @classmethod
     def validate_utc(cls, v: Optional[datetime.datetime]) -> Optional[datetime.datetime]:
         return _ensure_utc(v)
+
+
+# Re-export v4 outcome models and contract specifications
+from app.trading.attribution.outcome_contract import (
+    AdjustmentConvention,
+    BenchmarkSpec,
+    DecisionOutcomeRecordV4,
+    ExclusionReason,
+    HorizonSpec,
+    LOGICAL_TO_PHYSICAL_COLLECTIONS,
+    LotClosureRecordV4,
+    MarketCalendar,
+    MaturityStatus,
+    OutcomeClaimType,
+    OutcomeReportSlice,
+    PriceObservation,
+    calculate_forecast_alpha,
+    calculate_net_cashflow_return,
+    distinguish_action,
+    is_eligible_for_learning,
+)
 
