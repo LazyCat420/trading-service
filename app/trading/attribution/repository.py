@@ -678,9 +678,11 @@ def admit_execution_intent(
             try:
                 slot_col.insert_one(new_slot, session=s)
                 slot_info = new_slot
-            except Exception:
-                # Caught duplicate key, read existing
-                slot_info = slot_col.find_one({"slot_key": slot_key}, session=s) or new_slot
+            except Exception as e:
+                raise SlotConflictError(
+                    f"Slot {slot_key} concurrent insertion conflict: {e}",
+                    "SLOT_CONFLICT",
+                ) from e
 
         # 4. Check & Claim Cash Risk Reservation
         if intent.side.upper() == "BUY":

@@ -31,16 +31,19 @@ from app.trading.attribution.models import (
     PolicyDecision,
     PolicyDisposition,
     ReconciliationVerdict,
+    ReservationStatus,
 )
 from app.trading.attribution.reconciliation import reconcile_execution
 from app.trading.attribution.repository import (
     COLL_EXECUTION_INTENTS,
     COLL_EXECUTION_OUTBOX,
     COLL_EXECUTION_RECONCILIATIONS,
+    COLL_EXECUTION_SLOTS,
     COLL_LOT_CLOSURES,
     COLL_POLICY_DECISIONS,
     COLL_POLICY_SNAPSHOTS,
     COLL_POSITION_LOTS,
+    COLL_RISK_RESERVATIONS,
     claim_execution_slot,
     ensure_attribution_indexes,
     save_decision_artifact,
@@ -98,11 +101,21 @@ async def test_scenario_1_approved_buy_and_sell_lineage(real_mongo):
     assert pol_dec_buy.disposition in (PolicyDisposition.APPROVE, PolicyDisposition.APPROVE_WITH_CAP)
     assert intent_buy is not None
     intent_buy.bot_id = bot_id
+    intent_buy.slot_key = f"slot:{bot_id}:AAPL"
     save_policy_decision(pol_dec_buy)
     save_execution_intent(intent_buy)
+    real_mongo[COLL_RISK_RESERVATIONS].insert_one({
+        "execution_intent_id": intent_buy.execution_intent_id,
+        "status": ReservationStatus.ACTIVE.value,
+    })
+    real_mongo[COLL_EXECUTION_SLOTS].insert_one({
+        "slot_key": intent_buy.slot_key,
+        "intent_id": intent_buy.execution_intent_id,
+        "status": "ACTIVE",
+    })
 
     # Execute BUY
-    res_buy = await execute_intent(intent_buy.execution_intent_id, {"bot_id": bot_id}, {"price": 150.0})
+    res_buy = await execute_intent(intent_buy.execution_intent_id, {"bot_id": bot_id}, {"price": 150.0, "age_hours": 0.1})
     assert res_buy["status"] == "FILLED"
     assert res_buy["side"] == "BUY"
 
@@ -138,7 +151,7 @@ async def test_scenario_1_approved_buy_and_sell_lineage(real_mongo):
     save_policy_decision(pol_dec_sell)
     save_execution_intent(intent_sell)
 
-    res_sell = await execute_intent(intent_sell.execution_intent_id, {"bot_id": bot_id}, {"price": 160.0})
+    res_sell = await execute_intent(intent_sell.execution_intent_id, {"bot_id": bot_id}, {"price": 160.0, "age_hours": 0.1})
     assert res_sell["status"] == "FILLED"
     assert res_sell["side"] == "SELL"
 
@@ -171,15 +184,34 @@ async def test_scenario_2_duplicate_delivery_idempotency(real_mongo):
         expires_at=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1),
         idempotency_key="idemp-sc2",
     )
+    intent.slot_key = f"slot:{bot_id}:MSFT"
+    save_policy_decision(PolicyDecision(
+        policy_decision_id="pol-sc2",
+        decision_id="dec-sc2",
+        config_hash="h-sc2",
+        disposition=PolicyDisposition.APPROVE,
+        requested_values={},
+        normalized_values={},
+        approved_values={},
+    ))
     save_execution_intent(intent)
+    real_mongo[COLL_RISK_RESERVATIONS].insert_one({
+        "execution_intent_id": intent.execution_intent_id,
+        "status": ReservationStatus.ACTIVE.value,
+    })
+    real_mongo[COLL_EXECUTION_SLOTS].insert_one({
+        "slot_key": intent.slot_key,
+        "intent_id": intent.execution_intent_id,
+        "status": "ACTIVE",
+    })
 
     # First call succeeds
-    res1 = await execute_intent(intent.execution_intent_id, {"bot_id": bot_id}, {"price": 300.0})
+    res1 = await execute_intent(intent.execution_intent_id, {"bot_id": bot_id}, {"price": 300.0, "age_hours": 0.1})
     assert res1["status"] == "FILLED"
 
     # Second call raises IntentExecutionRejected (already consumed)
     with pytest.raises(IntentExecutionRejected) as exc:
-        await execute_intent(intent.execution_intent_id, {"bot_id": bot_id}, {"price": 300.0})
+        await execute_intent(intent.execution_intent_id, {"bot_id": bot_id}, {"price": 300.0, "age_hours": 0.1})
     assert "INTENT_NOT_CREATED" in str(exc.value) or "CONSUMED" in str(exc.value)
 
     # Verify only 1 order exists
@@ -308,6 +340,15 @@ async def test_scenario_6_stale_quote_rejection(real_mongo):
         expires_at=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1),
         idempotency_key="idemp-sc6",
     )
+    save_policy_decision(PolicyDecision(
+        policy_decision_id="pol-sc6",
+        decision_id="dec-sc6",
+        config_hash="h-sc6",
+        disposition=PolicyDisposition.APPROVE,
+        requested_values={},
+        normalized_values={},
+        approved_values={},
+    ))
     save_execution_intent(intent)
 
     with pytest.raises(IntentExecutionRejected) as exc:
@@ -335,8 +376,27 @@ async def test_scenario_7_crash_before_commit(real_mongo, monkeypatch):
         valid_from=datetime.datetime.now(datetime.timezone.utc),
         expires_at=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1),
         idempotency_key="idemp-sc7",
+        slot_key=f"slot:{bot_id}:AMZN",
     )
+    save_policy_decision(PolicyDecision(
+        policy_decision_id="pol-sc7",
+        decision_id="dec-sc7",
+        config_hash="h-sc7",
+        disposition=PolicyDisposition.APPROVE,
+        requested_values={},
+        normalized_values={},
+        approved_values={},
+    ))
     save_execution_intent(intent)
+    real_mongo[COLL_RISK_RESERVATIONS].insert_one({
+        "execution_intent_id": intent.execution_intent_id,
+        "status": ReservationStatus.ACTIVE.value,
+    })
+    real_mongo[COLL_EXECUTION_SLOTS].insert_one({
+        "slot_key": intent.slot_key,
+        "intent_id": intent.execution_intent_id,
+        "status": "ACTIVE",
+    })
 
     # Inject crash before commit
     def mock_crash(*args, **kwargs):
@@ -345,7 +405,7 @@ async def test_scenario_7_crash_before_commit(real_mongo, monkeypatch):
     monkeypatch.setattr("app.trading.attribution.repository.save_order_attempt", mock_crash)
 
     with pytest.raises(RuntimeError):
-        await execute_intent(intent.execution_intent_id, {"bot_id": bot_id}, {"price": 180.0})
+        await execute_intent(intent.execution_intent_id, {"bot_id": bot_id}, {"price": 180.0, "age_hours": 0.1})
 
     # Assert zero ledger records landed
     assert real_mongo["orders"].count_documents({"execution_intent_id": intent.execution_intent_id}) == 0
@@ -375,11 +435,30 @@ async def test_scenario_8_crash_after_commit_outbox_recovery(real_mongo):
         valid_from=datetime.datetime.now(datetime.timezone.utc),
         expires_at=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1),
         idempotency_key="idemp-sc8",
+        slot_key=f"slot:{bot_id}:META",
     )
+    save_policy_decision(PolicyDecision(
+        policy_decision_id="pol-sc8",
+        decision_id="dec-sc8",
+        config_hash="h-sc8",
+        disposition=PolicyDisposition.APPROVE,
+        requested_values={},
+        normalized_values={},
+        approved_values={},
+    ))
     save_execution_intent(intent)
+    real_mongo[COLL_RISK_RESERVATIONS].insert_one({
+        "execution_intent_id": intent.execution_intent_id,
+        "status": ReservationStatus.ACTIVE.value,
+    })
+    real_mongo[COLL_EXECUTION_SLOTS].insert_one({
+        "slot_key": intent.slot_key,
+        "intent_id": intent.execution_intent_id,
+        "status": "ACTIVE",
+    })
 
     # Execution commits
-    await execute_intent(intent.execution_intent_id, {"bot_id": bot_id}, {"price": 500.0})
+    await execute_intent(intent.execution_intent_id, {"bot_id": bot_id}, {"price": 500.0, "age_hours": 0.1})
 
     # Outbox has PENDING event
     assert real_mongo[COLL_EXECUTION_OUTBOX].count_documents({"aggregate_id": intent.execution_intent_id, "status": "PENDING"}) == 1
@@ -461,9 +540,18 @@ async def test_scenario_10_multi_lot_fifo_closure(real_mongo):
         expires_at=now + datetime.timedelta(hours=1),
         idempotency_key="idemp-sc10",
     )
+    save_policy_decision(PolicyDecision(
+        policy_decision_id="pol-sc10-sell",
+        decision_id="dec-sc10-sell",
+        config_hash="h-sc10",
+        disposition=PolicyDisposition.APPROVE,
+        requested_values={},
+        normalized_values={},
+        approved_values={},
+    ))
     save_execution_intent(intent_sell)
 
-    res = await execute_intent(intent_sell.execution_intent_id, {"bot_id": bot_id}, {"price": 120.0})
+    res = await execute_intent(intent_sell.execution_intent_id, {"bot_id": bot_id}, {"price": 120.0, "age_hours": 0.1})
     assert res["status"] == "FILLED"
 
     # Lot 1 must be closed

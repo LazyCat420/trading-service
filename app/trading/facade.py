@@ -32,6 +32,7 @@ import uuid
 from enum import Enum
 from typing import Any, Optional
 
+import pymongo.errors
 from app.db import mongo_query, mongo_store
 from app.trading.attribution.models import (
     DecisionArtifact,
@@ -344,8 +345,27 @@ class TradeFacade:
                     policy_snapshot=snapshot,
                     allow_supersede=allow_supersede,
                 )
-            except repository.AdmissionError as adm_err:
-                logger.warning("[TradeFacade] Admission rejected in ENFORCE mode: %s", adm_err)
+            except (repository.AdmissionError, pymongo.errors.PyMongoError) as adm_err:
+                logger.warning("[TradeFacade] Admission rejected or conflict in ENFORCE mode: %s", adm_err)
+                # Check if a concurrent request already committed the intent for this idempotency key
+                existing_intents = mongo_store.find_docs(
+                    repository.COLL_EXECUTION_INTENTS,
+                    {"idempotency_key": idempotency_key},
+                    limit=1,
+                )
+                if existing_intents:
+                    committed_intent_id = existing_intents[0].get("execution_intent_id")
+                    db = mongo_store.get_doc_db()
+                    fill_doc = db["trade_fills"].find_one({"execution_intent_id": committed_intent_id})
+                    order_doc = db["orders"].find_one({"execution_intent_id": committed_intent_id})
+                    return {
+                        "status": TradeResultStatus.ALREADY_PROCESSED.value,
+                        "effective_mode": "ENFORCE",
+                        "trade_executed": bool(fill_doc or order_doc),
+                        "execution_intent_id": committed_intent_id,
+                        "order_id": order_doc.get("order_id") if order_doc else None,
+                        "trade": fill_doc or order_doc or {},
+                    }
                 return {
                     "status": TradeResultStatus.POLICY_DENIED.value if isinstance(adm_err, repository.DegradedSnapshotAdmissionError) else TradeResultStatus.RETRYABLE_ERROR.value,
                     "effective_mode": "ENFORCE",
@@ -398,13 +418,45 @@ class TradeFacade:
                     "order_id": exec_res.get("order_id"),
                 }
             except IntentExecutionRejected as rej_err:
-                logger.error("[TradeFacade] execute_intent rejected in ENFORCE mode: %s", rej_err)
-                # NEVER fall back to legacy execution on ENFORCE error
+                logger.warning("[TradeFacade] execute_intent rejected in ENFORCE mode: %s", rej_err)
+                if rej_err.reason_code in ("INTENT_ALREADY_CONSUMED", "INTENT_NOT_CREATED") or "CONSUMED" in str(rej_err):
+                    db = mongo_store.get_doc_db()
+                    fill_doc = db["trade_fills"].find_one({"execution_intent_id": intent.execution_intent_id})
+                    order_doc = db["orders"].find_one({"execution_intent_id": intent.execution_intent_id})
+                    return {
+                        "status": TradeResultStatus.ALREADY_PROCESSED.value,
+                        "effective_mode": "ENFORCE",
+                        "trade_executed": bool(fill_doc or order_doc),
+                        "execution_intent_id": intent.execution_intent_id,
+                        "order_id": order_doc.get("order_id") if order_doc else None,
+                        "trade": fill_doc or order_doc or {},
+                    }
                 return {
                     "status": TradeResultStatus.RETRYABLE_ERROR.value,
                     "effective_mode": "ENFORCE",
                     "error": str(rej_err),
                     "reason_code": rej_err.reason_code,
+                    "trade_executed": False,
+                }
+            except pymongo.errors.PyMongoError as mongo_err:
+                logger.warning("[TradeFacade] Mongo transaction conflict during execute_intent: %s", mongo_err)
+                db = mongo_store.get_doc_db()
+                fill_doc = db["trade_fills"].find_one({"execution_intent_id": intent.execution_intent_id})
+                order_doc = db["orders"].find_one({"execution_intent_id": intent.execution_intent_id})
+                if fill_doc or order_doc:
+                    return {
+                        "status": TradeResultStatus.ALREADY_PROCESSED.value,
+                        "effective_mode": "ENFORCE",
+                        "trade_executed": True,
+                        "execution_intent_id": intent.execution_intent_id,
+                        "order_id": order_doc.get("order_id") if order_doc else None,
+                        "trade": fill_doc or order_doc or {},
+                    }
+                return {
+                    "status": TradeResultStatus.RETRYABLE_ERROR.value,
+                    "effective_mode": "ENFORCE",
+                    "error": str(mongo_err),
+                    "reason_code": "CONCURRENT_TRANSACTION_CONFLICT",
                     "trade_executed": False,
                 }
             except Exception as unk_err:
