@@ -123,7 +123,21 @@ class TradeFacade:
                 intent_status = intent_doc.get("status")
 
                 if intent_status == IntentStatus.CONSUMED.value:
-                    # Query order/fill result
+                    if effective_mode == ControlPlaneMode.SHADOW or intent_doc.get("effective_mode") == "SHADOW":
+                        sim = mongo_store.find_docs("shadow_executions", {"execution_intent_id": intent_id}, limit=1)
+                        rec = mongo_store.find_docs("execution_reconciliations", {"execution_intent_id": intent_id}, limit=1)
+                        return {
+                            "status": TradeResultStatus.ALREADY_PROCESSED.value,
+                            "effective_mode": "SHADOW",
+                            "execution_intent_id": intent_id,
+                            "idempotency_key": idempotency_key,
+                            "trade_executed": False,
+                            "simulated": True,
+                            "simulation": sim[0] if sim else {},
+                            "reconciliation_id": rec[0].get("reconciliation_id") if rec else None,
+                        }
+
+                    # Query order/fill result for ENFORCE / live
                     fill = mongo_query.find_row(
                         "trade_fills",
                         {"execution_intent_id": intent_id},
@@ -287,6 +301,8 @@ class TradeFacade:
                     "reason_codes": policy_dec.reason_codes,
                 }
             intent.effective_mode = "SHADOW"
+            if not intent.slot_key:
+                intent.slot_key = f"slot:shadow:{bot_id}:{ticker}"
             repository.save_execution_intent(intent)
             sim_res = await execute_intent(
                 intent.execution_intent_id,

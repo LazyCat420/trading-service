@@ -361,9 +361,11 @@ async def test_buy_fee_deduction_and_shadow_persistence():
 
     with patch("app.db.mongo_store.get_doc_db", return_value=fake_db), \
          patch("app.db.mongo_store.find_docs", side_effect=lambda col, q, **kw: fake_db[col].find(q).items), \
+         patch("app.db.mongo_store.with_txn") as mock_txn_shadow, \
          patch("app.db.mongo_query.find_row", return_value=[10000.0]), \
          patch("app.trading.executor._get_current_price", return_value=(100.0, 0.5)):
         
+        mock_txn_shadow.return_value.__enter__.return_value = "mock-session"
         s_res = await execute_intent(intent_shadow.execution_intent_id, account_context={"bot_id": "bot-fee-test", "effective_mode": "SHADOW"})
         assert s_res["status"] == "SIMULATED"
         assert s_res["simulated"] is True

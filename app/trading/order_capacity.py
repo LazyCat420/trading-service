@@ -34,6 +34,7 @@ def pending_capacity(bot_id, ticker):
                 'side': 'BUY',
                 'status': 'CREATED',
                 'expires_at': {'$gt': now},
+                'effective_mode': {'$ne': 'SHADOW'},
             }
         )
         for intent in active_intents:
