@@ -423,6 +423,7 @@ async def buy(
     strict_capacity: bool = False,
     execution_intent_id: str | None = None,
     decision_id: str | None = None,
+    called_via_facade: bool = False,
 ) -> dict:
     """
     Execute a paper BUY.
@@ -436,6 +437,9 @@ async def buy(
     (default, monitor sells on breach) or 'reanalyze_on_breach' (monitor
     leaves it to the re-analysis trigger).
     """
+    if getattr(settings, "RESTRICT_DIRECT_TRADER_CALLS", False) and not called_via_facade:
+        raise RuntimeError("Direct calls to paper_trader.buy are prohibited. Route trades through TradeFacade.")
+
     logger.info(
         "[TRACE][BUY] START bot_id=%s ticker=%s size_pct=%s intent_id=%s",
         bot_id, ticker, size_pct, execution_intent_id,
@@ -859,11 +863,15 @@ async def sell(
     execution_intent_id: str | None = None,
     decision_id: str | None = None,
     is_emergency_risk_exit: bool = False,
+    called_via_facade: bool = False,
 ) -> dict:
     """
     Execute a paper SELL.
     qty_pct: fraction of position to sell (default 1.0 = full close).
     """
+    if getattr(settings, "RESTRICT_DIRECT_TRADER_CALLS", False) and not called_via_facade:
+        raise RuntimeError("Direct calls to paper_trader.sell are prohibited. Route trades through TradeFacade.")
+
     logger.info(
         "[TRACE][SELL] START bot_id=%s ticker=%s qty_pct=%s intent_id=%s emergency=%s",
         bot_id, ticker, qty_pct, execution_intent_id, is_emergency_risk_exit,
@@ -1245,6 +1253,7 @@ async def emergency_risk_exit(
         ticker=ticker,
         qty_pct=qty_pct,
         is_emergency_risk_exit=True,
+        called_via_facade=True,
     )
 
 
@@ -1252,49 +1261,32 @@ async def emergency_risk_exit(
 async def check_stop_losses(
     bot_id: str, default_stop_pct: float = 0.08, cycle_id: str | None = None
 ) -> list[dict]:
-    """Check all open positions against their per-position stop-loss levels.
-
-    Each position stores its own stop_loss_pct (set at buy time from ATR).
-    Falls back to default_stop_pct only if the stored value is NULL.
-
-    Args:
-        bot_id: The bot to check
-        default_stop_pct: Fallback stop-loss for positions without a stored value
-        cycle_id: Identifier to tag generated fills/orders with the specific cycle
-    """
+    """Check all open positions against their per-position stop-loss levels."""
     _ensure_bot(bot_id)
-
     positions = mongo_query.find_rows('positions', {'bot_id': bot_id}, ['id', 'ticker', 'qty', 'avg_entry_price', 'stop_loss_pct', 'exit_style'])
+    if not positions:
+        return []
 
     triggered = []
     for pos in positions:
         pos_id, ticker, qty, entry_price, stop_pct, pos_exit_style = pos
-        # Agent chose re-analysis semantics: the price_triggers wake path owns
-        # this position's stop — the monitor must NOT hard-sell it.
-        if normalize_exit_style(pos_exit_style) == "reanalyze_on_breach":
-            continue
-        # Use stored stop or fall back to default
-        effective_stop = stop_pct if stop_pct is not None else default_stop_pct
-
-        current_price, age_hours = _get_current_price(ticker)
-
-        if current_price is None:
-            logger.warning("[stop-loss] %s: no price data, skipping", ticker)
+        # Honor exit_style: if reanalyze_on_breach, skip hard-sell entirely.
+        style = normalize_exit_style(pos_exit_style)
+        if style == "reanalyze_on_breach":
+            logger.info(
+                "[stop-loss] %s: exit_style='%s', leaving to agent prompt (not hard-selling)",
+                ticker, style,
+            )
             continue
 
-        # `entry_price` is money (Decimal); `effective_stop` is a ratio and
-        # `current_price` a vendor quote, both float. Promote the float side —
-        # demoting the entry price would discard the exactness it is stored
-        # for, in the comparison that decides whether to sell.
-        #
-        # This is the same boundary check_take_profits() handles below, and it
-        # was MISSED here when the reads moved to Mongo. `Decimal * float`
-        # raises TypeError, so every background risk sweep died at this line
-        # before reaching a single stop: 97 occurrences of "Background risk
-        # sweep failed ... unsupported operand type(s) for *: 'decimal.Decimal'
-        # and 'float'" in the 40 minutes after the 2026-08-19 cutover deploy.
-        # Take-profits kept working, so the harvest ran while the protective
-        # downside stop did not — the asymmetry that makes this worth a test.
+        price_now, _ = _get_current_price(ticker)
+        if not price_now:
+            continue
+        current_price = price_now
+        effective_stop = stop_pct if stop_pct else default_stop_pct
+
+        # Money arithmetic: entry_price and stop_pct may arrive as Decimal128,
+        # Decimal, float or str from Mongo/Postgres. Coerce through as_money
         entry_price = mongo_query.as_money(entry_price)
         stop_price = entry_price * (1 - mongo_query.as_money(effective_stop))
         if mongo_query.as_money(current_price) <= stop_price:
@@ -1311,10 +1303,8 @@ async def check_stop_losses(
                 pnl_pct,
             )
 
-            # Fix: restored missing sell call
-            result = await sell(
-                bot_id, ticker, current_price=current_price, cycle_id=cycle_id
-            )
+            # Execute sell
+            result = await sell(bot_id, ticker, current_price=current_price, cycle_id=cycle_id)
             if "error" not in result:
                 triggered.append(result)
                 # Resolve outcome so the feedback loop captures stop-loss exits
@@ -1327,71 +1317,69 @@ async def check_stop_losses(
                     )
                 except Exception as outcome_err:
                     logger.error("[stop-loss] Failed to resolve outcome for %s: %s", ticker, outcome_err)
-                
+
+                # Record fund-level alert
                 try:
                     record_fund_alert(
                         alert_type="stop_loss",
                         entity_name=bot_id,
                         detail=f"Stop loss triggered for {ticker} at ${current_price:.2f} (entry=${entry_price:.2f}, loss={pnl_pct:.1f}%)",
                         severity="high",
-                        ticker=ticker
+                        ticker=ticker,
                     )
-                except Exception as e:
-                    logger.error("[stop-loss] Alert error: %s", e)
-            else:
-                logger.error(
-                    "[stop-loss] Sell failed for %s: %s", ticker, result.get("error")
-                )
+                except Exception as alert_err:
+                    logger.error("[stop-loss] Failed to record alert: %s", alert_err)
 
     if triggered:
         logger.info(
-            "[stop-loss] Triggered %d stop-losses for bot '%s'", len(triggered), bot_id
+            "[stop-loss] Executed %d stop-loss exits for bot '%s'", len(triggered), bot_id
         )
     return triggered
 
 
-# Fix #13: Take-Profit Harvesting
+# Fix #14: Take-profit enforcement — per-position with agent-specified target
 async def check_take_profits(
-    bot_id: str,
-    reward_risk_ratio: float | None = None,
-    default_tp_pct: float = 0.20,
-    cycle_id: str | None = None,
+    bot_id: str, reward_risk_ratio: float | None = None, cycle_id: str | None = None
 ) -> list[dict]:
-    """Check all open positions against a take-profit target (harvesting).
-
-    The position's stored take_profit_pct (agent-decided at buy) is
-    authoritative when present. Otherwise the target derives from the stored
-    stop and the governed Risk/Reward ratio (stop 8% → target 16% at 2.0 R:R).
-    """
+    """Check open positions against take-profit targets and execute full harvests."""
     _ensure_bot(bot_id)
     if reward_risk_ratio is None:
-        reward_risk_ratio = float(get_param("TAKE_PROFIT_RR_RATIO"))
-
+        try:
+            reward_risk_ratio = float(get_param("TAKE_PROFIT_RR_RATIO"))
+        except Exception:
+            reward_risk_ratio = 2.0
     positions = mongo_query.find_rows('positions', {'bot_id': bot_id}, ['id', 'ticker', 'qty', 'avg_entry_price', 'stop_loss_pct', 'take_profit_pct', 'exit_style'])
+    if not positions:
+        return []
 
     triggered = []
     for pos in positions:
         pos_id, ticker, qty, entry_price, stop_pct, tp_pct, pos_exit_style = pos
-        # Re-analysis positions are owned by the price_triggers wake path.
-        if normalize_exit_style(pos_exit_style) == "reanalyze_on_breach":
-            continue
-        current_price, age_hours = _get_current_price(ticker)
-
-        if current_price is None:
-            continue
-
-        if tp_pct is not None:
-            effective_tp = tp_pct  # agent-decided target
-        else:
-            effective_stop = (
-                stop_pct if stop_pct is not None else (default_tp_pct / reward_risk_ratio)
+        # Honor exit_style: if reanalyze_on_breach, skip auto-harvest.
+        style = normalize_exit_style(pos_exit_style)
+        if style == "reanalyze_on_breach":
+            logger.info(
+                "[take-profit] %s: exit_style='%s', leaving to agent prompt (not auto-harvesting)",
+                ticker, style,
             )
-            effective_tp = effective_stop * reward_risk_ratio
+            continue
 
-        # `entry_price` is money (Decimal); `effective_tp` is a ratio and
-        # `current_price` a vendor quote, both float. Promote the float side —
-        # demoting the entry price would discard the exactness it is stored
-        # for, in the comparison that decides whether to sell.
+        price_now, _ = _get_current_price(ticker)
+        if not price_now:
+            continue
+        current_price = price_now
+
+        # Target hierarchy: agent's explicit take_profit_pct > R:R ratio fallback
+        if tp_pct is not None:
+            effective_tp = tp_pct
+        elif stop_pct is not None:
+            effective_tp = stop_pct * reward_risk_ratio
+        else:
+            effective_tp = None
+
+        if effective_tp is None:
+            continue
+
         entry_price = mongo_query.as_money(entry_price)
         target_price = entry_price * (1 + mongo_query.as_money(effective_tp))
         if mongo_query.as_money(current_price) >= target_price:
@@ -1409,9 +1397,7 @@ async def check_take_profits(
             )
 
             # Harvest the full position
-            result = await sell(
-                bot_id, ticker, current_price=current_price, cycle_id=cycle_id
-            )
+            result = await sell(bot_id, ticker, current_price=current_price, cycle_id=cycle_id)
             if "error" not in result:
                 triggered.append(result)
                 # Resolve outcome so the feedback loop captures take-profit exits

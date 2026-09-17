@@ -29,6 +29,18 @@ class ControlPlaneMode(str, enum.Enum):
 
 def resolve_control_plane_mode(bot_id: Optional[str] = None) -> ControlPlaneMode:
     """Resolve effective control plane mode from environment and optional account overrides."""
+    # 0. Check account-specific override from database (bots collection)
+    if bot_id:
+        try:
+            from app.db import mongo_query
+            bot_row = mongo_query.find_row("bots", {"bot_id": bot_id}, ["control_plane_mode"])
+            if bot_row and bot_row[0]:
+                db_mode = str(bot_row[0]).strip().upper()
+                if db_mode in ControlPlaneMode.__members__:
+                    return ControlPlaneMode(db_mode)
+        except Exception:
+            pass
+
     # 1. Check account-specific override from environment: CONTROL_PLANE_MODE_<BOT_ID>
     if bot_id:
         env_bot_mode = os.getenv(f"CONTROL_PLANE_MODE_{bot_id.upper().replace('-', '_')}")

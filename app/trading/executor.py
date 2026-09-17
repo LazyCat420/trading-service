@@ -25,10 +25,12 @@ from app.trading.attribution import repository
 from app.trading.attribution.repository import (
     COLL_EXECUTION_INTENTS,
     COLL_EXECUTION_OUTBOX,
+    COLL_EXECUTION_SLOTS,
     COLL_LOT_CLOSURES,
     COLL_ORDER_ATTEMPTS,
     COLL_POLICY_DECISIONS,
     COLL_POSITION_LOTS,
+    COLL_RISK_RESERVATIONS,
 )
 from app.trading.control_plane import ControlPlaneMode, resolve_control_plane_mode
 from app.trading.paper_trader import _apply_execution_cost, _get_current_price
@@ -150,6 +152,17 @@ async def execute_intent(
         # A. CAS consume intent
         if not repository.consume_execution_intent(intent_id, session=s):
             raise IntentExecutionRejected(f"Intent {intent_id} could not be consumed (CAS failed)", "INTENT_ALREADY_CONSUMED")
+
+        # Consume any active risk reservations for this intent
+        repository.consume_risk_reservations_for_intent(intent_id, session=s)
+
+        # Update slot if bound
+        if intent.slot_key:
+            db[COLL_EXECUTION_SLOTS].update_one(
+                {"slot_key": intent.slot_key, "intent_id": intent_id},
+                {"$set": {"status": "CONSUMED", "consumed_at": now}},
+                session=s,
+            )
 
         # B. Mutate Cash & Positions & Tax Lots
         if side == "BUY":

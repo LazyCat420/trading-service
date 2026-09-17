@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import uuid
 from typing import Any, Optional
 
 from app.db import mongo_query, mongo_store
@@ -20,6 +21,9 @@ from app.trading.attribution.models import (
     IntentStatus,
     OrderAttempt,
     PolicyDecision,
+    PolicyDisposition,
+    ReservationStatus,
+    RiskReservation,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,6 +39,7 @@ COLL_EXECUTION_OUTBOX = "execution_outbox"
 COLL_POSITION_LOTS = "position_lots"
 COLL_LOT_CLOSURES = "lot_closures"
 COLL_POLICY_SNAPSHOTS = "policy_snapshots"
+COLL_RISK_RESERVATIONS = "risk_reservations"
 
 
 def ensure_attribution_indexes() -> None:
@@ -92,6 +97,13 @@ def ensure_attribution_indexes() -> None:
         c_lc = db[COLL_LOT_CLOSURES]
         c_lc.create_index([("closure_id", 1)], unique=True)
         c_lc.create_index([("lot_id", 1)])
+
+        # 10. risk_reservations
+        c_rr = db[COLL_RISK_RESERVATIONS]
+        c_rr.create_index([("reservation_id", 1)], unique=True)
+        c_rr.create_index([("execution_intent_id", 1)])
+        c_rr.create_index([("bot_id", 1), ("status", 1)])
+        c_rr.create_index([("slot_key", 1)])
 
         logger.info("[AttributionRepo] Indexes ensured for canonical attribution and control-plane collections.")
     except Exception as exc:
@@ -283,20 +295,46 @@ def get_attribution_report_by_decision(decision_id: str) -> Optional[Attribution
     return AttributionReport.model_validate(docs[0])
 
 
+class AdmissionError(Exception):
+    """Base exception for intent admission errors."""
+    def __init__(self, message: str, reason_code: str):
+        super().__init__(f"{reason_code}: {message}")
+        self.reason_code = reason_code
+
+
+class SlotConflictError(AdmissionError):
+    pass
+
+
+class IntentSupersessionError(AdmissionError):
+    pass
+
+
+class InsufficientCashReservationError(AdmissionError):
+    pass
+
+
+class DegradedSnapshotAdmissionError(AdmissionError):
+    pass
+
+
 def claim_execution_slot(
     slot_key: str,
     decision_id: str,
     intent_id: str,
     expires_at: datetime.datetime,
+    owner_token: Optional[str] = None,
     session: Any = None,
 ) -> tuple[bool, dict[str, Any]]:
-    """Claims an execution slot atomically.
+    """Claims an execution slot atomically with CAS versioning and owner tokens.
+
     Returns (True, doc) if successfully claimed or matches existing decision_id.
     Returns (False, existing_doc) if slot is currently occupied by a different active decision.
     """
     db = mongo_store.get_doc_db()
     now = datetime.datetime.now(datetime.timezone.utc)
     col = db[COLL_EXECUTION_SLOTS]
+    token = owner_token or f"tok-{uuid.uuid4().hex[:12]}"
 
     doc = col.find_one({"slot_key": slot_key}, session=session)
     if not doc:
@@ -304,6 +342,8 @@ def claim_execution_slot(
             "slot_key": slot_key,
             "decision_id": decision_id,
             "intent_id": intent_id,
+            "owner_token": token,
+            "version": 1,
             "claimed_at": now,
             "expires_at": expires_at,
             "status": "ACTIVE",
@@ -319,27 +359,61 @@ def claim_execution_slot(
         # If same decision, return success (idempotent retry)
         if doc.get("decision_id") == decision_id:
             return True, doc
-        # If existing slot expired or superseded, allow claim
+        # If existing slot expired or superseded or released, allow claim via CAS
         existing_expires = doc.get("expires_at")
-        if (existing_expires and existing_expires < now) or doc.get("status") in ("SUPERSEDED", "EXPIRED"):
-            col.update_one(
-                {"slot_key": slot_key},
+        curr_ver = doc.get("version", 1)
+        if (existing_expires and existing_expires < now) or doc.get("status") in (
+            "SUPERSEDED",
+            "EXPIRED",
+            "RELEASED",
+            "CONSUMED",
+        ):
+            res = col.update_one(
+                {"slot_key": slot_key, "version": curr_ver},
                 {
                     "$set": {
                         "decision_id": decision_id,
                         "intent_id": intent_id,
+                        "owner_token": token,
                         "claimed_at": now,
                         "expires_at": expires_at,
                         "status": "ACTIVE",
-                    }
+                    },
+                    "$inc": {"version": 1},
                 },
                 session=session,
             )
-            return True, doc
+            modified = getattr(res, "modified_count", 1) if res is not None else 1
+            if modified == 1:
+                updated_doc = col.find_one({"slot_key": slot_key}, session=session)
+                return True, updated_doc or doc
+            # CAS race lost
+            curr = col.find_one({"slot_key": slot_key}, session=session)
+            return False, curr or doc
         # Otherwise slot is active and held by a different decision
         return False, doc
 
     return True, {}
+
+
+def release_execution_slot(
+    slot_key: str,
+    owner_token: Optional[str] = None,
+    session: Any = None,
+) -> bool:
+    """Releases an active execution slot atomically if owner_token matches (or if token is None)."""
+    db = mongo_store.get_doc_db()
+    col = db[COLL_EXECUTION_SLOTS]
+    query: dict[str, Any] = {"slot_key": slot_key, "status": "ACTIVE"}
+    if owner_token:
+        query["owner_token"] = owner_token
+    now = datetime.datetime.now(datetime.timezone.utc)
+    res = col.update_one(
+        query,
+        {"$set": {"status": "RELEASED", "released_at": now}},
+        session=session,
+    )
+    return res.modified_count == 1
 
 
 def supersede_execution_intent(
@@ -352,10 +426,10 @@ def supersede_execution_intent(
     now = datetime.datetime.now(datetime.timezone.utc)
     col = db[COLL_EXECUTION_INTENTS]
     res = col.update_one(
-        {"execution_intent_id": intent_id, "status": "CREATED"},
+        {"execution_intent_id": intent_id, "status": IntentStatus.CREATED.value},
         {
             "$set": {
-                "status": "SUPERSEDED",
+                "status": IntentStatus.SUPERSEDED.value,
                 "superseded_by": superseded_by_decision_id,
                 "superseded_at": now,
             }
@@ -363,3 +437,289 @@ def supersede_execution_intent(
         session=session,
     )
     return res.modified_count > 0
+
+
+def get_active_reserved_notional(bot_id: str, session: Any = None) -> float:
+    """Sums reserved_notional for all ACTIVE and unexpired risk reservations for bot_id."""
+    db = mongo_store.get_doc_db()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    pipeline = [
+        {
+            "$match": {
+                "bot_id": bot_id,
+                "status": ReservationStatus.ACTIVE.value,
+                "expires_at": {"$gt": now},
+            }
+        },
+        {
+            "$group": {
+                "_id": "$bot_id",
+                "total": {"$sum": "$reserved_notional"},
+            }
+        },
+    ]
+    res = list(db[COLL_RISK_RESERVATIONS].aggregate(pipeline, session=session))
+    if res and res[0].get("total") is not None:
+        return float(res[0]["total"])
+    return 0.0
+
+
+def release_risk_reservations_for_intent(
+    execution_intent_id: str,
+    session: Any = None,
+) -> int:
+    """Transitions any ACTIVE risk reservations for an intent to RELEASED."""
+    db = mongo_store.get_doc_db()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    res = db[COLL_RISK_RESERVATIONS].update_many(
+        {"execution_intent_id": execution_intent_id, "status": ReservationStatus.ACTIVE.value},
+        {"$set": {"status": ReservationStatus.RELEASED.value, "released_at": now}},
+        session=session,
+    )
+    return res.modified_count
+
+
+def consume_risk_reservations_for_intent(
+    execution_intent_id: str,
+    session: Any = None,
+) -> int:
+    """Transitions any ACTIVE risk reservations for an intent to CONSUMED when executed."""
+    db = mongo_store.get_doc_db()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    res = db[COLL_RISK_RESERVATIONS].update_many(
+        {"execution_intent_id": execution_intent_id, "status": ReservationStatus.ACTIVE.value},
+        {"$set": {"status": ReservationStatus.CONSUMED.value, "consumed_at": now}},
+        session=session,
+    )
+    return res.modified_count
+
+
+def admit_execution_intent(
+    intent: ExecutionIntent,
+    slot_key: str,
+    required_notional: float,
+    policy_decision: Optional[PolicyDecision] = None,
+    policy_snapshot: Optional[Any] = None,
+    allow_supersede: bool = True,
+    owner_token: Optional[str] = None,
+    session: Any = None,
+) -> dict[str, Any]:
+    """Atomic multi-document transaction for intent admission, slot reservation, and cash locking.
+
+    Invariants enforced:
+    1. Validates policy decision approval and snapshot integrity (blocks BUY on degraded snapshots).
+    2. Enforces request idempotency (returns existing intent on replay).
+    3. Claims execution slot with compare-and-set semantics and owner token.
+    4. Supersedes prior unconsumed intent on replacement; fails if prior intent already CONSUMED.
+    5. Releases prior intent's risk reservations.
+    6. Verifies available purchasing power (cash minus active reservations >= required notional for BUY).
+    7. Atomically persists new RiskReservation and ExecutionIntent.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+    bot_id = intent.bot_id or "default"
+    token = owner_token or f"tok-{uuid.uuid4().hex[:12]}"
+    db = mongo_store.get_doc_db()
+
+    def _admit_op(s):
+        # 1. Validate Policy Decision & Snapshot Freshness
+        if policy_decision:
+            if policy_decision.disposition not in (
+                PolicyDisposition.APPROVE,
+                PolicyDisposition.APPROVE_WITH_CAP,
+            ):
+                raise AdmissionError(
+                    f"Policy disposition {policy_decision.disposition} is not approved for admission",
+                    "POLICY_NOT_APPROVED",
+                )
+        if policy_snapshot and getattr(policy_snapshot, "is_degraded", False) and intent.side.upper() == "BUY":
+            raise DegradedSnapshotAdmissionError(
+                "Degraded snapshot with missing/stale marks cannot admit risk-increasing BUY intents",
+                "DEGRADED_SNAPSHOT",
+            )
+
+        # 2. Check Idempotency (Request idempotency key)
+        existing = db[COLL_EXECUTION_INTENTS].find_one({"idempotency_key": intent.idempotency_key}, session=s)
+        if existing:
+            existing_intent = ExecutionIntent.model_validate(existing)
+            existing_slot = db[COLL_EXECUTION_SLOTS].find_one({"slot_key": slot_key}, session=s)
+            existing_resv = db[COLL_RISK_RESERVATIONS].find_one(
+                {"execution_intent_id": existing_intent.execution_intent_id}, session=s
+            )
+            return {
+                "admitted": True,
+                "is_duplicate": True,
+                "execution_intent": existing_intent,
+                "slot": existing_slot or {},
+                "reservation": existing_resv or {},
+                "owner_token": existing_slot.get("owner_token") if existing_slot else token,
+            }
+
+        # 3. Claim Execution Slot & Handle Supersession
+        slot_col = db[COLL_EXECUTION_SLOTS]
+        slot_doc = slot_col.find_one({"slot_key": slot_key}, session=s)
+        if slot_doc:
+            slot_status = slot_doc.get("status", "ACTIVE")
+            slot_expires = slot_doc.get("expires_at")
+            is_active = slot_status == "ACTIVE" and (slot_expires is None or slot_expires > now)
+
+            if is_active and slot_doc.get("intent_id") != intent.execution_intent_id:
+                if not allow_supersede:
+                    raise SlotConflictError(
+                        f"Slot {slot_key} is occupied by active intent {slot_doc.get('intent_id')}",
+                        "SLOT_CONFLICT",
+                    )
+                # Check prior intent status
+                prior_intent_doc = db[COLL_EXECUTION_INTENTS].find_one(
+                    {"execution_intent_id": slot_doc.get("intent_id")}, session=s
+                )
+                if prior_intent_doc:
+                    prior_status = prior_intent_doc.get("status")
+                    if prior_status == IntentStatus.CONSUMED.value:
+                        raise IntentSupersessionError(
+                            f"Prior intent {slot_doc.get('intent_id')} is already CONSUMED and cannot be superseded",
+                            "PRIOR_INTENT_ALREADY_CONSUMED",
+                        )
+                    # Supersede prior intent
+                    supersede_execution_intent(
+                        slot_doc.get("intent_id"),
+                        superseded_by_decision_id=intent.decision_id,
+                        session=s,
+                    )
+                    # Release prior intent's reservation
+                    release_risk_reservations_for_intent(slot_doc.get("intent_id"), session=s)
+
+                # CAS update on slot version
+                curr_ver = slot_doc.get("version", 1)
+                cas_res = slot_col.update_one(
+                    {"slot_key": slot_key, "version": curr_ver},
+                    {
+                        "$set": {
+                            "decision_id": intent.decision_id,
+                            "intent_id": intent.execution_intent_id,
+                            "owner_token": token,
+                            "claimed_at": now,
+                            "expires_at": intent.expires_at,
+                            "status": "ACTIVE",
+                        },
+                        "$inc": {"version": 1},
+                    },
+                    session=s,
+                )
+                if getattr(cas_res, "modified_count", 1) == 0:
+                    raise SlotConflictError(f"Concurrent claim race on slot {slot_key}", "SLOT_CAS_FAILED")
+                slot_info = slot_col.find_one({"slot_key": slot_key}, session=s)
+            else:
+                # Slot is expired or released: claim it
+                curr_ver = slot_doc.get("version", 1)
+                cas_res = slot_col.update_one(
+                    {"slot_key": slot_key, "version": curr_ver},
+                    {
+                        "$set": {
+                            "decision_id": intent.decision_id,
+                            "intent_id": intent.execution_intent_id,
+                            "owner_token": token,
+                            "claimed_at": now,
+                            "expires_at": intent.expires_at,
+                            "status": "ACTIVE",
+                        },
+                        "$inc": {"version": 1},
+                    },
+                    session=s,
+                )
+                if getattr(cas_res, "modified_count", 1) == 0:
+                    raise SlotConflictError(f"Concurrent claim race on slot {slot_key}", "SLOT_CAS_FAILED")
+                slot_info = slot_col.find_one({"slot_key": slot_key}, session=s)
+        else:
+            # Slot does not exist: insert new
+            new_slot = {
+                "slot_key": slot_key,
+                "decision_id": intent.decision_id,
+                "intent_id": intent.execution_intent_id,
+                "owner_token": token,
+                "version": 1,
+                "claimed_at": now,
+                "expires_at": intent.expires_at,
+                "status": "ACTIVE",
+            }
+            try:
+                slot_col.insert_one(new_slot, session=s)
+                slot_info = new_slot
+            except Exception:
+                # Caught duplicate key, read existing
+                slot_info = slot_col.find_one({"slot_key": slot_key}, session=s) or new_slot
+
+        # 4. Check & Claim Cash Risk Reservation
+        if intent.side.upper() == "BUY":
+            bot_row = mongo_query.find_row("bots", {"bot_id": bot_id}, ["cash_balance"], session=s)
+            cash_avail = float(bot_row[0]) if bot_row and bot_row[0] is not None else 100000.0
+            active_resv_total = get_active_reserved_notional(bot_id, session=s)
+            free_cash = cash_avail - active_resv_total
+            if required_notional > free_cash:
+                raise InsufficientCashReservationError(
+                    f"Insufficient free cash ${free_cash:.2f} (balance ${cash_avail:.2f} - reserved ${active_resv_total:.2f}) for required ${required_notional:.2f}",
+                    "INSUFFICIENT_CASH_RESERVATION",
+                )
+
+        resv = RiskReservation(
+            reservation_id=f"resv-{uuid.uuid4().hex[:12]}",
+            bot_id=bot_id,
+            execution_intent_id=intent.execution_intent_id,
+            slot_key=slot_key,
+            ticker=intent.ticker.upper().strip(),
+            side=intent.side.upper().strip(),
+            reserved_notional=required_notional if intent.side.upper() == "BUY" else 0.0,
+            status=ReservationStatus.ACTIVE,
+            created_at=now,
+            expires_at=intent.expires_at,
+        )
+        db[COLL_RISK_RESERVATIONS].insert_one(resv.model_dump(mode="python"), session=s)
+
+        # 5. Persist Execution Intent
+        intent.slot_key = slot_key
+        intent.status = IntentStatus.CREATED
+        db[COLL_EXECUTION_INTENTS].insert_one(intent.model_dump(mode="python"), session=s)
+
+        return {
+            "admitted": True,
+            "is_duplicate": False,
+            "execution_intent": intent,
+            "slot": slot_info,
+            "reservation": resv.model_dump(mode="python"),
+            "owner_token": token,
+        }
+
+    if session is not None:
+        return _admit_op(session)
+    with mongo_store.with_txn() as s:
+        return _admit_op(s)
+
+
+def expire_stale_intents_and_reservations(cutoff_time: Optional[datetime.datetime] = None) -> dict[str, int]:
+    """Marks expired intents, risk reservations, and execution slots as EXPIRED."""
+    now = cutoff_time or datetime.datetime.now(datetime.timezone.utc)
+    db = mongo_store.get_doc_db()
+
+    # Expire intents
+    res_intents = db[COLL_EXECUTION_INTENTS].update_many(
+        {"status": IntentStatus.CREATED.value, "expires_at": {"$lt": now}},
+        {"$set": {"status": IntentStatus.EXPIRED.value, "expired_at": now}},
+    )
+
+    # Expire reservations
+    res_resv = db[COLL_RISK_RESERVATIONS].update_many(
+        {"status": ReservationStatus.ACTIVE.value, "expires_at": {"$lt": now}},
+        {"$set": {"status": ReservationStatus.EXPIRED.value, "expired_at": now}},
+    )
+
+    # Expire slots
+    res_slots = db[COLL_EXECUTION_SLOTS].update_many(
+        {"status": "ACTIVE", "expires_at": {"$lt": now}},
+        {"$set": {"status": "EXPIRED", "expired_at": now}},
+    )
+
+    return {
+        "expired_intents": res_intents.modified_count,
+        "expired_reservations": res_resv.modified_count,
+        "expired_slots": res_slots.modified_count,
+    }
+

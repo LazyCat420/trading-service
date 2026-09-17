@@ -293,12 +293,24 @@ async def run_worker(tickers: list[str] | None = None, shutdown_event: asyncio.E
     from app.services.learning.worker import run as run_learning_worker
     learning_task = asyncio.create_task(run_learning_worker(shutdown))
 
+    # Run Transactional Outbox reconciliation worker
+    from app.trading.outbox.worker import start_outbox_worker_loop
+    outbox_task = asyncio.create_task(start_outbox_worker_loop(poll_interval_seconds=2.0))
+    logger.info("[cycle_backend] Started Transactional Outbox reconciliation worker.")
+
+    # Run Mature Outcome evaluation and attribution worker
+    from app.trading.attribution.worker import start_outcome_worker_loop
+    outcome_task = asyncio.create_task(start_outcome_worker_loop(poll_interval_seconds=30.0))
+    logger.info("[cycle_backend] Started Mature Outcome evaluation worker.")
+
     await shutdown.wait()
 
+    outbox_task.cancel()
+    outcome_task.cancel()
     learning_task.cancel()
     try:
-        await learning_task
-    except asyncio.CancelledError:
+        await asyncio.gather(outbox_task, outcome_task, learning_task, return_exceptions=True)
+    except Exception:
         pass
 
     from app.services.pipeline_service import PipelineService
@@ -352,6 +364,15 @@ async def start_health_server(shutdown_event: asyncio.Event):
     def status(summary_only: bool = False, token: str = Depends(verify_api_key)):
         from app.services.pipeline_service import PipelineService
         return PipelineService.get_current_state(summary_only=summary_only)
+
+    @app.get("/control-plane/metrics")
+    def control_plane_metrics():
+        from app.trading.outbox.repository import get_outbox_metrics
+        from app.trading.control_plane import resolve_control_plane_mode
+        return {
+            "default_mode": resolve_control_plane_mode("default").value,
+            "outbox": get_outbox_metrics(),
+        }
 
     # Mounted one at a time, on purpose. These used to share a single
     # try/except: one bad import anywhere in the block aborted the whole

@@ -144,3 +144,24 @@ def test_policy_translator_deterministic_replay(base_artifact, base_snapshot):
     assert res1.config_hash == res2.config_hash
     assert res1.approved_values == res2.approved_values
     assert int1.idempotency_key == int2.idempotency_key
+
+
+def test_policy_translator_degraded_snapshot_blocks_buy_allows_sell(base_artifact, base_snapshot):
+    base_snapshot.is_degraded = True
+    base_snapshot.degraded_reasons = ["MARK_MISSING_NVDA"]
+
+    # BUY blocked
+    base_artifact.requested_action = "BUY"
+    pol_dec_buy, intent_buy = PolicyTranslator.evaluate(base_artifact, base_snapshot)
+    assert pol_dec_buy.disposition == PolicyDisposition.BLOCK
+    assert "DEGRADED_SNAPSHOT_BLOCK_BUY" in pol_dec_buy.reason_codes
+    assert "MARK_MISSING_NVDA" in pol_dec_buy.reason_codes
+    assert intent_buy is None
+
+    # SELL allowed
+    base_artifact.requested_action = "SELL"
+    base_snapshot.is_held = True
+    pol_dec_sell, intent_sell = PolicyTranslator.evaluate(base_artifact, base_snapshot)
+    assert pol_dec_sell.disposition == PolicyDisposition.APPROVE
+    assert intent_sell is not None
+    assert intent_sell.side == "SELL"

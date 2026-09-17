@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0.0",
+  "description": "Exhaustive inventory of production entry points that submit trades or mutate trading state in trading-service.",
+  "entry_points": [
+    {
+      "name": "pipeline_stage_4_buy",
+      "path_type": "automated_cycle",
+      "handler": "app.services.pipeline_service.PipelineService.run_cycle_stage_4_execution",
+      "execution_function": "app.trading.facade.TradeFacade.submit_trade",
+      "legacy_fallback": "app.trading.paper_trader.buy (OBSERVE mode only via facade)",
+      "account_identity_source": "active_bot_id resolved from system_commands / pipeline_state",
+      "idempotency_key_source": "sha256(bot_id:ticker:BUY:cycle_id)",
+      "supported_modes": ["OBSERVE", "SHADOW", "ENFORCE"],
+      "test_reference": "tests/unit/test_trade_facade.py::test_facade_pipeline_stage4_buy_enforce"
+    },
+    {
+      "name": "pipeline_stage_4_sell",
+      "path_type": "automated_cycle",
+      "handler": "app.services.pipeline_service.PipelineService.run_cycle_stage_4_execution",
+      "execution_function": "app.trading.facade.TradeFacade.submit_trade",
+      "legacy_fallback": "app.trading.paper_trader.sell (OBSERVE mode only via facade)",
+      "account_identity_source": "active_bot_id resolved from system_commands / pipeline_state",
+      "idempotency_key_source": "sha256(bot_id:ticker:SELL:cycle_id)",
+      "supported_modes": ["OBSERVE", "SHADOW", "ENFORCE"],
+      "test_reference": "tests/unit/test_trade_facade.py::test_facade_pipeline_stage4_sell_enforce"
+    },
+    {
+      "name": "interactive_tool_buy_stock",
+      "path_type": "agent_tool",
+      "handler": "app.tools.trading_tools.buy_stock",
+      "execution_function": "app.trading.facade.TradeFacade.submit_trade",
+      "legacy_fallback": "app.trading.paper_trader.buy (OBSERVE mode only via facade)",
+      "account_identity_source": "app.tools.portfolio_tools.resolve_bot_id()",
+      "idempotency_key_source": "sha256(bot_id:ticker:BUY:tool-proposal-{uuid})",
+      "supported_modes": ["OBSERVE", "SHADOW", "ENFORCE"],
+      "test_reference": "tests/unit/test_trade_facade.py::test_facade_interactive_tool_buy_modes"
+    },
+    {
+      "name": "interactive_tool_sell_stock",
+      "path_type": "agent_tool",
+      "handler": "app.tools.trading_tools.sell_stock",
+      "execution_function": "app.trading.facade.TradeFacade.submit_trade",
+      "legacy_fallback": "app.trading.paper_trader.sell (OBSERVE mode only via facade)",
+      "account_identity_source": "bot_id parameter supplied to tool",
+      "idempotency_key_source": "sha256(bot_id:ticker:SELL:tool-proposal-{uuid})",
+      "supported_modes": ["OBSERVE", "SHADOW", "ENFORCE"],
+      "test_reference": "tests/unit/test_trade_facade.py::test_facade_interactive_tool_sell_modes"
+    },
+    {
+      "name": "emergency_risk_exit",
+      "path_type": "risk_emergency",
+      "handler": "app.trading.paper_trader.emergency_risk_exit",
+      "execution_function": "app.trading.facade.TradeFacade.submit_trade",
+      "legacy_fallback": "app.trading.paper_trader.sell (OBSERVE mode only via facade)",
+      "account_identity_source": "bot_id parameter passed to emergency_risk_exit",
+      "idempotency_key_source": "sha256(bot_id:ticker:SELL:emergency-{timestamp})",
+      "supported_modes": ["OBSERVE", "SHADOW", "ENFORCE"],
+      "test_reference": "tests/unit/test_trade_facade.py::test_facade_emergency_exit_modes"
+    },
+    {
+      "name": "scheduled_stop_loss_exit",
+      "path_type": "scheduled_risk_harvest",
+      "handler": "app.trading.paper_trader.check_stop_losses",
+      "execution_function": "app.trading.facade.TradeFacade.submit_trade",
+      "legacy_fallback": "app.trading.paper_trader.sell (OBSERVE mode only via facade)",
+      "account_identity_source": "bot_id parameter passed to check_stop_losses",
+      "idempotency_key_source": "sha256(bot_id:ticker:SELL:stop-loss-{cycle_id or timestamp})",
+      "supported_modes": ["OBSERVE", "SHADOW", "ENFORCE"],
+      "test_reference": "tests/unit/test_trade_facade.py::test_facade_stop_loss_modes"
+    },
+    {
+      "name": "scheduled_take_profit_harvest",
+      "path_type": "scheduled_risk_harvest",
+      "handler": "app.trading.paper_trader.check_take_profits",
+      "execution_function": "app.trading.facade.TradeFacade.submit_trade",
+      "legacy_fallback": "app.trading.paper_trader.sell (OBSERVE mode only via facade)",
+      "account_identity_source": "bot_id parameter passed to check_take_profits",
+      "idempotency_key_source": "sha256(bot_id:ticker:SELL:take-profit-{cycle_id or timestamp})",
+      "supported_modes": ["OBSERVE", "SHADOW", "ENFORCE"],
+      "test_reference": "tests/unit/test_trade_facade.py::test_facade_take_profit_modes"
+    }
+  ]
+}

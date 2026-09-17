@@ -73,11 +73,14 @@ def test_evaluation_key_format():
 
 def test_build_policy_snapshot_mocked(monkeypatch):
     """build_policy_snapshot computes mark-to-market equity and reservations."""
-    # Mock bot balance
-    monkeypatch.setattr(
-        "app.db.mongo_query.find_row",
-        lambda coll, filt, cols, session=None: [40000.0, 100000.0] if coll == "bots" else None,
-    )
+    def mock_find_row(coll, filt, cols, sort=None, session=None):
+        if coll == "bots":
+            return [40000.0, 100000.0]
+        if coll == "price_history":
+            return [300.0, datetime.datetime.now(datetime.timezone.utc), datetime.datetime.now(datetime.timezone.utc), "test", 300.0]
+        return None
+
+    monkeypatch.setattr("app.db.mongo_query.find_row", mock_find_row)
     # Mock positions: AAPL 100 shares @ $150 = $15,000; MSFT 100 shares @ $300 = $30,000
     monkeypatch.setattr(
         "app.db.mongo_query.find_rows",

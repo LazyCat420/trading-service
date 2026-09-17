@@ -13,6 +13,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.db import mongo_store
+from app.quant.returns import one_vendor
 from app.services.cycle_scope import exclude_synthetic, is_synthetic_cycle
 from app.utils.tz import ensure_aware
 
@@ -40,7 +41,12 @@ def benchmark_observation(benchmark_symbol: str, as_of: datetime, source: str | 
         }
         if source:
             query['source'] = source
-        rows = mongo_store.find_docs('price_history', query, sort=[('date', -1)], limit=1)
+        rows = mongo_store.find_docs(
+            'price_history',
+            query if source else one_vendor(benchmark_symbol, query),
+            sort=[('date', -1)],
+            limit=1,
+        )
         return _observation(rows[0]) if rows else None
     except Exception as e:
         logger.debug("[evidence] benchmark observation failed: %s", e)

@@ -1,7 +1,6 @@
 import json
 import logging
 from app.tools.registry import registry, PermissionLevel
-from app.trading.paper_trader import buy, sell
 from app.trading.watchlist import add_ticker, remove_ticker
 from app.tools.portfolio_tools import resolve_bot_id
 from app.db import mongo_query
@@ -31,77 +30,31 @@ logger = logging.getLogger(__name__)
     permission=PermissionLevel.WRITE,  # Paper trading — nothing is irreversible
 )
 async def buy_stock(ticker: str, size_pct: float = 0.10) -> str:
-    """Propose a paper buy order via the deterministic policy translator."""
+    """Propose a paper buy order via the unified TradeFacade."""
     ticker = ticker.upper().strip()
     bot_id = resolve_bot_id()
     logger.info("[TradingTools] Proposing buy for %s (size: %.2f, bot: %s)", ticker, size_pct, bot_id)
 
     try:
-        import uuid
-        from app.trading.attribution.models import DecisionArtifact
-        from app.trading.attribution.repository import (
-            save_decision_artifact,
-            save_execution_intent,
-            save_policy_decision,
-        )
-        from app.trading.policy.policy_translator import PolicyInputSnapshot, PolicyTranslator
-        from app.trading.paper_trader import _get_current_price
-
-        from app.trading.policy.snapshot_service import build_policy_snapshot
-        from app.trading.control_plane import resolve_control_plane_mode, ControlPlaneMode
-
-        effective_mode = resolve_control_plane_mode(bot_id)
-        current_price, age_hours = _get_current_price(ticker)
-        if current_price is None:
-            return json.dumps({"status": "error", "message": f"No price data available for {ticker}"})
-
-        cycle_id = f"tool-proposal-{uuid.uuid4().hex[:8]}"
-        decision_id = f"dec-{uuid.uuid4().hex[:12]}"
-        artifact = DecisionArtifact(
-            decision_id=decision_id,
-            cycle_id=cycle_id,
+        from app.trading.facade import TradeFacade
+        res = await TradeFacade.submit_trade(
+            bot_id=bot_id,
             ticker=ticker,
+            action="BUY",
+            size_pct=size_pct,
             producer="trading_tools_buy_stock",
             model="human_or_tool_chat",
-            requested_action="BUY",
-            requested_size_pct=size_pct,
-            confidence=80,
-            reference_quote={"price": current_price, "age_hours": age_hours or 0.0},
         )
-        save_decision_artifact(artifact)
-
-        snapshot, snap_payload = build_policy_snapshot(
-            bot_id=bot_id,
-            ticker=ticker,
-            quote_price=current_price,
-            quote_age_hours=age_hours or 0.0,
-        )
-
-        policy_dec, intent = PolicyTranslator.evaluate(artifact, snapshot)
-        policy_dec.effective_mode = effective_mode.value
-        save_policy_decision(policy_dec)
-
-        if not intent:
+        if res.get("status") in ("COMMITTED", "SIMULATED"):
+            return json.dumps({"status": "success", "result": res})
+        elif res.get("status") == "POLICY_DENIED":
             return json.dumps({
                 "status": "policy_rejected",
-                "disposition": policy_dec.disposition.value,
-                "reasons": policy_dec.reason_codes,
+                "disposition": res.get("disposition"),
+                "reasons": res.get("reason_codes"),
             })
-
-        intent.effective_mode = effective_mode.value
-        save_execution_intent(intent)
-        result = await buy(
-            bot_id=bot_id,
-            ticker=ticker,
-            size_pct=intent.approved_size_pct,
-            current_price=current_price,
-            cycle_id=cycle_id,
-            execution_intent_id=intent.execution_intent_id,
-            decision_id=decision_id,
-        )
-        if "error" in result:
-            return json.dumps({"status": "error", "message": result["error"]})
-        return json.dumps({"status": "success", "trade": result, "policy": policy_dec.disposition.value})
+        else:
+            return json.dumps({"status": "error", "message": res.get("error", res.get("status"))})
     except Exception as e:
         logger.error("[TradingTools] Buy proposal failed: %s", e)
         return json.dumps({"status": "error", "message": str(e)})
@@ -129,68 +82,28 @@ async def buy_stock(ticker: str, size_pct: float = 0.10) -> str:
     permission=PermissionLevel.WRITE,  # Paper trading — nothing is irreversible
 )
 async def sell_stock(ticker: str, bot_id: str) -> str:
-    """Execute a sell order to close a position for a stock ticker."""
+    """Execute a sell order to close a position for a stock ticker via TradeFacade."""
+    ticker = ticker.upper().strip()
     logger.info("[TradingTools] Executing sell order for %s", ticker)
     try:
-        import uuid
-        from app.trading.attribution.models import DecisionArtifact
-        from app.trading.attribution.repository import (
-            save_decision_artifact,
-            save_execution_intent,
-            save_policy_decision,
-        )
-        from app.trading.policy.policy_translator import PolicyInputSnapshot, PolicyTranslator
-        from app.trading.policy.snapshot_service import build_policy_snapshot
-        from app.trading.control_plane import resolve_control_plane_mode, ControlPlaneMode
-        from app.trading.paper_trader import _get_current_price
-
-        effective_mode = resolve_control_plane_mode(bot_id)
-        current_price, age_hours = _get_current_price(ticker)
-
-        cycle_id = f"tool-proposal-{uuid.uuid4().hex[:8]}"
-        decision_id = f"dec-{uuid.uuid4().hex[:12]}"
-        artifact = DecisionArtifact(
-            decision_id=decision_id,
-            cycle_id=cycle_id,
+        from app.trading.facade import TradeFacade
+        res = await TradeFacade.submit_trade(
+            bot_id=bot_id,
             ticker=ticker,
+            action="SELL",
             producer="trading_tools_sell_stock",
             model="human_or_tool_chat",
-            requested_action="SELL",
-            confidence=80,
-            reference_quote={"price": current_price or 0.0, "age_hours": age_hours or 0.0},
         )
-        save_decision_artifact(artifact)
-
-        snapshot, snap_payload = build_policy_snapshot(
-            bot_id=bot_id,
-            ticker=ticker,
-            quote_price=current_price or 1.0,
-            quote_age_hours=age_hours or 0.0,
-        )
-        policy_dec, intent = PolicyTranslator.evaluate(artifact, snapshot)
-        policy_dec.effective_mode = effective_mode.value
-        save_policy_decision(policy_dec)
-
-        if not intent:
+        if res.get("status") in ("COMMITTED", "SIMULATED"):
+            return json.dumps({"status": "success", "result": res})
+        elif res.get("status") == "POLICY_DENIED":
             return json.dumps({
                 "status": "policy_rejected",
-                "disposition": policy_dec.disposition.value,
-                "reasons": policy_dec.reason_codes,
+                "disposition": res.get("disposition"),
+                "reasons": res.get("reason_codes"),
             })
-
-        intent.effective_mode = effective_mode.value
-        save_execution_intent(intent)
-        result = await sell(
-            bot_id=bot_id,
-            ticker=ticker,
-            current_price=current_price,
-            cycle_id=cycle_id,
-            execution_intent_id=intent.execution_intent_id,
-            decision_id=decision_id,
-        )
-        if "error" in result:
-            return json.dumps({"status": "error", "message": result["error"]})
-        return json.dumps({"status": "success", "trade": result})
+        else:
+            return json.dumps({"status": "error", "message": res.get("error", res.get("status"))})
     except Exception as e:
         logger.error("[TradingTools] Sell failed: %s", e)
         return json.dumps({"status": "error", "message": str(e)})

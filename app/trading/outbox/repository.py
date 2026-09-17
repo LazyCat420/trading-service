@@ -125,3 +125,51 @@ def mark_outbox_event_failed(
         session=session,
     )
     return res.modified_count > 0
+
+
+def get_outbox_metrics() -> dict[str, Any]:
+    """Exposes outbox queue operational telemetry: pending, oldest age, retries, poison count."""
+    db = mongo_store.get_doc_db()
+    col = db[COLL_EXECUTION_OUTBOX]
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    pending_count = col.count_documents({"status": "PENDING"})
+    processing_count = col.count_documents({"status": "PROCESSING"})
+    poison_count = col.count_documents({"status": "FAILED"})
+    completed_count = col.count_documents({"status": "COMPLETED"})
+
+    oldest = col.find_one({"status": "PENDING"}, sort=[("created_at", 1)])
+    oldest_pending_age_seconds = 0.0
+    if oldest and oldest.get("created_at"):
+        created = oldest["created_at"]
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=datetime.timezone.utc)
+        oldest_pending_age_seconds = max(0.0, (now - created).total_seconds())
+
+    return {
+        "pending": pending_count,
+        "processing": processing_count,
+        "poison_failed": poison_count,
+        "completed": completed_count,
+        "oldest_pending_age_seconds": round(oldest_pending_age_seconds, 2),
+    }
+
+
+def replay_poison_outbox_event(event_id: str) -> bool:
+    """Safe operator replay preserving event identity. Resets a FAILED event to PENDING."""
+    db = mongo_store.get_doc_db()
+    col = db[COLL_EXECUTION_OUTBOX]
+    now = datetime.datetime.now(datetime.timezone.utc)
+    res = col.update_one(
+        {"event_id": event_id, "status": "FAILED"},
+        {
+            "$set": {
+                "status": "PENDING",
+                "retry_after": now,
+                "locked_at": None,
+                "replayed_at": now,
+            }
+        },
+    )
+    return res.modified_count > 0
+

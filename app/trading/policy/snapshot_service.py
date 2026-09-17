@@ -106,12 +106,46 @@ def build_policy_snapshot(
     held_positions: dict[str, float] = {}
     total_positions_val = 0.0
     held_ticker_val = 0.0
+    position_marks: dict[str, dict[str, Any]] = {}
+    is_degraded = False
+    degraded_reasons: list[str] = []
 
     for p in positions:
         pos_tkr, pos_qty, pos_avg_px = p[0], float(p[1]), float(p[2])
         if pos_qty > 0:
             held_positions[pos_tkr] = pos_qty
-            val = pos_qty * (quote_price if pos_tkr.upper() == ticker.upper() else pos_avg_px)
+            if pos_tkr.upper() == ticker.upper():
+                mark_px = quote_price
+                mark_age = quote_age_hours
+                mark_src = quote_source
+                mark_status = "FRESH" if quote_age_hours <= 12.0 else "STALE"
+            else:
+                from app.trading.paper_trader import _get_current_price
+                m_px, m_age = _get_current_price(pos_tkr)
+                if m_px is not None and m_px > 0:
+                    mark_px = m_px
+                    mark_age = m_age if m_age is not None else 0.0
+                    mark_src = "vendor_quote"
+                    mark_status = "FRESH" if mark_age <= 24.0 else ("STALE" if mark_age <= 96.0 else "EXPIRED")
+                else:
+                    mark_px = pos_avg_px
+                    mark_age = 999.0
+                    mark_src = "entry_fallback"
+                    mark_status = "MISSING"
+
+            position_marks[pos_tkr] = {
+                "price": mark_px,
+                "age_hours": mark_age,
+                "source": mark_src,
+                "status": mark_status,
+                "retrieved_at": now.isoformat(),
+            }
+
+            if mark_status in ("EXPIRED", "MISSING"):
+                is_degraded = True
+                degraded_reasons.append(f"MARK_{mark_status}_{pos_tkr}")
+
+            val = pos_qty * mark_px
             total_positions_val += val
             if pos_tkr.upper() == ticker.upper():
                 held_ticker_val = val
@@ -164,6 +198,9 @@ def build_policy_snapshot(
         "quote_source": quote_source,
         "drawdown_pct": drawdown_pct,
         "breaker_active": breaker_active,
+        "position_marks": position_marks,
+        "is_degraded": is_degraded,
+        "degraded_reasons": degraded_reasons,
         "data_quality": {
             "stale_quote": quote_age_hours > 12.0,
             "sanity_passed": True,
@@ -186,7 +223,7 @@ def build_policy_snapshot(
 
     snapshot_obj = PolicyInputSnapshot(
         snapshot_id=snap_hash[:16],
-        cycle_id=f"snap-{snap_hash[:8]}",
+        cycle_id=f"sim-snap-{snap_hash[:8]}",
         portfolio_equity=portfolio_equity,
         cash_balance=cash,
         held_positions=held_positions,
@@ -197,6 +234,9 @@ def build_policy_snapshot(
         is_held=held_ticker_val > 0,
         as_of=now,
         circuit_breaker_active=breaker_active,
+        is_degraded=is_degraded,
+        degraded_reasons=degraded_reasons,
+        position_marks=position_marks,
     )
 
     return snapshot_obj, snapshot_payload

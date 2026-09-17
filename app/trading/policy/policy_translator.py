@@ -49,6 +49,15 @@ class PolicyInputSnapshot(BaseModel):
     snapshot_timestamp: datetime.datetime = Field(
         default_factory=lambda: datetime.datetime.now(datetime.timezone.utc)
     )
+    snapshot_id: str = ""
+    cycle_id: str = ""
+    held_positions: dict[str, float] = Field(default_factory=dict)
+    quote_timestamp: Optional[datetime.datetime] = None
+    as_of: Optional[datetime.datetime] = None
+    circuit_breaker_active: bool = False
+    is_degraded: bool = False
+    degraded_reasons: list[str] = Field(default_factory=list)
+    position_marks: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     def compute_hash(self) -> str:
         payload = {
@@ -60,6 +69,7 @@ class PolicyInputSnapshot(BaseModel):
             "breaker": self.drawdown_breaker_active,
             "health": self.strategy_health_status,
             "quote": round(self.quote_price, 4),
+            "is_degraded": self.is_degraded,
         }
         encoded = json.dumps(payload, sort_keys=True)
         return hashlib.sha256(encoded.encode()).hexdigest()[:16]
@@ -258,6 +268,26 @@ class PolicyTranslator:
                 "confidence": artifact.confidence,
                 "threshold": MIN_CONFIDENCE_THRESHOLD,
             }
+            pol_dec = PolicyDecision(
+                policy_decision_id=pol_id,
+                decision_id=artifact.decision_id,
+                policy_version=POLICY_VERSION,
+                config_hash=config_hash,
+                evaluated_at=eval_time,
+                requested_values=requested_values,
+                normalized_values=normalized_values,
+                approved_values={},
+                disposition=PolicyDisposition.BLOCK,
+                reason_codes=reason_codes,
+                gate_results=gate_results,
+            )
+            return pol_dec, None
+
+        # Check Degraded Snapshot (Stale/Missing marks on portfolio holdings block BUY)
+        if snapshot.is_degraded:
+            reason_codes.append("DEGRADED_SNAPSHOT_BLOCK_BUY")
+            reason_codes.extend(snapshot.degraded_reasons)
+            gate_results["snapshot_integrity"] = {"status": "FAIL", "reasons": snapshot.degraded_reasons}
             pol_dec = PolicyDecision(
                 policy_decision_id=pol_id,
                 decision_id=artifact.decision_id,

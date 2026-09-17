@@ -30,6 +30,13 @@ class IntentStatus(str, Enum):
     REVOKED = "REVOKED"
 
 
+class ReservationStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    RELEASED = "RELEASED"
+    CONSUMED = "CONSUMED"
+    EXPIRED = "EXPIRED"
+
+
 class OrderAttemptStatus(str, Enum):
     SUBMITTED = "SUBMITTED"
     ACCEPTED = "ACCEPTED"
@@ -141,6 +148,13 @@ class PolicyDecision(CanonicalAttributionModel):
     normalized_ticker: str = ""
     normalized_action: str = ""
     approved_size_pct: float = 0.0
+
+    @property
+    def is_approved(self) -> bool:
+        return self.disposition in (
+            PolicyDisposition.APPROVE,
+            PolicyDisposition.APPROVE_WITH_CAP,
+        )
 
     @field_validator("evaluated_at", mode="after")
     @classmethod
@@ -299,3 +313,27 @@ class AttributionReport(CanonicalAttributionModel):
     @classmethod
     def validate_utc(cls, v: datetime.datetime) -> datetime.datetime:
         return _ensure_utc(v) or datetime.datetime.now(datetime.timezone.utc)
+
+
+class RiskReservation(CanonicalAttributionModel):
+    """Represents a cash risk reservation locking purchasing power for an admitted intent."""
+
+    reservation_id: str
+    bot_id: str
+    execution_intent_id: str
+    slot_key: str
+    ticker: str
+    side: str
+    reserved_notional: float
+    status: ReservationStatus = ReservationStatus.ACTIVE
+    created_at: datetime.datetime = Field(
+        default_factory=lambda: datetime.datetime.now(datetime.timezone.utc)
+    )
+    expires_at: datetime.datetime
+    released_at: Optional[datetime.datetime] = None
+
+    @field_validator("created_at", "expires_at", "released_at", mode="after")
+    @classmethod
+    def validate_utc(cls, v: Optional[datetime.datetime]) -> Optional[datetime.datetime]:
+        return _ensure_utc(v)
+
