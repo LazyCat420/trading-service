@@ -601,10 +601,15 @@ def run_mature_outcome_evaluation_iteration(
     return evaluated
 
 
-def evaluate_closed_lot_alpha_iteration(limit: int = 50) -> int:
+def evaluate_closed_lot_alpha_iteration(
+    limit: int = 50,
+    now: Optional[datetime.datetime] = None,
+    db: Optional[Any] = None,
+) -> int:
     """Evaluates realized FIFO lot closures with benchmark comparison and attribution."""
-    db = mongo_store.get_doc_db()
-    now = datetime.datetime.now(datetime.timezone.utc)
+    if db is None:
+        db = mongo_store.get_doc_db()
+    eval_now = now or datetime.datetime.now(datetime.timezone.utc)
 
     # Un-evaluated closures
     closures = list(
@@ -635,9 +640,30 @@ def evaluate_closed_lot_alpha_iteration(limit: int = 50) -> int:
             # Fetch lot to know opening time and provenance
             lot_id = closure.get("lot_id")
             lot = db[COLL_POSITION_LOTS].find_one({"lot_id": lot_id}) if lot_id else None
-            opened_at = lot.get("opened_at") if lot else closed_at
-            provenance = lot.get("origin", "LIVE") if lot else "LIVE"
-            provenance_complete = lot.get("provenance_complete", True) if lot else True
+            if lot is None:
+                opened_at = closed_at
+                provenance = "MISSING_LOT"
+                provenance_complete = False
+                is_attributable = False
+                exclusion_reason = "MISSING_LOT_PROVENANCE"
+            else:
+                opened_at = lot.get("opened_at") or closed_at
+                provenance = lot.get("origin", "UNKNOWN")
+                provenance_complete = bool(lot.get("provenance_complete", False))
+                if not provenance_complete:
+                    exclusion_reason = "INCOMPLETE_PROVENANCE"
+                elif provenance not in ("LIVE", "HISTORICAL_RECONSTRUCTION"):
+                    exclusion_reason = f"EXCLUDED_ORIGIN_{provenance}"
+                else:
+                    exclusion_reason = None
+
+            alloc_entry_fee = float(closure.get("allocated_entry_fee", 0.0))
+            exit_fee = float(closure.get("exit_fee", 0.0))
+            fees_val = float(closure.get("fees") or 0.0)
+            fees_embedded = bool(closure.get("fees_embedded_in_fills", False))
+
+            if alloc_entry_fee == 0.0 and exit_fee == 0.0 and fees_val > 0.0:
+                exit_fee = fees_val
 
             bm_spec = BenchmarkSpec.resolve(ticker)
             bm_symbol = bm_spec.symbol
@@ -649,19 +675,38 @@ def evaluate_closed_lot_alpha_iteration(limit: int = 50) -> int:
                 lot_exit_price=exit_px,
                 benchmark_entry=bm_entry,
                 benchmark_exit=bm_exit,
-                fees=fees,
-                notional=notional,
+                allocated_entry_fee=alloc_entry_fee,
+                exit_fee=exit_fee,
+                qty=qty,
+                fees_embedded_in_fills=fees_embedded,
             )
 
-            # Distinguish provenance: if migration or incomplete, flag
+            is_mature = res.get("status") in ("MATURE", "RESOLVED")
+            is_attributable = (
+                provenance_complete
+                and provenance in ("LIVE", "HISTORICAL_RECONSTRUCTION")
+                and is_mature
+            )
+
             eval_record = {
                 "closure_id": closure_id,
                 "lot_id": lot_id,
                 "bot_id": closure.get("bot_id"),
                 "ticker": ticker,
+                "closed_qty": qty,
+                "entry_price": entry_px,
+                "exit_price": exit_px,
+                "allocated_entry_fee": alloc_entry_fee,
+                "exit_fee": exit_fee,
+                "invested_capital_denominator": res.get("invested_capital_denominator"),
+                "dollar_pnl": res.get("dollar_pnl"),
+                "net_realized_return": res.get("net_return"),
+                "gross_return": res.get("gross_return"),
+                "fee_drag_pct": res.get("fee_drag_pct"),
                 "provenance": provenance,
                 "provenance_complete": provenance_complete,
-                "is_attributable": provenance_complete and res.get("status") in ("MATURE", "RESOLVED"),
+                "is_attributable": is_attributable,
+                "exclusion_reason": exclusion_reason if not is_attributable else None,
                 "evaluation": res,
                 "evaluated_at": now,
             }
@@ -671,10 +716,24 @@ def evaluate_closed_lot_alpha_iteration(limit: int = 50) -> int:
                 upsert=True,
             )
 
-            if res.get("status") in ("MATURE", "RESOLVED"):
+            if is_mature:
                 db[COLL_LOT_CLOSURES].update_one(
                     {"closure_id": closure_id},
-                    {"$set": {"alpha_evaluated": True, "evaluated_at": now, "lot_alpha": res.get("net_alpha", res.get("lot_alpha"))}},
+                    {
+                        "$set": {
+                            "alpha_evaluated": True,
+                            "evaluated_at": now,
+                            "lot_alpha": res.get("net_alpha"),
+                            "benchmark_return": res.get("benchmark_return"),
+                            "invested_capital_denominator": res.get("invested_capital_denominator"),
+                            "dollar_pnl": res.get("dollar_pnl"),
+                            "net_realized_return": res.get("net_return"),
+                            "provenance": provenance,
+                            "provenance_complete": provenance_complete,
+                            "is_attributable": is_attributable,
+                            "exclusion_reason": exclusion_reason if not is_attributable else None,
+                        }
+                    },
                 )
                 evaluated += 1
             else:

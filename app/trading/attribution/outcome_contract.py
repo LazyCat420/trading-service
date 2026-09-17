@@ -273,6 +273,34 @@ class DecisionOutcomeRecordV4(CanonicalOutcomeModel):
         return _ensure_utc(v)
 
 
+class PositionLot(CanonicalOutcomeModel):
+    """Canonical tax lot tracking for FIFO allocation, fees, and provenance."""
+
+    lot_id: str
+    bot_id: str
+    ticker: str
+    initial_qty: float = Field(gt=0.0)
+    remaining_qty: float = Field(ge=0.0)
+    entry_price: float = Field(gt=0.0)
+    entry_notional: float = Field(gt=0.0)
+    entry_fee: float = Field(default=0.0, ge=0.0)
+    remaining_entry_fee: float = Field(default=0.0, ge=0.0)
+    opened_at: datetime.datetime
+    status: str = "open"  # "open", "partial", "closed"
+    origin: str = "LIVE"
+    provenance_complete: bool = True
+    decision_id: Optional[str] = None
+    execution_intent_id: Optional[str] = None
+    historical_fill_id: Optional[str] = None
+    migration_batch_id: Optional[str] = None
+    updated_at: Optional[datetime.datetime] = None
+
+    @field_validator("opened_at", "updated_at", mode="after")
+    @classmethod
+    def validate_utc(cls, v: Optional[datetime.datetime]) -> Optional[datetime.datetime]:
+        return _ensure_utc(v)
+
+
 class LotClosureRecordV4(CanonicalOutcomeModel):
     """Realized closed tax lot economic accounting under Contract v4."""
 
@@ -300,8 +328,21 @@ class LotClosureRecordV4(CanonicalOutcomeModel):
     opened_at: datetime.datetime
     closed_at: datetime.datetime
     evaluated_at: Optional[datetime.datetime] = None
+    gross_pnl: Optional[float] = None
+    net_pnl: Optional[float] = None
+    fees: Optional[float] = None
+    entry_decision_id: Optional[str] = None
+    exit_decision_id: Optional[str] = None
+    entry_intent_id: Optional[str] = None
+    exit_intent_id: Optional[str] = None
+    alpha_evaluated: Optional[bool] = None
+    lot_alpha: Optional[float] = None
+    exclusion_reason: Optional[str] = None
+    retry_after: Optional[datetime.datetime] = None
+    status: Optional[str] = None
+    benchmark_status: Optional[str] = None
 
-    @field_validator("opened_at", "closed_at", "evaluated_at", mode="after")
+    @field_validator("opened_at", "closed_at", "evaluated_at", "retry_after", mode="after")
     @classmethod
     def validate_utc(cls, v: Optional[datetime.datetime]) -> Optional[datetime.datetime]:
         return _ensure_utc(v)
