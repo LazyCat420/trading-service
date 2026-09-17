@@ -19,10 +19,10 @@ def test_no_direct_production_callers_to_paper_trader_buy_or_sell():
     app_dir = repo_root / "app"
 
     allowed_files = {
-        (app_dir / "trading" / "paper_trader.py").resolve(),
         (app_dir / "trading" / "facade.py").resolve(),
     }
 
+    paper_trader_path = (app_dir / "trading" / "paper_trader.py").resolve()
     violations = []
 
     for root, _, files in os.walk(app_dir):
@@ -42,7 +42,15 @@ def test_no_direct_production_callers_to_paper_trader_buy_or_sell():
                 continue
 
             for node in ast.walk(tree):
-                # 1. Check direct imports: from app.trading.paper_trader import buy, sell
+                # 1. Inside paper_trader.py, no internal function may call buy() or sell()
+                if full_path == paper_trader_path:
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("buy", "sell"):
+                        violations.append(
+                            f"{full_path.relative_to(repo_root)}:{node.lineno} internal function calls '{node.func.id}()' directly instead of routing through TradeFacade"
+                        )
+                    continue
+
+                # 2. In other files, check direct imports: from app.trading.paper_trader import buy, sell
                 if isinstance(node, ast.ImportFrom):
                     mod = node.module or ""
                     if "paper_trader" in mod:
@@ -52,7 +60,7 @@ def test_no_direct_production_callers_to_paper_trader_buy_or_sell():
                                     f"{full_path.relative_to(repo_root)}:{node.lineno} imports '{alias.name}' directly from {mod}"
                                 )
 
-                # 2. Check attribute calls: paper_trader.buy(...) or paper_trader.sell(...)
+                # 3. Check attribute calls: paper_trader.buy(...) or paper_trader.sell(...)
                 if isinstance(node, ast.Call):
                     if isinstance(node.func, ast.Attribute):
                         attr_name = node.func.attr

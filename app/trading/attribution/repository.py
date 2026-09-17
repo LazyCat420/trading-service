@@ -318,6 +318,10 @@ class DegradedSnapshotAdmissionError(AdmissionError):
     pass
 
 
+class InvalidAccountAdmissionError(AdmissionError):
+    pass
+
+
 def claim_execution_slot(
     slot_key: str,
     decision_id: str,
@@ -516,11 +520,24 @@ def admit_execution_intent(
     7. Atomically persists new RiskReservation and ExecutionIntent.
     """
     now = datetime.datetime.now(datetime.timezone.utc)
-    bot_id = intent.bot_id or "default"
+    bot_id = intent.bot_id
+    if not bot_id or bot_id == "default":
+        raise InvalidAccountAdmissionError(
+            f"Execution intent {intent.execution_intent_id} has missing or invalid bot_id: {bot_id!r}",
+            "INVALID_ACCOUNT",
+        )
     token = owner_token or f"tok-{uuid.uuid4().hex[:12]}"
     db = mongo_store.get_doc_db()
 
     def _admit_op(s):
+        # Verify bot exists in database
+        bot_doc = db["bots"].find_one({"bot_id": bot_id}, session=s)
+        if not bot_doc:
+            raise InvalidAccountAdmissionError(
+                f"Account bot_id {bot_id!r} not found in database",
+                "INVALID_ACCOUNT",
+            )
+
         # 1. Validate Policy Decision & Snapshot Freshness
         if policy_decision:
             if policy_decision.disposition not in (
@@ -545,13 +562,19 @@ def admit_execution_intent(
             existing_resv = db[COLL_RISK_RESERVATIONS].find_one(
                 {"execution_intent_id": existing_intent.execution_intent_id}, session=s
             )
+            is_consumed = (existing_intent.status == IntentStatus.CONSUMED)
+            is_created = (existing_intent.status == IntentStatus.CREATED and (existing_intent.expires_at is None or existing_intent.expires_at > now))
+
             return {
-                "admitted": True,
+                "admitted": is_created,
                 "is_duplicate": True,
+                "already_executed": is_consumed,
+                "resumed": is_created,
                 "execution_intent": existing_intent,
                 "slot": existing_slot or {},
                 "reservation": existing_resv or {},
                 "owner_token": existing_slot.get("owner_token") if existing_slot else token,
+                "status": "CONSUMED" if is_consumed else ("CREATED" if is_created else "SUPERSEDED_OR_EXPIRED"),
             }
 
         # 3. Claim Execution Slot & Handle Supersession
@@ -650,13 +673,28 @@ def admit_execution_intent(
 
         # 4. Check & Claim Cash Risk Reservation
         if intent.side.upper() == "BUY":
-            bot_row = mongo_query.find_row("bots", {"bot_id": bot_id}, ["cash_balance"], session=s)
-            cash_avail = float(bot_row[0]) if bot_row and bot_row[0] is not None else 100000.0
+            cash_avail = float(bot_doc.get("cash_balance", 0.0))
             active_resv_total = get_active_reserved_notional(bot_id, session=s)
             free_cash = cash_avail - active_resv_total
             if required_notional > free_cash:
                 raise InsufficientCashReservationError(
                     f"Insufficient free cash ${free_cash:.2f} (balance ${cash_avail:.2f} - reserved ${active_resv_total:.2f}) for required ${required_notional:.2f}",
+                    "INSUFFICIENT_CASH_RESERVATION",
+                )
+            res_bot = db["bots"].update_one(
+                {
+                    "bot_id": bot_id,
+                    "cash_balance": {"$gte": required_notional + active_resv_total},
+                },
+                {
+                    "$inc": {"reservation_version": 1},
+                    "$set": {"updated_at": now},
+                },
+                session=s,
+            )
+            if res_bot.modified_count == 0:
+                raise InsufficientCashReservationError(
+                    f"Concurrent reservation conflict or insufficient cash balance for bot {bot_id}",
                     "INSUFFICIENT_CASH_RESERVATION",
                 )
 

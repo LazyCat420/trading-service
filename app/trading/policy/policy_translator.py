@@ -35,6 +35,7 @@ class PolicyInputSnapshot(BaseModel):
 
     portfolio_equity: float
     cash_balance: float
+    bot_id: str = "default"
     held_ticker_value: float = 0.0
     max_concentration_pct: float = 0.25
     max_position_size_pct: float = 0.10
@@ -102,10 +103,22 @@ class PolicyTranslator:
         policy_decision_id: Optional[str] = None,
         execution_intent_id: Optional[str] = None,
         now: Optional[datetime.datetime] = None,
+        bot_id: Optional[str] = None,
     ) -> tuple[PolicyDecision, Optional[ExecutionIntent]]:
         eval_time = now or datetime.datetime.now(datetime.timezone.utc)
         pol_id = policy_decision_id or f"pol-{uuid.uuid4().hex[:12]}"
         config_hash = snapshot.compute_hash()
+
+        # Resolve explicit bot_id
+        resolved_bot_id = bot_id or getattr(snapshot, "bot_id", None) or getattr(artifact, "bot_id", None)
+        if resolved_bot_id == "default":
+            candidate = getattr(snapshot, "bot_id", None)
+            if candidate and candidate != "default":
+                resolved_bot_id = candidate
+            else:
+                candidate = getattr(artifact, "bot_id", None)
+                if candidate and candidate != "default":
+                    resolved_bot_id = candidate
 
         # 1. Capture requested values
         requested_values = {
@@ -135,7 +148,28 @@ class PolicyTranslator:
         reason_codes: list[str] = []
         gate_results: dict[str, Any] = {}
 
-        # 3. Check Quote Staleness
+        # 3. Check Environmental Degradation and Quote Staleness
+        if snapshot.is_degraded and action == "BUY":
+            reason_codes.append("DEGRADED_ENVIRONMENT")
+            gate_results["data_freshness_and_capacity"] = {
+                "status": "FAIL",
+                "degraded_reasons": snapshot.degraded_reasons,
+            }
+            pol_dec = PolicyDecision(
+                policy_decision_id=pol_id,
+                decision_id=artifact.decision_id,
+                policy_version=POLICY_VERSION,
+                config_hash=config_hash,
+                evaluated_at=eval_time,
+                requested_values=requested_values,
+                normalized_values=normalized_values,
+                approved_values={},
+                disposition=PolicyDisposition.REJECT,
+                reason_codes=reason_codes,
+                gate_results=gate_results,
+            )
+            return pol_dec, None
+
         if snapshot.quote_age_hours > MAX_QUOTE_AGE_HOURS:
             reason_codes.append("STALE_QUOTE")
             gate_results["quote_freshness"] = {"status": "FAIL", "age_hours": snapshot.quote_age_hours}
@@ -240,6 +274,7 @@ class PolicyTranslator:
                 execution_intent_id=intent_id,
                 decision_id=artifact.decision_id,
                 policy_decision_id=pol_id,
+                bot_id=resolved_bot_id,
                 ticker=artifact.ticker.upper().strip(),
                 side="SELL",
                 approved_size_pct=1.0,
@@ -421,6 +456,7 @@ class PolicyTranslator:
             execution_intent_id=intent_id,
             decision_id=artifact.decision_id,
             policy_decision_id=pol_id,
+            bot_id=resolved_bot_id,
             ticker=artifact.ticker.upper().strip(),
             side="BUY",
             approved_notional=round(capped_amount, 2),

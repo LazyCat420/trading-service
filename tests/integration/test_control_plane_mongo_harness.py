@@ -18,6 +18,7 @@ or ephemeral replica-set environment, verifying:
 """
 
 import datetime
+import uuid
 import pytest
 from pydantic import ValidationError
 
@@ -48,6 +49,7 @@ from app.trading.attribution.repository import (
 )
 from app.trading.control_plane import ControlPlaneMode, resolve_control_plane_mode
 from app.trading.executor import IntentExecutionRejected, execute_intent
+from app.trading.facade import TradeFacade, TradeResultStatus
 from app.trading.outbox.repository import (
     claim_pending_outbox_events,
     mark_outbox_event_completed,
@@ -61,8 +63,9 @@ pytestmark = pytest.mark.real_mongo
 
 
 @pytest.fixture(autouse=True)
-def init_clean_env(real_mongo):
+def init_clean_env(real_mongo, monkeypatch):
     """Ensure indexes and clean collections in isolated test database."""
+    monkeypatch.setenv("CONTROL_PLANE_MODE", "ENFORCE")
     ensure_attribution_indexes()
     yield real_mongo
 
@@ -558,3 +561,70 @@ def test_scenario_13_strict_pydantic_forbid():
             idempotency_key="idem",
             **{"unauthorized_key": "forbidden_key"},
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Scenario 14: Real TradeFacade ENFORCE Mode: Exactly 1 execution, zero false success
+# ─────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_scenario_14_real_facade_enforce_no_false_success(real_mongo, monkeypatch):
+    bot_id = "test-bot-sc14"
+    initial_cash = 100000.0
+    real_mongo["bots"].insert_one({
+        "bot_id": bot_id,
+        "cash_balance": initial_cash,
+        "starting_balance": initial_cash,
+        "control_plane_mode": "ENFORCE",
+    })
+
+    # Mock price lookup to avoid external HTTP calls
+    monkeypatch.setattr("app.trading.paper_trader._get_current_price", lambda ticker: (150.0, 0.1))
+
+    idemp_key = f"sc14-key-{uuid.uuid4().hex[:8]}"
+
+    # First Submission: Must execute trade
+    res1 = await TradeFacade.submit_trade(
+        bot_id=bot_id,
+        ticker="AAPL",
+        action="BUY",
+        size_pct=0.10,
+        confidence=90,
+        idempotency_key=idemp_key,
+    )
+
+    assert res1["status"] == TradeResultStatus.COMMITTED.value
+    assert res1["effective_mode"] == "ENFORCE"
+    assert res1["trade_executed"] is True
+    intent_id = res1["execution_intent_id"]
+    assert intent_id is not None
+
+    # Assert exactly 1 order, 1 fill, 1 lot, 1 outbox event
+    assert real_mongo["orders"].count_documents({"execution_intent_id": intent_id}) == 1
+    assert real_mongo["trade_fills"].count_documents({"execution_intent_id": intent_id}) == 1
+    assert real_mongo[COLL_POSITION_LOTS].count_documents({"execution_intent_id": intent_id}) == 1
+    assert real_mongo[COLL_EXECUTION_OUTBOX].count_documents({"aggregate_id": intent_id}) == 1
+
+    # Assert cash was deducted
+    bot_doc = real_mongo["bots"].find_one({"bot_id": bot_id})
+    assert bot_doc["cash_balance"] < initial_cash
+
+    # Second Submission with SAME idempotency key: Must return ALREADY_PROCESSED with zero duplicate execution
+    res2 = await TradeFacade.submit_trade(
+        bot_id=bot_id,
+        ticker="AAPL",
+        action="BUY",
+        size_pct=0.10,
+        confidence=90,
+        idempotency_key=idemp_key,
+    )
+
+    assert res2["status"] == TradeResultStatus.ALREADY_PROCESSED.value
+    assert res2["trade_executed"] is True
+    assert res2["execution_intent_id"] == intent_id
+
+    # Still exactly 1 order, 1 fill, 1 lot, 1 outbox event
+    assert real_mongo["orders"].count_documents({"execution_intent_id": intent_id}) == 1
+    assert real_mongo["trade_fills"].count_documents({"execution_intent_id": intent_id}) == 1
+    assert real_mongo[COLL_POSITION_LOTS].count_documents({"execution_intent_id": intent_id}) == 1
+    assert real_mongo[COLL_EXECUTION_OUTBOX].count_documents({"aggregate_id": intent_id}) == 1
+

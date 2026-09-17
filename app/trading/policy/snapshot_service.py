@@ -84,12 +84,19 @@ def build_policy_snapshot(
     as_of: Optional[datetime.datetime] = None,
     session: Any = None,
 ) -> tuple[PolicyInputSnapshot, dict[str, Any]]:
-    """Builds authoritative PolicyInputSnapshot from real MongoDB state."""
+    quote_age = quote_age_hours if quote_age_hours is not None else 999.0
     now = as_of or datetime.datetime.now(datetime.timezone.utc)
     quote_ts = quote_timestamp or now
 
     if quote_price <= 0:
         raise ValueError(f"Invalid quote price ${quote_price} for {ticker}")
+
+    is_degraded = False
+    degraded_reasons: list[str] = []
+
+    if quote_age > 12.0:
+        is_degraded = True
+        degraded_reasons.append(f"TARGET_QUOTE_STALE_{ticker}")
 
     # 1. Fetch bot balance
     bot_row = mongo_query.find_row("bots", {"bot_id": bot_id}, ["cash_balance", "starting_balance"], session=session)
@@ -107,8 +114,6 @@ def build_policy_snapshot(
     total_positions_val = 0.0
     held_ticker_val = 0.0
     position_marks: dict[str, dict[str, Any]] = {}
-    is_degraded = False
-    degraded_reasons: list[str] = []
 
     for p in positions:
         pos_tkr, pos_qty, pos_avg_px = p[0], float(p[1]), float(p[2])
@@ -116,15 +121,15 @@ def build_policy_snapshot(
             held_positions[pos_tkr] = pos_qty
             if pos_tkr.upper() == ticker.upper():
                 mark_px = quote_price
-                mark_age = quote_age_hours
+                mark_age = quote_age
                 mark_src = quote_source
-                mark_status = "FRESH" if quote_age_hours <= 12.0 else "STALE"
+                mark_status = "FRESH" if quote_age <= 12.0 else "STALE"
             else:
                 from app.trading.paper_trader import _get_current_price
                 m_px, m_age = _get_current_price(pos_tkr)
                 if m_px is not None and m_px > 0:
                     mark_px = m_px
-                    mark_age = m_age if m_age is not None else 0.0
+                    mark_age = m_age if m_age is not None else 999.0
                     mark_src = "vendor_quote"
                     mark_status = "FRESH" if mark_age <= 24.0 else ("STALE" if mark_age <= 96.0 else "EXPIRED")
                 else:
@@ -141,7 +146,7 @@ def build_policy_snapshot(
                 "retrieved_at": now.isoformat(),
             }
 
-            if mark_status in ("EXPIRED", "MISSING"):
+            if mark_status in ("STALE", "EXPIRED", "MISSING"):
                 is_degraded = True
                 degraded_reasons.append(f"MARK_{mark_status}_{pos_tkr}")
 
@@ -175,6 +180,8 @@ def build_policy_snapshot(
         logger.warning("[SnapshotService] pending_capacity check failed: %s", cap_err)
         cash_reserved = 0.0
         ticker_reserved = 0.0
+        is_degraded = True
+        degraded_reasons.append(f"CAPACITY_LOOKUP_FAILED_{cap_err}")
 
     # 5. Breaker & drawdown check
     drawdown_pct = max(0.0, (starting_balance - portfolio_equity) / starting_balance) if starting_balance > 0 else 0.0
@@ -193,7 +200,7 @@ def build_policy_snapshot(
         "cash_reserved": cash_reserved,
         "ticker_reserved": ticker_reserved,
         "quote_price": quote_price,
-        "quote_age_hours": quote_age_hours,
+        "quote_age_hours": quote_age,
         "quote_timestamp": quote_ts,
         "quote_source": quote_source,
         "drawdown_pct": drawdown_pct,
@@ -202,7 +209,7 @@ def build_policy_snapshot(
         "is_degraded": is_degraded,
         "degraded_reasons": degraded_reasons,
         "data_quality": {
-            "stale_quote": quote_age_hours > 12.0,
+            "stale_quote": quote_age > 12.0,
             "sanity_passed": True,
         },
     }
@@ -224,12 +231,13 @@ def build_policy_snapshot(
     snapshot_obj = PolicyInputSnapshot(
         snapshot_id=snap_hash[:16],
         cycle_id=f"sim-snap-{snap_hash[:8]}",
+        bot_id=bot_id,
         portfolio_equity=portfolio_equity,
         cash_balance=cash,
         held_positions=held_positions,
         held_ticker_value=held_ticker_val,
         quote_price=quote_price,
-        quote_age_hours=quote_age_hours,
+        quote_age_hours=quote_age,
         quote_timestamp=quote_ts,
         is_held=held_ticker_val > 0,
         as_of=now,
