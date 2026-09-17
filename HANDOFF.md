@@ -21,6 +21,7 @@ state; read these for the reasoning behind a specific change.
 
 | Date | Handoff | What it settled |
 |---|---|---|
+| 2026-09-17 | [`HANDOFF_control_plane_blockers_2026-09-17.md`](HANDOFF_control_plane_blockers_2026-09-17.md) | Remediated all 7 verified V3 Control Plane release blockers across admission, AST enforce, ledger invariants, FIFO lot replay migration, outbox leases, horizon attribution, and operational metrics. All 38 unit and 14 live Mongo integration tests green. Deployed to NAS. |
 | 2026-08-12 | [`HANDOFF_open_item_46_2026-08-12.md`](HANDOFF_open_item_46_2026-08-12.md) | A `HOLD` on a name we OWN is not a decision about entering. Held-aware label, wake pool, dead signal repaired, exit ratchet measured. **Also corrects the "turn the panel on" recommendation** — read its Next step. |
 | 2026-08-03 | [`HANDOFF_self_contradictions_2026-08-03.md`](HANDOFF_self_contradictions_2026-08-03.md) | Five places where a comment claimed one thing and the code did another. All five fixed. |
 
