@@ -177,9 +177,8 @@ def consume_execution_intent(
     Returns True if consumption succeeded, False if already consumed, expired, or absent.
     """
     now = consumed_at or datetime.datetime.now(datetime.timezone.utc)
-    from app.db.mongo import get_collection
-
-    col = get_collection(COLL_EXECUTION_INTENTS)
+    db = mongo_store.get_doc_db()
+    col = db[COLL_EXECUTION_INTENTS]
     result = col.update_one(
         {
             "execution_intent_id": execution_intent_id,

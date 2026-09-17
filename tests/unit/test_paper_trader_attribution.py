@@ -260,3 +260,32 @@ def test_verify_fill_lineage_contract(monkeypatch):
     res_orphan = verify_fill_lineage("fill-orphan")
     assert res_orphan.valid is False
     assert any("unattributed fill" in a for a in res_orphan.anomalies)
+
+
+def test_consume_execution_intent_direct_cas(monkeypatch):
+    """Verify consume_execution_intent uses get_doc_db and issues CAS update."""
+    from app.trading.attribution.repository import consume_execution_intent
+
+    mock_db = MagicMock()
+    mock_col = MagicMock()
+    mock_db.__getitem__.return_value = mock_col
+    monkeypatch.setattr("app.trading.attribution.repository.mongo_store.get_doc_db", lambda: mock_db)
+
+    # 1. Success on modified_count == 1
+    mock_res_ok = MagicMock()
+    mock_res_ok.modified_count = 1
+    mock_col.update_one.return_value = mock_res_ok
+
+    assert consume_execution_intent("intent-test-1") is True
+    mock_col.update_one.assert_called_once()
+    filter_arg = mock_col.update_one.call_args[0][0]
+    assert filter_arg["execution_intent_id"] == "intent-test-1"
+    assert filter_arg["status"] == "CREATED"
+
+    # 2. Failure on modified_count == 0 (already consumed or expired)
+    mock_res_fail = MagicMock()
+    mock_res_fail.modified_count = 0
+    mock_col.update_one.return_value = mock_res_fail
+
+    assert consume_execution_intent("intent-test-1") is False
+
