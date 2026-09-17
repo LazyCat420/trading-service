@@ -298,6 +298,28 @@ async def execute_intent(
             with mongo_store.with_txn() as s:
                 _shadow_txn_op(s)
 
+        try:
+            from app.telemetry.trading_adapter import TradingLineageTracker
+            TradingLineageTracker.record_order_fill(
+                cycle_id=intent.cycle_id,
+                ticker=ticker,
+                order_id=order_id,
+                fill_id=f"sim-fill-{order_id}",
+                execution_intent_id=intent_id,
+                shares=int(qty),
+                fill_price=float(fill_price),
+                attributes={"mode": "SHADOW", "fees": fees},
+            )
+            TradingLineageTracker.record_reconciliation(
+                cycle_id=intent.cycle_id,
+                ticker=ticker,
+                reconciliation_id=rec_id,
+                status="MATCH" if verdict.value == "EXECUTION_MATCHED" else "MISMATCH",
+                diff=float(realized_slippage),
+            )
+        except Exception as e:
+            logger.debug("[telemetry] SHADOW lineage tracking failed: %s", e)
+
         return {
             "status": "SIMULATED",
             "effective_mode": "SHADOW",
@@ -650,6 +672,21 @@ async def execute_intent(
         "[Executor] Intent %s executed: %s %s %.4f @ $%.4f (order %s)",
         intent_id, side, ticker, qty, fill_price, order_id,
     )
+
+    try:
+        from app.telemetry.trading_adapter import TradingLineageTracker
+        TradingLineageTracker.record_order_fill(
+            cycle_id=intent.cycle_id,
+            ticker=ticker,
+            order_id=order_id,
+            fill_id=fill_id,
+            execution_intent_id=intent_id,
+            shares=int(qty),
+            fill_price=float(fill_price),
+            attributes={"mode": "ENFORCE", "fees": fees},
+        )
+    except Exception as e:
+        logger.debug("[telemetry] ENFORCE lineage tracking failed: %s", e)
 
     return {
         "status": "FILLED",

@@ -398,6 +398,25 @@ def evaluate_decision_at_horizon(
         upsert=True,
     )
 
+    try:
+        from app.telemetry.trading_adapter import TradingLineageTracker
+        outcome_val = "WIN" if (metrics.decision_alpha or 0.0) > 0 else "LOSS"
+        TradingLineageTracker.record_outcome(
+            cycle_id=artifact.cycle_id,
+            ticker=artifact.ticker,
+            outcome_id=outcome_id,
+            outcome=outcome_val,
+            pnl_pct=float(metrics.decision_alpha or 0.0),
+            is_shadow=(getattr(artifact, "execution_mode", "") == "SHADOW"),
+            attributes={
+                "decision_id": artifact.decision_id,
+                "claim_type": claim_type.value,
+                "action_classification": action_class,
+            },
+        )
+    except Exception as e:
+        logger.debug("[telemetry] record_outcome failed: %s", e)
+
     # Mark artifact as maturely evaluated so it will not starve subsequent decisions
     db[COLL_DECISION_ARTIFACTS].update_one(
         {"decision_id": artifact.decision_id},
