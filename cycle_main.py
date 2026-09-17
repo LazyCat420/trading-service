@@ -58,6 +58,11 @@ async def run_single_cycle(
         tickers = ["AAPL"] # fallback
 
     logger.info("[cycle_backend] Starting V3 cycle %s | tickers=%s", cycle_id, tickers)
+    try:
+        from app.telemetry.trading_adapter import TradingLineageTracker
+        TradingLineageTracker.record_cycle_start(cycle_id=cycle_id, scope="production" if tickers else "shadow")
+    except Exception as e:
+        logger.debug("[telemetry] record_cycle_start failed: %s", e)
     t0 = time.monotonic()
 
     try:

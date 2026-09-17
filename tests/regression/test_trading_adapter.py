@@ -28,36 +28,42 @@ def test_lineage_spans_propagation():
     assert snap_span.attributes["price"] == 125.50
 
     dec_span = TradingLineageTracker.record_decision(
-        cycle_id=cycle_id, ticker=ticker, action="BUY", confidence=85, parent_span_id=snap_span.span_id
+        cycle_id=cycle_id, ticker=ticker, decision_id="dec-12345", action="BUY", confidence=85, parent_span_id=snap_span.span_id
     )
     assert dec_span.trace_id == snap_span.trace_id
     assert dec_span.parent_span_id == snap_span.span_id
+    assert dec_span.attributes["decision_id"] == "dec-12345"
     assert dec_span.attributes["action"] == "BUY"
 
     policy_span = TradingLineageTracker.record_policy_eval(
-        cycle_id=cycle_id, ticker=ticker, verdict="APPROVED", approved=True, parent_span_id=dec_span.span_id
+        cycle_id=cycle_id, ticker=ticker, policy_decision_id="pol-12345", decision_id="dec-12345", verdict="APPROVED", approved=True, parent_span_id=dec_span.span_id
     )
     assert policy_span.status == "OK"
+    assert policy_span.attributes["policy_decision_id"] == "pol-12345"
 
     intent_span = TradingLineageTracker.record_execution_intent(
-        cycle_id=cycle_id, ticker=ticker, action="BUY", shares=100, price=125.50
+        cycle_id=cycle_id, ticker=ticker, execution_intent_id="intent-12345", action="BUY", shares=100, price=125.50
     )
-    assert "intent_id" in intent_span.attributes
+    assert intent_span.attributes["execution_intent_id"] == "intent-12345"
 
     fill_span = TradingLineageTracker.record_order_fill(
-        cycle_id=cycle_id, ticker=ticker, fill_id="fill_abc123", shares=100, fill_price=125.48
+        cycle_id=cycle_id, ticker=ticker, order_id="ord-12345", fill_id="fill_abc123", shares=100, fill_price=125.48
     )
+    assert fill_span.attributes["order_id"] == "ord-12345"
+    assert fill_span.attributes["fill_id"] == "fill_abc123"
     assert fill_span.attributes["executed_shares"] == 100
 
     recon_span = TradingLineageTracker.record_reconciliation(
-        cycle_id=cycle_id, ticker=ticker, status="MATCH", diff=0.0
+        cycle_id=cycle_id, ticker=ticker, reconciliation_id="recon-12345", status="MATCH", diff=0.0
     )
     assert recon_span.status == "OK"
+    assert recon_span.attributes["reconciliation_id"] == "recon-12345"
 
     outcome_span = TradingLineageTracker.record_outcome(
-        cycle_id=cycle_id, ticker=ticker, outcome="WIN", pnl_pct=3.8
+        cycle_id=cycle_id, ticker=ticker, outcome_id="out-12345", outcome="WIN", pnl_pct=3.8
     )
     assert outcome_span.status == "OK"
+    assert outcome_span.attributes["outcome_id"] == "out-12345"
     assert outcome_span.attributes["pnl_pct"] == 3.8
 
 

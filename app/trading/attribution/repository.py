@@ -165,6 +165,18 @@ def save_decision_artifact(artifact: DecisionArtifact) -> DecisionArtifact:
     if existing:
         return artifact
     mongo_store.insert_docs(COLL_DECISION_ARTIFACTS, [doc])
+    try:
+        from app.telemetry.trading_adapter import TradingLineageTracker
+        TradingLineageTracker.record_decision(
+            cycle_id=artifact.cycle_id,
+            ticker=artifact.ticker,
+            decision_id=artifact.decision_id,
+            action=artifact.action,
+            confidence=artifact.confidence or 0,
+            attributes={"strategy": getattr(artifact, "strategy_name", "")},
+        )
+    except Exception as e:
+        logger.debug("[telemetry] record_decision failed: %s", e)
     return artifact
 
 
@@ -195,6 +207,20 @@ def save_policy_decision(policy: PolicyDecision) -> PolicyDecision:
     if existing:
         return policy
     mongo_store.insert_docs(COLL_POLICY_DECISIONS, [doc])
+    try:
+        from app.telemetry.trading_adapter import TradingLineageTracker
+        approved = policy.disposition in (PolicyDisposition.APPROVE, PolicyDisposition.APPROVE_WITH_CAP)
+        TradingLineageTracker.record_policy_eval(
+            cycle_id=policy.cycle_id,
+            ticker=policy.ticker,
+            policy_decision_id=policy.policy_decision_id,
+            decision_id=policy.decision_id,
+            verdict=policy.disposition.value,
+            approved=approved,
+            attributes={"rationale": getattr(policy, "rationale", "")},
+        )
+    except Exception as e:
+        logger.debug("[telemetry] record_policy_eval failed: %s", e)
     return policy
 
 
@@ -768,6 +794,28 @@ def admit_execution_intent(
         intent.slot_key = slot_key
         intent.status = IntentStatus.CREATED
         db[COLL_EXECUTION_INTENTS].insert_one(intent.model_dump(mode="python"), session=s)
+
+        try:
+            from app.telemetry.trading_adapter import TradingLineageTracker
+            TradingLineageTracker.record_reservation(
+                cycle_id=intent.cycle_id,
+                ticker=intent.ticker,
+                reservation_id=resv.reservation_id,
+                slot_key=slot_key,
+                capital=resv.reserved_notional,
+            )
+            TradingLineageTracker.record_execution_intent(
+                cycle_id=intent.cycle_id,
+                ticker=intent.ticker,
+                execution_intent_id=intent.execution_intent_id,
+                policy_decision_id=intent.policy_decision_id,
+                reservation_id=resv.reservation_id,
+                action=intent.side,
+                shares=int(intent.quantity),
+                price=float(intent.limit_price or 0.0),
+            )
+        except Exception as e:
+            logger.debug("[telemetry] admit_execution_intent lineage failed: %s", e)
 
         return {
             "admitted": True,

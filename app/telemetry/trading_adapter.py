@@ -200,91 +200,199 @@ class TradingLineageTracker:
         )
 
     @classmethod
+    def record_cycle_start(cls, cycle_id: str, scope: str = "production") -> TradingSpan:
+        return cls.emit_span(
+            cycle_id=cycle_id,
+            ticker="PORTFOLIO",
+            stage="trading.cycle",
+            attributes={"cycle_id": cycle_id, "scope": scope},
+        )
+
+    @classmethod
     def record_decision(
-        cls, cycle_id: str, ticker: str, action: str, confidence: int, parent_span_id: Optional[str] = None
+        cls,
+        cycle_id: str,
+        ticker: str,
+        decision_id: str,
+        action: str,
+        confidence: int,
+        parent_span_id: Optional[str] = None,
+        attributes: Optional[dict[str, Any]] = None,
     ) -> TradingSpan:
+        attrs = {"decision_id": decision_id, "action": action, "confidence": confidence}
+        if attributes:
+            attrs.update(attributes)
         return cls.emit_span(
             cycle_id=cycle_id,
             ticker=ticker,
             stage="decision",
             parent_span_id=parent_span_id,
-            attributes={"action": action, "confidence": confidence},
+            attributes=attrs,
         )
 
     @classmethod
     def record_policy_eval(
-        cls, cycle_id: str, ticker: str, verdict: str, approved: bool, parent_span_id: Optional[str] = None
+        cls,
+        cycle_id: str,
+        ticker: str,
+        policy_decision_id: str,
+        decision_id: str,
+        verdict: str,
+        approved: bool,
+        parent_span_id: Optional[str] = None,
+        attributes: Optional[dict[str, Any]] = None,
     ) -> TradingSpan:
+        attrs = {
+            "policy_decision_id": policy_decision_id,
+            "decision_id": decision_id,
+            "verdict": verdict,
+            "approved": approved,
+        }
+        if attributes:
+            attrs.update(attributes)
         return cls.emit_span(
             cycle_id=cycle_id,
             ticker=ticker,
             stage="policy",
             status="OK" if approved else "ERROR",
             parent_span_id=parent_span_id,
-            attributes={"verdict": verdict, "approved": approved},
+            attributes=attrs,
         )
 
     @classmethod
     def record_execution_intent(
-        cls, cycle_id: str, ticker: str, action: str, shares: int, price: float, parent_span_id: Optional[str] = None
+        cls,
+        cycle_id: str,
+        ticker: str,
+        execution_intent_id: str,
+        policy_decision_id: Optional[str] = None,
+        reservation_id: Optional[str] = None,
+        action: str = "BUY",
+        shares: int = 0,
+        price: float = 0.0,
+        parent_span_id: Optional[str] = None,
+        attributes: Optional[dict[str, Any]] = None,
     ) -> TradingSpan:
-        intent_id = f"intent_{uuid.uuid4().hex[:12]}"
+        attrs = {
+            "execution_intent_id": execution_intent_id,
+            "policy_decision_id": policy_decision_id,
+            "reservation_id": reservation_id,
+            "action": action,
+            "shares": shares,
+            "target_price": price,
+        }
+        if attributes:
+            attrs.update(attributes)
         return cls.emit_span(
             cycle_id=cycle_id,
             ticker=ticker,
             stage="execution_intent",
             parent_span_id=parent_span_id,
-            attributes={"intent_id": intent_id, "action": action, "shares": shares, "target_price": price},
+            attributes=attrs,
         )
 
     @classmethod
     def record_reservation(
-        cls, cycle_id: str, ticker: str, slot_id: str, capital: float, parent_span_id: Optional[str] = None
+        cls,
+        cycle_id: str,
+        ticker: str,
+        reservation_id: str,
+        slot_key: Optional[str] = None,
+        capital: float = 0.0,
+        parent_span_id: Optional[str] = None,
+        attributes: Optional[dict[str, Any]] = None,
     ) -> TradingSpan:
+        attrs = {"reservation_id": reservation_id, "slot_key": slot_key, "capital_allocated": capital}
+        if attributes:
+            attrs.update(attributes)
         return cls.emit_span(
             cycle_id=cycle_id,
             ticker=ticker,
             stage="reservation_slot",
             parent_span_id=parent_span_id,
-            attributes={"slot_id": slot_id, "capital_allocated": capital},
+            attributes=attrs,
         )
 
     @classmethod
     def record_order_fill(
-        cls, cycle_id: str, ticker: str, fill_id: str, shares: int, fill_price: float, parent_span_id: Optional[str] = None
+        cls,
+        cycle_id: str,
+        ticker: str,
+        order_id: str,
+        fill_id: str,
+        execution_intent_id: Optional[str] = None,
+        shares: int = 0,
+        fill_price: float = 0.0,
+        parent_span_id: Optional[str] = None,
+        attributes: Optional[dict[str, Any]] = None,
     ) -> TradingSpan:
+        attrs = {
+            "order_id": order_id,
+            "fill_id": fill_id,
+            "execution_intent_id": execution_intent_id,
+            "executed_shares": shares,
+            "executed_price": fill_price,
+        }
+        if attributes:
+            attrs.update(attributes)
         return cls.emit_span(
             cycle_id=cycle_id,
             ticker=ticker,
             stage="order_fill",
             parent_span_id=parent_span_id,
-            attributes={"fill_id": fill_id, "executed_shares": shares, "executed_price": fill_price},
+            attributes=attrs,
         )
 
     @classmethod
     def record_reconciliation(
-        cls, cycle_id: str, ticker: str, status: str, diff: float, parent_span_id: Optional[str] = None
+        cls,
+        cycle_id: str,
+        ticker: str,
+        reconciliation_id: str,
+        status: str,
+        diff: float = 0.0,
+        parent_span_id: Optional[str] = None,
+        attributes: Optional[dict[str, Any]] = None,
     ) -> TradingSpan:
+        attrs = {"reconciliation_id": reconciliation_id, "reconciliation_status": status, "discrepancy": diff}
+        if attributes:
+            attrs.update(attributes)
         return cls.emit_span(
             cycle_id=cycle_id,
             ticker=ticker,
             stage="reconciliation",
             status="OK" if status == "MATCH" else "ERROR",
             parent_span_id=parent_span_id,
-            attributes={"reconciliation_status": status, "discrepancy": diff},
+            attributes=attrs,
         )
 
     @classmethod
     def record_outcome(
-        cls, cycle_id: str, ticker: str, outcome: str, pnl_pct: float, parent_span_id: Optional[str] = None
+        cls,
+        cycle_id: str,
+        ticker: str,
+        outcome_id: str,
+        outcome: str,
+        pnl_pct: float = 0.0,
+        is_shadow: bool = False,
+        parent_span_id: Optional[str] = None,
+        attributes: Optional[dict[str, Any]] = None,
     ) -> TradingSpan:
+        attrs = {
+            "outcome_id": outcome_id,
+            "outcome": outcome,
+            "pnl_pct": pnl_pct,
+            "is_shadow": is_shadow,
+        }
+        if attributes:
+            attrs.update(attributes)
         return cls.emit_span(
             cycle_id=cycle_id,
             ticker=ticker,
-            stage="outcome",
+            stage="shadow_outcome" if is_shadow else "outcome",
             status="OK" if outcome in ("WIN", "HOLD_CORRECT") else "ERROR",
             parent_span_id=parent_span_id,
-            attributes={"outcome": outcome, "pnl_pct": pnl_pct},
+            attributes=attrs,
         )
 
 

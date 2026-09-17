@@ -16,6 +16,16 @@ def save_snapshot(snapshot: MarketSnapshot):
         subsystem="DB",
         message=f"Upserted market snapshot for {snapshot.ticker} to market_snapshots"
     )
+    try:
+        from app.telemetry.trading_adapter import TradingLineageTracker
+        TradingLineageTracker.record_market_snapshot(
+            cycle_id="market-feed",
+            ticker=snapshot.ticker,
+            bar_price=float(snapshot.price or 0.0),
+            source=snapshot.data_source or "alpaca",
+        )
+    except Exception as e:
+        logger.debug("[telemetry] record_market_snapshot failed: %s", e)
 
 
 def get_latest_snapshot(
