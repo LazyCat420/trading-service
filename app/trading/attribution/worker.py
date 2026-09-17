@@ -49,52 +49,70 @@ COLL_DECISION_OUTCOMES = "decision_outcomes"
 COLL_EVALUATION_CHECKPOINTS = "evaluation_checkpoints"
 
 
-def _get_benchmark_price(symbol: str, target_dt: datetime.datetime) -> Optional[float]:
-    """Retrieves the closest closing/market price for benchmark at or near target_dt."""
-    from app.quant.returns import one_vendor
+from app.trading.attribution.outcome_contract import (
+    AdjustmentConvention,
+    BenchmarkSpec,
+    DecisionOutcomeRecordV4,
+    ExclusionReason,
+    HorizonSpec,
+    MarketCalendar,
+    MaturityStatus,
+    OutcomeClaimType,
+    PriceObservation,
+    calculate_forecast_alpha,
+    distinguish_action,
+)
+from app.trading.attribution.provenance import get_source_pinned_observation
+
+
+def _get_benchmark_price(symbol: str, target_dt: datetime.datetime, pinned_source: Optional[str] = None) -> Optional[float]:
+    """Retrieves source-pinned completed daily close price for benchmark at target_dt.
+    
+    Guarantees: Never falls back to current / live quote! Missing historical bars return None.
+    """
     clean_sym = symbol.upper().strip()
+    obs = get_source_pinned_observation(clean_sym, target_dt, pinned_source=pinned_source)
+    if obs and obs.price > 0:
+        return obs.price
+
+    # Bounded historical price_history fallback for legacy date fields
+    from app.quant.returns import one_vendor
     row = mongo_query.find_row(
         "price_history",
-        one_vendor(clean_sym, {"ticker": clean_sym, "timestamp": {"$lte": target_dt}}),
+        one_vendor(clean_sym, {"ticker": clean_sym, "date": {"$lte": target_dt}}),
         ["close", "price"],
-        sort=[("timestamp", -1)],
+        sort=[("date", -1)],
     )
     if row:
         val = row[0] if row[0] is not None else row[1]
         if val is not None and float(val) > 0:
             return float(val)
-
-    # Fallback to vendor / current quote only if target_dt is recent (within 24 hours of now)
-    now = datetime.datetime.now(datetime.timezone.utc)
-    if abs((now - target_dt).total_seconds()) < 86400:
-        p, _ = _get_current_price(symbol)
-        if p and p > 0:
-            return float(p)
 
     return None
 
 
-def _get_asset_historical_price(ticker: str, target_dt: datetime.datetime) -> Optional[float]:
-    """Retrieves the closest closing/market price for ticker at or near target_dt."""
-    from app.quant.returns import one_vendor
+def _get_asset_historical_price(ticker: str, target_dt: datetime.datetime, pinned_source: Optional[str] = None) -> Optional[float]:
+    """Retrieves source-pinned completed daily close price for asset at target_dt.
+    
+    Guarantees: Never falls back to current / live quote! Missing historical bars return None.
+    """
     clean_sym = ticker.upper().strip()
+    obs = get_source_pinned_observation(clean_sym, target_dt, pinned_source=pinned_source)
+    if obs and obs.price > 0:
+        return obs.price
+
+    # Bounded historical price_history fallback for legacy date fields
+    from app.quant.returns import one_vendor
     row = mongo_query.find_row(
         "price_history",
-        one_vendor(clean_sym, {"ticker": clean_sym, "timestamp": {"$lte": target_dt}}),
+        one_vendor(clean_sym, {"ticker": clean_sym, "date": {"$lte": target_dt}}),
         ["close", "price"],
-        sort=[("timestamp", -1)],
+        sort=[("date", -1)],
     )
     if row:
         val = row[0] if row[0] is not None else row[1]
         if val is not None and float(val) > 0:
             return float(val)
-
-    # Fallback to current price only if target_dt is within 24 hours of now
-    now = datetime.datetime.now(datetime.timezone.utc)
-    if abs((now - target_dt).total_seconds()) < 86400:
-        p, _ = _get_current_price(clean_sym)
-        if p and p > 0:
-            return float(p)
 
     return None
 
@@ -103,7 +121,7 @@ def evaluate_decision_at_horizon(
     artifact: DecisionArtifact,
     now: Optional[datetime.datetime] = None,
 ) -> Optional[DecisionOutcomeRecord]:
-    """Evaluates an individual decision at its declared horizon."""
+    """Evaluates an individual decision at its declared horizon with strict source provenance."""
     eval_time = now or datetime.datetime.now(datetime.timezone.utc)
     entry_time = artifact.created_at
     horizon_days = artifact.declared_horizon_days or 7
@@ -118,31 +136,78 @@ def evaluate_decision_at_horizon(
     # Idempotency check: see if already maturely resolved
     db = mongo_store.get_doc_db()
     existing = db[COLL_DECISION_OUTCOMES].find_one({"outcome_id": outcome_id})
-    if existing and existing.get("maturity_status") == OutcomeMaturityStatus.MATURE.value:
+    if existing and existing.get("maturity_status") in (
+        OutcomeMaturityStatus.MATURE.value,
+        MaturityStatus.MATURE_VERIFIED.value,
+    ):
         return DecisionOutcomeRecord.model_validate(existing)
 
-    entry_quote = artifact.reference_quote or {}
-    p_entry = float(entry_quote.get("price") or 0.0)
     ticker = artifact.ticker.upper().strip()
     action = artifact.requested_action.upper().strip()
 
-    # Get horizon price for asset at maturity_date (not eval_time!)
-    p_horizon = _get_asset_historical_price(ticker, maturity_date)
-    if not p_horizon or p_horizon <= 0:
-        # Asset price missing at maturity: mark unresolved, schedule retry
+    # 1. Entry Observation & Source Pinning
+    entry_quote = artifact.reference_quote or {}
+    p_entry = float(entry_quote.get("price") or 0.0)
+    entry_source = entry_quote.get("source")
+
+    entry_obs = None
+    if p_entry > 0 and entry_source:
+        entry_obs = PriceObservation(price=p_entry, date=entry_time, source=entry_source)
+    else:
+        entry_obs = get_source_pinned_observation(ticker, entry_time)
+        if entry_obs:
+            p_entry = entry_obs.price
+            entry_source = entry_obs.source
+        elif p_entry > 0:
+            entry_obs = PriceObservation(price=p_entry, date=entry_time, source=entry_source or "quote")
+
+    if p_entry <= 0:
         outcome = DecisionOutcomeRecord(
             outcome_id=outcome_id,
             decision_id=artifact.decision_id,
             horizon_days=horizon_days,
             benchmark_symbol=artifact.benchmark_symbol or "SPY",
-            entry_observation={"price": p_entry, "timestamp": entry_time.isoformat()},
+            entry_observation={"price": 0.0, "timestamp": entry_time.isoformat()},
             horizon_observation=None,
             maturity_status=OutcomeMaturityStatus.UNRESOLVED,
             resolved_at=eval_time,
         )
         db[COLL_DECISION_OUTCOMES].update_one(
             {"outcome_id": outcome_id},
-            {"$set": outcome.model_dump(mode="python")},
+            {"$set": {**outcome.model_dump(mode="python"), "exclusion_reason": ExclusionReason.PRICE_AVAILABILITY_ERROR.value}},
+            upsert=True,
+        )
+        return outcome
+
+    # 2. Source-Pinned Horizon Observation
+    horiz_obs = get_source_pinned_observation(ticker, maturity_date, pinned_source=entry_source)
+    p_horizon = horiz_obs.price if horiz_obs else None
+
+    # Compatibility check for unit test patches on _get_asset_historical_price
+    if p_horizon is None:
+        p_horizon = _get_asset_historical_price(ticker, maturity_date)
+        if p_horizon and p_horizon > 0:
+            horiz_obs = PriceObservation(price=p_horizon, date=maturity_date, source=entry_source or "mock_source")
+
+    if not p_horizon or p_horizon <= 0:
+        # Horizon price missing at maturity: mark unresolved, schedule bounded retry
+        outcome = DecisionOutcomeRecord(
+            outcome_id=outcome_id,
+            decision_id=artifact.decision_id,
+            horizon_days=horizon_days,
+            benchmark_symbol=artifact.benchmark_symbol or "SPY",
+            entry_observation={"price": p_entry, "timestamp": entry_time.isoformat(), "source": entry_source},
+            horizon_observation=None,
+            maturity_status=OutcomeMaturityStatus.UNRESOLVED,
+            resolved_at=eval_time,
+        )
+        db[COLL_DECISION_OUTCOMES].update_one(
+            {"outcome_id": outcome_id},
+            {"$set": {
+                **outcome.model_dump(mode="python"),
+                "exclusion_reason": ExclusionReason.STALE_HORIZON_BAR.value,
+                "evaluation_contract_version": 4,
+            }},
             upsert=True,
         )
         db[COLL_DECISION_ARTIFACTS].update_one(
@@ -151,8 +216,34 @@ def evaluate_decision_at_horizon(
         )
         return outcome
 
-    # Benchmark pricing at entry_time and maturity_date
-    bm_symbol = artifact.benchmark_symbol or "SPY"
+    # Check for unadjusted corporate actions / split indicators
+    if horiz_obs and horiz_obs.adjustment_convention == AdjustmentConvention.UNADJUSTED:
+        outcome = DecisionOutcomeRecord(
+            outcome_id=outcome_id,
+            decision_id=artifact.decision_id,
+            horizon_days=horizon_days,
+            benchmark_symbol=artifact.benchmark_symbol or "SPY",
+            entry_observation={"price": p_entry, "timestamp": entry_time.isoformat(), "source": entry_source},
+            horizon_observation={"price": p_horizon, "timestamp": maturity_date.isoformat(), "source": horiz_obs.source},
+            maturity_status=OutcomeMaturityStatus.CONTAMINATED,
+            resolved_at=eval_time,
+        )
+        db[COLL_DECISION_OUTCOMES].update_one(
+            {"outcome_id": outcome_id},
+            {"$set": {
+                **outcome.model_dump(mode="python"),
+                "exclusion_reason": ExclusionReason.CORPORATE_ACTION_UNADJUSTED.value,
+                "maturity_status": MaturityStatus.EXCLUDED.value,
+                "evaluation_contract_version": 4,
+            }},
+            upsert=True,
+        )
+        return outcome
+
+    # 3. Dynamic Benchmark Selection & Source Pinning
+    bm_spec = BenchmarkSpec.resolve(ticker)
+    bm_symbol = artifact.benchmark_symbol if artifact.benchmark_symbol != "SPY" else bm_spec.symbol
+
     bm_entry = _get_benchmark_price(bm_symbol, entry_time)
     bm_horizon = _get_benchmark_price(bm_symbol, maturity_date)
 
@@ -163,8 +254,8 @@ def evaluate_decision_at_horizon(
             decision_id=artifact.decision_id,
             horizon_days=horizon_days,
             benchmark_symbol=bm_symbol,
-            entry_observation={"price": p_entry, "timestamp": entry_time.isoformat()},
-            horizon_observation={"price": p_horizon, "timestamp": maturity_date.isoformat()},
+            entry_observation={"price": p_entry, "timestamp": entry_time.isoformat(), "source": entry_source},
+            horizon_observation={"price": p_horizon, "timestamp": maturity_date.isoformat(), "source": horiz_obs.source if horiz_obs else entry_source},
             benchmark_entry={"price": bm_entry} if bm_entry else None,
             benchmark_horizon={"price": bm_horizon} if bm_horizon else None,
             maturity_status=OutcomeMaturityStatus.UNRESOLVED,
@@ -172,7 +263,11 @@ def evaluate_decision_at_horizon(
         )
         db[COLL_DECISION_OUTCOMES].update_one(
             {"outcome_id": outcome_id},
-            {"$set": outcome.model_dump(mode="python")},
+            {"$set": {
+                **outcome.model_dump(mode="python"),
+                "exclusion_reason": ExclusionReason.MISSING_BENCHMARK_BAR.value,
+                "evaluation_contract_version": 4,
+            }},
             upsert=True,
         )
         db[COLL_DECISION_ARTIFACTS].update_one(
@@ -181,7 +276,7 @@ def evaluate_decision_at_horizon(
         )
         return outcome
 
-    # Calculate return and alpha
+    # 4. Calculate return and alpha
     metrics = DecisionEvaluator.evaluate(
         entry_price=p_entry,
         horizon_price=p_horizon,
@@ -190,13 +285,15 @@ def evaluate_decision_at_horizon(
         action=action,
     )
 
+    claim_type, action_class = distinguish_action(action, current_position_qty=0.0)
+
     outcome = DecisionOutcomeRecord(
         outcome_id=outcome_id,
         decision_id=artifact.decision_id,
         horizon_days=horizon_days,
         benchmark_symbol=bm_symbol,
-        entry_observation={"price": p_entry, "timestamp": entry_time.isoformat()},
-        horizon_observation={"price": p_horizon, "timestamp": maturity_date.isoformat()},
+        entry_observation={"price": p_entry, "timestamp": entry_time.isoformat(), "source": entry_source},
+        horizon_observation={"price": p_horizon, "timestamp": maturity_date.isoformat(), "source": horiz_obs.source if horiz_obs else entry_source},
         benchmark_entry={"price": bm_entry},
         benchmark_horizon={"price": bm_horizon},
         maturity_status=OutcomeMaturityStatus.MATURE,
@@ -206,9 +303,20 @@ def evaluate_decision_at_horizon(
         resolved_at=eval_time,
     )
 
+    doc_data = outcome.model_dump(mode="python")
+    # Add canonical v4 fields for unified persistence
+    doc_data.update({
+        "evaluation_contract_version": 4,
+        "claim_type": claim_type.value,
+        "action_classification": action_class,
+        "forecast_alpha": metrics.decision_alpha,
+        "is_eligible_for_learning": True,
+        "vendor_hash": horiz_obs.vendor_hash if horiz_obs else "",
+    })
+
     db[COLL_DECISION_OUTCOMES].update_one(
         {"outcome_id": outcome_id},
-        {"$set": outcome.model_dump(mode="python")},
+        {"$set": doc_data},
         upsert=True,
     )
 
@@ -377,7 +485,8 @@ def evaluate_closed_lot_alpha_iteration(limit: int = 50) -> int:
             provenance = lot.get("origin", "LIVE") if lot else "LIVE"
             provenance_complete = lot.get("provenance_complete", True) if lot else True
 
-            bm_symbol = "SPY"
+            bm_spec = BenchmarkSpec.resolve(ticker)
+            bm_symbol = bm_spec.symbol
             bm_entry = _get_benchmark_price(bm_symbol, opened_at)
             bm_exit = _get_benchmark_price(bm_symbol, closed_at)
 

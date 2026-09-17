@@ -271,6 +271,7 @@ class ExecutionReconciliation(CanonicalAttributionModel):
 
 class DecisionOutcomeRecord(CanonicalAttributionModel):
     """Represents horizon-based evaluation of the underlying thesis claim (Contract v3)."""
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     outcome_id: str
     decision_id: str
