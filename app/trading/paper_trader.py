@@ -25,6 +25,7 @@ from app.services.parameter_store import get_param
 from app.db import mongo_query
 from app.db import mongo_store
 from app.quant.returns import one_vendor  # pin ONE vendor per price_history read
+from app.trading.authority import DirectTraderCallRestricted, FacadeExecutionAuthority
 
 logger = logging.getLogger(__name__)
 
@@ -424,6 +425,7 @@ async def buy(
     execution_intent_id: str | None = None,
     decision_id: str | None = None,
     called_via_facade: bool = False,
+    execution_authority: FacadeExecutionAuthority | None = None,
 ) -> dict:
     """
     Execute a paper BUY.
@@ -437,8 +439,15 @@ async def buy(
     (default, monitor sells on breach) or 'reanalyze_on_breach' (monitor
     leaves it to the re-analysis trigger).
     """
-    if getattr(settings, "RESTRICT_DIRECT_TRADER_CALLS", False) and not called_via_facade:
-        raise RuntimeError("Direct calls to paper_trader.buy are prohibited. Route trades through TradeFacade.")
+    if getattr(settings, "RESTRICT_DIRECT_TRADER_CALLS", True):
+        if (
+            not isinstance(execution_authority, FacadeExecutionAuthority)
+            or not execution_authority.verify(bot_id=bot_id, ticker=ticker, action="BUY")
+        ):
+            raise DirectTraderCallRestricted(
+                f"Direct or forged call to paper_trader.buy(bot_id={bot_id}, ticker={ticker}) is forbidden. "
+                "Execution authority must be minted and passed by TradeFacade."
+            )
 
     logger.info(
         "[TRACE][BUY] START bot_id=%s ticker=%s size_pct=%s intent_id=%s",
@@ -864,13 +873,21 @@ async def sell(
     decision_id: str | None = None,
     is_emergency_risk_exit: bool = False,
     called_via_facade: bool = False,
+    execution_authority: FacadeExecutionAuthority | None = None,
 ) -> dict:
     """
     Execute a paper SELL.
     qty_pct: fraction of position to sell (default 1.0 = full close).
     """
-    if getattr(settings, "RESTRICT_DIRECT_TRADER_CALLS", False) and not called_via_facade:
-        raise RuntimeError("Direct calls to paper_trader.sell are prohibited. Route trades through TradeFacade.")
+    if getattr(settings, "RESTRICT_DIRECT_TRADER_CALLS", True):
+        if (
+            not isinstance(execution_authority, FacadeExecutionAuthority)
+            or not execution_authority.verify(bot_id=bot_id, ticker=ticker, action="SELL")
+        ):
+            raise DirectTraderCallRestricted(
+                f"Direct or forged call to paper_trader.sell(bot_id={bot_id}, ticker={ticker}) is forbidden. "
+                "Execution authority must be minted and passed by TradeFacade."
+            )
 
     logger.info(
         "[TRACE][SELL] START bot_id=%s ticker=%s qty_pct=%s intent_id=%s emergency=%s",

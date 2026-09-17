@@ -441,6 +441,10 @@ class TradeFacade:
     ) -> dict[str, Any]:
         """Adapter invoking legacy buy() or sell() exclusively for OBSERVE mode."""
         from app.trading.paper_trader import buy, sell
+        from app.trading.authority import mint_facade_authority
+
+        authority = mint_facade_authority(bot_id=bot_id, ticker=ticker, action=action)
+
         if action == "BUY":
             return await buy(
                 bot_id=bot_id,
@@ -454,6 +458,7 @@ class TradeFacade:
                 execution_intent_id=execution_intent_id,
                 decision_id=decision_id,
                 called_via_facade=True,
+                execution_authority=authority,
                 strict_capacity=strict_capacity,
             )
         elif action == "SELL":
@@ -467,5 +472,6 @@ class TradeFacade:
                 decision_id=decision_id,
                 is_emergency_risk_exit=is_emergency,
                 called_via_facade=True,
+                execution_authority=authority,
             )
         return {"error": f"Unsupported action {action}"}

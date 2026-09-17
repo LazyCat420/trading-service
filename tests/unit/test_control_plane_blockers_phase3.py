@@ -21,6 +21,7 @@ from app.trading.attribution.models import (
 from app.trading.attribution.repository import (
     COLL_EXECUTION_INTENTS,
     COLL_EXECUTION_SLOTS,
+    COLL_POLICY_DECISIONS,
     COLL_POSITION_LOTS,
     COLL_RISK_RESERVATIONS,
 )
@@ -204,6 +205,19 @@ async def test_slot_ownership_validation():
         slot_key="slot-alpha",
     )
     fake_db[COLL_EXECUTION_INTENTS].insert_one(intent.model_dump(mode="python"))
+    fake_db[COLL_POLICY_DECISIONS].insert_one({
+        "policy_decision_id": "pol-1",
+        "decision_id": "dec-1",
+        "config_hash": "h-1",
+        "disposition": "APPROVE",
+        "requested_values": {},
+        "normalized_values": {},
+        "approved_values": {},
+    })
+    fake_db[COLL_RISK_RESERVATIONS].insert_one({
+        "execution_intent_id": "intent-slot-1",
+        "status": ReservationStatus.ACTIVE.value,
+    })
     # Slot held by a DIFFERENT intent
     fake_db[COLL_EXECUTION_SLOTS].insert_one({
         "slot_key": "slot-alpha",
@@ -240,8 +254,23 @@ async def test_reservation_validity_check():
         expires_at=now + datetime.timedelta(minutes=10),
         idempotency_key="key-resv-1",
         bot_id="bot-resv-test",
+        slot_key="slot-resv-1",
     )
     fake_db[COLL_EXECUTION_INTENTS].insert_one(intent.model_dump(mode="python"))
+    fake_db[COLL_POLICY_DECISIONS].insert_one({
+        "policy_decision_id": "pol-2",
+        "decision_id": "dec-2",
+        "config_hash": "h-2",
+        "disposition": "APPROVE",
+        "requested_values": {},
+        "normalized_values": {},
+        "approved_values": {},
+    })
+    fake_db[COLL_EXECUTION_SLOTS].insert_one({
+        "slot_key": "slot-resv-1",
+        "intent_id": "intent-resv-1",
+        "status": "ACTIVE",
+    })
     # Reservation expired
     fake_db[COLL_RISK_RESERVATIONS].insert_one({
         "execution_intent_id": "intent-resv-1",
@@ -280,6 +309,15 @@ async def test_sell_unmatched_lot_quantity_aborts():
         bot_id="bot-sell-test",
     )
     fake_db[COLL_EXECUTION_INTENTS].insert_one(intent.model_dump(mode="python"))
+    fake_db[COLL_POLICY_DECISIONS].insert_one({
+        "policy_decision_id": "pol-3",
+        "decision_id": "dec-3",
+        "config_hash": "h-3",
+        "disposition": "APPROVE",
+        "requested_values": {},
+        "normalized_values": {},
+        "approved_values": {},
+    })
     fake_db["bots"].insert_one({"bot_id": "bot-sell-test", "cash_balance": 10000.0})
     fake_db["positions"].insert_one({"bot_id": "bot-sell-test", "ticker": "MSFT", "qty": 10.0, "avg_entry_price": 200.0})
     
@@ -322,8 +360,27 @@ async def test_buy_fee_deduction_and_shadow_persistence():
         expires_at=now + datetime.timedelta(minutes=10),
         idempotency_key="key-buy-fee",
         bot_id="bot-fee-test",
+        slot_key="slot-fee-1",
     )
     fake_db[COLL_EXECUTION_INTENTS].insert_one(intent.model_dump(mode="python"))
+    fake_db[COLL_POLICY_DECISIONS].insert_one({
+        "policy_decision_id": "pol-4",
+        "decision_id": "dec-4",
+        "config_hash": "h-4",
+        "disposition": "APPROVE",
+        "requested_values": {},
+        "normalized_values": {},
+        "approved_values": {},
+    })
+    fake_db[COLL_RISK_RESERVATIONS].insert_one({
+        "execution_intent_id": "intent-buy-fee",
+        "status": ReservationStatus.ACTIVE.value,
+    })
+    fake_db[COLL_EXECUTION_SLOTS].insert_one({
+        "slot_key": "slot-fee-1",
+        "intent_id": "intent-buy-fee",
+        "status": "ACTIVE",
+    })
     bot_doc = {"bot_id": "bot-fee-test", "cash_balance": 10000.0}
     fake_db["bots"].insert_one(bot_doc)
 
@@ -358,11 +415,20 @@ async def test_buy_fee_deduction_and_shadow_persistence():
         bot_id="bot-fee-test",
     )
     fake_db[COLL_EXECUTION_INTENTS].insert_one(intent_shadow.model_dump(mode="python"))
+    fake_db[COLL_POLICY_DECISIONS].insert_one({
+        "policy_decision_id": "pol-5",
+        "decision_id": "dec-5",
+        "config_hash": "h-5",
+        "disposition": "APPROVE",
+        "requested_values": {},
+        "normalized_values": {},
+        "approved_values": {},
+    })
 
     with patch("app.db.mongo_store.get_doc_db", return_value=fake_db), \
          patch("app.db.mongo_store.find_docs", side_effect=lambda col, q, **kw: fake_db[col].find(q).items), \
          patch("app.db.mongo_store.with_txn") as mock_txn_shadow, \
-         patch("app.db.mongo_query.find_row", return_value=[10000.0]), \
+         patch("app.db.mongo_query.find_row", side_effect=lambda col, q, p=None, **kwargs: [10000.0] if col == "bots" and p != ["control_plane_mode"] else None), \
          patch("app.trading.executor._get_current_price", return_value=(100.0, 0.5)):
         
         mock_txn_shadow.return_value.__enter__.return_value = "mock-session"

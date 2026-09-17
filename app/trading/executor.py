@@ -72,19 +72,23 @@ async def execute_intent(
     intent = ExecutionIntent.model_validate(docs[0])
     now = datetime.datetime.now(datetime.timezone.utc)
 
-    # Resolve and validate effective execution mode:
-    # 1. Caller explicit effective_mode
-    # 2. Bot-specific or global control plane mode
-    # 3. Intent recorded mode if set beyond default OBSERVE
+    if mode_arg and mode_arg != ControlPlaneMode.ENFORCE.value:
+        bot_mode = resolve_control_plane_mode(bot_id)
+        if bot_mode == ControlPlaneMode.ENFORCE:
+            raise IntentExecutionRejected(
+                f"Account {bot_id} is in ENFORCE mode; cannot downgrade execution to {mode_arg}",
+                "MODE_DOWNGRADE_REJECTED",
+            )
+
     resolved_mode = mode_arg
     if not resolved_mode:
-        bot_mode = resolve_control_plane_mode(bot_id).value
-        if bot_mode in (ControlPlaneMode.SHADOW.value, ControlPlaneMode.ENFORCE.value):
-            resolved_mode = bot_mode
+        bot_mode = resolve_control_plane_mode(bot_id)
+        if bot_mode in (ControlPlaneMode.SHADOW, ControlPlaneMode.ENFORCE):
+            resolved_mode = bot_mode.value
         elif intent.effective_mode and intent.effective_mode != ControlPlaneMode.OBSERVE.value:
             resolved_mode = intent.effective_mode
         else:
-            resolved_mode = bot_mode
+            resolved_mode = bot_mode.value
 
     try:
         effective_mode = ControlPlaneMode(resolved_mode)
@@ -106,20 +110,34 @@ async def execute_intent(
         raise IntentExecutionRejected(f"Account mismatch: intent bot {intent.bot_id} != context bot {bot_id}", "ACCOUNT_MISMATCH")
 
     # Verify parent policy decision is approved
+    if not intent.policy_decision_id:
+        raise IntentExecutionRejected("Intent missing parent policy_decision_id", "PARENT_POLICY_MISSING")
+
     pol_docs = mongo_store.find_docs(COLL_POLICY_DECISIONS, {"policy_decision_id": intent.policy_decision_id}, limit=1)
-    if pol_docs:
+    if not pol_docs:
+        raise IntentExecutionRejected(f"Parent policy {intent.policy_decision_id} not found", "PARENT_POLICY_MISSING")
+
+    try:
         pol_dec = PolicyDecision.model_validate(pol_docs[0])
-        if pol_dec.disposition not in (PolicyDisposition.APPROVE, PolicyDisposition.APPROVE_WITH_CAP):
-            raise IntentExecutionRejected(f"Parent policy disposition is {pol_dec.disposition}", "POLICY_NOT_APPROVED")
+    except Exception as e:
+        raise IntentExecutionRejected(f"Parent policy {intent.policy_decision_id} is malformed: {e}", "MALFORMED_PARENT_POLICY")
+
+    if pol_dec.disposition not in (PolicyDisposition.APPROVE, PolicyDisposition.APPROVE_WITH_CAP):
+        raise IntentExecutionRejected(f"Parent policy disposition is {pol_dec.disposition}", "POLICY_NOT_APPROVED")
 
     # 3. Resolve Reference Quote
     quote = current_quote or intent.reference_quote or {}
     price = quote.get("price")
-    age_hours = quote.get("age_hours", 0.0)
+    age_hours = quote.get("age_hours")
+
     if not price or price <= 0:
         p_curr, p_age = _get_current_price(intent.ticker)
         price = p_curr
-        age_hours = p_age or 0.0
+        if age_hours is None:
+            age_hours = p_age
+
+    if age_hours is None:
+        raise IntentExecutionRejected("Quote age is unknown or None", "UNKNOWN_QUOTE_AGE")
 
     if not price or price <= 0:
         raise IntentExecutionRejected(f"No price data available for {intent.ticker}", "PRICE_UNAVAILABLE")
@@ -305,8 +323,20 @@ async def execute_intent(
         if not repository.consume_execution_intent(intent_id, session=s):
             raise IntentExecutionRejected(f"Intent {intent_id} could not be consumed (CAS failed)", "INTENT_ALREADY_CONSUMED")
 
-        # Validate reservation validity if present
+        # Validate reservation and slot requirements for ENFORCE mode
         resv_doc = db[COLL_RISK_RESERVATIONS].find_one({"execution_intent_id": intent_id}, session=s)
+        if effective_mode == ControlPlaneMode.ENFORCE and side == "BUY":
+            if not resv_doc:
+                raise IntentExecutionRejected(
+                    f"Active risk reservation required for BUY under ENFORCE mode for intent {intent_id}",
+                    "MISSING_REQUIRED_RESERVATION",
+                )
+            if not intent.slot_key:
+                raise IntentExecutionRejected(
+                    f"Execution slot required for BUY under ENFORCE mode for intent {intent_id}",
+                    "MISSING_REQUIRED_SLOT",
+                )
+
         if resv_doc:
             if resv_doc.get("status") != ReservationStatus.ACTIVE.value:
                 raise IntentExecutionRejected(
@@ -327,6 +357,11 @@ async def execute_intent(
         # Update slot if bound, validating ownership
         if intent.slot_key:
             existing_slot = db[COLL_EXECUTION_SLOTS].find_one({"slot_key": intent.slot_key}, session=s)
+            if effective_mode == ControlPlaneMode.ENFORCE and side == "BUY" and not existing_slot:
+                raise IntentExecutionRejected(
+                    f"Execution slot {intent.slot_key} not found for intent {intent_id}",
+                    "MISSING_REQUIRED_SLOT",
+                )
             if existing_slot:
                 if existing_slot.get("intent_id") != intent_id or existing_slot.get("status") not in ("ACTIVE", "RESERVED"):
                     raise IntentExecutionRejected(
