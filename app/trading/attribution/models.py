@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime
 from enum import Enum
 from typing import Any, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class PolicyDisposition(str, Enum):
@@ -79,7 +79,13 @@ def _ensure_utc(dt: Optional[datetime.datetime]) -> Optional[datetime.datetime]:
     return dt.astimezone(datetime.timezone.utc)
 
 
-class DecisionArtifact(BaseModel):
+class CanonicalAttributionModel(BaseModel):
+    """Base model enforcing extra='forbid' while safely ignoring Mongo's internal _id."""
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    mongo_id: Optional[Any] = Field(default=None, alias="_id", exclude=True)
+
+
+class DecisionArtifact(CanonicalAttributionModel):
     """Represents the LLM proposal exactly as produced, before any policy modification."""
 
     decision_id: str
@@ -113,7 +119,7 @@ class DecisionArtifact(BaseModel):
         return _ensure_utc(v) or datetime.datetime.now(datetime.timezone.utc)
 
 
-class PolicyDecision(BaseModel):
+class PolicyDecision(CanonicalAttributionModel):
     """Represents deterministic policy evaluation of a DecisionArtifact."""
 
     policy_decision_id: str
@@ -130,6 +136,11 @@ class PolicyDecision(BaseModel):
     reason_codes: list[str] = Field(default_factory=list)
     gate_results: dict[str, Any] = Field(default_factory=dict)
     portfolio_snapshot_ref: str = ""
+    effective_mode: str = "OBSERVE"
+    evaluation_timestamp: Optional[datetime.datetime] = None
+    normalized_ticker: str = ""
+    normalized_action: str = ""
+    approved_size_pct: float = 0.0
 
     @field_validator("evaluated_at", mode="after")
     @classmethod
@@ -137,7 +148,7 @@ class PolicyDecision(BaseModel):
         return _ensure_utc(v) or datetime.datetime.now(datetime.timezone.utc)
 
 
-class ExecutionIntent(BaseModel):
+class ExecutionIntent(CanonicalAttributionModel):
     """Represents the only legal instruction for an entry execution attempt."""
 
     execution_intent_id: str
@@ -159,6 +170,9 @@ class ExecutionIntent(BaseModel):
     schema_version: int = 1
     status: IntentStatus = IntentStatus.CREATED
     consumed_at: Optional[datetime.datetime] = None
+    effective_mode: str = "OBSERVE"
+    slot_key: Optional[str] = None
+    bot_id: Optional[str] = None
 
     @field_validator("valid_from", "expires_at", "consumed_at", mode="after")
     @classmethod
@@ -166,19 +180,20 @@ class ExecutionIntent(BaseModel):
         return _ensure_utc(v)
 
 
-class OrderAttempt(BaseModel):
+class OrderAttempt(CanonicalAttributionModel):
     """Represents each submission attempt to broker/paper trader."""
 
     order_attempt_id: str
     execution_intent_id: str
     attempt_number: int = 1
-    request_hash: str
+    request_hash: str = ""
     submitted_at: datetime.datetime = Field(
         default_factory=lambda: datetime.datetime.now(datetime.timezone.utc)
     )
     status: OrderAttemptStatus = OrderAttemptStatus.SUBMITTED
     reason_code: str = ""
     order_id: Optional[str] = None
+    effective_mode: str = "OBSERVE"
 
     @field_validator("submitted_at", mode="after")
     @classmethod
@@ -186,7 +201,7 @@ class OrderAttempt(BaseModel):
         return _ensure_utc(v) or datetime.datetime.now(datetime.timezone.utc)
 
 
-class ExecutionReconciliation(BaseModel):
+class ExecutionReconciliation(CanonicalAttributionModel):
     """Represents intended versus actual broker execution."""
 
     reconciliation_id: str
@@ -205,9 +220,33 @@ class ExecutionReconciliation(BaseModel):
     residual_qty: float = 0.0
     verdict: ReconciliationVerdict = ReconciliationVerdict.EXECUTION_MATCHED
     evidence_version: str = "v1"
+    discrepancy_reasons: list[str] = Field(default_factory=list)
+    order_attempt_id: str = ""
+    matched_quantity: float = 0.0
     reconciled_at: datetime.datetime = Field(
         default_factory=lambda: datetime.datetime.now(datetime.timezone.utc)
     )
+    effective_mode: str = "OBSERVE"
+
+    @property
+    def slippage_bps(self) -> float:
+        return self.realized_slippage_bps
+
+    @property
+    def fees_paid(self) -> float:
+        return self.fees
+
+    @property
+    def actual_quantity(self) -> float:
+        return self.filled_qty
+
+    @property
+    def intended_quantity(self) -> float:
+        return self.intended_qty
+
+    @property
+    def residual_quantity(self) -> float:
+        return self.residual_qty
 
     @field_validator("reconciled_at", mode="after")
     @classmethod
@@ -215,7 +254,7 @@ class ExecutionReconciliation(BaseModel):
         return _ensure_utc(v) or datetime.datetime.now(datetime.timezone.utc)
 
 
-class DecisionOutcomeRecord(BaseModel):
+class DecisionOutcomeRecord(CanonicalAttributionModel):
     """Represents horizon-based evaluation of the underlying thesis claim (Contract v3)."""
 
     outcome_id: str
@@ -239,7 +278,7 @@ class DecisionOutcomeRecord(BaseModel):
         return _ensure_utc(v)
 
 
-class AttributionReport(BaseModel):
+class AttributionReport(CanonicalAttributionModel):
     """Represents a derived causal diagnosis of trade / decision performance."""
 
     attribution_id: str

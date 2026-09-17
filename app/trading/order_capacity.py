@@ -3,8 +3,9 @@ from app.v3.financial_evidence import number
 
 
 def pending_capacity(bot_id, ticker):
+    import datetime
     from app.db import mongo_store
-    # Filled paper orders are recorded with filled_at and are not reservations.
+    # 1. Filled paper orders are recorded with filled_at and are not reservations.
     rows = mongo_store.find_docs('orders', {'bot_id': bot_id, 'side': 'BUY', 'filled_at': None,
         'status': {'$nin': ['cancelled', 'canceled', 'rejected', 'expired', 'filled']}})
     total = same_name = 0.0
@@ -22,6 +23,27 @@ def pending_capacity(bot_id, ticker):
         total += float(amount)
         if row['ticker'].upper() == ticker.upper():
             same_name += float(amount)
+
+    # 2. Active execution_intents with status CREATED that have not yet resulted in orders
+    now = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        active_intents = mongo_store.find_docs(
+            'execution_intents',
+            {
+                'bot_id': bot_id,
+                'side': 'BUY',
+                'status': 'CREATED',
+                'expires_at': {'$gt': now},
+            }
+        )
+        for intent in active_intents:
+            intent_notional = number(intent.get('approved_notional')) or 0.0
+            total += float(intent_notional)
+            if intent.get('ticker', '').upper() == ticker.upper():
+                same_name += float(intent_notional)
+    except Exception:
+        pass
+
     return {'cash_reserved': total, 'ticker_reserved': same_name}
 
 

@@ -47,22 +47,13 @@ async def buy_stock(ticker: str, size_pct: float = 0.10) -> str:
         from app.trading.policy.policy_translator import PolicyInputSnapshot, PolicyTranslator
         from app.trading.paper_trader import _get_current_price
 
+        from app.trading.policy.snapshot_service import build_policy_snapshot
+        from app.trading.control_plane import resolve_control_plane_mode, ControlPlaneMode
+
+        effective_mode = resolve_control_plane_mode(bot_id)
         current_price, age_hours = _get_current_price(ticker)
         if current_price is None:
             return json.dumps({"status": "error", "message": f"No price data available for {ticker}"})
-
-        # Fetch bot equity and cash
-        bot_row = mongo_query.find_row('bots', {'bot_id': bot_id}, ['cash_balance'])
-        cash = float(bot_row[0]) if bot_row and bot_row[0] is not None else 100000.0
-        positions = mongo_query.find_rows('positions', {'bot_id': bot_id}, ['ticker', 'qty'])
-        equity = cash
-        held_val = 0.0
-        for pt, pq in positions:
-            pp, _ = _get_current_price(pt)
-            val = float(pq) * (pp or 0.0)
-            equity += val
-            if pt == ticker:
-                held_val = val
 
         cycle_id = f"tool-proposal-{uuid.uuid4().hex[:8]}"
         decision_id = f"dec-{uuid.uuid4().hex[:12]}"
@@ -79,16 +70,15 @@ async def buy_stock(ticker: str, size_pct: float = 0.10) -> str:
         )
         save_decision_artifact(artifact)
 
-        snapshot = PolicyInputSnapshot(
-            portfolio_equity=equity,
-            cash_balance=cash,
-            held_ticker_value=held_val,
+        snapshot, snap_payload = build_policy_snapshot(
+            bot_id=bot_id,
+            ticker=ticker,
             quote_price=current_price,
             quote_age_hours=age_hours or 0.0,
-            is_held=held_val > 0,
         )
 
         policy_dec, intent = PolicyTranslator.evaluate(artifact, snapshot)
+        policy_dec.effective_mode = effective_mode.value
         save_policy_decision(policy_dec)
 
         if not intent:
@@ -98,6 +88,7 @@ async def buy_stock(ticker: str, size_pct: float = 0.10) -> str:
                 "reasons": policy_dec.reason_codes,
             })
 
+        intent.effective_mode = effective_mode.value
         save_execution_intent(intent)
         result = await buy(
             bot_id=bot_id,
@@ -125,18 +116,20 @@ async def buy_stock(ticker: str, size_pct: float = 0.10) -> str:
             "ticker": {
                 "type": "string",
                 "description": "The stock ticker symbol to sell (e.g., AAPL).",
-            }
+            },
+            "bot_id": {
+                "type": "string",
+                "description": "The bot ID executing the order.",
+            },
         },
-        "required": ["ticker"],
+        "required": ["ticker", "bot_id"],
     },
     tier=1,
     source="paper_trader",
     permission=PermissionLevel.WRITE,  # Paper trading — nothing is irreversible
 )
-async def sell_stock(ticker: str) -> str:
-    """Execute a paper sell order via policy."""
-    ticker = ticker.upper().strip()
-    bot_id = resolve_bot_id()
+async def sell_stock(ticker: str, bot_id: str) -> str:
+    """Execute a sell order to close a position for a stock ticker."""
     logger.info("[TradingTools] Executing sell order for %s", ticker)
     try:
         import uuid
@@ -147,11 +140,12 @@ async def sell_stock(ticker: str) -> str:
             save_policy_decision,
         )
         from app.trading.policy.policy_translator import PolicyInputSnapshot, PolicyTranslator
+        from app.trading.policy.snapshot_service import build_policy_snapshot
+        from app.trading.control_plane import resolve_control_plane_mode, ControlPlaneMode
         from app.trading.paper_trader import _get_current_price
 
+        effective_mode = resolve_control_plane_mode(bot_id)
         current_price, age_hours = _get_current_price(ticker)
-        pos = mongo_query.find_row('positions', {'bot_id': bot_id, 'ticker': ticker}, ['id', 'qty'])
-        is_held = bool(pos and float(pos[1]) > 0)
 
         cycle_id = f"tool-proposal-{uuid.uuid4().hex[:8]}"
         decision_id = f"dec-{uuid.uuid4().hex[:12]}"
@@ -167,14 +161,14 @@ async def sell_stock(ticker: str) -> str:
         )
         save_decision_artifact(artifact)
 
-        snapshot = PolicyInputSnapshot(
-            portfolio_equity=100000.0,
-            cash_balance=100000.0,
-            quote_price=current_price or 0.0,
+        snapshot, snap_payload = build_policy_snapshot(
+            bot_id=bot_id,
+            ticker=ticker,
+            quote_price=current_price or 1.0,
             quote_age_hours=age_hours or 0.0,
-            is_held=is_held,
         )
         policy_dec, intent = PolicyTranslator.evaluate(artifact, snapshot)
+        policy_dec.effective_mode = effective_mode.value
         save_policy_decision(policy_dec)
 
         if not intent:
@@ -184,6 +178,7 @@ async def sell_stock(ticker: str) -> str:
                 "reasons": policy_dec.reason_codes,
             })
 
+        intent.effective_mode = effective_mode.value
         save_execution_intent(intent)
         result = await sell(
             bot_id=bot_id,

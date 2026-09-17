@@ -106,3 +106,50 @@ class ExecutionEvaluator:
             execution_drag=exec_drag,
             net_alpha=net_alpha,
         )
+
+
+class LotAlphaEvaluator:
+    """Evaluates realized FIFO lot closures and separates policy effect from execution drag."""
+
+    @staticmethod
+    def evaluate_lot_closure(
+        lot_entry_price: float,
+        lot_exit_price: float,
+        benchmark_entry: Optional[float],
+        benchmark_exit: Optional[float],
+        fees: float = 0.0,
+        notional: float = 1.0,
+        is_closing_long: bool = True,
+    ) -> dict[str, Any]:
+        """Evaluates a closed lot.
+        When is_closing_long=True, it measures the performance of the long holding from entry to exit.
+        """
+        if lot_entry_price <= 0:
+            return {"status": "INVALID", "reason": "Zero or negative entry price"}
+
+        # Gross return on holding
+        gross_return = ((lot_exit_price - lot_entry_price) / lot_entry_price) * 100.0
+        fee_drag_pct = (fees / max(notional, 1.0)) * 100.0
+        net_return = round(gross_return - fee_drag_pct, 4)
+
+        if not benchmark_entry or not benchmark_exit or benchmark_entry <= 0:
+            return {
+                "status": "UNRESOLVED",
+                "gross_return": round(gross_return, 4),
+                "net_return": net_return,
+                "benchmark_return": None,
+                "net_alpha": None,
+                "reason": "MISSING_SOURCE_PINNED_BENCHMARK",
+            }
+
+        bm_return = ((benchmark_exit - benchmark_entry) / benchmark_entry) * 100.0
+        net_alpha = round(net_return - bm_return, 4)
+
+        return {
+            "status": "MATURE",
+            "gross_return": round(gross_return, 4),
+            "fee_drag_pct": round(fee_drag_pct, 4),
+            "net_return": net_return,
+            "benchmark_return": round(bm_return, 4),
+            "net_alpha": net_alpha,
+        }

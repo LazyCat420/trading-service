@@ -223,7 +223,9 @@ class PolicyTranslator:
             )
 
             intent_id = execution_intent_id or f"int-{uuid.uuid4().hex[:12]}"
-            idemp_key = f"idemp:{artifact.cycle_id}:{artifact.ticker}:SELL:{pol_id}"
+            valid_to = eval_time + datetime.timedelta(seconds=DEFAULT_INTENT_TTL_SECONDS)
+            slot_key = f"slot:{artifact.ticker.upper().strip()}:{artifact.decision_id}:SELL:{eval_time.strftime('%Y%m%d%H%M')}_{valid_to.strftime('%Y%m%d%H%M')}"
+            idemp_key = hashlib.sha256(f"{slot_key}:{pol_id}".encode("utf-8")).hexdigest()
             intent = ExecutionIntent(
                 execution_intent_id=intent_id,
                 decision_id=artifact.decision_id,
@@ -240,8 +242,9 @@ class PolicyTranslator:
                     "age_hours": snapshot.quote_age_hours,
                 },
                 valid_from=eval_time,
-                expires_at=eval_time + datetime.timedelta(seconds=DEFAULT_INTENT_TTL_SECONDS),
+                expires_at=valid_to,
                 idempotency_key=idemp_key,
+                slot_key=slot_key,
                 status=IntentStatus.CREATED,
             )
             return pol_dec, intent
@@ -381,7 +384,9 @@ class PolicyTranslator:
         )
 
         intent_id = execution_intent_id or f"int-{uuid.uuid4().hex[:12]}"
-        idemp_key = f"idemp:{artifact.cycle_id}:{artifact.ticker}:BUY:{pol_id}"
+        valid_to = eval_time + datetime.timedelta(seconds=DEFAULT_INTENT_TTL_SECONDS)
+        slot_key = f"slot:{artifact.ticker.upper().strip()}:{artifact.decision_id}:BUY:{eval_time.strftime('%Y%m%d%H%M')}_{valid_to.strftime('%Y%m%d%H%M')}"
+        idemp_key = hashlib.sha256(f"{slot_key}:{pol_id}".encode("utf-8")).hexdigest()
         intent = ExecutionIntent(
             execution_intent_id=intent_id,
             decision_id=artifact.decision_id,
@@ -399,8 +404,9 @@ class PolicyTranslator:
                 "age_hours": snapshot.quote_age_hours,
             },
             valid_from=eval_time,
-            expires_at=eval_time + datetime.timedelta(seconds=DEFAULT_INTENT_TTL_SECONDS),
+            expires_at=valid_to,
             idempotency_key=idemp_key,
+            slot_key=slot_key,
             status=IntentStatus.CREATED,
         )
         return pol_dec, intent

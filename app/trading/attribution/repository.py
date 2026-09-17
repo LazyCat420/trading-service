@@ -30,6 +30,11 @@ COLL_EXECUTION_INTENTS = "execution_intents"
 COLL_ORDER_ATTEMPTS = "order_attempts"
 COLL_EXECUTION_RECONCILIATIONS = "execution_reconciliations"
 COLL_ATTRIBUTION_REPORTS = "attribution_reports"
+COLL_EXECUTION_SLOTS = "execution_slots"
+COLL_EXECUTION_OUTBOX = "execution_outbox"
+COLL_POSITION_LOTS = "position_lots"
+COLL_LOT_CLOSURES = "lot_closures"
+COLL_POLICY_SNAPSHOTS = "policy_snapshots"
 
 
 def ensure_attribution_indexes() -> None:
@@ -52,6 +57,7 @@ def ensure_attribution_indexes() -> None:
         c_ei.create_index([("execution_intent_id", 1)], unique=True)
         c_ei.create_index([("idempotency_key", 1)], unique=True)
         c_ei.create_index([("decision_id", 1)])
+        c_ei.create_index([("slot_key", 1)])
 
         # 4. order_attempts
         c_oa = db[COLL_ORDER_ATTEMPTS]
@@ -67,7 +73,27 @@ def ensure_attribution_indexes() -> None:
         c_ar = db[COLL_ATTRIBUTION_REPORTS]
         c_ar.create_index([("attribution_id", 1)], unique=True)
         c_ar.create_index([("lineage.decision_id", 1)])
-        logger.info("[AttributionRepo] Indexes ensured for canonical attribution collections.")
+
+        # 7. execution_slots
+        c_es = db[COLL_EXECUTION_SLOTS]
+        c_es.create_index([("slot_key", 1)], unique=True)
+        c_es.create_index([("decision_id", 1)])
+
+        # 8. execution_outbox
+        c_eo = db[COLL_EXECUTION_OUTBOX]
+        c_eo.create_index([("event_id", 1)], unique=True)
+        c_eo.create_index([("status", 1), ("created_at", 1)])
+
+        # 9. position_lots & lot_closures
+        c_pl = db[COLL_POSITION_LOTS]
+        c_pl.create_index([("lot_id", 1)], unique=True)
+        c_pl.create_index([("bot_id", 1), ("ticker", 1), ("status", 1)])
+
+        c_lc = db[COLL_LOT_CLOSURES]
+        c_lc.create_index([("closure_id", 1)], unique=True)
+        c_lc.create_index([("lot_id", 1)])
+
+        logger.info("[AttributionRepo] Indexes ensured for canonical attribution and control-plane collections.")
     except Exception as exc:
         logger.warning("[AttributionRepo] ensure_attribution_indexes non-fatal failure: %s", exc)
 
@@ -196,17 +222,18 @@ def consume_execution_intent(
     return result.modified_count == 1
 
 
-def save_order_attempt(attempt: OrderAttempt) -> OrderAttempt:
+def save_order_attempt(attempt: OrderAttempt, session: Optional[Any] = None) -> OrderAttempt:
     """Persist OrderAttempt idempotently."""
     doc = attempt.model_dump(mode="python")
     existing = mongo_query.find_row(
         COLL_ORDER_ATTEMPTS,
         {"order_attempt_id": attempt.order_attempt_id},
         ["order_attempt_id"],
+        session=session,
     )
     if existing:
         return attempt
-    mongo_store.insert_docs(COLL_ORDER_ATTEMPTS, [doc])
+    mongo_store.insert_docs(COLL_ORDER_ATTEMPTS, [doc], session=session)
     return attempt
 
 
@@ -254,3 +281,85 @@ def get_attribution_report_by_decision(decision_id: str) -> Optional[Attribution
     if not docs:
         return None
     return AttributionReport.model_validate(docs[0])
+
+
+def claim_execution_slot(
+    slot_key: str,
+    decision_id: str,
+    intent_id: str,
+    expires_at: datetime.datetime,
+    session: Any = None,
+) -> tuple[bool, dict[str, Any]]:
+    """Claims an execution slot atomically.
+    Returns (True, doc) if successfully claimed or matches existing decision_id.
+    Returns (False, existing_doc) if slot is currently occupied by a different active decision.
+    """
+    db = mongo_store.get_doc_db()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    col = db[COLL_EXECUTION_SLOTS]
+
+    doc = col.find_one({"slot_key": slot_key}, session=session)
+    if not doc:
+        new_slot = {
+            "slot_key": slot_key,
+            "decision_id": decision_id,
+            "intent_id": intent_id,
+            "claimed_at": now,
+            "expires_at": expires_at,
+            "status": "ACTIVE",
+        }
+        try:
+            col.insert_one(new_slot, session=session)
+            return True, new_slot
+        except Exception:
+            # Concurrent race caught by unique index
+            doc = col.find_one({"slot_key": slot_key}, session=session)
+
+    if doc:
+        # If same decision, return success (idempotent retry)
+        if doc.get("decision_id") == decision_id:
+            return True, doc
+        # If existing slot expired or superseded, allow claim
+        existing_expires = doc.get("expires_at")
+        if (existing_expires and existing_expires < now) or doc.get("status") in ("SUPERSEDED", "EXPIRED"):
+            col.update_one(
+                {"slot_key": slot_key},
+                {
+                    "$set": {
+                        "decision_id": decision_id,
+                        "intent_id": intent_id,
+                        "claimed_at": now,
+                        "expires_at": expires_at,
+                        "status": "ACTIVE",
+                    }
+                },
+                session=session,
+            )
+            return True, doc
+        # Otherwise slot is active and held by a different decision
+        return False, doc
+
+    return True, {}
+
+
+def supersede_execution_intent(
+    intent_id: str,
+    superseded_by_decision_id: str,
+    session: Any = None,
+) -> bool:
+    """Atomically transitions an intent from CREATED to SUPERSEDED."""
+    db = mongo_store.get_doc_db()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    col = db[COLL_EXECUTION_INTENTS]
+    res = col.update_one(
+        {"execution_intent_id": intent_id, "status": "CREATED"},
+        {
+            "$set": {
+                "status": "SUPERSEDED",
+                "superseded_by": superseded_by_decision_id,
+                "superseded_at": now,
+            }
+        },
+        session=session,
+    )
+    return res.modified_count > 0

@@ -252,7 +252,8 @@ class Settings(BaseSettings):
 
     # ── Paper Trading & Control Plane ──
     STARTING_CASH: float = 100000.0
-    ENFORCE_EXECUTION_INTENTS: bool = False  # False in Stage A/B (shadow mode), True in Stage C (enforcement)
+    CONTROL_PLANE_MODE: str = "OBSERVE"  # "OBSERVE", "SHADOW", or "ENFORCE"
+    ENFORCE_EXECUTION_INTENTS: bool = False  # Legacy property, kept for compatibility (True when CONTROL_PLANE_MODE == "ENFORCE")
 
     # ── Janitor Agent (Data Hygiene) ──
     JANITOR_MAX_TOKENS: int = 4096
