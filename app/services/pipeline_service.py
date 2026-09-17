@@ -2834,12 +2834,62 @@ class PipelineService:
                                 effective_size_pct * 100,
                             )
                             _est = result.get("estimate") or {}
+                            _decision_id = result.get("decision_id")
+                            _intent_id = None
+                            try:
+                                from app.trading.attribution.models import DecisionArtifact
+                                from app.trading.attribution.repository import (
+                                    get_decision_artifact,
+                                    save_decision_artifact,
+                                    save_execution_intent,
+                                    save_policy_decision,
+                                )
+                                from app.trading.policy.policy_translator import PolicyInputSnapshot, PolicyTranslator
+                                from app.trading.paper_trader import _get_current_price
+
+                                _p_curr, _p_age = _get_current_price(ticker_name)
+                                _art = get_decision_artifact(_decision_id) if _decision_id else None
+                                if not _art:
+                                    import uuid
+                                    _decision_id = _decision_id or f"dec-{uuid.uuid4().hex[:12]}"
+                                    result["decision_id"] = _decision_id
+                                    _art = DecisionArtifact(
+                                        decision_id=_decision_id,
+                                        cycle_id=cycle_id,
+                                        ticker=ticker_name,
+                                        producer=result.get("decision_producer") or "v3_decision_synthesizer",
+                                        model="local",
+                                        requested_action="BUY",
+                                        requested_size_pct=agent_size_pct,
+                                        confidence=confidence,
+                                        reference_quote={"price": _p_curr or 0.0, "age_hours": _p_age or 0.0},
+                                    )
+                                    save_decision_artifact(_art)
+                                _snap = PolicyInputSnapshot(
+                                    portfolio_equity=100000.0,
+                                    cash_balance=100000.0,
+                                    quote_price=_p_curr or 0.0,
+                                    quote_age_hours=_p_age or 0.0,
+                                    is_held=False,
+                                )
+                                _pol_dec, _pol_intent = PolicyTranslator.evaluate(_art, _snap)
+                                save_policy_decision(_pol_dec)
+                                if _pol_intent:
+                                    save_execution_intent(_pol_intent)
+                                    _intent_id = _pol_intent.execution_intent_id
+                                    result["execution_intent_id"] = _intent_id
+                                result["policy_decision_id"] = _pol_dec.policy_decision_id
+                            except Exception as _attr_err:
+                                logger.warning("[PipelineService] %s: policy intent generation non-fatal: %s", ticker_name, _attr_err)
+
                             trade_res = await buy(
                                 bot_id=active_bot_id, ticker=ticker_name, size_pct=effective_size_pct, cycle_id=cycle_id,
                                 stop_loss_price=_est.get("stop_loss"),
                                 take_profit_price=_est.get("take_profit"),
                                 exit_style=_est.get("exit_style"),
                                 strict_capacity=result.get("financial_evidence_version") == 1,
+                                execution_intent_id=_intent_id,
+                                decision_id=_decision_id,
                             )
                             if isinstance(trade_res, dict) and trade_res.get("error"):
                                 if trade_res.get('reason') == 'CAPACITY_REVALIDATION_FAILED':
@@ -2880,7 +2930,58 @@ class PipelineService:
                             emit_trade(ticker_name, "SELL", {"error": "no open position"}, False, REASON_NO_POSITION)
                         else:
                             result["trade_attempted"] = True
-                            trade_res = await sell(bot_id=active_bot_id, ticker=ticker_name, cycle_id=cycle_id, qty_pct=1.0)
+                            _decision_id = result.get("decision_id")
+                            _intent_id = None
+                            try:
+                                from app.trading.attribution.models import DecisionArtifact
+                                from app.trading.attribution.repository import (
+                                    get_decision_artifact,
+                                    save_decision_artifact,
+                                    save_execution_intent,
+                                    save_policy_decision,
+                                )
+                                from app.trading.policy.policy_translator import PolicyInputSnapshot, PolicyTranslator
+                                from app.trading.paper_trader import _get_current_price
+
+                                _p_curr, _p_age = _get_current_price(ticker_name)
+                                _art = get_decision_artifact(_decision_id) if _decision_id else None
+                                if not _art:
+                                    import uuid
+                                    _decision_id = _decision_id or f"dec-{uuid.uuid4().hex[:12]}"
+                                    result["decision_id"] = _decision_id
+                                    _art = DecisionArtifact(
+                                        decision_id=_decision_id,
+                                        cycle_id=cycle_id,
+                                        ticker=ticker_name,
+                                        producer=result.get("decision_producer") or "v3_decision_synthesizer",
+                                        model="local",
+                                        requested_action="SELL",
+                                        confidence=confidence,
+                                        reference_quote={"price": _p_curr or 0.0, "age_hours": _p_age or 0.0},
+                                    )
+                                    save_decision_artifact(_art)
+                                _snap = PolicyInputSnapshot(
+                                    portfolio_equity=100000.0,
+                                    cash_balance=100000.0,
+                                    quote_price=_p_curr or 0.0,
+                                    quote_age_hours=_p_age or 0.0,
+                                    is_held=True,
+                                )
+                                _pol_dec, _pol_intent = PolicyTranslator.evaluate(_art, _snap)
+                                save_policy_decision(_pol_dec)
+                                if _pol_intent:
+                                    save_execution_intent(_pol_intent)
+                                    _intent_id = _pol_intent.execution_intent_id
+                                    result["execution_intent_id"] = _intent_id
+                                result["policy_decision_id"] = _pol_dec.policy_decision_id
+                            except Exception as _attr_err:
+                                logger.warning("[PipelineService] %s: sell policy intent generation non-fatal: %s", ticker_name, _attr_err)
+
+                            trade_res = await sell(
+                                bot_id=active_bot_id, ticker=ticker_name, cycle_id=cycle_id, qty_pct=1.0,
+                                execution_intent_id=_intent_id,
+                                decision_id=_decision_id,
+                            )
                             if isinstance(trade_res, dict) and trade_res.get("error"):
                                 result["no_trade_reason"] = resolve_no_trade_reason(trade_res)
                                 logger.warning("[PipelineService] %s: SELL not executed: %s", ticker_name, trade_res["error"])

@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 @registry.register(
     name="buy_stock",
-    description="Execute a buy order for a stock ticker. Requires user confirmation.",
+    description="Propose a paper buy order for a stock ticker. Sizing and approval are subject to deterministic policy validation.",
     parameters={
         "type": "object",
         "properties": {
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
             },
             "size_pct": {
                 "type": "number",
-                "description": "The percentage of available cash to use (e.g., 0.10 for 10%, 1.0 for 100%). Default is 0.10.",
+                "description": "The percentage of available cash to target. Default is 0.10.",
             },
         },
         "required": ["ticker"],
@@ -31,26 +31,88 @@ logger = logging.getLogger(__name__)
     permission=PermissionLevel.WRITE,  # Paper trading — nothing is irreversible
 )
 async def buy_stock(ticker: str, size_pct: float = 0.10) -> str:
-    """Execute a paper buy order."""
-    logger.info(
-        "[TradingTools] Executing buy order for %s (size: %.2f)", ticker, size_pct
-    )
-    # Ensure uppercase
+    """Propose a paper buy order via the deterministic policy translator."""
     ticker = ticker.upper().strip()
-
-    # THE single resolver (2026-07-25 audit). This inlined get_active_bot_id()
-    # with an `except: settings.BOT_ID` fallback — behaviourally identical, but a
-    # fourth copy of the resolution rule in a WRITE tool that places real orders.
-    # A future change to bot resolution must not have to find this one.
     bot_id = resolve_bot_id()
+    logger.info("[TradingTools] Proposing buy for %s (size: %.2f, bot: %s)", ticker, size_pct, bot_id)
 
     try:
-        result = await buy(bot_id, ticker, size_pct)
+        import uuid
+        from app.trading.attribution.models import DecisionArtifact
+        from app.trading.attribution.repository import (
+            save_decision_artifact,
+            save_execution_intent,
+            save_policy_decision,
+        )
+        from app.trading.policy.policy_translator import PolicyInputSnapshot, PolicyTranslator
+        from app.trading.paper_trader import _get_current_price
+
+        current_price, age_hours = _get_current_price(ticker)
+        if current_price is None:
+            return json.dumps({"status": "error", "message": f"No price data available for {ticker}"})
+
+        # Fetch bot equity and cash
+        bot_row = mongo_query.find_row('bots', {'bot_id': bot_id}, ['cash_balance'])
+        cash = float(bot_row[0]) if bot_row and bot_row[0] is not None else 100000.0
+        positions = mongo_query.find_rows('positions', {'bot_id': bot_id}, ['ticker', 'qty'])
+        equity = cash
+        held_val = 0.0
+        for pt, pq in positions:
+            pp, _ = _get_current_price(pt)
+            val = float(pq) * (pp or 0.0)
+            equity += val
+            if pt == ticker:
+                held_val = val
+
+        cycle_id = f"tool-proposal-{uuid.uuid4().hex[:8]}"
+        decision_id = f"dec-{uuid.uuid4().hex[:12]}"
+        artifact = DecisionArtifact(
+            decision_id=decision_id,
+            cycle_id=cycle_id,
+            ticker=ticker,
+            producer="trading_tools_buy_stock",
+            model="human_or_tool_chat",
+            requested_action="BUY",
+            requested_size_pct=size_pct,
+            confidence=80,
+            reference_quote={"price": current_price, "age_hours": age_hours or 0.0},
+        )
+        save_decision_artifact(artifact)
+
+        snapshot = PolicyInputSnapshot(
+            portfolio_equity=equity,
+            cash_balance=cash,
+            held_ticker_value=held_val,
+            quote_price=current_price,
+            quote_age_hours=age_hours or 0.0,
+            is_held=held_val > 0,
+        )
+
+        policy_dec, intent = PolicyTranslator.evaluate(artifact, snapshot)
+        save_policy_decision(policy_dec)
+
+        if not intent:
+            return json.dumps({
+                "status": "policy_rejected",
+                "disposition": policy_dec.disposition.value,
+                "reasons": policy_dec.reason_codes,
+            })
+
+        save_execution_intent(intent)
+        result = await buy(
+            bot_id=bot_id,
+            ticker=ticker,
+            size_pct=intent.approved_size_pct,
+            current_price=current_price,
+            cycle_id=cycle_id,
+            execution_intent_id=intent.execution_intent_id,
+            decision_id=decision_id,
+        )
         if "error" in result:
             return json.dumps({"status": "error", "message": result["error"]})
-        return json.dumps({"status": "success", "trade": result})
+        return json.dumps({"status": "success", "trade": result, "policy": policy_dec.disposition.value})
     except Exception as e:
-        logger.error("[TradingTools] Buy failed: %s", e)
+        logger.error("[TradingTools] Buy proposal failed: %s", e)
         return json.dumps({"status": "error", "message": str(e)})
 
 
@@ -72,14 +134,65 @@ async def buy_stock(ticker: str, size_pct: float = 0.10) -> str:
     permission=PermissionLevel.WRITE,  # Paper trading — nothing is irreversible
 )
 async def sell_stock(ticker: str) -> str:
-    """Execute a paper sell order (closes the entire position)."""
-    logger.info("[TradingTools] Executing sell order for %s", ticker)
+    """Execute a paper sell order via policy."""
     ticker = ticker.upper().strip()
-    # THE single resolver — see buy_stock above.
     bot_id = resolve_bot_id()
-
+    logger.info("[TradingTools] Executing sell order for %s", ticker)
     try:
-        result = await sell(bot_id, ticker)
+        import uuid
+        from app.trading.attribution.models import DecisionArtifact
+        from app.trading.attribution.repository import (
+            save_decision_artifact,
+            save_execution_intent,
+            save_policy_decision,
+        )
+        from app.trading.policy.policy_translator import PolicyInputSnapshot, PolicyTranslator
+        from app.trading.paper_trader import _get_current_price
+
+        current_price, age_hours = _get_current_price(ticker)
+        pos = mongo_query.find_row('positions', {'bot_id': bot_id, 'ticker': ticker}, ['id', 'qty'])
+        is_held = bool(pos and float(pos[1]) > 0)
+
+        cycle_id = f"tool-proposal-{uuid.uuid4().hex[:8]}"
+        decision_id = f"dec-{uuid.uuid4().hex[:12]}"
+        artifact = DecisionArtifact(
+            decision_id=decision_id,
+            cycle_id=cycle_id,
+            ticker=ticker,
+            producer="trading_tools_sell_stock",
+            model="human_or_tool_chat",
+            requested_action="SELL",
+            confidence=80,
+            reference_quote={"price": current_price or 0.0, "age_hours": age_hours or 0.0},
+        )
+        save_decision_artifact(artifact)
+
+        snapshot = PolicyInputSnapshot(
+            portfolio_equity=100000.0,
+            cash_balance=100000.0,
+            quote_price=current_price or 0.0,
+            quote_age_hours=age_hours or 0.0,
+            is_held=is_held,
+        )
+        policy_dec, intent = PolicyTranslator.evaluate(artifact, snapshot)
+        save_policy_decision(policy_dec)
+
+        if not intent:
+            return json.dumps({
+                "status": "policy_rejected",
+                "disposition": policy_dec.disposition.value,
+                "reasons": policy_dec.reason_codes,
+            })
+
+        save_execution_intent(intent)
+        result = await sell(
+            bot_id=bot_id,
+            ticker=ticker,
+            current_price=current_price,
+            cycle_id=cycle_id,
+            execution_intent_id=intent.execution_intent_id,
+            decision_id=decision_id,
+        )
         if "error" in result:
             return json.dumps({"status": "error", "message": result["error"]})
         return json.dumps({"status": "success", "trade": result})

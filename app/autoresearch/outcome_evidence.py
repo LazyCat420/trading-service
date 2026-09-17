@@ -7,21 +7,49 @@ row is silently upgraded from its stored win/loss label.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import logging
 import math
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.db import mongo_store
 from app.services.cycle_scope import exclude_synthetic, is_synthetic_cycle
 from app.utils.tz import ensure_aware
 
-CONTRACT_VERSION = 2
+logger = logging.getLogger(__name__)
+
+CONTRACT_VERSION = 3
 HORIZON_DAYS = 7
 GRACE_DAYS = 5
 
 
+def benchmark_symbol_for(ticker: str) -> str:
+    """Map ticker to its source-pinned benchmark asset."""
+    from app.config.config_tickers import classify_asset
+    return "BTC" if classify_asset(ticker) == "crypto" else "SPY"
+
+
+def benchmark_observation(benchmark_symbol: str, as_of: datetime, source: str | None = None) -> dict | None:
+    """Find source-pinned closing bar for benchmark asset at observation date."""
+    try:
+        cutoff = closed_bar_cutoff(as_of)
+        query: dict[str, Any] = {
+            'ticker': benchmark_symbol,
+            'close': {'$gt': 0},
+            'date': {'$gte': cutoff - timedelta(days=GRACE_DAYS), '$lte': cutoff},
+        }
+        if source:
+            query['source'] = source
+        rows = mongo_store.find_docs('price_history', query, sort=[('date', -1)], limit=1)
+        return _observation(rows[0]) if rows else None
+    except Exception as e:
+        logger.debug("[evidence] benchmark observation failed: %s", e)
+        return None
+
+
 def learning_query() -> dict:
-    """Only the resolver below may stamp verified v2 price-pair provenance."""
-    return {**exclude_synthetic(), 'outcome_contract_version': CONTRACT_VERSION,
+    """Only the resolver below may stamp verified v2/v3 price-pair provenance."""
+    return {**exclude_synthetic(), 'outcome_contract_version': {'$in': [2, CONTRACT_VERSION]},
             'outcome_evidence_state': 'verified', 'horizon_days': HORIZON_DAYS,
             'claim_type': {'$in': ['immediate_directional', 'flat_wait']},
             'entry_price': {'$gt': 0}, 'exit_price': {'$gt': 0},
@@ -109,7 +137,7 @@ def exit_observation(ticker: str, decision_as_of: datetime, source: str,
 
 def verified_pair(row: dict, exit_ref: dict, *, as_of: datetime | None = None) -> bool:
     """Validate independently of a database match before grading or memory writeback."""
-    if (row.get('outcome_contract_version') != CONTRACT_VERSION
+    if (row.get('outcome_contract_version') not in (2, CONTRACT_VERSION)
         or row.get('claim_type') not in ('immediate_directional', 'flat_wait')
         or is_synthetic_cycle(row.get('cycle_id'))):
         return False

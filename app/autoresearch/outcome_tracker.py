@@ -372,7 +372,7 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
             {'cycle_id': cycle_id, 'confidence': {'$ne': None}},
             ['ticker', 'confidence', 'result_json', 'created_at'],
         )
-        from app.autoresearch.outcome_evidence import entry_observation, CONTRACT_VERSION, claim_type
+        from app.autoresearch.outcome_evidence import entry_observation, CONTRACT_VERSION, claim_type, benchmark_symbol_for
         for ticker, confidence, result_json, decision_at in raw_rows:
             if not isinstance(decision_at, datetime):
                 logger.warning('[OUTCOME] Skipping %s — decision timestamp unavailable', ticker)
@@ -421,6 +421,7 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
             now_utc = datetime.now(timezone.utc)
             mongo_store.insert_docs('decision_outcomes', [{
                 'id': outcome_id,
+                'decision_id': result.get('decision_id'),
                 'cycle_id': cycle_id,
                 'ticker': ticker,
                 'action': action,
@@ -430,6 +431,7 @@ def record_cycle_decisions(cycle_id: str, cycle_summary: dict) -> int:
                 'entry_price_source': entry_ref['source'],
                 'decision_as_of': decision_as_of,
                 'outcome_contract_version': CONTRACT_VERSION,
+                'benchmark_symbol': benchmark_symbol_for(ticker),
                 'claim_type': _claim,
                 'outcome_evidence_state': 'pending' if _claim else 'unsupported_claim',
                 'created_at': now_utc,
@@ -476,10 +478,11 @@ def resolve_pending_outcomes() -> dict:
 
         from app.autoresearch.outcome_evidence import (
             CONTRACT_VERSION, exit_observation, verified_pair, horizon_date,
+            benchmark_symbol_for, benchmark_observation,
         )
         pending = mongo_store.find_docs('decision_outcomes', {
             'resolved_at': None, 'decision_as_of': {'$lt': cutoff},
-            'outcome_contract_version': CONTRACT_VERSION, 'outcome_evidence_state': 'pending', **exclude_synthetic(),
+            'outcome_contract_version': {'$in': [2, CONTRACT_VERSION]}, 'outcome_evidence_state': 'pending', **exclude_synthetic(),
         }, sort=[('decision_as_of', 1)], limit=50)
 
         for row in pending:
@@ -495,6 +498,18 @@ def resolve_pending_outcomes() -> dict:
                     pnl_pct = ((entry_price - exit_price) / entry_price) * 100
                 else:  # BUY and HOLD both measure the long-side move
                     pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+
+                bm_sym = row.get("benchmark_symbol") or benchmark_symbol_for(ticker)
+                bm_return = None
+                decision_alpha = None
+                try:
+                    bm_entry = benchmark_observation(bm_sym, row['decision_as_of'])
+                    bm_exit = exit_observation(bm_sym, row['decision_as_of'], bm_entry['source']) if bm_entry else None
+                    if bm_entry and bm_exit and bm_entry.get('price', 0) > 0:
+                        bm_return = round(((bm_exit['price'] - bm_entry['price']) / bm_entry['price']) * 100.0, 4)
+                        decision_alpha = round(pnl_pct - bm_return, 4)
+                except Exception as bm_err:
+                    logger.debug("[OUTCOME] Benchmark calculation skipped for %s: %s", outcome_id, bm_err)
 
                 outcome = _classify(action, pnl_pct)
                 key = {
@@ -517,8 +532,39 @@ def resolve_pending_outcomes() -> dict:
                 # which is exactly the ambiguity that let a 43-day median hide
                 # behind a "7-day" label — an auditor could not tell a
                 # contract-honouring row from a late one.
-                mongo_store.update_docs('decision_outcomes', {'id': outcome_id}, {'$set': {'exit_price': round(exit_price, 4), 'pnl_pct': round(pnl_pct, 2), 'outcome': outcome, 'resolved_at': now_res, 'exit_date': exit_date, 'exit_price_source': exit_ref['source'], 'horizon_date': horizon_date(row['decision_as_of']), 'horizon_days': RESOLVE_AFTER_DAYS, 'outcome_evidence_state': 'verified'}})
+                mongo_store.update_docs('decision_outcomes', {'id': outcome_id}, {'$set': {
+                    'exit_price': round(exit_price, 4),
+                    'pnl_pct': round(pnl_pct, 2),
+                    'outcome': outcome,
+                    'resolved_at': now_res,
+                    'exit_date': exit_date,
+                    'exit_price_source': exit_ref['source'],
+                    'horizon_date': horizon_date(row['decision_as_of']),
+                    'horizon_days': RESOLVE_AFTER_DAYS,
+                    'outcome_evidence_state': 'verified',
+                    'benchmark_symbol': bm_sym,
+                    'benchmark_return': bm_return,
+                    'decision_alpha': decision_alpha,
+                }})
                 resolved += 1
+
+                try:
+                    from app.trading.attribution.classifier import AttributionClassifier
+                    from app.trading.attribution.repository import save_attribution_report
+
+                    att_report = AttributionClassifier.classify(
+                        lineage={
+                            "outcome_id": outcome_id,
+                            "decision_id": row.get("decision_id"),
+                            "cycle_id": cycle_id,
+                            "ticker": ticker,
+                        },
+                        decision_alpha=decision_alpha,
+                        net_alpha=decision_alpha,
+                    )
+                    save_attribution_report(att_report)
+                except Exception as att_err:
+                    logger.debug("[OUTCOME] %s: attribution report save skipped: %s", outcome_id, att_err)
 
                 write_outcome_to_memory(
                     cycle_id=cycle_id, ticker=ticker, action=action,

@@ -421,6 +421,8 @@ async def buy(
     take_profit_price: float | None = None,
     exit_style: str | None = None,
     strict_capacity: bool = False,
+    execution_intent_id: str | None = None,
+    decision_id: str | None = None,
 ) -> dict:
     """
     Execute a paper BUY.
@@ -435,9 +437,14 @@ async def buy(
     leaves it to the re-analysis trigger).
     """
     logger.info(
-        "[TRACE][BUY] START bot_id=%s ticker=%s size_pct=%s", bot_id, ticker, size_pct
+        "[TRACE][BUY] START bot_id=%s ticker=%s size_pct=%s intent_id=%s",
+        bot_id, ticker, size_pct, execution_intent_id,
     )
     _ensure_bot(bot_id)
+
+    if getattr(settings, "ENFORCE_EXECUTION_INTENTS", False) and not execution_intent_id:
+        logger.error("[TRACE][BUY] ABORT — execution_intent_id required under intent-only policy for %s", ticker)
+        return {"error": f"Execution intent required for BUY on {ticker} under intent-only policy"}
 
     if cycle_id:
         existing = mongo_query.find_row('trade_fills', {'cycle_id': cycle_id, 'ticker': ticker, 'side': 'BUY'}, ['fill_id'])
@@ -629,6 +636,15 @@ async def buy(
     # Wrap in Mongo replica transaction (Tier F)
     try:
         with mongo_store.with_txn() as session:
+            if execution_intent_id:
+                from app.trading.attribution.repository import consume_execution_intent
+                if not consume_execution_intent(execution_intent_id, session=session):
+                    logger.warning(
+                        "[TRACE][BUY] ABORT — Intent %s already consumed or expired for %s",
+                        execution_intent_id, ticker,
+                    )
+                    return {"error": f"Execution intent {execution_intent_id} cannot be consumed (already consumed or expired)"}
+
             # Check for existing position
             existing = mongo_query.find_row('positions', {'bot_id': bot_id, 'ticker': ticker}, ['id', 'qty', 'avg_entry_price'], session=session)
 
@@ -706,6 +722,8 @@ async def buy(
                     'signal': 'pipeline',
                     'created_at': now,
                     'filled_at': now,
+                    'execution_intent_id': execution_intent_id,
+                    'decision_id': decision_id,
                 }],
                 session=session,
             )
@@ -730,6 +748,8 @@ async def buy(
                     'reference_price_source': 'caller_supplied' if price_was_supplied else 'stored_price',
                     'filled_at': now,
                     'cycle_id': cycle_id,
+                    'execution_intent_id': execution_intent_id,
+                    'decision_id': decision_id,
                 }],
                 session=session,
             )
@@ -746,14 +766,59 @@ async def buy(
                     'entry_price': mongo_store.dec128(current_price),
                     'status': 'open',
                     'cycle_id': cycle_id,
+                    'execution_intent_id': execution_intent_id,
+                    'decision_id': decision_id,
                 }],
                 session=session,
             )
+
+            if execution_intent_id:
+                try:
+                    from app.trading.attribution.models import (
+                        ExecutionReconciliation,
+                        OrderAttempt,
+                        OrderAttemptStatus,
+                        ReconciliationVerdict,
+                    )
+                    from app.trading.attribution.repository import (
+                        save_execution_reconciliation,
+                        save_order_attempt,
+                    )
+                    save_order_attempt(OrderAttempt(
+                        order_attempt_id=f"att-{uuid.uuid4().hex[:12]}",
+                        execution_intent_id=execution_intent_id,
+                        attempt_number=1,
+                        request_hash=f"req:{cycle_id}:{ticker}:{order_id}",
+                        status=OrderAttemptStatus.ACCEPTED,
+                        order_id=order_id,
+                        submitted_at=now,
+                    ))
+                    save_execution_reconciliation(ExecutionReconciliation(
+                        reconciliation_id=f"rec-{uuid.uuid4().hex[:12]}",
+                        execution_intent_id=execution_intent_id,
+                        order_id=order_id,
+                        fill_ids=[fill_id],
+                        intended_qty=qty,
+                        filled_qty=qty,
+                        reference_price=reference_price,
+                        expected_price=reference_price,
+                        realized_price=current_price,
+                        fees=round(amount * cost["total_bps"] / 10_000.0, 6),
+                        modeled_spread_bps=float(cost.get("spread_bps", 0.0)),
+                        realized_slippage_bps=float(cost.get("slippage_bps", 0.0)),
+                        residual_qty=0.0,
+                        verdict=ReconciliationVerdict.EXECUTION_MATCHED,
+                        reconciled_at=now,
+                    ))
+                except Exception as rec_err:
+                    logger.warning("[paper] Non-fatal reconciliation save failed: %s", rec_err)
+
             logger.info(
-                "[TRACE][BUY] COMMITTED OK — order_id=%s fill_id=%s lot_id=%s",
+                "[TRACE][BUY] COMMITTED OK — order_id=%s fill_id=%s lot_id=%s intent=%s",
                 order_id,
                 fill_id,
                 lot_id,
+                execution_intent_id,
             )
     except Exception as e:
         logger.error(
@@ -791,15 +856,23 @@ async def sell(
     current_price: float | None = None,
     cycle_id: str | None = None,
     qty_pct: float = 1.0,
+    execution_intent_id: str | None = None,
+    decision_id: str | None = None,
+    is_emergency_risk_exit: bool = False,
 ) -> dict:
     """
     Execute a paper SELL.
     qty_pct: fraction of position to sell (default 1.0 = full close).
     """
     logger.info(
-        "[TRACE][SELL] START bot_id=%s ticker=%s qty_pct=%s", bot_id, ticker, qty_pct
+        "[TRACE][SELL] START bot_id=%s ticker=%s qty_pct=%s intent_id=%s emergency=%s",
+        bot_id, ticker, qty_pct, execution_intent_id, is_emergency_risk_exit,
     )
     _ensure_bot(bot_id)
+
+    if getattr(settings, "ENFORCE_EXECUTION_INTENTS", False) and not execution_intent_id and not is_emergency_risk_exit:
+        logger.error("[TRACE][SELL] ABORT — execution_intent_id required under intent-only policy for %s", ticker)
+        return {"error": f"Execution intent required for SELL on {ticker} under intent-only policy"}
 
     if cycle_id:
         existing = mongo_query.find_row('trade_fills', {'cycle_id': cycle_id, 'ticker': ticker, 'side': 'SELL'}, ['fill_id'])
@@ -871,6 +944,15 @@ async def sell(
     # Wrap in Mongo replica transaction (Tier F)
     try:
         with mongo_store.with_txn() as session:
+            if execution_intent_id:
+                from app.trading.attribution.repository import consume_execution_intent
+                if not consume_execution_intent(execution_intent_id, session=session):
+                    logger.warning(
+                        "[TRACE][SELL] ABORT — Intent %s already consumed or expired for %s",
+                        execution_intent_id, ticker,
+                    )
+                    return {"error": f"Execution intent {execution_intent_id} cannot be consumed (already consumed or expired)"}
+
             # 1. FIFO lot matching: consume oldest lots first to calculate true P&L
             open_lots = mongo_query.find_rows('position_lots', {'bot_id': bot_id, 'ticker': ticker, 'status': {'$in': ['open', 'partial']}}, ['lot_id', 'remaining_qty', 'entry_price', 'opened_at'], sort=[('opened_at', 1)], session=session)
 
@@ -1018,6 +1100,8 @@ async def sell(
                     'created_at': now,
                     'filled_at': now,
                     'realized_pnl': mongo_store.dec128(total_realized_pnl),
+                    'execution_intent_id': execution_intent_id,
+                    'decision_id': decision_id,
                 }],
                 session=session,
             )
@@ -1040,9 +1124,52 @@ async def sell(
                     'reference_price_source': 'caller_supplied' if price_was_supplied else 'stored_price',
                     'filled_at': now,
                     'cycle_id': cycle_id,
+                    'execution_intent_id': execution_intent_id,
+                    'decision_id': decision_id,
                 }],
                 session=session,
             )
+
+            if execution_intent_id:
+                try:
+                    from app.trading.attribution.models import (
+                        ExecutionReconciliation,
+                        OrderAttempt,
+                        OrderAttemptStatus,
+                        ReconciliationVerdict,
+                    )
+                    from app.trading.attribution.repository import (
+                        save_execution_reconciliation,
+                        save_order_attempt,
+                    )
+                    save_order_attempt(OrderAttempt(
+                        order_attempt_id=f"att-{uuid.uuid4().hex[:12]}",
+                        execution_intent_id=execution_intent_id,
+                        attempt_number=1,
+                        request_hash=f"req:{cycle_id}:{ticker}:{order_id}",
+                        status=OrderAttemptStatus.ACCEPTED,
+                        order_id=order_id,
+                        submitted_at=now,
+                    ))
+                    save_execution_reconciliation(ExecutionReconciliation(
+                        reconciliation_id=f"rec-{uuid.uuid4().hex[:12]}",
+                        execution_intent_id=execution_intent_id,
+                        order_id=order_id,
+                        fill_ids=[sell_fill_id],
+                        intended_qty=qty_to_sell,
+                        filled_qty=qty_to_sell,
+                        reference_price=reference_price,
+                        expected_price=reference_price,
+                        realized_price=current_price,
+                        fees=round(proceeds * sell_cost["total_bps"] / 10_000.0, 6),
+                        modeled_spread_bps=float(sell_cost.get("spread_bps", 0.0)),
+                        realized_slippage_bps=float(sell_cost.get("slippage_bps", 0.0)),
+                        residual_qty=0.0,
+                        verdict=ReconciliationVerdict.EXECUTION_MATCHED,
+                        reconciled_at=now,
+                    ))
+                except Exception as rec_err:
+                    logger.warning("[paper] Non-fatal sell reconciliation save failed: %s", rec_err)
 
             # Update bot win_rate dynamically from lot_closures
             closures = mongo_store.find_docs('lot_closures', {'bot_id': bot_id}, projection={'realized_pnl': 1}, session=session)
@@ -1054,9 +1181,10 @@ async def sell(
             mongo_store.update_docs('bots', {'bot_id': bot_id}, {'$set': {'win_rate': round(win_rate, 2)}}, session=session)
 
             logger.info(
-                "[TRACE][SELL] COMMITTED OK — order_id=%s sell_fill_id=%s",
+                "[TRACE][SELL] COMMITTED OK — order_id=%s sell_fill_id=%s intent=%s",
                 order_id,
                 sell_fill_id,
+                execution_intent_id,
             )
     except Exception as e:
         logger.error(
@@ -1102,6 +1230,22 @@ async def sell(
     )
     _record_portfolio_snapshot(bot_id)
     return result
+
+
+async def emergency_risk_exit(
+    bot_id: str,
+    ticker: str,
+    reason: str = "EMERGENCY_RISK_REDUCTION",
+    qty_pct: float = 1.0,
+) -> dict:
+    """Executes a risk-reducing exit strictly exempt from intent or pipeline health requirements."""
+    logger.warning("[paper] EMERGENCY RISK EXIT for %s (bot_id=%s, reason=%s)", ticker, bot_id, reason)
+    return await sell(
+        bot_id=bot_id,
+        ticker=ticker,
+        qty_pct=qty_pct,
+        is_emergency_risk_exit=True,
+    )
 
 
 # Fix #13: Stop-loss enforcement — now per-position with ATR-based levels

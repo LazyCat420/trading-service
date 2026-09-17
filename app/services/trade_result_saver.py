@@ -75,11 +75,43 @@ def save_trade_result(ticker: str, cycle_id: str, verdict: dict) -> None:
 
         result_id = str(uuid.uuid4())
         _saved_at = datetime.now(timezone.utc)
+        decision_id = verdict.get("decision_id") or f"dec-{uuid.uuid4().hex[:12]}"
+        verdict["decision_id"] = decision_id
+
+        # Persist immutable DecisionArtifact
+        try:
+            from app.trading.attribution.models import DecisionArtifact
+            from app.trading.attribution.repository import save_decision_artifact
+            from app.trading.paper_trader import _get_current_price
+
+            quote_p, quote_age = _get_current_price(ticker)
+            timing = {
+                "entry_mode": verdict.get("entry_mode") or "enter_now",
+                "trigger_purpose": verdict.get("trigger_purpose") or "none",
+                "dynamic_trigger": dynamic_trigger,
+            }
+            artifact = DecisionArtifact(
+                decision_id=decision_id,
+                cycle_id=cycle_id,
+                ticker=ticker,
+                producer=verdict.get("decision_producer") or persona_used or "v3_decision_synthesizer",
+                model=verdict.get("model_used") or "local",
+                requested_action=action,
+                requested_size_pct=position_size_pct,
+                requested_timing=timing,
+                confidence=confidence,
+                reference_quote={"price": quote_p or 0.0, "age_hours": quote_age or 0.0},
+                contract_validation=verdict.get("decision_contract") or {},
+            )
+            save_decision_artifact(artifact)
+        except Exception as art_err:
+            logger.debug("[TradeResultSaver] %s/%s: DecisionArtifact persist non-fatal: %s", cycle_id, ticker, art_err)
 
         # Upsert in Mongo: remove existing for this ticker+cycle to avoid duplicates
         mongo_store.delete_docs('trade_results', {'ticker': ticker, 'cycle_id': cycle_id})
         mongo_store.insert_docs('trade_results', [{
             'id': result_id,
+            'decision_id': decision_id,
             'ticker': ticker,
             'cycle_id': cycle_id,
             'action': action,
