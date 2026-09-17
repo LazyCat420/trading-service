@@ -235,6 +235,38 @@ class TestTheRunnerStampsProvenance:
         )
         assert "signal_weights" not in artifact
 
+    def test_financial_reasoning_v2_without_literal_reasoning_gets_equalized_default(self):
+        from app.v3.agent_runner import apply_signal_weights_policy
+
+        artifact = {
+            "action": "BUY",
+            "confidence": 65,
+            "financial_reasoning_version": 2,
+            "reasoning_steps": ["calc_headroom_pct", "close"],
+        }
+        salvaged = apply_signal_weights_policy(
+            artifact, artifact_type="trade_decision",
+            agent_name="v3_decision_synthesizer", ticker="AAPL",
+        )
+        assert salvaged is True
+        assert artifact["signal_weights_source"] == "default_equalized"
+        assert set(artifact["signal_weights"].values()) == {0.25}
+
+    def test_decision_with_reasoning_steps_gets_equalized_default(self):
+        from app.v3.agent_runner import apply_signal_weights_policy
+
+        artifact = {
+            "action": "HOLD",
+            "confidence": 55,
+            "reasoning_steps": ["close", "sma_50"],
+        }
+        salvaged = apply_signal_weights_policy(
+            artifact, artifact_type="trade_decision",
+            agent_name="v3_decision_synthesizer", ticker="TW",
+        )
+        assert salvaged is True
+        assert artifact["signal_weights_source"] == "default_equalized"
+
 
 class TestTheSaverPersistsProvenance:
     def test_save_trade_result_writes_signal_weights_source(self, monkeypatch):

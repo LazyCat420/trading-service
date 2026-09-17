@@ -304,7 +304,11 @@ def apply_signal_weights_policy(
         complete = (
             artifact.get("action")
             and artifact.get("confidence") is not None
-            and str(artifact.get("reasoning") or "").strip()
+            and (
+                str(artifact.get("reasoning") or "").strip()
+                or bool(artifact.get("reasoning_steps"))
+                or artifact.get("financial_reasoning_version") == 2
+            )
         )
         if not complete:
             return False
@@ -2008,6 +2012,25 @@ async def run_v3_agent(
                     trace_data(cycle_id, desk.ticker, agent_name, "artifact.timing_normalized",
                                data={"rule": "unique_minimal_nonentry_labels", "patch": timing_patch,
                                      "original": before_timing, "normalized": artifact})
+            elif contract_failures and artifact_type == "trade_decision" and board_source:
+                from app.v3.decision_contract import unique_nonentry_timing_correction, board_reference, DECISION_FIELDS
+                timing_patch = unique_nonentry_timing_correction(artifact) or {}
+                patched = {**artifact, **timing_patch}
+                changes = [key for key in DECISION_FIELDS if patched.get(key, board_source.get(key)) != board_source.get(key)]
+                if not changes and patched.get('decision_relation') in (None, 'preserve'):
+                    patched['source_board_ref'] = board_reference(board_source)
+                    patched['source_board_action'] = board_source.get('action')
+                    if not patched.get('decision_relation'):
+                        patched['decision_relation'] = 'preserve'
+                new_failures = contract_errors(patched, board=board_source,
+                                               evidence_sources=evidence_sources(desk))
+                if len(new_failures) < len(contract_failures):
+                    before_norm = dict(artifact)
+                    artifact = patched
+                    contract_failures = new_failures
+                    trace_data(cycle_id, desk.ticker, agent_name, "artifact.trade_decision_normalized",
+                               data={"rule": "board_preserve_attribution_and_timing",
+                                     "original": before_norm, "normalized": artifact})
             if contract_failures and repaired is None:
                 # One tool-less correction inside the original deadline. Keep
                 # the actual decision and evidence; never synthesize defaults.

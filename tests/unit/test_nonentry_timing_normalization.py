@@ -105,3 +105,45 @@ async def test_ambiguous_case_keeps_one_model_repair_and_strict_preservation(cha
         assert desk.final_decision['trigger_purpose']=='monitor'
         assert desk.final_decision['resolution_condition'] is None
 
+
+@pytest.mark.asyncio
+async def test_trade_decision_preserves_board_attribution_and_timing():
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+    from app.v3 import data_trace
+    from app.v3.shared_desk import SharedDesk
+    from app.v3.agent_runner import run_v3_agent
+    from app.v3.agents import decision_agent as synth
+    from app.v3.decision_contract import board_reference
+
+    desk = SharedDesk(ticker='CANG', cycle_id='preserve-board-regression')
+    desk.cycle_metadata = {'decision_contract_version': 1, 'held': False}
+    board_decision = {
+        'action': 'HOLD', 'confidence': 60, 'position_size_pct': 0.0,
+        'entry_mode': 'watch_only', 'trigger_purpose': 'none', 'dynamic_trigger': None,
+        'stop_loss': None, 'take_profit': None, 'exit_style': None,
+        'reasoning': 'Board hold verdict.',
+    }
+    desk.final_decision = board_decision
+
+    synth_decision = {
+        'action': 'HOLD', 'confidence': 58, 'position_size_pct': 0.0,
+        'reasoning': 'Agree with board hold.',
+        'signal_weights': {'quant': 0.25, 'fundamental': 0.25, 'debate': 0.25, 'board': 0.25},
+    }
+    module = SimpleNamespace(AGENT_NAME=synth.AGENT_NAME, ARTIFACT_TYPE=synth.ARTIFACT_TYPE,
+                           TOOL_WHITELIST=synth.TOOL_WHITELIST, SYSTEM_PROMPT='System')
+    responses = [{'response': json.dumps(synth_decision), 'tokens_used': 80, 'loops_used': 1, 'stop_reason': 'completed'}]
+    with patch('app.agents.base_agent.run_agent', new_callable=AsyncMock, side_effect=responses), \
+         patch.object(data_trace.mongo_store, 'insert_docs'), patch.object(data_trace.mongo_store, 'update_docs'):
+        outcome = await run_v3_agent(desk, module, cycle_id=desk.cycle_id, bot_id='test')
+
+    assert outcome.value == 'SUCCESS'
+    assert desk.trade_decision is not None
+    assert desk.trade_decision['source_board_ref'] == board_reference(board_decision)
+    assert desk.trade_decision['source_board_action'] == 'HOLD'
+    assert desk.trade_decision['decision_relation'] == 'preserve'
+    assert desk.trade_decision['entry_mode'] == 'watch_only'
+    assert desk.trade_decision['trigger_purpose'] == 'none'
+
