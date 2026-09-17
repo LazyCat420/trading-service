@@ -460,6 +460,7 @@ from app.trading.attribution.outcome_contract import (
     MaturityStatus,
     OutcomeClaimType,
     OutcomeReportSlice,
+    PositionLot,
     PriceObservation,
     calculate_forecast_alpha,
     calculate_net_cashflow_return,

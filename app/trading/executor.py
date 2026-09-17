@@ -428,8 +428,12 @@ async def execute_intent(
                     "remaining_qty": qty,
                     "entry_price": fill_price,
                     "entry_notional": total_spent,
+                    "entry_fee": fees,
+                    "remaining_entry_fee": fees,
                     "opened_at": now,
                     "status": "open",
+                    "origin": "LIVE",
+                    "provenance_complete": True,
                     "decision_id": intent.decision_id,
                     "execution_intent_id": intent_id,
                 },
@@ -474,6 +478,7 @@ async def execute_intent(
                 .sort("opened_at", 1)
             )
             unclosed = qty
+            remaining_sell_fees = fees
             for lot in open_lots:
                 if unclosed <= 0:
                     break
@@ -482,13 +487,50 @@ async def execute_intent(
                 new_rem = rem - close_amt
                 lot_status = "closed" if new_rem <= 0.0001 else "partial"
 
+                # Pro-rata entry fee allocation with conservation
+                init_qty = float(lot.get("initial_qty", rem))
+                init_entry_fee = float(lot.get("entry_fee", 0.0))
+                cur_rem_entry_fee = float(lot.get("remaining_entry_fee", init_entry_fee))
+
+                if new_rem <= 0.0001:
+                    alloc_entry_fee = cur_rem_entry_fee
+                    new_rem_entry_fee = 0.0
+                else:
+                    alloc_entry_fee = round((close_amt / init_qty) * init_entry_fee, 4) if init_qty > 0 else 0.0
+                    new_rem_entry_fee = max(0.0, round(cur_rem_entry_fee - alloc_entry_fee, 4))
+
+                # Exit fee allocation with conservation across closures of this sell order
+                if unclosed - close_amt <= 0.0001:
+                    alloc_exit_fee = remaining_sell_fees
+                    remaining_sell_fees = 0.0
+                else:
+                    alloc_exit_fee = round((close_amt / qty) * fees, 4) if qty > 0 else 0.0
+                    remaining_sell_fees = max(0.0, round(remaining_sell_fees - alloc_exit_fee, 4))
+
                 db[COLL_POSITION_LOTS].update_one(
                     {"lot_id": lot["lot_id"]},
-                    {"$set": {"remaining_qty": new_rem, "status": lot_status, "updated_at": now}},
+                    {
+                        "$set": {
+                            "remaining_qty": new_rem,
+                            "remaining_entry_fee": new_rem_entry_fee,
+                            "status": lot_status,
+                            "updated_at": now,
+                        }
+                    },
                     session=s,
                 )
 
-                gross_pnl = close_amt * (fill_price - float(lot["entry_price"]))
+                entry_px = float(lot["entry_price"])
+                gross_pnl = close_amt * (fill_price - entry_px)
+                invested_capital = (close_amt * entry_px) + alloc_entry_fee
+                total_closure_fees = alloc_entry_fee + alloc_exit_fee
+                net_pnl = gross_pnl - alloc_entry_fee - alloc_exit_fee
+                net_realized_return = (net_pnl / invested_capital) * 100.0 if invested_capital > 0 else 0.0
+
+                lot_origin = lot.get("origin", "LIVE")
+                lot_prov_complete = bool(lot.get("provenance_complete", True))
+                is_attributable = lot_prov_complete and lot_origin in ("LIVE", "HISTORICAL_RECONSTRUCTION")
+
                 db[COLL_LOT_CLOSURES].insert_one(
                     {
                         "closure_id": f"close-{uuid.uuid4().hex[:12]}",
@@ -496,11 +538,20 @@ async def execute_intent(
                         "bot_id": bot_id,
                         "ticker": ticker,
                         "closed_qty": close_amt,
-                        "entry_price": float(lot["entry_price"]),
+                        "entry_price": entry_px,
                         "exit_price": fill_price,
                         "gross_pnl": gross_pnl,
-                        "fees": fees * (close_amt / qty),
-                        "net_pnl": gross_pnl - (fees * (close_amt / qty)),
+                        "allocated_entry_fee": alloc_entry_fee,
+                        "exit_fee": alloc_exit_fee,
+                        "fees": total_closure_fees,
+                        "net_pnl": net_pnl,
+                        "dollar_pnl": net_pnl,
+                        "invested_capital_denominator": invested_capital,
+                        "net_realized_return": round(net_realized_return, 4),
+                        "origin": lot_origin,
+                        "provenance": lot_origin,
+                        "provenance_complete": lot_prov_complete,
+                        "is_attributable": is_attributable,
                         "closed_at": now,
                         "entry_decision_id": lot.get("decision_id"),
                         "exit_decision_id": intent.decision_id,
