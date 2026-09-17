@@ -338,10 +338,11 @@ async def run_worker(tickers: list[str] | None = None, shutdown_event: asyncio.E
 
     await BootService.shutdown()
 
-async def start_health_server(shutdown_event: asyncio.Event):
+def create_app() -> FastAPI:
     from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-    from fastapi import Depends, HTTPException
+    from fastapi import Depends, HTTPException, Response
     from app.config import settings
+    import importlib
 
     security = HTTPBearer()
 
@@ -351,6 +352,7 @@ async def start_health_server(shutdown_event: asyncio.Event):
         return credentials.credentials
 
     app = FastAPI(title="Trading Cycle Backend Health")
+
     @app.get("/health")
     def health():
         return {"status": "ok", "service": "trading-service", "version": "v3"}
@@ -366,22 +368,13 @@ async def start_health_server(shutdown_event: asyncio.Event):
         return PipelineService.get_current_state(summary_only=summary_only)
 
     @app.get("/control-plane/metrics")
-    def control_plane_metrics():
+    def control_plane_metrics(response: Response):
         from app.trading.control_plane import get_control_plane_operational_metrics
-        return get_control_plane_operational_metrics()
+        metrics = get_control_plane_operational_metrics()
+        status = metrics.get("metrics_status", "HEALTHY")
+        response.headers["X-Metrics-Status"] = status
+        return metrics
 
-    # Mounted one at a time, on purpose. These used to share a single
-    # try/except: one bad import anywhere in the block aborted the whole
-    # sequence, mounted NOTHING, and logged one line -- while /health and
-    # /status (declared above) kept answering, so the container stayed
-    # "healthy" with its entire API missing. Now a broken router costs only
-    # itself and says so by name.
-    #
-    # The scraper was extracted back into the standalone scraper-service
-    # (:8001); trading-service no longer SERVES /scrape, /collect, /stream.
-    # Its own scraping goes out over HTTP via app.services.scraper_client. The
-    # app.scraper source still lives here only so scraper-service can
-    # build-copy it -- it is not imported or run in this process.
     _ROUTER_MODULES = (
         "vllm_router",
         "agent_persona_router",
@@ -401,8 +394,6 @@ async def start_health_server(shutdown_event: asyncio.Event):
         "watch_allocator_router",
     )
 
-    import importlib
-
     _mounted, _failed = [], []
     for _name in _ROUTER_MODULES:
         try:
@@ -421,6 +412,11 @@ async def start_health_server(shutdown_event: asyncio.Event):
     else:
         logger.info("API mounted all %d routers", len(_mounted))
 
+    return app
+
+
+async def start_health_server(shutdown_event: asyncio.Event):
+    app = create_app()
     config = uvicorn.Config(app, host="0.0.0.0", port=8080, log_level="error")
     server = uvicorn.Server(config)
     
