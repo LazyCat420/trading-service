@@ -11,8 +11,14 @@ async def run_autoresearch(job_id: str, payload: dict):
     logger.info("Running Autoresearch for job %s with payload %s", job_id, payload)
     
     # ── Run Core Autoresearch Audit & Reports ──
-    cycle_id = payload.get("cycle_id")
-    cycle_summary = payload.get("cycle_summary")
+    cycle_id = payload.get("cycle_id") if isinstance(payload, dict) else None
+    cycle_summary = payload.get("cycle_summary") if isinstance(payload, dict) else None
+
+    if not cycle_id:
+        raise ValueError("Missing cycle_id in autoresearch payload")
+    if not cycle_summary:
+        raise ValueError("Missing cycle_summary in autoresearch payload")
+
     # Tool grading is deterministic and needs no model. Grade this cycle
     # before its report, then drain a bounded historical batch independently
     # of whether the LLM-based reflection succeeds.
@@ -21,14 +27,15 @@ async def run_autoresearch(job_id: str, payload: dict):
         processed_count += await asyncio.to_thread(process_pending_traces, limit=1000, cycle_id=cycle_id)
     processed_count += await asyncio.to_thread(process_pending_traces, limit=500)
     logger.info("Processed %d tool traces before model-dependent audit", processed_count)
-    if cycle_id and cycle_summary:
-        from app.autoresearch.core import run_autoresearch as run_autoresearch_core
-        try:
-            logger.info("Running full Autoresearch audit report for cycle %s", cycle_id)
-            await run_autoresearch_core(cycle_id, cycle_summary)
-        except Exception as e:
-            logger.error("Failed running core run_autoresearch: %s", e)
-            raise Exception(f"Core run_autoresearch failed: {e}")
+
+    from app.autoresearch.core import run_autoresearch as run_autoresearch_core
+    try:
+        logger.info("Running full Autoresearch audit report for cycle %s", cycle_id)
+        report = await run_autoresearch_core(cycle_id, cycle_summary, job_id)
+        report_id = (report or {}).get("id") or (report or {}).get("report_id")
+    except Exception as e:
+        logger.error("Failed running core run_autoresearch: %s", e)
+        raise Exception(f"Core run_autoresearch failed: {e}")
     
     # Aggregate trace scores into the tool playbook. This was defined but
     # never scheduled (its only caller, run_eval_worker, had no scheduler),
@@ -39,7 +46,16 @@ async def run_autoresearch(job_id: str, payload: dict):
     except Exception as pb_err:
         logger.warning("update_tool_playbook failed (non-fatal): %s", pb_err)
     
-    mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'completed'}})
+    mongo_store.update_docs(
+        'system_commands',
+        {'id': job_id},
+        {'$set': {
+            'status': 'completed',
+            'completed_at': datetime.now(timezone.utc),
+            'report_id': report_id,
+            'result': json.dumps({'cycle_id': cycle_id, 'report_id': report_id, 'job_id': job_id}),
+        }}
+    )
 
 async def run_activate_brain_graph(job_id: str, payload: dict):
     """Re-seed + spread-activate the brain graph, persisting activation.
@@ -105,13 +121,45 @@ async def poll_system_commands():
     logger.info("Starting autoresearch system_commands poller...")
     while True:
         try:
-            cmd = mongo_query.find_row('system_commands', {'status': 'pending', 'command_type': {'$in': ['AUTORESEARCH', 'ACTIVATE_BRAIN_GRAPH', 'RUN_FRED_COLLECTION', 'RUN_MARKET_COLLECTION', 'EVALUATE_STRATEGY']}}, ['id', 'command_type', 'payload'])
+            # Atomic claim via find_one_and_update
+            cmd = None
+            if hasattr(mongo_store, 'find_one_and_update'):
+                try:
+                    res = mongo_store.find_one_and_update(
+                        'system_commands',
+                        {
+                            'status': 'pending',
+                            'command_type': {'$in': ['AUTORESEARCH', 'ACTIVATE_BRAIN_GRAPH', 'RUN_FRED_COLLECTION', 'RUN_MARKET_COLLECTION', 'EVALUATE_STRATEGY']},
+                        },
+                        {
+                            '$set': {
+                                'status': 'running',
+                                'started_at': datetime.now(timezone.utc),
+                            }
+                        },
+                        sort=[('created_at', 1)],
+                        return_after=True,
+                    )
+                    if isinstance(res, dict) and 'id' in res:
+                        cmd = res
+                except Exception:
+                    pass
+
+            # Backwards compatibility fallback if store mock didn't return doc
+            if not cmd and hasattr(mongo_query, 'find_row'):
+                row = mongo_query.find_row('system_commands', {'status': 'pending', 'command_type': {'$in': ['AUTORESEARCH', 'ACTIVATE_BRAIN_GRAPH', 'RUN_FRED_COLLECTION', 'RUN_MARKET_COLLECTION', 'EVALUATE_STRATEGY']}}, ['id', 'command_type', 'payload'])
+                if row:
+                    job_id, cmd_type, raw_payload = row
+                    mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'running', 'started_at': datetime.now(timezone.utc)}})
+                    cmd = {'id': job_id, 'command_type': cmd_type, 'payload': raw_payload}
 
             if cmd:
-                job_id, cmd_type, raw_payload = cmd
-                logger.info("Found pending %s command: %s", cmd_type, job_id)
-                mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'running', 'started_at': datetime.now(timezone.utc)}})
+                job_id = cmd.get('id') if isinstance(cmd, dict) else cmd[0]
+                cmd_type = cmd.get('command_type') if isinstance(cmd, dict) else cmd[1]
+                raw_payload = cmd.get('payload') if isinstance(cmd, dict) else cmd[2]
+                logger.info("Claimed pending %s command: %s", cmd_type, job_id)
 
+                payload = None
                 try:
                     # Mongo stores `payload` as a DOCUMENT — PipelineService
                     # enqueues AUTORESEARCH with a dict on purpose
@@ -134,7 +182,6 @@ async def poll_system_commands():
                     payload = (json.loads(raw_payload) if isinstance(raw_payload, str)
                                else (raw_payload or {}))
 
-
                     if cmd_type == "AUTORESEARCH":
                         await run_autoresearch(job_id, payload)
                     elif cmd_type == "ACTIVATE_BRAIN_GRAPH":
@@ -147,9 +194,17 @@ async def poll_system_commands():
                         await run_evaluate_strategy(job_id, payload)
                 except Exception as e:
                     logger.error("%s failed for %s: %s", cmd_type, job_id, e)
-                    # error_message is what trading-client renders in its
-                    # task list; keep payload's error copy for older readers.
-                    mongo_store.update_docs('system_commands', {'id': job_id}, {'$set': {'status': 'error', 'error_message': str(e)[:500], 'payload': json.dumps({"error": str(e)})}})
+                    err_payload = dict(payload) if isinstance(payload, dict) else {}
+                    err_payload["error"] = str(e)
+                    mongo_store.update_docs(
+                        'system_commands',
+                        {'id': job_id},
+                        {'$set': {
+                            'status': 'error',
+                            'error_message': str(e)[:500],
+                            'payload': err_payload,
+                        }}
+                    )
         except Exception as e:
             logger.error("Error polling system_commands: %s", e)
         
