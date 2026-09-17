@@ -19,7 +19,9 @@ from app.autoresearch.auditors.triage_audit import _audit_triage
 from app.autoresearch.auditors.schedule_audit import _audit_schedule_health
 from app.autoresearch.reflection import _reflect, _store_lessons
 from app.autoresearch.directives import _generate_directives, _expire_old_directives
-from app.autoresearch.outcome_tracker import record_cycle_decisions, resolve_pending_outcomes
+from app.autoresearch.outcome_tracker import (
+    record_cycle_decisions, refresh_pending_outcome_prices, resolve_pending_outcomes,
+)
 from app.autoresearch.janitor import run_janitor
 from app.db import mongo_query, mongo_store
 
@@ -137,6 +139,12 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
         # Resolve pending decision outcomes before scoring
         _update_ar_state(report_id, phase="outcome_resolution")
         try:
+            refresh_result = await refresh_pending_outcome_prices()
+            if refresh_result.get("refreshed", 0) > 0:
+                logger.info(
+                    "[AUTORESEARCH] refreshed %d source-pinned outcome price pair(s)",
+                    refresh_result["refreshed"],
+                )
             outcome_result = resolve_pending_outcomes()
             try:
                 from app.v3.challenger import resolve_challenger_outcomes

@@ -101,6 +101,26 @@ def test_batch_cannot_promote_old_or_wrong_vendor_data_even_if_reader_returns_it
         update.assert_not_called(); write.assert_not_called()
 
 
+def test_mature_pending_claim_refreshes_its_pinned_vendor_only():
+    """A fresh yfinance bar cannot grade a Polygon entry (or vice versa)."""
+    import asyncio
+
+    pending = row(entry_price_source='polygon')
+    with patch.object(outcome_tracker.mongo_store, 'find_docs', return_value=[pending]), \
+         patch('app.autoresearch.outcome_evidence.exit_observation', return_value=None), \
+         patch('app.collectors.polygon_collector.collect_price_history') as polygon, \
+         patch('app.collectors.yfinance_collector.collect_price_history') as yfinance:
+        polygon.return_value = None
+        stats = asyncio.run(outcome_tracker.refresh_pending_outcome_prices())
+
+    assert stats == {
+        'candidates': 1, 'already_available': 0, 'refreshed': 1,
+        'unsupported_source': 0, 'errors': 0,
+    }
+    polygon.assert_awaited_once_with('TEST', days_back=30)
+    yfinance.assert_not_called()
+
+
 def test_execution_exit_never_overwrites_forecast_or_teaches_early_result():
     with patch.object(outcome_tracker.mongo_store, 'update_docs') as update, \
          patch.object(outcome_tracker, 'write_outcome_to_memory') as write:

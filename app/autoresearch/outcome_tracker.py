@@ -544,6 +544,73 @@ def resolve_pending_outcomes() -> dict:
     return {"resolved": resolved, "errors": errors, **stats}
 
 
+async def refresh_pending_outcome_prices(limit: int = 20) -> dict:
+    """Refresh only the vendor-pinned bars required by mature outcome claims.
+
+    The general price rotator is intentionally allowed to stop after a fresh
+    yfinance response.  That is correct for an analysis run, but it cannot
+    satisfy an outcome whose *entry* was observed from Polygon: mixing the two
+    vendors would make the return non-comparable.  This narrow refresh is the
+    bridge between the two contracts.  It writes only ordinary price-history
+    observations and never resolves, relabels, or otherwise mutates a claim.
+    """
+    stats = {"candidates": 0, "already_available": 0, "refreshed": 0,
+             "unsupported_source": 0, "errors": 0}
+    try:
+        from app.autoresearch.outcome_evidence import CONTRACT_VERSION, exit_observation
+        from app.services.cycle_scope import exclude_synthetic
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=RESOLVE_AFTER_DAYS)
+        pending = mongo_store.find_docs('decision_outcomes', {
+            'resolved_at': None, 'decision_as_of': {'$lt': cutoff},
+            'outcome_contract_version': CONTRACT_VERSION,
+            'outcome_evidence_state': 'pending',
+            'claim_type': {'$in': ['immediate_directional', 'flat_wait']},
+            **exclude_synthetic(),
+        }, sort=[('decision_as_of', 1)], limit=limit)
+
+        # One collection per (ticker, vendor), even if an historic duplicate
+        # exists.  This keeps the job bounded and respects Polygon's rate cap.
+        seen: set[tuple[str, str]] = set()
+        for row in pending:
+            ticker = row.get('ticker')
+            source = row.get('entry_price_source')
+            if not isinstance(ticker, str) or not isinstance(source, str):
+                stats['unsupported_source'] += 1
+                continue
+            pair = (ticker, source)
+            if pair in seen:
+                continue
+            seen.add(pair)
+            stats['candidates'] += 1
+
+            if exit_observation(ticker, row['decision_as_of'], source):
+                stats['already_available'] += 1
+                continue
+
+            try:
+                if source == 'yfinance':
+                    from app.collectors.yfinance_collector import collect_price_history
+                    await collect_price_history(ticker, period='1y')
+                elif source == 'polygon':
+                    from app.collectors.polygon_collector import collect_price_history
+                    # The collector itself constrains this to the missing
+                    # window; the bounded request prevents a full re-backfill.
+                    await collect_price_history(ticker, days_back=30)
+                else:
+                    stats['unsupported_source'] += 1
+                    continue
+                stats['refreshed'] += 1
+            except Exception as exc:  # a vendor outage must not block scoring
+                stats['errors'] += 1
+                logger.warning('[OUTCOME] source-pinned refresh %s/%s failed: %s',
+                               source, ticker, exc)
+    except Exception as exc:
+        stats['errors'] += 1
+        logger.warning('[OUTCOME] source-pinned refresh setup failed: %s', exc)
+    return stats
+
+
 def resolve_outcome_for_exit(ticker: str, exit_price: float, realized_pnl: float | None = None) -> int:
     """Compatibility no-op: a position exit cannot grade a seven-day forecast.
 
