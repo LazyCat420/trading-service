@@ -397,7 +397,12 @@ def evaluate_decision_at_horizon(
         resolved_at=eval_time,
     )
 
+    from app.telemetry.trading_adapter import TradingLineageTracker
     doc_data = outcome.model_dump(mode="python")
+    outcome_span_id = TradingLineageTracker.generate_span_id()
+    parent_trace_id = getattr(artifact, "trace_id", None) or TradingLineageTracker.derive_trace_id(artifact.cycle_id)
+    parent_span_id = getattr(artifact, "span_id", None)
+
     # Add canonical v4 fields for unified persistence
     doc_data.update({
         "evaluation_contract_version": 4,
@@ -406,6 +411,9 @@ def evaluate_decision_at_horizon(
         "forecast_alpha": metrics.decision_alpha,
         "is_eligible_for_learning": True,
         "vendor_hash": horiz_obs.vendor_hash if horiz_obs else "",
+        "trace_id": parent_trace_id,
+        "span_id": outcome_span_id,
+        "parent_span_id": parent_span_id,
     })
 
     db[COLL_DECISION_OUTCOMES].update_one(
@@ -415,8 +423,8 @@ def evaluate_decision_at_horizon(
     )
 
     try:
-        from app.telemetry.trading_adapter import TradingLineageTracker
         outcome_val = "WIN" if (metrics.decision_alpha or 0.0) > 0 else "LOSS"
+        links = [{"trace_id": parent_trace_id, "span_id": parent_span_id}] if parent_span_id else []
         TradingLineageTracker.record_outcome(
             cycle_id=artifact.cycle_id,
             ticker=artifact.ticker,
@@ -424,10 +432,13 @@ def evaluate_decision_at_horizon(
             outcome=outcome_val,
             pnl_pct=_safe_float(metrics.decision_alpha),
             is_shadow=(getattr(artifact, "execution_mode", "") == "SHADOW"),
+            parent_span_id=parent_span_id,
+            links=links,
             attributes={
                 "decision_id": artifact.decision_id,
                 "claim_type": claim_type.value,
                 "action_classification": action_class,
+                "span_id": outcome_span_id,
             },
         )
     except Exception as e:

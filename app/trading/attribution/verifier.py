@@ -116,3 +116,32 @@ def verify_fill_lineage(fill_id: str) -> LineageVerificationResult:
     result.anomalies.extend(intent_res.anomalies)
     result.chain.update(intent_res.chain)
     return result
+
+
+def verify_cycle_lineage(cycle_id: str) -> LineageVerificationResult:
+    """Verifies that an entire cycle has a complete, unbroken lineage chain from admission to outcome."""
+    from app.telemetry.trading_adapter import get_cycle_lineage, TradingLineageTracker
+    result = LineageVerificationResult(cycle_id)
+    lineage = get_cycle_lineage(cycle_id)
+    result.chain = lineage
+
+    expected_trace_id = TradingLineageTracker.derive_trace_id(cycle_id)
+    expected_root_span_id = TradingLineageTracker.root_span_id(cycle_id)
+
+    if lineage.get("trace_id") != expected_trace_id:
+        result.add_anomaly(f"Trace ID mismatch: got {lineage.get('trace_id')} expected {expected_trace_id}")
+
+    # Check each decision artifact
+    for d in lineage.get("decisions", []):
+        if d.get("trace_id") and d.get("trace_id") != expected_trace_id:
+            result.add_anomaly(f"Decision {d.get('decision_id')} trace_id {d.get('trace_id')} != {expected_trace_id}")
+
+    # Check execution intents
+    for intent in lineage.get("intents", []):
+        intent_id = intent.get("execution_intent_id")
+        sub_res = verify_intent_lineage(intent_id)
+        if not sub_res.valid:
+            result.valid = False
+            result.anomalies.extend([f"Intent {intent_id}: {a}" for a in sub_res.anomalies])
+
+    return result

@@ -158,6 +158,11 @@ def get_evaluation_checkpoint(worker_name: str) -> Optional[dict[str, Any]]:
 
 def save_decision_artifact(artifact: DecisionArtifact) -> DecisionArtifact:
     """Persist DecisionArtifact idempotently. Never overwrites historical proposal."""
+    from app.telemetry.trading_adapter import TradingLineageTracker
+    if not artifact.trace_id and artifact.cycle_id:
+        artifact.trace_id = TradingLineageTracker.derive_trace_id(artifact.cycle_id)
+    if not artifact.span_id:
+        artifact.span_id = TradingLineageTracker.generate_span_id()
     doc = artifact.model_dump(mode="python")
     existing = mongo_query.find_row(
         COLL_DECISION_ARTIFACTS, {"decision_id": artifact.decision_id}, ["decision_id"]
@@ -166,14 +171,15 @@ def save_decision_artifact(artifact: DecisionArtifact) -> DecisionArtifact:
         return artifact
     mongo_store.insert_docs(COLL_DECISION_ARTIFACTS, [doc])
     try:
-        from app.telemetry.trading_adapter import TradingLineageTracker
+        action_val = getattr(artifact, "action", getattr(artifact, "requested_action", "HOLD"))
         TradingLineageTracker.record_decision(
             cycle_id=artifact.cycle_id,
             ticker=artifact.ticker,
             decision_id=artifact.decision_id,
-            action=artifact.action,
+            action=action_val,
             confidence=artifact.confidence or 0,
-            attributes={"strategy": getattr(artifact, "strategy_name", "")},
+            parent_span_id=TradingLineageTracker.root_span_id(artifact.cycle_id),
+            attributes={"strategy": getattr(artifact, "strategy_name", ""), "span_id": artifact.span_id},
         )
     except Exception as e:
         logger.debug("[telemetry] record_decision failed: %s", e)
@@ -198,6 +204,18 @@ def get_decision_artifact_by_cycle_ticker(cycle_id: str, ticker: str) -> Optiona
 
 def save_policy_decision(policy: PolicyDecision) -> PolicyDecision:
     """Persist PolicyDecision idempotently."""
+    from app.telemetry.trading_adapter import TradingLineageTracker
+    cycle_id = getattr(policy, "cycle_id", "")
+    ticker = getattr(policy, "ticker", "") or getattr(policy, "normalized_ticker", "")
+    if not cycle_id or not ticker:
+        art = get_decision_artifact(policy.decision_id)
+        if art:
+            cycle_id = cycle_id or art.cycle_id
+            ticker = ticker or art.ticker
+    if cycle_id and not policy.trace_id:
+        policy.trace_id = TradingLineageTracker.derive_trace_id(cycle_id)
+    if not policy.span_id:
+        policy.span_id = TradingLineageTracker.generate_span_id()
     doc = policy.model_dump(mode="python")
     existing = mongo_query.find_row(
         COLL_POLICY_DECISIONS,
@@ -208,16 +226,16 @@ def save_policy_decision(policy: PolicyDecision) -> PolicyDecision:
         return policy
     mongo_store.insert_docs(COLL_POLICY_DECISIONS, [doc])
     try:
-        from app.telemetry.trading_adapter import TradingLineageTracker
         approved = policy.disposition in (PolicyDisposition.APPROVE, PolicyDisposition.APPROVE_WITH_CAP)
         TradingLineageTracker.record_policy_eval(
-            cycle_id=policy.cycle_id,
-            ticker=policy.ticker,
+            cycle_id=cycle_id or "unknown",
+            ticker=ticker or "UNKNOWN",
             policy_decision_id=policy.policy_decision_id,
             decision_id=policy.decision_id,
             verdict=policy.disposition.value,
             approved=approved,
-            attributes={"rationale": getattr(policy, "rationale", "")},
+            parent_span_id=TradingLineageTracker.root_span_id(cycle_id) if cycle_id else None,
+            attributes={"rationale": getattr(policy, "rationale", ""), "span_id": policy.span_id},
         )
     except Exception as e:
         logger.debug("[telemetry] record_policy_eval failed: %s", e)
@@ -776,6 +794,14 @@ def admit_execution_intent(
                     "INSUFFICIENT_CASH_RESERVATION",
                 )
 
+        from app.telemetry.trading_adapter import TradingLineageTracker
+        cycle_id = getattr(intent, "cycle_id", "") or "default"
+        trace_id = TradingLineageTracker.derive_trace_id(cycle_id)
+        if not intent.trace_id:
+            intent.trace_id = trace_id
+        if not intent.span_id:
+            intent.span_id = TradingLineageTracker.generate_span_id()
+
         resv = RiskReservation(
             reservation_id=f"resv-{uuid.uuid4().hex[:12]}",
             bot_id=bot_id,
@@ -787,6 +813,8 @@ def admit_execution_intent(
             status=ReservationStatus.ACTIVE,
             created_at=now,
             expires_at=intent.expires_at,
+            trace_id=trace_id,
+            span_id=TradingLineageTracker.generate_span_id(),
         )
         db[COLL_RISK_RESERVATIONS].insert_one(resv.model_dump(mode="python"), session=s)
 
@@ -794,28 +822,6 @@ def admit_execution_intent(
         intent.slot_key = slot_key
         intent.status = IntentStatus.CREATED
         db[COLL_EXECUTION_INTENTS].insert_one(intent.model_dump(mode="python"), session=s)
-
-        try:
-            from app.telemetry.trading_adapter import TradingLineageTracker
-            TradingLineageTracker.record_reservation(
-                cycle_id=intent.cycle_id,
-                ticker=intent.ticker,
-                reservation_id=resv.reservation_id,
-                slot_key=slot_key,
-                capital=resv.reserved_notional,
-            )
-            TradingLineageTracker.record_execution_intent(
-                cycle_id=intent.cycle_id,
-                ticker=intent.ticker,
-                execution_intent_id=intent.execution_intent_id,
-                policy_decision_id=intent.policy_decision_id,
-                reservation_id=resv.reservation_id,
-                action=intent.side,
-                shares=int(intent.quantity),
-                price=float(intent.limit_price or 0.0),
-            )
-        except Exception as e:
-            logger.debug("[telemetry] admit_execution_intent lineage failed: %s", e)
 
         return {
             "admitted": True,
@@ -827,9 +833,40 @@ def admit_execution_intent(
         }
 
     if session is not None:
-        return _admit_op(session)
-    with mongo_store.with_txn() as s:
-        return _admit_op(s)
+        result = _admit_op(session)
+    else:
+        with mongo_store.with_txn() as s:
+            result = _admit_op(s)
+
+    # Post-commit telemetry: only emit if transaction successfully committed and is not a duplicate replay
+    if result.get("admitted") and not result.get("is_duplicate"):
+        try:
+            from app.telemetry.trading_adapter import TradingLineageTracker
+            resv_data = result.get("reservation") or {}
+            intent_obj = result.get("execution_intent")
+            cycle_id = getattr(intent_obj, "cycle_id", "") or "default"
+            TradingLineageTracker.record_reservation(
+                cycle_id=cycle_id,
+                ticker=intent_obj.ticker,
+                reservation_id=resv_data.get("reservation_id"),
+                slot_key=slot_key,
+                capital=float(resv_data.get("reserved_notional", 0.0)),
+            )
+            shares_val = int(getattr(intent_obj, "approved_quantity", 0) or getattr(intent_obj, "quantity", 0) or 0)
+            TradingLineageTracker.record_execution_intent(
+                cycle_id=cycle_id,
+                ticker=intent_obj.ticker,
+                execution_intent_id=intent_obj.execution_intent_id,
+                policy_decision_id=intent_obj.policy_decision_id,
+                reservation_id=resv_data.get("reservation_id"),
+                action=intent_obj.side,
+                shares=shares_val,
+                price=float(required_notional / shares_val if shares_val else 0.0),
+            )
+        except Exception as e:
+            logger.debug("[telemetry] admit_execution_intent lineage failed: %s", e)
+
+    return result
 
 
 def expire_stale_intents_and_reservations(cutoff_time: Optional[datetime.datetime] = None) -> dict[str, int]:

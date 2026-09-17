@@ -90,6 +90,8 @@ class CanonicalAttributionModel(BaseModel):
     """Base model enforcing extra='forbid' while safely ignoring Mongo's internal _id."""
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
     mongo_id: Optional[Any] = Field(default=None, alias="_id", exclude=True)
+    trace_id: Optional[str] = Field(default=None)
+    span_id: Optional[str] = Field(default=None)
 
 
 class DecisionArtifact(CanonicalAttributionModel):

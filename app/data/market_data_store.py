@@ -8,7 +8,7 @@ from app.db import mongo_store
 logger = logging.getLogger(__name__)
 
 
-def save_snapshot(snapshot: MarketSnapshot):
+def save_snapshot(snapshot: MarketSnapshot, cycle_id: Optional[str] = None):
     """Save a market snapshot to the database."""
     mongo_store.upsert_doc('market_snapshots', {'ticker': snapshot.ticker, 'fetched_at': snapshot.fetched_at}, {'ticker': snapshot.ticker, 'fetched_at': snapshot.fetched_at, 'data_source': snapshot.data_source, 'candles_used': snapshot.candles_used, 'price': snapshot.price, 'open': snapshot.open, 'high': snapshot.high, 'low': snapshot.low, 'volume': snapshot.volume, 'vwap': snapshot.vwap, 'rsi_14': snapshot.rsi_14, 'macd': snapshot.macd, 'macd_signal': snapshot.macd_signal, 'macd_hist': snapshot.macd_hist, 'bb_upper': snapshot.bb_upper, 'bb_lower': snapshot.bb_lower, 'bb_pct': snapshot.bb_pct, 'sma_20': snapshot.sma_20, 'sma_50': snapshot.sma_50, 'sma_200': snapshot.sma_200, 'atr_14': snapshot.atr_14, 'adx_14': snapshot.adx_14, 'stoch_k': snapshot.stoch_k, 'stoch_d': snapshot.stoch_d, 'returns_1d': snapshot.returns_1d, 'returns_5d': snapshot.returns_5d, 'returns_20d': snapshot.returns_20d, 'volatility_20d': snapshot.volatility_20d, 'sharpe_20d': snapshot.sharpe_20d, 'max_drawdown_20d': snapshot.max_drawdown_20d, 'beta_20d': snapshot.beta_20d, 'pe_ratio': snapshot.pe_ratio, 'forward_pe': snapshot.forward_pe, 'eps': snapshot.eps, 'market_cap': snapshot.market_cap, 'revenue_growth': snapshot.revenue_growth, 'profit_margin': snapshot.profit_margin, 'debt_to_equity': snapshot.debt_to_equity}, insert_only=True)
     from app.telemetry import send_system_log
@@ -18,12 +18,20 @@ def save_snapshot(snapshot: MarketSnapshot):
     )
     try:
         from app.telemetry.trading_adapter import TradingLineageTracker
-        TradingLineageTracker.record_market_snapshot(
-            cycle_id="market-feed",
-            ticker=snapshot.ticker,
-            bar_price=float(snapshot.price or 0.0),
-            source=snapshot.data_source or "alpaca",
-        )
+        if cycle_id and cycle_id != "market-feed":
+            TradingLineageTracker.record_market_snapshot_consumed(
+                cycle_id=cycle_id,
+                ticker=snapshot.ticker,
+                bar_price=float(snapshot.price or 0.0),
+                source=snapshot.data_source or "alpaca",
+            )
+        else:
+            TradingLineageTracker.record_market_snapshot(
+                cycle_id="market-feed",
+                ticker=snapshot.ticker,
+                bar_price=float(snapshot.price or 0.0),
+                source=snapshot.data_source or "alpaca",
+            )
     except Exception as e:
         logger.debug("[telemetry] record_market_snapshot failed: %s", e)
 

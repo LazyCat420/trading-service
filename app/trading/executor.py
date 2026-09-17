@@ -675,7 +675,7 @@ async def execute_intent(
 
     try:
         from app.telemetry.trading_adapter import TradingLineageTracker
-        TradingLineageTracker.record_order_fill(
+        fill_span = TradingLineageTracker.record_order_fill(
             cycle_id=intent.cycle_id,
             ticker=ticker,
             order_id=order_id,
@@ -683,7 +683,29 @@ async def execute_intent(
             execution_intent_id=intent_id,
             shares=int(qty),
             fill_price=float(fill_price),
-            attributes={"mode": "ENFORCE", "fees": fees},
+            parent_span_id=TradingLineageTracker.root_span_id(intent.cycle_id),
+            attributes={
+                "mode": "ENFORCE",
+                "fees": fees,
+                "reservation_id": getattr(intent, "reservation_id", None) or f"resv-{intent_id}",
+                "slot_key": getattr(intent, "slot_key", None),
+            },
+        )
+        rec_id = f"rec-{intent_id}"
+        TradingLineageTracker.record_reconciliation(
+            cycle_id=intent.cycle_id,
+            ticker=ticker,
+            reconciliation_id=rec_id,
+            status="MATCH",
+            diff=0.0,
+            reconciliation_type="ENFORCE",
+            parent_span_id=fill_span.span_id,
+            attributes={
+                "mode": "ENFORCE",
+                "execution_intent_id": intent_id,
+                "order_id": order_id,
+                "fill_id": fill_id,
+            },
         )
     except Exception as e:
         logger.debug("[telemetry] ENFORCE lineage tracking failed: %s", e)

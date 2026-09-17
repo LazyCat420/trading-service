@@ -62,12 +62,13 @@ class TradingSpan:
     parent_span_id: Optional[str]
     cycle_id: str
     ticker: str
-    stage: str  # e.g., "market_snapshot", "research", "decision", "policy", "execution_intent", "reservation", "order_fill", "reconciliation", "outcome"
-    status: str  # "OK" | "ERROR"
+    stage: str  # e.g., "trading.cycle", "market_snapshot", "research", "decision", "policy", "execution_intent", "reservation_slot", "order_fill", "reconciliation", "outcome"
+    status: str  # "OK" | "ERROR" | "CANCELLED"
     start_time: str
     end_time: Optional[str] = None
     duration_ms: Optional[int] = None
     attributes: dict[str, Any] = field(default_factory=dict)
+    links: list[dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -148,10 +149,17 @@ def get_exporter() -> TelemetryAsyncExporter:
 class TradingLineageTracker:
     """Tracks and emits lineage spans across the complete trading lifecycle."""
 
+    _cycle_start_times: dict[str, float] = {}
+
     @staticmethod
     def derive_trace_id(cycle_id: str) -> str:
         """Deterministically derives a 32-char hex trace_id from cycle_id."""
         return hashlib.sha256(cycle_id.encode("utf-8")).hexdigest()[:32]
+
+    @staticmethod
+    def root_span_id(cycle_id: str) -> str:
+        """Deterministically derives a 16-char hex root span_id for the cycle, matching data_trace.root_span."""
+        return hashlib.sha256((cycle_id + ":root").encode("utf-8")).hexdigest()[:16]
 
     @staticmethod
     def generate_span_id() -> str:
@@ -170,16 +178,18 @@ class TradingLineageTracker:
         stage: str,
         status: str = "OK",
         parent_span_id: Optional[str] = None,
+        span_id: Optional[str] = None,
         duration_ms: Optional[int] = 0,
+        links: Optional[list[dict[str, str]]] = None,
         attributes: Optional[dict[str, Any]] = None,
     ) -> TradingSpan:
         trace_id = cls.derive_trace_id(cycle_id)
-        span_id = cls.generate_span_id()
+        final_span_id = span_id or cls.generate_span_id()
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         span = TradingSpan(
             trace_id=trace_id,
-            span_id=span_id,
+            span_id=final_span_id,
             parent_span_id=parent_span_id,
             cycle_id=cycle_id,
             ticker=ticker,
@@ -189,6 +199,7 @@ class TradingLineageTracker:
             end_time=now_iso,
             duration_ms=duration_ms,
             attributes=attributes or {},
+            links=links or [],
         )
 
         try:
@@ -199,6 +210,50 @@ class TradingLineageTracker:
         return span
 
     @classmethod
+    def record_cycle_start(
+        cls, cycle_id: str, scope: str = "production", attributes: Optional[dict[str, Any]] = None
+    ) -> TradingSpan:
+        cls._cycle_start_times[cycle_id] = time.monotonic()
+        attrs = {"cycle_id": cycle_id, "scope": scope}
+        if attributes:
+            attrs.update(attributes)
+        return cls.emit_span(
+            cycle_id=cycle_id,
+            ticker="PORTFOLIO",
+            stage="trading.cycle",
+            status="OK",
+            span_id=cls.root_span_id(cycle_id),
+            parent_span_id=None,
+            attributes=attrs,
+        )
+
+    @classmethod
+    def record_cycle_end(
+        cls,
+        cycle_id: str,
+        status: str = "OK",
+        error: Optional[str] = None,
+        attributes: Optional[dict[str, Any]] = None,
+    ) -> TradingSpan:
+        start_t = cls._cycle_start_times.pop(cycle_id, None)
+        duration_ms = int((time.monotonic() - start_t) * 1000) if start_t is not None else 0
+        attrs = {"cycle_id": cycle_id}
+        if error:
+            attrs["error"] = error
+        if attributes:
+            attrs.update(attributes)
+        return cls.emit_span(
+            cycle_id=cycle_id,
+            ticker="PORTFOLIO",
+            stage="trading.cycle",
+            status=status,
+            span_id=cls.root_span_id(cycle_id),
+            parent_span_id=None,
+            duration_ms=duration_ms,
+            attributes=attrs,
+        )
+
+    @classmethod
     def record_market_snapshot(
         cls, cycle_id: str, ticker: str, bar_price: float, source: str, parent_span_id: Optional[str] = None
     ) -> TradingSpan:
@@ -206,17 +261,29 @@ class TradingLineageTracker:
             cycle_id=cycle_id,
             ticker=ticker,
             stage="market_snapshot",
-            parent_span_id=parent_span_id,
+            parent_span_id=parent_span_id or (cls.root_span_id(cycle_id) if cycle_id != "market-feed" else None),
             attributes={"price": bar_price, "source": source},
         )
 
     @classmethod
-    def record_cycle_start(cls, cycle_id: str, scope: str = "production") -> TradingSpan:
+    def record_market_snapshot_consumed(
+        cls,
+        cycle_id: str,
+        ticker: str,
+        bar_price: float,
+        source: str = "cache",
+        parent_span_id: Optional[str] = None,
+        attributes: Optional[dict[str, Any]] = None,
+    ) -> TradingSpan:
+        attrs = {"price": bar_price, "source": source, "consumed_by_cycle": cycle_id}
+        if attributes:
+            attrs.update(attributes)
         return cls.emit_span(
             cycle_id=cycle_id,
-            ticker="PORTFOLIO",
-            stage="trading.cycle",
-            attributes={"cycle_id": cycle_id, "scope": scope},
+            ticker=ticker,
+            stage="market_snapshot",
+            parent_span_id=parent_span_id or cls.root_span_id(cycle_id),
+            attributes=attrs,
         )
 
     @classmethod
@@ -237,7 +304,7 @@ class TradingLineageTracker:
             cycle_id=cycle_id,
             ticker=ticker,
             stage="decision",
-            parent_span_id=parent_span_id,
+            parent_span_id=parent_span_id or cls.root_span_id(cycle_id),
             attributes=attrs,
         )
 
@@ -253,20 +320,23 @@ class TradingLineageTracker:
         parent_span_id: Optional[str] = None,
         attributes: Optional[dict[str, Any]] = None,
     ) -> TradingSpan:
+        domain_result = "APPROVED" if approved else "REJECTED"
         attrs = {
             "policy_decision_id": policy_decision_id,
             "decision_id": decision_id,
             "verdict": verdict,
             "approved": approved,
+            "domain_result": domain_result,
         }
         if attributes:
             attrs.update(attributes)
+        # Policy rejection is a normal domain result, NOT an infrastructure error (status is OK)
         return cls.emit_span(
             cycle_id=cycle_id,
             ticker=ticker,
             stage="policy",
-            status="OK" if approved else "ERROR",
-            parent_span_id=parent_span_id,
+            status="OK",
+            parent_span_id=parent_span_id or cls.root_span_id(cycle_id),
             attributes=attrs,
         )
 
@@ -298,7 +368,7 @@ class TradingLineageTracker:
             cycle_id=cycle_id,
             ticker=ticker,
             stage="execution_intent",
-            parent_span_id=parent_span_id,
+            parent_span_id=parent_span_id or cls.root_span_id(cycle_id),
             attributes=attrs,
         )
 
@@ -320,7 +390,7 @@ class TradingLineageTracker:
             cycle_id=cycle_id,
             ticker=ticker,
             stage="reservation_slot",
-            parent_span_id=parent_span_id,
+            parent_span_id=parent_span_id or cls.root_span_id(cycle_id),
             attributes=attrs,
         )
 
@@ -350,7 +420,7 @@ class TradingLineageTracker:
             cycle_id=cycle_id,
             ticker=ticker,
             stage="order_fill",
-            parent_span_id=parent_span_id,
+            parent_span_id=parent_span_id or cls.root_span_id(cycle_id),
             attributes=attrs,
         )
 
@@ -362,18 +432,27 @@ class TradingLineageTracker:
         reconciliation_id: str,
         status: str,
         diff: float = 0.0,
+        reconciliation_type: str = "SHADOW",
         parent_span_id: Optional[str] = None,
+        links: Optional[list[dict[str, str]]] = None,
         attributes: Optional[dict[str, Any]] = None,
     ) -> TradingSpan:
-        attrs = {"reconciliation_id": reconciliation_id, "reconciliation_status": status, "discrepancy": diff}
+        attrs = {
+            "reconciliation_id": reconciliation_id,
+            "reconciliation_status": status,
+            "domain_result": status,
+            "discrepancy": diff,
+            "reconciliation_type": reconciliation_type,
+        }
         if attributes:
             attrs.update(attributes)
         return cls.emit_span(
             cycle_id=cycle_id,
             ticker=ticker,
             stage="reconciliation",
-            status="OK" if status == "MATCH" else "ERROR",
-            parent_span_id=parent_span_id,
+            status="OK",
+            parent_span_id=parent_span_id or cls.root_span_id(cycle_id),
+            links=links or [],
             attributes=attrs,
         )
 
@@ -387,22 +466,26 @@ class TradingLineageTracker:
         pnl_pct: float = 0.0,
         is_shadow: bool = False,
         parent_span_id: Optional[str] = None,
+        links: Optional[list[dict[str, str]]] = None,
         attributes: Optional[dict[str, Any]] = None,
     ) -> TradingSpan:
         attrs = {
             "outcome_id": outcome_id,
             "outcome": outcome,
+            "domain_result": outcome,
             "pnl_pct": pnl_pct,
             "is_shadow": is_shadow,
         }
         if attributes:
             attrs.update(attributes)
+        # Trading loss is a normal domain result, NOT an infrastructure error
         return cls.emit_span(
             cycle_id=cycle_id,
             ticker=ticker,
             stage="shadow_outcome" if is_shadow else "outcome",
-            status="OK" if outcome in ("WIN", "HOLD_CORRECT") else "ERROR",
+            status="OK",
             parent_span_id=parent_span_id,
+            links=links or [],
             attributes=attrs,
         )
 
@@ -444,3 +527,50 @@ class CandidateTradingObservation:
         )
 
         return record
+
+
+def get_cycle_lineage(cycle_id: str) -> dict[str, Any]:
+    """Retrieves full applicable lineage and authoritative domain IDs for a trading cycle."""
+    from app.db import mongo_store
+
+    trace_id = TradingLineageTracker.derive_trace_id(cycle_id)
+    root_span_id = TradingLineageTracker.root_span_id(cycle_id)
+
+    db = mongo_store.get_doc_db()
+
+    # Query domain collections
+    decisions = list(db["decision_artifacts"].find({"cycle_id": cycle_id}, {"_id": 0}))
+    decision_ids = [d.get("decision_id") for d in decisions if d.get("decision_id")]
+
+    policies = list(db["policy_decisions"].find({"decision_id": {"$in": decision_ids}}, {"_id": 0})) if decision_ids else []
+    reservations = list(db["risk_reservations"].find({"cycle_id": cycle_id}, {"_id": 0}))
+    intents = list(db["execution_intents"].find({"cycle_id": cycle_id}, {"_id": 0}))
+    intent_ids = [i.get("execution_intent_id") for i in intents if i.get("execution_intent_id")]
+
+    order_attempts = list(db["order_attempts"].find({"execution_intent_id": {"$in": intent_ids}}, {"_id": 0})) if intent_ids else []
+    fills = list(db["trade_fills"].find({"execution_intent_id": {"$in": intent_ids}}, {"_id": 0})) if intent_ids else []
+    reconciliations = list(db["execution_reconciliations"].find({"execution_intent_id": {"$in": intent_ids}}, {"_id": 0})) if intent_ids else []
+    outcomes = list(db["decision_outcomes"].find({"decision_id": {"$in": decision_ids}}, {"_id": 0})) if decision_ids else []
+    events = list(db["pipeline_trace_events"].find({"cycle_id": cycle_id}, {"_id": 0}))
+
+    # Also include any un-flushed spans in the exporter queue
+    queued_spans = [
+        s for s in list(get_exporter().queue)
+        if s.get("cycle_id") == cycle_id
+    ]
+
+    return {
+        "cycle_id": cycle_id,
+        "trace_id": trace_id,
+        "root_span_id": root_span_id,
+        "decisions": decisions,
+        "policies": policies,
+        "reservations": reservations,
+        "intents": intents,
+        "order_attempts": order_attempts,
+        "fills": fills,
+        "reconciliations": reconciliations,
+        "outcomes": outcomes,
+        "events": events,
+        "queued_spans": queued_spans,
+    }

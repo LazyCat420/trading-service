@@ -96,15 +96,25 @@ _SOURCE_COLLECTIONS = frozenset({
 def trace_cycle(fn):
     """Bind only this explicitly started cycle, never the global active singleton."""
     from functools import wraps
+    import asyncio
+    from app.telemetry.trading_adapter import TradingLineageTracker
     @wraps(fn)
     async def wrapped(cls, cycle_id, *args, **kwargs):
         token = _identity.set({'cycle_id':cycle_id,'ticker':'','agent':'collector'})
         parent = _parent.set(root_span(cycle_id))
+        TradingLineageTracker.record_cycle_start(cycle_id)
         try:
-            return await fn(cls,cycle_id,*args,**kwargs)
+            res = await fn(cls,cycle_id,*args,**kwargs)
+            TradingLineageTracker.record_cycle_end(cycle_id, status="OK")
+            return res
+        except BaseException as exc:
+            status = "CANCELLED" if isinstance(exc, asyncio.CancelledError) else "ERROR"
+            TradingLineageTracker.record_cycle_end(cycle_id, status=status, error=str(exc))
+            raise
         finally:
             _parent.reset(parent)
             _identity.reset(token)
+            TradingLineageTracker.flush()
     return wrapped
 
 def observe_store(collection, operation, query, documents):

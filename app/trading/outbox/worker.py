@@ -76,6 +76,31 @@ def process_outbox_event(event: dict[str, Any]) -> dict[str, Any]:
     # 5. Persist Reconciliation Record
     save_execution_reconciliation(rec)
 
+    try:
+        from app.telemetry.trading_adapter import TradingLineageTracker
+        cycle_id = getattr(intent, "cycle_id", "") or "default"
+        parent_trace_id = intent.trace_id or TradingLineageTracker.derive_trace_id(cycle_id)
+        parent_span_id = intent.span_id
+        links = [{"trace_id": parent_trace_id, "span_id": parent_span_id}] if parent_span_id else []
+        TradingLineageTracker.record_reconciliation(
+            cycle_id=cycle_id,
+            ticker=intent.ticker,
+            reconciliation_id=rec.reconciliation_id,
+            status="MATCH" if rec.verdict.value == "EXECUTION_MATCHED" else "MISMATCH",
+            diff=float(rec.realized_slippage_bps),
+            reconciliation_type="ASYNC_OUTBOX",
+            parent_span_id=parent_span_id,
+            links=links,
+            attributes={
+                "order_id": order_id,
+                "execution_intent_id": intent_id,
+                "verdict": rec.verdict.value,
+                "event_id": event_id,
+            },
+        )
+    except Exception as e:
+        logger.debug("[OutboxWorker] Reconciliation telemetry failed: %s", e)
+
     logger.info(
         "[OutboxWorker] Event %s processed: intent=%s verdict=%s slippage=%.1fbps",
         event_id, intent_id, rec.verdict.value, rec.realized_slippage_bps,

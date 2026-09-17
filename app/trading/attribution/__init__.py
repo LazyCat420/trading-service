@@ -35,6 +35,7 @@ from app.trading.attribution.repository import (
     save_policy_decision,
 )
 from app.trading.attribution.verifier import (
+    verify_cycle_lineage,
     verify_fill_lineage,
     verify_intent_lineage,
 )
@@ -71,6 +72,7 @@ __all__ = [
     "save_execution_reconciliation",
     "save_order_attempt",
     "save_policy_decision",
+    "verify_cycle_lineage",
     "verify_fill_lineage",
     "verify_intent_lineage",
 ]
