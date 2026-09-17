@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 from typing import Any, Optional
 
@@ -84,6 +85,16 @@ def process_outbox_event(event: dict[str, Any]) -> dict[str, Any]:
 
 def run_outbox_worker_iteration(batch_size: int = 10) -> int:
     """Runs a single iteration of the outbox worker loop."""
+    try:
+        db = mongo_store.get_doc_db()
+        db["worker_heartbeats"].update_one(
+            {"worker": "outbox_worker"},
+            {"$set": {"last_heartbeat": datetime.datetime.now(datetime.timezone.utc), "status": "RUNNING"}},
+            upsert=True,
+        )
+    except Exception:
+        pass
+
     events = claim_pending_outbox_events(batch_size=batch_size)
     if not events:
         return 0
@@ -91,13 +102,14 @@ def run_outbox_worker_iteration(batch_size: int = 10) -> int:
     processed_count = 0
     for event in events:
         event_id = event["event_id"]
+        worker_token = event.get("locked_by")
         try:
             res = process_outbox_event(event)
-            mark_outbox_event_completed(event_id, result_payload=res)
+            mark_outbox_event_completed(event_id, result_payload=res, worker_token=worker_token)
             processed_count += 1
         except Exception as exc:
             logger.exception("[OutboxWorker] Failed processing event %s: %s", event_id, exc)
-            mark_outbox_event_failed(event_id, error_msg=str(exc))
+            mark_outbox_event_failed(event_id, error_msg=str(exc), worker_token=worker_token)
 
     return processed_count
 

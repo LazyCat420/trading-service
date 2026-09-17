@@ -96,6 +96,7 @@ class DecisionArtifact(CanonicalAttributionModel):
     """Represents the LLM proposal exactly as produced, before any policy modification."""
 
     decision_id: str
+    bot_id: str = "default"
     schema_version: int = 1
     cycle_id: str
     ticker: str

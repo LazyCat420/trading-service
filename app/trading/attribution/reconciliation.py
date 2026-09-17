@@ -51,7 +51,7 @@ def reconcile_execution(
     modeled_friction_bps: float = 10.0,
 ) -> ExecutionReconciliation:
     """Pure function calculating execution reconciliation and verdict."""
-    reconciliation_id = f"rec-{uuid.uuid4().hex[:12]}"
+    reconciliation_id = f"rec-{intent.execution_intent_id}"
     now = datetime.datetime.now(datetime.timezone.utc)
 
     # 1. Total filled quantity and volume-weighted average price (VWAP)

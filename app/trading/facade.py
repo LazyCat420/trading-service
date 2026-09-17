@@ -84,6 +84,7 @@ class TradeFacade:
         allow_supersede: bool = True,
         slot_key: Optional[str] = None,
         strict_capacity: bool = False,
+        request_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Execute or simulate a trade through the unified control plane."""
         ticker = ticker.upper().strip()
@@ -95,7 +96,12 @@ class TradeFacade:
 
         # 2. Derive Request Idempotency Key
         if not idempotency_key:
-            raw_key = f"{bot_id}:{ticker}:{action}:{cycle_id or 'adhoc'}"
+            if request_id:
+                raw_key = f"req:{request_id}"
+            elif cycle_id:
+                raw_key = f"cycle:{cycle_id}:{bot_id}:{ticker}:{action}"
+            else:
+                raw_key = f"adhoc:{bot_id}:{ticker}:{action}:{uuid.uuid4().hex}"
             idempotency_key = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
         is_approved = True
@@ -182,6 +188,7 @@ class TradeFacade:
                 d_id = f"dec-{uuid.uuid4().hex[:12]}"
                 decision_artifact = DecisionArtifact(
                     decision_id=d_id,
+                    bot_id=bot_id,
                     cycle_id=c_id,
                     ticker=ticker,
                     producer=producer,
@@ -199,6 +206,7 @@ class TradeFacade:
             policy_dec, intent = PolicyTranslator.evaluate(
                 decision_artifact,
                 snapshot,
+                bot_id=bot_id,
             )
             policy_dec.effective_mode = effective_mode.value
             repository.save_policy_decision(policy_dec)
@@ -206,7 +214,7 @@ class TradeFacade:
             if intent:
                 intent.effective_mode = effective_mode.value
                 intent.idempotency_key = idempotency_key
-                repository.save_execution_intent(intent)
+                intent.bot_id = bot_id
 
             is_approved = policy_dec.is_approved
         except Exception as advisory_err:
@@ -331,18 +339,36 @@ class TradeFacade:
                 }
 
             if admit_res.get("is_duplicate"):
-                return {
-                    "status": TradeResultStatus.ALREADY_PROCESSED.value,
-                    "effective_mode": "ENFORCE",
-                    "trade_executed": True,
-                    "execution_intent_id": intent.execution_intent_id,
-                }
+                if admit_res.get("already_executed"):
+                    committed_intent_id = admit_res.get("execution_intent").execution_intent_id
+                    db = mongo_store.get_doc_db()
+                    fill_doc = db["trade_fills"].find_one({"execution_intent_id": committed_intent_id})
+                    order_doc = db["orders"].find_one({"execution_intent_id": committed_intent_id})
+                    return {
+                        "status": TradeResultStatus.ALREADY_PROCESSED.value,
+                        "effective_mode": "ENFORCE",
+                        "trade_executed": True,
+                        "execution_intent_id": committed_intent_id,
+                        "order_id": order_doc.get("order_id") if order_doc else None,
+                        "trade": fill_doc or order_doc or {},
+                    }
+                elif admit_res.get("resumed"):
+                    intent = admit_res.get("execution_intent")
+                    logger.info("[TradeFacade] Resuming interrupted execution for intent %s", intent.execution_intent_id)
+                else:
+                    return {
+                        "status": TradeResultStatus.POLICY_DENIED.value,
+                        "effective_mode": "ENFORCE",
+                        "trade_executed": False,
+                        "reason_code": "INTENT_SUPERSEDED_OR_EXPIRED",
+                        "execution_intent_id": intent.execution_intent_id,
+                    }
 
             # Transactional Execution via execute_intent
             try:
                 exec_res = await execute_intent(
                     intent.execution_intent_id,
-                    account_context={"bot_id": bot_id},
+                    account_context={"bot_id": bot_id, "effective_mode": effective_mode.value},
                     current_quote={"price": quote_price, "age_hours": quote_age_hours},
                 )
                 return {

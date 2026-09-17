@@ -1248,13 +1248,17 @@ async def emergency_risk_exit(
 ) -> dict:
     """Executes a risk-reducing exit strictly exempt from intent or pipeline health requirements."""
     logger.warning("[paper] EMERGENCY RISK EXIT for %s (bot_id=%s, reason=%s)", ticker, bot_id, reason)
-    return await sell(
+    from app.trading.facade import TradeFacade
+    res = await TradeFacade.submit_trade(
         bot_id=bot_id,
         ticker=ticker,
-        qty_pct=qty_pct,
-        is_emergency_risk_exit=True,
-        called_via_facade=True,
+        action="SELL",
+        size_pct=qty_pct,
+        confidence=100,
+        is_emergency=True,
+        idempotency_key=f"emergency:{bot_id}:{ticker}:{datetime.date.today().isoformat()}:{uuid.uuid4().hex[:6]}",
     )
+    return res.get("trade") or res
 
 
 # Fix #13: Stop-loss enforcement — now per-position with ATR-based levels
@@ -1303,9 +1307,21 @@ async def check_stop_losses(
                 pnl_pct,
             )
 
-            # Execute sell
-            result = await sell(bot_id, ticker, current_price=current_price, cycle_id=cycle_id)
-            if "error" not in result:
+            # Execute sell via TradeFacade
+            from app.trading.facade import TradeFacade
+            c_key = f"stoploss:{bot_id}:{ticker}:{cycle_id or datetime.date.today().isoformat()}"
+            facade_res = await TradeFacade.submit_trade(
+                bot_id=bot_id,
+                ticker=ticker,
+                action="SELL",
+                size_pct=1.0,
+                current_price=current_price,
+                cycle_id=cycle_id,
+                confidence=100,
+                idempotency_key=c_key,
+            )
+            result = facade_res.get("trade") or facade_res
+            if facade_res.get("trade_executed"):
                 triggered.append(result)
                 # Resolve outcome so the feedback loop captures stop-loss exits
                 try:
@@ -1396,9 +1412,21 @@ async def check_take_profits(
                 pnl_pct,
             )
 
-            # Harvest the full position
-            result = await sell(bot_id, ticker, current_price=current_price, cycle_id=cycle_id)
-            if "error" not in result:
+            # Harvest the full position via TradeFacade
+            from app.trading.facade import TradeFacade
+            tp_key = f"takeprofit:{bot_id}:{ticker}:{cycle_id or datetime.date.today().isoformat()}"
+            facade_res = await TradeFacade.submit_trade(
+                bot_id=bot_id,
+                ticker=ticker,
+                action="SELL",
+                size_pct=1.0,
+                current_price=current_price,
+                cycle_id=cycle_id,
+                confidence=100,
+                idempotency_key=tp_key,
+            )
+            result = facade_res.get("trade") or facade_res
+            if facade_res.get("trade_executed"):
                 triggered.append(result)
                 # Resolve outcome so the feedback loop captures take-profit exits
                 try:

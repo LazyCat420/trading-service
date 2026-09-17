@@ -367,12 +367,8 @@ async def start_health_server(shutdown_event: asyncio.Event):
 
     @app.get("/control-plane/metrics")
     def control_plane_metrics():
-        from app.trading.outbox.repository import get_outbox_metrics
-        from app.trading.control_plane import resolve_control_plane_mode
-        return {
-            "default_mode": resolve_control_plane_mode("default").value,
-            "outbox": get_outbox_metrics(),
-        }
+        from app.trading.control_plane import get_control_plane_operational_metrics
+        return get_control_plane_operational_metrics()
 
     # Mounted one at a time, on purpose. These used to share a single
     # try/except: one bad import anywhere in the block aborted the whole

@@ -20,6 +20,7 @@ from app.trading.attribution.models import (
     OrderAttemptStatus,
     PolicyDecision,
     PolicyDisposition,
+    ReservationStatus,
 )
 from app.trading.attribution import repository
 from app.trading.attribution.repository import (
@@ -38,6 +39,14 @@ from app.trading.paper_trader import _apply_execution_cost, _get_current_price
 logger = logging.getLogger(__name__)
 
 
+def _ensure_utc(dt: Optional[datetime.datetime]) -> Optional[datetime.datetime]:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone(datetime.timezone.utc)
+
+
 class IntentExecutionRejected(Exception):
     """Raised when an intent fails invariant verification."""
     def __init__(self, message: str, reason_code: str):
@@ -53,7 +62,7 @@ async def execute_intent(
 ) -> dict[str, Any]:
     """Source-of-truth runner: atomically executes an approved ExecutionIntent."""
     bot_id = account_context.get("bot_id", "default")
-    effective_mode = resolve_control_plane_mode(bot_id)
+    mode_arg = account_context.get("effective_mode") or getattr(account_context, "mode", None)
 
     # 1. Fetch Intent
     docs = mongo_store.find_docs(COLL_EXECUTION_INTENTS, {"execution_intent_id": intent_id}, limit=1)
@@ -63,11 +72,34 @@ async def execute_intent(
     intent = ExecutionIntent.model_validate(docs[0])
     now = datetime.datetime.now(datetime.timezone.utc)
 
+    # Resolve and validate effective execution mode:
+    # 1. Caller explicit effective_mode
+    # 2. Bot-specific or global control plane mode
+    # 3. Intent recorded mode if set beyond default OBSERVE
+    resolved_mode = mode_arg
+    if not resolved_mode:
+        bot_mode = resolve_control_plane_mode(bot_id).value
+        if bot_mode in (ControlPlaneMode.SHADOW.value, ControlPlaneMode.ENFORCE.value):
+            resolved_mode = bot_mode
+        elif intent.effective_mode and intent.effective_mode != ControlPlaneMode.OBSERVE.value:
+            resolved_mode = intent.effective_mode
+        else:
+            resolved_mode = bot_mode
+
+    try:
+        effective_mode = ControlPlaneMode(resolved_mode)
+    except ValueError:
+        raise IntentExecutionRejected(f"Invalid execution mode {resolved_mode}", "INVALID_EXECUTION_MODE")
+
+    if effective_mode not in (ControlPlaneMode.SHADOW, ControlPlaneMode.ENFORCE):
+        raise IntentExecutionRejected(f"Cannot execute intent in {effective_mode.value} mode", "INVALID_EXECUTION_MODE")
+
     # 2. Invariant Verifications
     if intent.status != IntentStatus.CREATED:
         raise IntentExecutionRejected(f"Intent status is {intent.status}, expected CREATED", "INTENT_NOT_CREATED")
 
-    if intent.expires_at and intent.expires_at < now:
+    exp_intent = _ensure_utc(intent.expires_at)
+    if exp_intent and exp_intent < now:
         raise IntentExecutionRejected(f"Intent expired at {intent.expires_at}", "INTENT_EXPIRED")
 
     if intent.bot_id and intent.bot_id != bot_id:
@@ -114,7 +146,7 @@ async def execute_intent(
         fill_price, cost = _apply_execution_cost(ticker, price, "BUY", approved_notional)
         fees = float(cost.get("commission", 0.0) + cost.get("exchange_fee", 0.0))
         qty = approved_notional / fill_price
-        total_spent = approved_notional
+        total_spent = approved_notional + fees
     elif side == "SELL":
         pos = mongo_query.find_row("positions", {"bot_id": bot_id, "ticker": ticker}, ["id", "qty", "avg_entry_price"], session=session)
         if not pos or float(pos[1]) <= 0:
@@ -129,9 +161,50 @@ async def execute_intent(
     else:
         raise IntentExecutionRejected(f"Unsupported side {side}", "INVALID_SIDE")
 
-    # 5. SHADOW Mode Bypass (Simulate execution without mutating portfolio)
+    # 5. SHADOW Mode Bypass (Simulate execution without mutating portfolio, but persist shadow execution & reconciliation)
     if effective_mode == ControlPlaneMode.SHADOW:
         logger.info("[Executor] SHADOW mode active: simulating execution for intent %s", intent_id)
+        repository.consume_execution_intent(intent_id)
+        repository.consume_risk_reservations_for_intent(intent_id)
+
+        db = mongo_store.get_doc_db()
+        shadow_exec = {
+            "execution_intent_id": intent_id,
+            "order_id": order_id,
+            "bot_id": bot_id,
+            "ticker": ticker,
+            "side": side,
+            "fill_price": fill_price,
+            "qty": qty,
+            "fees": fees,
+            "simulated": True,
+            "executed_at": now,
+        }
+        db["shadow_executions"].insert_one(shadow_exec)
+
+        from app.trading.attribution.models import ExecutionReconciliation, ReconciliationVerdict
+        rec_id = f"rec-{intent_id}"
+        rec = ExecutionReconciliation(
+            reconciliation_id=rec_id,
+            execution_intent_id=intent_id,
+            order_id=order_id,
+            fill_ids=[f"sim-fill-{order_id}"],
+            intended_qty=qty,
+            filled_qty=qty,
+            reference_price=fill_price,
+            expected_price=fill_price,
+            realized_price=fill_price,
+            fees=fees,
+            modeled_spread_bps=0.0,
+            realized_slippage_bps=0.0,
+            submission_to_fill_latency_ms=0.0,
+            residual_qty=0.0,
+            verdict=ReconciliationVerdict.EXECUTION_MATCHED,
+            effective_mode="SHADOW",
+            reconciled_at=now,
+        )
+        repository.save_execution_reconciliation(rec)
+
         return {
             "status": "SIMULATED",
             "effective_mode": "SHADOW",
@@ -143,6 +216,7 @@ async def execute_intent(
             "qty": qty,
             "fees": fees,
             "simulated": True,
+            "reconciliation_id": rec_id,
         }
 
     # 6. Atomic Execution Transaction in MongoDB
@@ -153,16 +227,39 @@ async def execute_intent(
         if not repository.consume_execution_intent(intent_id, session=s):
             raise IntentExecutionRejected(f"Intent {intent_id} could not be consumed (CAS failed)", "INTENT_ALREADY_CONSUMED")
 
+        # Validate reservation validity if present
+        resv_doc = db[COLL_RISK_RESERVATIONS].find_one({"execution_intent_id": intent_id}, session=s)
+        if resv_doc:
+            if resv_doc.get("status") != ReservationStatus.ACTIVE.value:
+                raise IntentExecutionRejected(
+                    f"Reservation for intent {intent_id} is not active ({resv_doc.get('status')})",
+                    "RESERVATION_NOT_ACTIVE",
+                )
+            if resv_doc.get("expires_at"):
+                exp_resv = _ensure_utc(resv_doc["expires_at"])
+                if exp_resv and exp_resv < now:
+                    raise IntentExecutionRejected(
+                        f"Reservation for intent {intent_id} has expired",
+                        "RESERVATION_EXPIRED",
+                    )
+
         # Consume any active risk reservations for this intent
         repository.consume_risk_reservations_for_intent(intent_id, session=s)
 
-        # Update slot if bound
+        # Update slot if bound, validating ownership
         if intent.slot_key:
-            db[COLL_EXECUTION_SLOTS].update_one(
-                {"slot_key": intent.slot_key, "intent_id": intent_id},
-                {"$set": {"status": "CONSUMED", "consumed_at": now}},
-                session=s,
-            )
+            existing_slot = db[COLL_EXECUTION_SLOTS].find_one({"slot_key": intent.slot_key}, session=s)
+            if existing_slot:
+                if existing_slot.get("intent_id") != intent_id or existing_slot.get("status") not in ("ACTIVE", "RESERVED"):
+                    raise IntentExecutionRejected(
+                        f"Slot {intent.slot_key} not held or not reserved for intent {intent_id}",
+                        "SLOT_OWNERSHIP_INVALID",
+                    )
+                db[COLL_EXECUTION_SLOTS].update_one(
+                    {"slot_key": intent.slot_key, "intent_id": intent_id},
+                    {"$set": {"status": "CONSUMED", "consumed_at": now}},
+                    session=s,
+                )
 
         # B. Mutate Cash & Positions & Tax Lots
         if side == "BUY":
@@ -198,6 +295,9 @@ async def execute_intent(
                         "ticker": ticker,
                         "qty": qty,
                         "avg_entry_price": fill_price,
+                        "stop_loss_pct": intent.order_constraints.get("stop_loss_pct") if intent.order_constraints else None,
+                        "take_profit_pct": intent.order_constraints.get("take_profit_pct") if intent.order_constraints else None,
+                        "exit_style": intent.order_constraints.get("exit_style", "hard_stop") if intent.order_constraints else "hard_stop",
                         "created_at": now,
                         "updated_at": now,
                     },
@@ -226,8 +326,16 @@ async def execute_intent(
         elif side == "SELL":
             # Deduct position qty
             existing_pos = mongo_query.find_row("positions", {"bot_id": bot_id, "ticker": ticker}, ["id", "qty", "avg_entry_price"], session=s)
-            held_qty = float(existing_pos[1])
-            new_qty = max(0.0, held_qty - qty)
+            if not existing_pos:
+                raise IntentExecutionRejected(f"No open position to sell for {ticker}", "NO_OPEN_POSITION")
+            held_qty = float(existing_pos[1] or 0.0)
+            if held_qty < qty:
+                raise IntentExecutionRejected(
+                    f"Cannot sell {qty} shares of {ticker}; only {held_qty} held",
+                    "INSUFFICIENT_POSITION_QTY",
+                )
+
+            new_qty = held_qty - qty
             if new_qty <= 0.0001:
                 db["positions"].delete_one({"bot_id": bot_id, "ticker": ticker}, session=s)
             else:
@@ -289,6 +397,12 @@ async def execute_intent(
                     session=s,
                 )
                 unclosed -= close_amt
+
+            if unclosed > 0.0001:
+                raise IntentExecutionRejected(
+                    f"Cannot sell {qty} shares of {ticker}: only {qty - unclosed:.4f} shares matched to open lots",
+                    "UNMATCHED_LOT_QUANTITY",
+                )
 
         # C. Insert Order & TradeFill
         db["orders"].insert_one(
