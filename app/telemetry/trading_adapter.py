@@ -90,38 +90,44 @@ class TelemetryAsyncExporter:
         with self._lock:
             self.queue.append(clean_span)
 
+    def flush(self) -> None:
+        batch = []
+        with self._lock:
+            while self.queue and len(batch) < 50:
+                batch.append(self.queue.popleft())
+
+        if not batch:
+            return
+
+        payload = {
+            "schema_version": "1.0",
+            "service_source": "trading-service",
+            "exported_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "spans": batch,
+            "runs": [],
+        }
+
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            self.endpoint,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            # Fail fast with 2.5s timeout — never block trading loops
+            with urllib.request.urlopen(req, timeout=2.5):
+                pass
+        except Exception as e:
+            # Silently catch; telemetry failures never compromise trading operations
+            logger.debug("[TelemetryAsyncExporter] Export failed: %s", e)
+
     def _worker_loop(self) -> None:
         while self._running:
             try:
-                time.sleep(3.0)
-                batch = []
-                with self._lock:
-                    while self.queue and len(batch) < 50:
-                        batch.append(self.queue.popleft())
-
-                if not batch:
-                    continue
-
-                payload = {
-                    "schema_version": "1.0",
-                    "service_source": "trading-service",
-                    "exported_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    "spans": batch,
-                    "runs": [],
-                }
-
-                data = json.dumps(payload).encode("utf-8")
-                req = urllib.request.Request(
-                    self.endpoint,
-                    data=data,
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                # Fail fast with 2.5s timeout — never block trading loops
-                with urllib.request.urlopen(req, timeout=2.5):
-                    pass
+                time.sleep(1.0)
+                self.flush()
             except Exception:
-                # Silently catch; telemetry failures never compromise trading operations
                 pass
 
     def stop(self) -> None:
@@ -150,6 +156,11 @@ class TradingLineageTracker:
     @staticmethod
     def generate_span_id() -> str:
         return uuid.uuid4().hex[:16]
+
+    @classmethod
+    def flush(cls) -> None:
+        """Forces immediate export of all queued spans to the collector."""
+        get_exporter().flush()
 
     @classmethod
     def emit_span(
