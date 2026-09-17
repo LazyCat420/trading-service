@@ -323,7 +323,13 @@ def test_live_every_target_agent_has_versions_and_the_active_one_is_the_newest()
         history = ss._versions(agent, True)
         assert history, f"{agent} has no versions in agent_skills"
         assert history == sorted(history), f"{agent} history is not ascending"
-        assert history == list(range(1, len(history) + 1)), (
-            f"{agent} versions are not contiguous from 1: {history}")
+        from app.services.learning.policy import BASELINE_VERSION
+        assert history.count(BASELINE_VERSION) == 1, (
+            f"{agent} must contain exactly one reviewed baseline: {history}")
+        legacy = [version for version in history if version != BASELINE_VERSION]
+        assert legacy == list(range(1, len(legacy) + 1)), (
+            f"{agent} legacy versions are not contiguous from 1: {history}")
+        assert history[-1] == BASELINE_VERSION, (
+            f"{agent} reviewed baseline must be newest: {history}")
         assert ss._versions(agent, False) == [history[-1]], (
             f"{agent}: the active row is not the newest version")
