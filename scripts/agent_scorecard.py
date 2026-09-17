@@ -161,27 +161,14 @@ def _wilson(hits: int, n: int) -> tuple[float, float]:
 
 
 def _resolved_outcomes(since: str) -> list[dict]:
-    """`WHERE resolved_at IS NOT NULL AND pnl_pct IS NOT NULL AND created_at >= s`.
+    """Single source of truth via unified outcome access layer.
 
-    `{"$ne": None}` is the exact Mongo spelling of SQL's `IS NOT NULL`: it
-    matches neither a stored null nor a MISSING field. That matters here —
-    Postgres supplied a NULL for every unresolved row, but a document written
-    after the cutover simply has no `resolved_at` key (35 of the 2,693 outcome
-    documents, measured 2026-08-30), and those are unresolved, so dropping them
-    is what the SQL did.
+    Reads verified decision outcomes, guaranteeing identical return calculation,
+    dropping quarantined/excluded records, and projecting canonical fields.
     """
-    from app.db import mongo_store
+    from app.trading.attribution.outcome_reader import get_verified_decision_outcomes
 
-    return mongo_store.find_docs(
-        "decision_outcomes",
-        {"resolved_at": {"$ne": None},
-         "pnl_pct": {"$ne": None},
-         "created_at": {"$gte": since}},
-        sort=[("created_at", 1)],
-        projection={"_id": 0, "cycle_id": 1, "ticker": 1, "action": 1,
-                    "confidence": 1, "pnl_pct": 1, "outcome": 1,
-                    "created_at": 1},
-    )
+    return get_verified_decision_outcomes(since=since)
 
 
 def fetch_rows(since: str) -> list[dict]:

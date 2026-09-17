@@ -181,67 +181,45 @@ def distribution() -> int:
 
 
 def _shadow_rows() -> list[tuple]:
-    """The archive's
+    """Joins decision_scores against verified decision_outcomes.
 
-        SELECT ds.band, ds.score, ds.baseline_confidence, ds.risk_reward,
-               ds.board_action, ds.board_confidence, outcome.pnl_pct
-          FROM decision_scores ds
-          LEFT JOIN decision_outcomes outcome
-                 ON outcome.cycle_id = ds.cycle_id
-                AND outcome.ticker  = ds.ticker
-         WHERE ds.score IS NOT NULL
-
-    as two collection reads and a Python stitch, returning tuples in the same
-    SELECT order so every positional read below is unchanged.
-
-    `{"score": {"$ne": None}}` is the faithful `IS NOT NULL`: in Mongo a query
-    for `null` also matches a document that LACKS the field, so `$ne: None`
-    excludes both — which is what a NULL column was. The mirror of that matters
-    on the way out and is why the columns are read through `find_rows()` rather
-    than filtered on: `board_action` and `board_confidence` are `$set` onto the
-    row afterwards by `attach_board_decision`, so on a desk that never reached a
-    verdict the fields are ABSENT, not null — 129 of 508 rows today, against 44
-    explicit nulls inherited from the archive. `find_rows()` returns None for a
-    missing field exactly as Postgres returned NULL for the column, so the
-    "no board action" count below sees all 173 and not just the archive's 44.
-
-    NOT `$lookup`: its left-outer array semantics differ from a LEFT JOIN, and
-    `from:` would need a resolved collection name — a second `collection_for()`
-    on a table `mongo_store` already resolves, which is the defect
-    `tests/unit/test_no_double_collection_resolution.py` fails the build on.
+    Stitches using the unified outcome access layer:
+    prioritizes decision_id match with fallback to (cycle_id, ticker).
     """
     from app.db import mongo_query
+    from app.trading.attribution.outcome_reader import get_verified_decision_outcomes
 
     left = mongo_query.find_rows(
         "decision_scores", {"score": {"$ne": None}},
-        list(_SCORE_COLUMNS) + ["cycle_id", "ticker"])
-    # The whole right side, as `left_join_rows` also reads it: 2,693 documents
-    # of three fields. Pushing the left side's cycle_ids down as an `$in` would
-    # be equivalent, and is not worth a second thing that can be wrong.
-    right = mongo_query.find_rows(
-        "decision_outcomes", {}, ["cycle_id", "ticker", "pnl_pct"])
+        list(_SCORE_COLUMNS) + ["cycle_id", "ticker", "decision_id"])
 
-    # `NULL = NULL` is not true, so a row without a COMPLETE key joins nothing,
-    # on either side. That is enforced in ONE place — the index simply never
-    # holds an incomplete key — and one place is the point: an incomplete left
-    # key can only ever match an incomplete right key, so guarding the index
-    # covers both sides, whereas guarding BOTH sides makes each guard redundant
-    # and so removable with no test going red. Drop this condition and a
-    # `decision_scores` row with no cycle_id joins every `decision_outcomes`
-    # row with no cycle_id — a cross product of exactly the rows that should
-    # not have matched at all, and one no row count would look wrong for.
-    index: dict[tuple, list] = {}
-    for cycle_id, ticker, pnl_pct in right:
-        if cycle_id is not None and ticker is not None:
-            index.setdefault((cycle_id, ticker), []).append(pnl_pct)
+    verified_outcomes = get_verified_decision_outcomes()
+
+    index_by_dec: dict[str, list[float]] = {}
+    index_by_key: dict[tuple, list[float]] = {}
+    for o in verified_outcomes:
+        pnl = o.get("pnl_pct")
+        if pnl is not None:
+            if o.get("decision_id"):
+                index_by_dec.setdefault(o["decision_id"], []).append(pnl)
+            c_id, t = o.get("cycle_id"), o.get("ticker")
+            if c_id and t:
+                index_by_key.setdefault((c_id, t), []).append(pnl)
 
     rows: list[tuple] = []
     for row in left:
-        head, key = row[:len(_SCORE_COLUMNS)], (row[-2], row[-1])
-        # No match -> ONE row with the right side NULL (LEFT JOIN, not INNER);
-        # N matches -> N rows, which is what the SQL did when the right side
-        # was not unique on the key.
-        for pnl_pct in (index.get(key) or [None]):
+        head = row[:len(_SCORE_COLUMNS)]
+        cycle_id = row[-3]
+        ticker = row[-2]
+        decision_id = row[-1]
+
+        matches = None
+        if decision_id and decision_id in index_by_dec:
+            matches = index_by_dec[decision_id]
+        elif (cycle_id, ticker) in index_by_key:
+            matches = index_by_key[(cycle_id, ticker)]
+
+        for pnl_pct in (matches or [None]):
             rows.append(head + (pnl_pct,))
     return rows
 
