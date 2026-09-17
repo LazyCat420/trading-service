@@ -68,6 +68,20 @@ from app.trading.attribution.outcome_contract import (
 from app.trading.attribution.provenance import get_source_pinned_observation
 
 
+def _safe_float(val: Any, default: float = 0.0) -> float:
+    """Safely converts Mongo numbers (including BSON Decimal128, Decimal, float, int, str) to float."""
+    if val is None:
+        return default
+    if isinstance(val, (int, float)):
+        return float(val)
+    try:
+        if hasattr(val, "to_decimal"):
+            return float(val.to_decimal())
+        return float(str(val))
+    except (ValueError, TypeError):
+        return default
+
+
 def _record_evaluation_retry_or_exclusion(
     db: Any,
     artifact: DecisionArtifact,
@@ -147,8 +161,9 @@ def _get_benchmark_price(symbol: str, target_dt: datetime.datetime, pinned_sourc
     )
     if row:
         val = row[0] if row[0] is not None else row[1]
-        if val is not None and float(val) > 0:
-            return float(val)
+        f_val = _safe_float(val)
+        if f_val > 0:
+            return f_val
 
     return None
 
@@ -173,8 +188,9 @@ def _get_asset_historical_price(ticker: str, target_dt: datetime.datetime, pinne
     )
     if row:
         val = row[0] if row[0] is not None else row[1]
-        if val is not None and float(val) > 0:
-            return float(val)
+        f_val = _safe_float(val)
+        if f_val > 0:
+            return f_val
 
     return None
 
@@ -213,7 +229,7 @@ def evaluate_decision_at_horizon(
 
     # 1. Entry Observation & Source Pinning
     entry_quote = artifact.reference_quote or {}
-    p_entry = float(entry_quote.get("price") or 0.0)
+    p_entry = _safe_float(entry_quote.get("price"))
     entry_source = entry_quote.get("source")
 
     entry_obs = None
@@ -406,7 +422,7 @@ def evaluate_decision_at_horizon(
             ticker=artifact.ticker,
             outcome_id=outcome_id,
             outcome=outcome_val,
-            pnl_pct=float(metrics.decision_alpha or 0.0),
+            pnl_pct=_safe_float(metrics.decision_alpha),
             is_shadow=(getattr(artifact, "execution_mode", "") == "SHADOW"),
             attributes={
                 "decision_id": artifact.decision_id,
@@ -648,11 +664,11 @@ def evaluate_closed_lot_alpha_iteration(
     for closure in closures:
         closure_id = closure.get("closure_id")
         try:
-            entry_px = float(closure.get("entry_price") or 0.0)
-            exit_px = float(closure.get("exit_price") or 0.0)
+            entry_px = _safe_float(closure.get("entry_price"))
+            exit_px = _safe_float(closure.get("exit_price"))
             ticker = closure.get("ticker", "").upper().strip()
-            fees = float(closure.get("fees") or 0.0)
-            qty = float(closure.get("closed_qty") or 0.0)
+            fees = _safe_float(closure.get("fees"))
+            qty = _safe_float(closure.get("closed_qty"))
             notional = exit_px * qty
             closed_at = closure.get("closed_at") or now
 
@@ -676,9 +692,9 @@ def evaluate_closed_lot_alpha_iteration(
                 else:
                     exclusion_reason = None
 
-            alloc_entry_fee = float(closure.get("allocated_entry_fee", 0.0))
-            exit_fee = float(closure.get("exit_fee", 0.0))
-            fees_val = float(closure.get("fees") or 0.0)
+            alloc_entry_fee = _safe_float(closure.get("allocated_entry_fee"))
+            exit_fee = _safe_float(closure.get("exit_fee"))
+            fees_val = _safe_float(closure.get("fees"))
             fees_embedded = bool(closure.get("fees_embedded_in_fills", False))
 
             if alloc_entry_fee == 0.0 and exit_fee == 0.0 and fees_val > 0.0:
