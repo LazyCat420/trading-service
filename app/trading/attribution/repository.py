@@ -35,36 +35,36 @@ COLL_ATTRIBUTION_REPORTS = "attribution_reports"
 def ensure_attribution_indexes() -> None:
     """Create unique and lookup indexes for canonical attribution tables."""
     try:
-        from app.db.mongo import get_collection
+        db = mongo_store.get_doc_db()
 
         # 1. decision_artifacts
-        c_da = get_collection(COLL_DECISION_ARTIFACTS)
+        c_da = db[COLL_DECISION_ARTIFACTS]
         c_da.create_index([("decision_id", 1)], unique=True)
         c_da.create_index([("cycle_id", 1), ("ticker", 1)])
 
         # 2. policy_decisions
-        c_pd = get_collection(COLL_POLICY_DECISIONS)
+        c_pd = db[COLL_POLICY_DECISIONS]
         c_pd.create_index([("policy_decision_id", 1)], unique=True)
         c_pd.create_index([("decision_id", 1)], unique=True)
 
         # 3. execution_intents
-        c_ei = get_collection(COLL_EXECUTION_INTENTS)
+        c_ei = db[COLL_EXECUTION_INTENTS]
         c_ei.create_index([("execution_intent_id", 1)], unique=True)
         c_ei.create_index([("idempotency_key", 1)], unique=True)
         c_ei.create_index([("decision_id", 1)])
 
         # 4. order_attempts
-        c_oa = get_collection(COLL_ORDER_ATTEMPTS)
+        c_oa = db[COLL_ORDER_ATTEMPTS]
         c_oa.create_index([("order_attempt_id", 1)], unique=True)
         c_oa.create_index([("execution_intent_id", 1), ("attempt_number", 1)], unique=True)
 
         # 5. execution_reconciliations
-        c_er = get_collection(COLL_EXECUTION_RECONCILIATIONS)
+        c_er = db[COLL_EXECUTION_RECONCILIATIONS]
         c_er.create_index([("reconciliation_id", 1)], unique=True)
         c_er.create_index([("execution_intent_id", 1)], unique=True)
 
         # 6. attribution_reports
-        c_ar = get_collection(COLL_ATTRIBUTION_REPORTS)
+        c_ar = db[COLL_ATTRIBUTION_REPORTS]
         c_ar.create_index([("attribution_id", 1)], unique=True)
         c_ar.create_index([("lineage.decision_id", 1)])
         logger.info("[AttributionRepo] Indexes ensured for canonical attribution collections.")
