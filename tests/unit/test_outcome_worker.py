@@ -14,6 +14,69 @@ from app.trading.attribution.worker import (
 )
 
 
+class MockCursor:
+    def __init__(self, items):
+        self._items = list(items)
+
+    def sort(self, *args, **kwargs):
+        return self
+
+    def skip(self, count):
+        self._items = self._items[count:]
+        return self
+
+    def limit(self, count):
+        self._items = self._items[:count]
+        return self
+
+    def __iter__(self):
+        return iter(self._items)
+
+
+class MockCollection:
+    def __init__(self, storage, key_field):
+        self.storage = storage
+        self.key_field = key_field
+
+    def find(self, filt=None, projection=None, session=None):
+        items = list(self.storage.values())
+        if filt:
+            target_key = filt.get(self.key_field)
+            if target_key is not None:
+                items = [d for d in items if d.get(self.key_field) == target_key]
+        return MockCursor(items)
+
+    def find_one(self, filt, session=None):
+        target_key = filt.get(self.key_field) if isinstance(filt, dict) else None
+        return self.storage.get(target_key)
+
+    def update_one(self, filt, update, upsert=False, session=None):
+        key = filt.get(self.key_field)
+        doc = update.get("$set", {})
+        if key in self.storage:
+            self.storage[key].update(doc)
+        else:
+            self.storage[key] = dict(doc)
+
+    def insert_one(self, doc, *args, **kwargs):
+        key = doc.get(self.key_field)
+        self.storage[key] = dict(doc)
+
+    def insert_many(self, docs, *args, **kwargs):
+        class InsertManyResult:
+            def __init__(self, ids):
+                self.inserted_ids = ids
+        ids = []
+        for doc in docs:
+            key = doc.get(self.key_field)
+            self.storage[key] = dict(doc)
+            ids.append(key)
+        return InsertManyResult(ids)
+
+    def create_index(self, *args, **kwargs):
+        pass
+
+
 def test_evaluate_decision_at_horizon_mature(monkeypatch):
     """Mature decision evaluates return and alpha against benchmark and generates attribution."""
     now = datetime.datetime(2026, 9, 16, 22, 0, 0, tzinfo=datetime.timezone.utc)
@@ -29,84 +92,32 @@ def test_evaluate_decision_at_horizon_mature(monkeypatch):
         confidence=85,
         declared_horizon_days=7,
         benchmark_symbol="SPY",
-        reference_quote={"price": 100.0},
+        reference_quote={"price": 100.0, "source": "alpaca"},
         created_at=entry_time,
     )
 
     outcomes_db = {}
     attribution_db = {}
-
-    class MockCursor:
-        def __init__(self, items):
-            self._items = list(items)
-
-        def sort(self, *args, **kwargs):
-            return self
-
-        def skip(self, count):
-            self._items = self._items[count:]
-            return self
-
-        def limit(self, count):
-            self._items = self._items[:count]
-            return self
-
-        def __iter__(self):
-            return iter(self._items)
-
-    class MockCollection:
-        def __init__(self, storage, key_field):
-            self.storage = storage
-            self.key_field = key_field
-
-        def find(self, filt=None, projection=None, session=None):
-            items = list(self.storage.values())
-            if filt:
-                target_key = filt.get(self.key_field)
-                if target_key is not None:
-                    items = [d for d in items if d.get(self.key_field) == target_key]
-            return MockCursor(items)
-
-        def find_one(self, filt, session=None):
-            target_key = filt.get(self.key_field) if isinstance(filt, dict) else None
-            return self.storage.get(target_key)
-
-        def update_one(self, filt, update, upsert=False, session=None):
-            key = filt.get(self.key_field)
-            doc = update.get("$set", {})
-            if key in self.storage:
-                self.storage[key].update(doc)
-            else:
-                self.storage[key] = dict(doc)
-
-        def insert_one(self, doc, *args, **kwargs):
-            key = doc.get(self.key_field)
-            self.storage[key] = dict(doc)
-
-        def insert_many(self, docs, *args, **kwargs):
-            class InsertManyResult:
-                def __init__(self, ids):
-                    self.inserted_ids = ids
-            ids = []
-            for doc in docs:
-                key = doc.get(self.key_field)
-                self.storage[key] = dict(doc)
-                ids.append(key)
-            return InsertManyResult(ids)
-
-        def create_index(self, *args, **kwargs):
-            pass
+    artifacts_db = {}
+    quarantine_db = {}
 
     monkeypatch.setattr(
         "app.db.mongo_store.get_doc_db",
         lambda: {
             "decision_outcomes": MockCollection(outcomes_db, "outcome_id"),
             "attribution_reports": MockCollection(attribution_db, "attribution_id"),
+            "decision_artifacts": MockCollection(artifacts_db, "decision_id"),
+            "decision_quarantine": MockCollection(quarantine_db, "decision_id"),
+            "execution_intents": MockCollection({}, "decision_id"),
+            "price_history": MockCollection({}, "id"),
         },
     )
 
-    # AAPL went from 100 -> 110 (+10%)
-    monkeypatch.setattr("app.trading.attribution.worker._get_current_price", lambda s: (110.0, 0.5))
+    from app.trading.attribution.outcome_contract import PriceObservation
+    monkeypatch.setattr(
+        "app.trading.attribution.worker.get_source_pinned_observation",
+        lambda ticker, dt, pinned_source=None: PriceObservation(price=110.0, date=dt, source="alpaca"),
+    )
 
     # SPY went from 400 -> 420 (+5%)
     def mock_bm_price(symbol, target_dt):
@@ -165,15 +176,25 @@ def test_evaluate_decision_missing_benchmark_unresolved(monkeypatch):
             doc = update.get("$set", {})
             self.storage[key] = dict(doc)
 
+    artifacts_db = {}
+    quarantine_db = {}
+
     monkeypatch.setattr(
         "app.db.mongo_store.get_doc_db",
         lambda: {
             "decision_outcomes": MockCollection(outcomes_db, "outcome_id"),
             "attribution_reports": MockCollection(attribution_db, "attribution_id"),
+            "decision_artifacts": MockCollection(artifacts_db, "decision_id"),
+            "decision_quarantine": MockCollection(quarantine_db, "decision_id"),
+            "price_history": MockCollection({}, "id"),
         },
     )
 
-    monkeypatch.setattr("app.trading.attribution.worker._get_current_price", lambda s: (110.0, 0.5))
+    from app.trading.attribution.outcome_contract import PriceObservation
+    monkeypatch.setattr(
+        "app.trading.attribution.worker.get_source_pinned_observation",
+        lambda ticker, dt, pinned_source=None: PriceObservation(price=110.0, date=dt, source="alpaca"),
+    )
     # Benchmark returns None (missing market data)
     monkeypatch.setattr("app.trading.attribution.worker._get_benchmark_price", lambda s, dt: None)
 

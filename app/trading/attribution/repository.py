@@ -34,6 +34,7 @@ COLL_EXECUTION_INTENTS = "execution_intents"
 COLL_ORDER_ATTEMPTS = "order_attempts"
 COLL_EXECUTION_RECONCILIATIONS = "execution_reconciliations"
 COLL_ATTRIBUTION_REPORTS = "attribution_reports"
+COLL_DECISION_OUTCOMES = "decision_outcomes"
 COLL_EXECUTION_SLOTS = "execution_slots"
 COLL_EXECUTION_OUTBOX = "execution_outbox"
 COLL_POSITION_LOTS = "position_lots"
@@ -41,6 +42,8 @@ COLL_LOT_CLOSURES = "lot_closures"
 COLL_POLICY_SNAPSHOTS = "policy_snapshots"
 COLL_RISK_RESERVATIONS = "risk_reservations"
 COLL_SHADOW_EXECUTIONS = "shadow_executions"
+COLL_DECISION_QUARANTINE = "decision_quarantine"
+COLL_EVALUATION_CHECKPOINTS = "evaluation_checkpoints"
 
 
 def ensure_attribution_indexes() -> None:
@@ -52,6 +55,12 @@ def ensure_attribution_indexes() -> None:
         c_da = db[COLL_DECISION_ARTIFACTS]
         c_da.create_index([("decision_id", 1)], unique=True)
         c_da.create_index([("cycle_id", 1), ("ticker", 1)])
+        c_da.create_index([
+            ("is_quarantined", 1),
+            ("outcome_status", 1),
+            ("maturity_date", 1),
+            ("retry_after", 1),
+        ])
 
         # 2. policy_decisions
         c_pd = db[COLL_POLICY_DECISIONS]
@@ -112,9 +121,39 @@ def ensure_attribution_indexes() -> None:
         c_se.create_index([("order_id", 1)], unique=True)
         c_se.create_index([("bot_id", 1), ("ticker", 1)])
 
+        # 12. decision_quarantine
+        c_dq = db[COLL_DECISION_QUARANTINE]
+        c_dq.create_index([("decision_id", 1)])
+        c_dq.create_index([("quarantined_at", -1)])
+
+        # 13. evaluation_checkpoints
+        c_ec = db[COLL_EVALUATION_CHECKPOINTS]
+        c_ec.create_index([("worker", 1)], unique=True)
+
         logger.info("[AttributionRepo] Indexes ensured for canonical attribution and control-plane collections.")
     except Exception as exc:
         logger.warning("[AttributionRepo] ensure_attribution_indexes non-fatal failure: %s", exc)
+
+
+def save_evaluation_checkpoint(worker_name: str, records_processed: int, last_evaluated_at: datetime.datetime) -> None:
+    """Records an evaluation checkpoint for workers to provide operational visibility and restart safety."""
+    db = mongo_store.get_doc_db()
+    db[COLL_EVALUATION_CHECKPOINTS].update_one(
+        {"worker": worker_name},
+        {"$set": {
+            "worker": worker_name,
+            "last_evaluated_at": last_evaluated_at,
+            "records_processed": records_processed,
+            "updated_at": datetime.datetime.now(datetime.timezone.utc),
+        }},
+        upsert=True,
+    )
+
+
+def get_evaluation_checkpoint(worker_name: str) -> Optional[dict[str, Any]]:
+    """Retrieves the last saved evaluation checkpoint for a worker."""
+    db = mongo_store.get_doc_db()
+    return db[COLL_EVALUATION_CHECKPOINTS].find_one({"worker": worker_name})
 
 
 def save_decision_artifact(artifact: DecisionArtifact) -> DecisionArtifact:

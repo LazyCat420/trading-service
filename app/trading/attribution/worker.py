@@ -34,19 +34,22 @@ from app.trading.attribution.models import (
 from app.trading.attribution.repository import (
     COLL_ATTRIBUTION_REPORTS,
     COLL_DECISION_ARTIFACTS,
+    COLL_DECISION_QUARANTINE,
+    COLL_EVALUATION_CHECKPOINTS,
     COLL_EXECUTION_INTENTS,
     COLL_LOT_CLOSURES,
     COLL_POLICY_DECISIONS,
     COLL_POSITION_LOTS,
     expire_stale_intents_and_reservations,
     save_attribution_report,
+    save_evaluation_checkpoint,
 )
 from app.trading.paper_trader import _get_current_price
 
 logger = logging.getLogger(__name__)
 
 COLL_DECISION_OUTCOMES = "decision_outcomes"
-COLL_EVALUATION_CHECKPOINTS = "evaluation_checkpoints"
+MAX_OUTCOME_RETRIES = 5
 
 
 from app.trading.attribution.outcome_contract import (
@@ -63,6 +66,65 @@ from app.trading.attribution.outcome_contract import (
     distinguish_action,
 )
 from app.trading.attribution.provenance import get_source_pinned_observation
+
+
+def _record_evaluation_retry_or_exclusion(
+    db: Any,
+    artifact: DecisionArtifact,
+    eval_time: datetime.datetime,
+    reason: str,
+    outcome: DecisionOutcomeRecord,
+) -> None:
+    """Updates artifact retry count or quarantines if MAX_OUTCOME_RETRIES exceeded.
+    
+    Prevents retry starvation by placing records into exponential backoff
+    and quarantining upon exceeding MAX_OUTCOME_RETRIES.
+    """
+    new_retry_count = (artifact.retry_count or 0) + 1
+    if new_retry_count >= MAX_OUTCOME_RETRIES:
+        # Terminal exclusion & quarantine
+        db[COLL_DECISION_ARTIFACTS].update_one(
+            {"decision_id": artifact.decision_id},
+            {"$set": {
+                "outcome_status": "EXCLUDED",
+                "is_quarantined": True,
+                "quarantine_reason": f"MAX_RETRIES_EXCEEDED: {reason}",
+                "retry_count": new_retry_count,
+                "evaluated_at": eval_time,
+            }},
+        )
+        db[COLL_DECISION_OUTCOMES].update_one(
+            {"outcome_id": outcome.outcome_id},
+            {"$set": {
+                "maturity_status": MaturityStatus.EXCLUDED.value,
+                "exclusion_reason": ExclusionReason.PRICE_AVAILABILITY_ERROR.value,
+                "evaluation_contract_version": 4,
+            }},
+            upsert=True,
+        )
+        db[COLL_DECISION_QUARANTINE].update_one(
+            {"decision_id": artifact.decision_id},
+            {"$set": {
+                "quarantine_id": f"quar-{artifact.decision_id}",
+                "decision_id": artifact.decision_id,
+                "quarantined_at": eval_time,
+                "reason": f"MAX_RETRIES_EXCEEDED: {reason}",
+                "retry_count": new_retry_count,
+            }},
+            upsert=True,
+        )
+    else:
+        # Bounded exponential backoff: 1h, 2h, 4h, 8h, 16h
+        backoff_hours = 2 ** (new_retry_count - 1)
+        retry_after = eval_time + datetime.timedelta(hours=backoff_hours)
+        db[COLL_DECISION_ARTIFACTS].update_one(
+            {"decision_id": artifact.decision_id},
+            {"$set": {
+                "outcome_status": OutcomeMaturityStatus.UNRESOLVED.value,
+                "retry_count": new_retry_count,
+                "retry_after": retry_after,
+            }},
+        )
 
 
 def _get_benchmark_price(symbol: str, target_dt: datetime.datetime, pinned_source: Optional[str] = None) -> Optional[float]:
@@ -125,7 +187,7 @@ def evaluate_decision_at_horizon(
     eval_time = now or datetime.datetime.now(datetime.timezone.utc)
     entry_time = artifact.created_at
     horizon_days = artifact.declared_horizon_days or 7
-    maturity_date = entry_time + datetime.timedelta(days=horizon_days)
+    maturity_date = artifact.maturity_date or (entry_time + datetime.timedelta(days=horizon_days))
 
     if eval_time < maturity_date:
         # Not mature yet
@@ -140,6 +202,10 @@ def evaluate_decision_at_horizon(
         OutcomeMaturityStatus.MATURE.value,
         MaturityStatus.MATURE_VERIFIED.value,
     ):
+        db[COLL_DECISION_ARTIFACTS].update_one(
+            {"decision_id": artifact.decision_id},
+            {"$set": {"outcome_status": OutcomeMaturityStatus.MATURE.value, "evaluated_at": eval_time}},
+        )
         return DecisionOutcomeRecord.model_validate(existing)
 
     ticker = artifact.ticker.upper().strip()
@@ -174,8 +240,15 @@ def evaluate_decision_at_horizon(
         )
         db[COLL_DECISION_OUTCOMES].update_one(
             {"outcome_id": outcome_id},
-            {"$set": {**outcome.model_dump(mode="python"), "exclusion_reason": ExclusionReason.PRICE_AVAILABILITY_ERROR.value}},
+            {"$set": {
+                **outcome.model_dump(mode="python"),
+                "exclusion_reason": ExclusionReason.PRICE_AVAILABILITY_ERROR.value,
+                "evaluation_contract_version": 4,
+            }},
             upsert=True,
+        )
+        _record_evaluation_retry_or_exclusion(
+            db, artifact, eval_time, "MISSING_ENTRY_PRICE", outcome
         )
         return outcome
 
@@ -210,9 +283,8 @@ def evaluate_decision_at_horizon(
             }},
             upsert=True,
         )
-        db[COLL_DECISION_ARTIFACTS].update_one(
-            {"decision_id": artifact.decision_id},
-            {"$set": {"outcome_status": "UNRESOLVED", "retry_after": eval_time + datetime.timedelta(hours=1)}},
+        _record_evaluation_retry_or_exclusion(
+            db, artifact, eval_time, "STALE_OR_MISSING_HORIZON_BAR", outcome
         )
         return outcome
 
@@ -237,6 +309,13 @@ def evaluate_decision_at_horizon(
                 "evaluation_contract_version": 4,
             }},
             upsert=True,
+        )
+        db[COLL_DECISION_ARTIFACTS].update_one(
+            {"decision_id": artifact.decision_id},
+            {"$set": {
+                "outcome_status": "EXCLUDED",
+                "evaluated_at": eval_time,
+            }},
         )
         return outcome
 
@@ -270,9 +349,8 @@ def evaluate_decision_at_horizon(
             }},
             upsert=True,
         )
-        db[COLL_DECISION_ARTIFACTS].update_one(
-            {"decision_id": artifact.decision_id},
-            {"$set": {"outcome_status": "UNRESOLVED", "retry_after": eval_time + datetime.timedelta(hours=1)}},
+        _record_evaluation_retry_or_exclusion(
+            db, artifact, eval_time, "MISSING_BENCHMARK_BAR", outcome
         )
         return outcome
 
@@ -323,7 +401,11 @@ def evaluate_decision_at_horizon(
     # Mark artifact as maturely evaluated so it will not starve subsequent decisions
     db[COLL_DECISION_ARTIFACTS].update_one(
         {"decision_id": artifact.decision_id},
-        {"$set": {"outcome_status": OutcomeMaturityStatus.MATURE.value, "evaluated_at": eval_time}},
+        {"$set": {
+            "outcome_status": OutcomeMaturityStatus.MATURE.value,
+            "evaluated_at": eval_time,
+            "retry_count": 0,
+        }},
     )
 
     # Generate Attribution Report separating provenance
@@ -398,51 +480,123 @@ def _generate_attribution_report(
     return report
 
 
-def run_mature_outcome_evaluation_iteration(limit: int = 50) -> int:
-    """Finds due, unfinished decisions that have matured beyond their declared horizon and evaluates them."""
+def run_mature_outcome_evaluation_iteration(
+    limit: int = 50,
+    now: Optional[datetime.datetime] = None,
+) -> int:
+    """Finds due, unfinished decisions that have matured beyond their declared horizon and evaluates them.
+    
+    Guarantees:
+    1. Due-work scheduling: respects each horizon (1d, 7d, 30d) rather than hardcoded 7d.
+    2. Starvation prevention: older ineligible records (future horizon or in retry backoff)
+       do not starve due records.
+    3. Malformed document quarantine: validation failures are immediately quarantined to
+       decision_quarantine and never block subsequent valid work.
+    4. Bounded retries: repeated evaluation failures are backed off exponentially and
+       quarantined upon exceeding MAX_OUTCOME_RETRIES.
+    5. Checkpoint persistence: records last evaluated timestamp and batch count.
+    """
     db = mongo_store.get_doc_db()
-    now = datetime.datetime.now(datetime.timezone.utc)
+    eval_now = now or datetime.datetime.now(datetime.timezone.utc)
 
     try:
         db["worker_heartbeats"].update_one(
             {"worker": "outcome_worker"},
-            {"$set": {"last_heartbeat": now, "status": "RUNNING"}},
+            {"$set": {"last_heartbeat": eval_now, "status": "RUNNING"}},
             upsert=True,
         )
     except Exception:
         pass
 
-    max_horizon_days = 7
-    cutoff = now - datetime.timedelta(days=max_horizon_days)
-
-    # Candidate decisions: matured and not yet marked MATURE, with retry_after <= now or None
+    # Candidate decisions:
+    # 1. Not quarantined
+    # 2. Outcome status not in (MATURE, EXCLUDED, QUARANTINED)
+    # 3. Maturity date <= eval_now OR maturity_date is null/missing (legacy records)
+    # 4. retry_after <= eval_now OR retry_after is null/missing
     query = {
-        "created_at": {"$lte": cutoff},
-        "outcome_status": {"$ne": OutcomeMaturityStatus.MATURE.value},
-        "$or": [
-            {"retry_after": None},
-            {"retry_after": {"$lte": now}},
+        "is_quarantined": {"$ne": True},
+        "outcome_status": {"$nin": [OutcomeMaturityStatus.MATURE.value, "EXCLUDED", "QUARANTINED"]},
+        "$and": [
+            {
+                "$or": [
+                    {"maturity_date": {"$lte": eval_now}},
+                    {"maturity_date": None},
+                    {"maturity_date": {"$exists": False}},
+                ]
+            },
+            {
+                "$or": [
+                    {"retry_after": None},
+                    {"retry_after": {"$lte": eval_now}},
+                    {"retry_after": {"$exists": False}},
+                ]
+            },
         ],
     }
 
     docs = list(
         db[COLL_DECISION_ARTIFACTS]
         .find(query)
-        .sort("created_at", 1)
+        .sort([("maturity_date", 1), ("created_at", 1)])
         .limit(limit)
     )
 
     evaluated = 0
     valid_keys = set(DecisionArtifact.model_fields.keys()) | {"_id"}
     for doc in docs:
+        decision_id = doc.get("decision_id") or str(doc.get("_id", ""))
+        doc_filter = {"_id": doc["_id"]} if "_id" in doc else {"decision_id": decision_id}
         try:
             cleaned_doc = {k: v for k, v in doc.items() if k in valid_keys}
             artifact = DecisionArtifact.model_validate(cleaned_doc)
-            outcome = evaluate_decision_at_horizon(artifact, now=now)
+        except Exception as val_exc:
+            logger.error("[OutcomeWorker] Malformed decision artifact %s: %s. Quarantining.", decision_id, val_exc)
+            # Quarantine the malformed document immediately so it does not starve valid work
+            db[COLL_DECISION_ARTIFACTS].update_one(
+                doc_filter,
+                {"$set": {
+                    "is_quarantined": True,
+                    "outcome_status": "QUARANTINED",
+                    "quarantine_reason": f"VALIDATION_ERROR: {val_exc}",
+                    "quarantined_at": eval_now,
+                }},
+            )
+            db[COLL_DECISION_QUARANTINE].update_one(
+                {"decision_id": decision_id},
+                {"$set": {
+                    "quarantine_id": f"quar-{decision_id}",
+                    "decision_id": decision_id,
+                    "quarantined_at": eval_now,
+                    "reason": f"VALIDATION_ERROR: {val_exc}",
+                    "raw_doc": {k: str(v) if isinstance(v, (datetime.datetime, uuid.UUID)) else v for k, v in doc.items() if k != "_id"},
+                }},
+                upsert=True,
+            )
+            continue
+
+        try:
+            # Backfill maturity_date in DB if it was missing
+            if doc.get("maturity_date") is None and artifact.maturity_date:
+                db[COLL_DECISION_ARTIFACTS].update_one(
+                    doc_filter,
+                    {"$set": {"maturity_date": artifact.maturity_date}},
+                )
+
+            # Check if artifact is actually mature yet (e.g. legacy document with declared_horizon_days in future)
+            if artifact.maturity_date and eval_now < artifact.maturity_date:
+                continue
+
+            outcome = evaluate_decision_at_horizon(artifact, now=eval_now)
             if outcome:
                 evaluated += 1
         except Exception as exc:
-            logger.warning("[OutcomeWorker] Error evaluating artifact %s: %s", doc.get("decision_id"), exc)
+            logger.warning("[OutcomeWorker] Error evaluating artifact %s: %s", decision_id, exc)
+
+    # Save evaluation checkpoint
+    try:
+        save_evaluation_checkpoint("outcome_worker", evaluated, eval_now)
+    except Exception as exc:
+        logger.warning("[OutcomeWorker] Failed to save evaluation checkpoint: %s", exc)
 
     return evaluated
 
