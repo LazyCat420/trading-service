@@ -161,49 +161,124 @@ async def execute_intent(
     else:
         raise IntentExecutionRejected(f"Unsupported side {side}", "INVALID_SIDE")
 
-    # 5. SHADOW Mode Bypass (Simulate execution without mutating portfolio, but persist shadow execution & reconciliation)
+    # 5. SHADOW Mode Atomic Execution (Simulate execution without mutating operational portfolio)
     if effective_mode == ControlPlaneMode.SHADOW:
         logger.info("[Executor] SHADOW mode active: simulating execution for intent %s", intent_id)
-        repository.consume_execution_intent(intent_id)
-        repository.consume_risk_reservations_for_intent(intent_id)
-
         db = mongo_store.get_doc_db()
-        shadow_exec = {
-            "execution_intent_id": intent_id,
-            "order_id": order_id,
-            "bot_id": bot_id,
-            "ticker": ticker,
-            "side": side,
-            "fill_price": fill_price,
-            "qty": qty,
-            "fees": fees,
-            "simulated": True,
-            "executed_at": now,
-        }
-        db["shadow_executions"].insert_one(shadow_exec)
+
+        # Fidelity metrics: preserve distinct reference vs realized prices and cost components
+        modeled_spread = float(cost.get("spread_bps", 0.0) or 0.0)
+        if price > 0:
+            realized_slippage = round(abs(fill_price - price) / price * 10000.0, 4)
+        else:
+            realized_slippage = float(cost.get("impact_bps", 0.0) or 0.0)
 
         from app.trading.attribution.models import ExecutionReconciliation, ReconciliationVerdict
+        allowed_slip = float(intent.allowed_slippage_bps or 25.0)
+        if realized_slippage > allowed_slip:
+            verdict = ReconciliationVerdict.EXECUTION_SLIPPAGE_BREACH
+        else:
+            verdict = ReconciliationVerdict.EXECUTION_MATCHED
+
         rec_id = f"rec-{intent_id}"
-        rec = ExecutionReconciliation(
-            reconciliation_id=rec_id,
-            execution_intent_id=intent_id,
-            order_id=order_id,
-            fill_ids=[f"sim-fill-{order_id}"],
-            intended_qty=qty,
-            filled_qty=qty,
-            reference_price=fill_price,
-            expected_price=fill_price,
-            realized_price=fill_price,
-            fees=fees,
-            modeled_spread_bps=0.0,
-            realized_slippage_bps=0.0,
-            submission_to_fill_latency_ms=0.0,
-            residual_qty=0.0,
-            verdict=ReconciliationVerdict.EXECUTION_MATCHED,
-            effective_mode="SHADOW",
-            reconciled_at=now,
-        )
-        repository.save_execution_reconciliation(rec)
+
+        def _shadow_txn_op(s):
+            # A. Atomic CAS intent consumption
+            if not repository.consume_execution_intent(intent_id, session=s):
+                raise IntentExecutionRejected(
+                    f"Intent {intent_id} could not be consumed (CAS failed)",
+                    "INTENT_ALREADY_CONSUMED",
+                )
+
+            # B. Consume any risk reservations for this intent
+            repository.consume_risk_reservations_for_intent(intent_id, session=s)
+
+            # C. Insert into shadow_executions with distinct reference and fill prices
+            shadow_exec = {
+                "execution_intent_id": intent_id,
+                "order_id": order_id,
+                "bot_id": bot_id,
+                "ticker": ticker,
+                "side": side,
+                "reference_price": price,
+                "fill_price": fill_price,
+                "qty": qty,
+                "fees": fees,
+                "modeled_spread_bps": modeled_spread,
+                "realized_slippage_bps": realized_slippage,
+                "simulated": True,
+                "reconciliation_id": rec_id,
+                "executed_at": now,
+            }
+            db["shadow_executions"].insert_one(shadow_exec, session=s)
+
+            # D. Save ExecutionReconciliation with accurate pricing fidelity
+            rec = ExecutionReconciliation(
+                reconciliation_id=rec_id,
+                execution_intent_id=intent_id,
+                order_id=order_id,
+                fill_ids=[f"sim-fill-{order_id}"],
+                intended_qty=qty,
+                filled_qty=qty,
+                reference_price=price,
+                expected_price=price,
+                realized_price=fill_price,
+                fees=fees,
+                modeled_spread_bps=modeled_spread,
+                realized_slippage_bps=realized_slippage,
+                submission_to_fill_latency_ms=0.0,
+                residual_qty=0.0,
+                verdict=verdict,
+                effective_mode="SHADOW",
+                reconciled_at=now,
+            )
+            repository.save_execution_reconciliation(rec, session=s)
+
+            # E. Emit Transactional Outbox Event for SHADOW execution
+            outbox_event = {
+                "event_id": f"outbox-{uuid.uuid4().hex[:16]}",
+                "event_type": "SHADOW_TRADE_EXECUTED",
+                "aggregate_id": intent_id,
+                "payload": {
+                    "intent_id": intent_id,
+                    "decision_id": intent.decision_id,
+                    "policy_decision_id": intent.policy_decision_id,
+                    "bot_id": bot_id,
+                    "ticker": ticker,
+                    "side": side,
+                    "reference_price": price,
+                    "fill_price": fill_price,
+                    "fill_qty": qty,
+                    "fees": fees,
+                    "order_id": order_id,
+                    "simulated": True,
+                    "reconciliation_id": rec_id,
+                    "executed_at": now.isoformat(),
+                },
+                "status": "PENDING",
+                "attempts": 0,
+                "created_at": now,
+                "last_error": None,
+            }
+            db[COLL_EXECUTION_OUTBOX].insert_one(outbox_event, session=s)
+
+            # F. Save OrderAttempt record
+            attempt = OrderAttempt(
+                order_attempt_id=attempt_id,
+                execution_intent_id=intent_id,
+                attempt_number=1,
+                submitted_at=now,
+                status=OrderAttemptStatus.ACCEPTED,
+                order_id=order_id,
+                effective_mode="SHADOW",
+            )
+            repository.save_order_attempt(attempt, session=s)
+
+        if session is not None:
+            _shadow_txn_op(session)
+        else:
+            with mongo_store.with_txn() as s:
+                _shadow_txn_op(s)
 
         return {
             "status": "SIMULATED",
@@ -212,9 +287,12 @@ async def execute_intent(
             "order_id": order_id,
             "ticker": ticker,
             "side": side,
+            "reference_price": price,
             "fill_price": fill_price,
             "qty": qty,
             "fees": fees,
+            "modeled_spread_bps": modeled_spread,
+            "realized_slippage_bps": realized_slippage,
             "simulated": True,
             "reconciliation_id": rec_id,
         }

@@ -40,6 +40,7 @@ COLL_POSITION_LOTS = "position_lots"
 COLL_LOT_CLOSURES = "lot_closures"
 COLL_POLICY_SNAPSHOTS = "policy_snapshots"
 COLL_RISK_RESERVATIONS = "risk_reservations"
+COLL_SHADOW_EXECUTIONS = "shadow_executions"
 
 
 def ensure_attribution_indexes() -> None:
@@ -104,6 +105,12 @@ def ensure_attribution_indexes() -> None:
         c_rr.create_index([("execution_intent_id", 1)])
         c_rr.create_index([("bot_id", 1), ("status", 1)])
         c_rr.create_index([("slot_key", 1)])
+
+        # 11. shadow_executions
+        c_se = db[COLL_SHADOW_EXECUTIONS]
+        c_se.create_index([("execution_intent_id", 1)], unique=True)
+        c_se.create_index([("order_id", 1)], unique=True)
+        c_se.create_index([("bot_id", 1), ("ticker", 1)])
 
         logger.info("[AttributionRepo] Indexes ensured for canonical attribution and control-plane collections.")
     except Exception as exc:
@@ -249,17 +256,21 @@ def save_order_attempt(attempt: OrderAttempt, session: Optional[Any] = None) -> 
     return attempt
 
 
-def save_execution_reconciliation(rec: ExecutionReconciliation) -> ExecutionReconciliation:
+def save_execution_reconciliation(
+    rec: ExecutionReconciliation,
+    session: Any = None,
+) -> ExecutionReconciliation:
     """Persist ExecutionReconciliation idempotently."""
     doc = rec.model_dump(mode="python")
     existing = mongo_query.find_row(
         COLL_EXECUTION_RECONCILIATIONS,
         {"reconciliation_id": rec.reconciliation_id},
         ["reconciliation_id"],
+        session=session,
     )
     if existing:
         return rec
-    mongo_store.insert_docs(COLL_EXECUTION_RECONCILIATIONS, [doc])
+    mongo_store.insert_docs(COLL_EXECUTION_RECONCILIATIONS, [doc], session=session)
     return rec
 
 
