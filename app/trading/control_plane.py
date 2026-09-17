@@ -82,6 +82,43 @@ def resolve_control_plane_mode(bot_id: Optional[str] = None) -> ControlPlaneMode
     )
 
 
+import re
+
+_URI_AUTH_RE = re.compile(r"://([^:]+):([^@]+)@", re.IGNORECASE)
+_CONNECTION_STRING_RE = re.compile(r"mongodb(\+srv)?://[^\s\"']+", re.IGNORECASE)
+
+
+def _sanitize_message(msg: str) -> str:
+    """Scrub raw connection strings, URIs, and credentials from diagnostic error messages."""
+    if not msg:
+        return ""
+    cleaned = _CONNECTION_STRING_RE.sub("[REDACTED_MONGO_URI]", str(msg))
+    cleaned = _URI_AUTH_RE.sub("://[REDACTED_USER]:[REDACTED_AUTH]@", cleaned)
+    return cleaned
+
+
+def _classify_error_category(err: Exception) -> str:
+    """Map exceptions to bounded, sanitized error categories."""
+    if isinstance(err, ControlPlaneConfigurationError):
+        return "CONFIGURATION_ERROR"
+    err_str = str(err).lower()
+    err_cls = err.__class__.__name__.lower()
+    if "timeout" in err_str or "timed out" in err_str or "timeout" in err_cls:
+        return "TIMEOUT"
+    if (
+        "connection refused" in err_str
+        or "server selection" in err_str
+        or "failed to connect" in err_str
+        or "unreachable" in err_str
+        or "socket" in err_str
+        or "network" in err_str
+    ):
+        return "DATABASE_UNAVAILABLE"
+    if "query" in err_str or "operationfailure" in err_cls or "cursor" in err_str:
+        return "QUERY_ERROR"
+    return "INTERNAL_ERROR"
+
+
 def is_enforce_active(mode: ControlPlaneMode) -> bool:
     """Returns True if intent enforcement is mandatory."""
     return mode == ControlPlaneMode.ENFORCE
@@ -93,16 +130,18 @@ def is_shadow_active(mode: ControlPlaneMode) -> bool:
 
 
 def get_control_plane_operational_metrics() -> dict[str, Any]:
-    """Aggregates end-to-end control-plane operational telemetry for monitoring and health."""
-    from app.db import mongo_store
-    from app.trading.outbox.repository import get_outbox_metrics
+    """Aggregates end-to-end control-plane operational telemetry with isolated section resilience.
+
+    Returns bounded, explicit degraded telemetry (metrics_status='DEGRADED') if any database,
+    configuration, or worker metric section encounters errors, without crashing or masking failures.
+    """
     import datetime
     import subprocess
 
-    db = mongo_store.get_doc_db()
     now = datetime.datetime.now(datetime.timezone.utc)
+    degraded_sections: list[str] = []
 
-    # 1. Deployed Commit SHA
+    # 1. Deployed Commit SHA (Independently obtained)
     commit_sha = os.getenv("GIT_COMMIT_SHA") or os.getenv("COMMIT_SHA") or os.getenv("GIT_SHA")
     if not commit_sha:
         try:
@@ -112,61 +151,174 @@ def get_control_plane_operational_metrics() -> dict[str, Any]:
         except Exception:
             commit_sha = "unknown"
 
-    # 2. Worker Heartbeats
-    heartbeats_cursor = db["worker_heartbeats"].find({})
-    heartbeats: dict[str, Any] = {}
-    for h in heartbeats_cursor:
-        w_name = h.get("worker", "unknown")
-        w_time = h.get("last_heartbeat")
-        if w_time and hasattr(w_time, "tzinfo") and w_time.tzinfo is None:
-            w_time = w_time.replace(tzinfo=datetime.timezone.utc)
-        age_s = (now - w_time).total_seconds() if isinstance(w_time, datetime.datetime) else 999999.0
-        heartbeats[w_name] = {
-            "last_heartbeat": w_time.isoformat() if isinstance(w_time, datetime.datetime) else None,
-            "age_seconds": round(age_s, 1),
-            "status": "ALIVE" if age_s <= 120.0 else "DEAD",
+    # 2. Mode Resolution (Isolated: failures mark mode UNAVAILABLE / UNKNOWN, execution resolver still fails closed)
+    mode_info: dict[str, Any] = {}
+    default_mode = "UNKNOWN"
+    try:
+        resolved = resolve_control_plane_mode("default")
+        default_mode = resolved.value
+        mode_info = {
+            "status": "AVAILABLE",
+            "effective_mode": default_mode,
+        }
+    except Exception as mode_err:
+        degraded_sections.append("mode_resolution")
+        default_mode = "UNKNOWN"
+        mode_info = {
+            "status": "UNAVAILABLE",
+            "error_category": _classify_error_category(mode_err),
+            "error_message": _sanitize_message(str(mode_err)),
         }
 
-    # 3. Outbox Metrics
-    outbox = get_outbox_metrics()
+    # Acquire MongoDB database handle with isolated exception guard
+    db = None
+    try:
+        from app.db import mongo_store
+        db = mongo_store.get_doc_db()
+    except Exception as conn_err:
+        cat = _classify_error_category(conn_err)
+        sanitized_msg = _sanitize_message(str(conn_err))
+        degraded_sections.extend(["worker_heartbeats", "outbox", "reconciliation", "outcome_evaluation"])
+        return {
+            "metrics_status": "DEGRADED",
+            "observation_time": now.isoformat(),
+            "deployed_commit_sha": commit_sha,
+            "default_mode": default_mode,
+            "degraded_sections": sorted(list(set(degraded_sections))),
+            "mode_resolution": mode_info,
+            "worker_heartbeats": {
+                "status": "UNAVAILABLE",
+                "error_category": cat,
+                "error_message": sanitized_msg,
+            },
+            "outbox": {
+                "status": "UNAVAILABLE",
+                "error_category": cat,
+                "error_message": sanitized_msg,
+            },
+            "reconciliation": {
+                "status": "UNAVAILABLE",
+                "error_category": cat,
+                "error_message": sanitized_msg,
+                "last_reconciled_at": None,
+                "last_reconciliation_id": None,
+                "last_verdict": None,
+            },
+            "outcome_evaluation": {
+                "status": "UNAVAILABLE",
+                "error_category": cat,
+                "error_message": sanitized_msg,
+                "total_decisions": None,
+                "mature_decisions": None,
+                "unresolved_decisions": None,
+                "coverage_pct": None,
+            },
+        }
 
-    # 4. Reconciliation Telemetry
-    last_rec = db["execution_reconciliations"].find_one({}, sort=[("reconciled_at", -1)])
-    rec_time = last_rec.get("reconciled_at") if last_rec else None
-    if rec_time and hasattr(rec_time, "tzinfo") and rec_time.tzinfo is None:
-        rec_time = rec_time.replace(tzinfo=datetime.timezone.utc)
+    # 3. Worker Heartbeats (Isolated)
+    heartbeats: dict[str, Any] = {}
+    try:
+        heartbeats_cursor = db["worker_heartbeats"].find({})
+        for h in heartbeats_cursor:
+            w_name = h.get("worker", "unknown")
+            w_time = h.get("last_heartbeat")
+            if w_time and hasattr(w_time, "tzinfo") and w_time.tzinfo is None:
+                w_time = w_time.replace(tzinfo=datetime.timezone.utc)
+            age_s = (now - w_time).total_seconds() if isinstance(w_time, datetime.datetime) else 999999.0
+            heartbeats[w_name] = {
+                "last_heartbeat": w_time.isoformat() if isinstance(w_time, datetime.datetime) else None,
+                "age_seconds": round(age_s, 1),
+                "status": "ALIVE" if age_s <= 120.0 else "DEAD",
+            }
+    except Exception as hb_err:
+        degraded_sections.append("worker_heartbeats")
+        heartbeats = {
+            "status": "UNAVAILABLE",
+            "error_category": _classify_error_category(hb_err),
+            "error_message": _sanitize_message(str(hb_err)),
+        }
 
-    reconciliation_info = {
-        "last_reconciled_at": rec_time.isoformat() if isinstance(rec_time, datetime.datetime) else None,
-        "last_reconciliation_id": last_rec.get("reconciliation_id") if last_rec else None,
-        "last_verdict": last_rec.get("verdict") if last_rec else None,
-    }
+    # 4. Outbox Metrics (Isolated)
+    outbox: dict[str, Any] = {}
+    try:
+        from app.trading.outbox.repository import get_outbox_metrics
+        outbox = get_outbox_metrics()
+    except Exception as ob_err:
+        degraded_sections.append("outbox")
+        outbox = {
+            "status": "UNAVAILABLE",
+            "error_category": _classify_error_category(ob_err),
+            "error_message": _sanitize_message(str(ob_err)),
+        }
 
-    # 5. Outcome Evaluation & Coverage
-    last_eval = db["decision_outcomes"].find_one(
-        {"maturity_status": "MATURE"}, sort=[("resolved_at", -1)]
-    )
-    eval_time = last_eval.get("resolved_at") if last_eval else None
-    if eval_time and hasattr(eval_time, "tzinfo") and eval_time.tzinfo is None:
-        eval_time = eval_time.replace(tzinfo=datetime.timezone.utc)
+    # 5. Reconciliation Telemetry (Isolated)
+    reconciliation_info: dict[str, Any] = {}
+    try:
+        last_rec = db["execution_reconciliations"].find_one({}, sort=[("reconciled_at", -1)])
+        rec_time = last_rec.get("reconciled_at") if last_rec else None
+        if rec_time and hasattr(rec_time, "tzinfo") and rec_time.tzinfo is None:
+            rec_time = rec_time.replace(tzinfo=datetime.timezone.utc)
 
-    total_decisions = db["decision_artifacts"].count_documents({})
-    mature_decisions = db["decision_outcomes"].count_documents({"maturity_status": "MATURE"})
-    unresolved_decisions = db["decision_outcomes"].count_documents({"maturity_status": "UNRESOLVED"})
-    coverage_pct = round((mature_decisions / max(total_decisions, 1)) * 100, 2)
+        reconciliation_info = {
+            "last_reconciled_at": rec_time.isoformat() if isinstance(rec_time, datetime.datetime) else None,
+            "last_reconciliation_id": last_rec.get("reconciliation_id") if last_rec else None,
+            "last_verdict": last_rec.get("verdict") if last_rec else None,
+        }
+    except Exception as rec_err:
+        degraded_sections.append("reconciliation")
+        reconciliation_info = {
+            "status": "UNAVAILABLE",
+            "error_category": _classify_error_category(rec_err),
+            "error_message": _sanitize_message(str(rec_err)),
+            "last_reconciled_at": None,
+            "last_reconciliation_id": None,
+            "last_verdict": None,
+        }
 
-    evaluation_info = {
-        "last_evaluated_at": eval_time.isoformat() if isinstance(eval_time, datetime.datetime) else None,
-        "last_outcome_id": last_eval.get("outcome_id") if last_eval else None,
-        "total_decisions": total_decisions,
-        "mature_decisions": mature_decisions,
-        "unresolved_decisions": unresolved_decisions,
-        "coverage_pct": coverage_pct,
-    }
+    # 6. Outcome Evaluation & Coverage (Isolated)
+    evaluation_info: dict[str, Any] = {}
+    try:
+        last_eval = db["decision_outcomes"].find_one(
+            {"maturity_status": "MATURE"}, sort=[("resolved_at", -1)]
+        )
+        eval_time = last_eval.get("resolved_at") if last_eval else None
+        if eval_time and hasattr(eval_time, "tzinfo") and eval_time.tzinfo is None:
+            eval_time = eval_time.replace(tzinfo=datetime.timezone.utc)
+
+        total_decisions = db["decision_artifacts"].count_documents({})
+        mature_decisions = db["decision_outcomes"].count_documents({"maturity_status": "MATURE"})
+        unresolved_decisions = db["decision_outcomes"].count_documents({"maturity_status": "UNRESOLVED"})
+        coverage_pct = round((mature_decisions / max(total_decisions, 1)) * 100, 2)
+
+        evaluation_info = {
+            "last_evaluated_at": eval_time.isoformat() if isinstance(eval_time, datetime.datetime) else None,
+            "last_outcome_id": last_eval.get("outcome_id") if last_eval else None,
+            "total_decisions": total_decisions,
+            "mature_decisions": mature_decisions,
+            "unresolved_decisions": unresolved_decisions,
+            "coverage_pct": coverage_pct,
+        }
+    except Exception as eval_err:
+        degraded_sections.append("outcome_evaluation")
+        evaluation_info = {
+            "status": "UNAVAILABLE",
+            "error_category": _classify_error_category(eval_err),
+            "error_message": _sanitize_message(str(eval_err)),
+            "total_decisions": None,
+            "mature_decisions": None,
+            "unresolved_decisions": None,
+            "coverage_pct": None,
+        }
+
+    metrics_status = "DEGRADED" if len(degraded_sections) > 0 else "HEALTHY"
 
     return {
+        "metrics_status": metrics_status,
+        "observation_time": now.isoformat(),
         "deployed_commit_sha": commit_sha,
-        "default_mode": resolve_control_plane_mode("default").value,
+        "default_mode": default_mode,
+        "degraded_sections": sorted(list(set(degraded_sections))),
+        "mode_resolution": mode_info,
         "worker_heartbeats": heartbeats,
         "outbox": outbox,
         "reconciliation": reconciliation_info,
