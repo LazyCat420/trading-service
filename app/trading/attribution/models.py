@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime
 from enum import Enum
 from typing import Any, Optional
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class PolicyDisposition(str, Enum):
@@ -120,11 +120,32 @@ class DecisionArtifact(CanonicalAttributionModel):
     created_at: datetime.datetime = Field(
         default_factory=lambda: datetime.datetime.now(datetime.timezone.utc)
     )
+    maturity_date: Optional[datetime.datetime] = None
+    retry_count: int = 0
+    is_quarantined: bool = False
+    quarantine_reason: Optional[str] = None
+    retry_after: Optional[datetime.datetime] = None
+    outcome_status: Optional[str] = None
+    evaluated_at: Optional[datetime.datetime] = None
 
     @field_validator("created_at", mode="after")
     @classmethod
     def validate_utc(cls, v: datetime.datetime) -> datetime.datetime:
         return _ensure_utc(v) or datetime.datetime.now(datetime.timezone.utc)
+
+    @field_validator("maturity_date", "retry_after", "evaluated_at", mode="after")
+    @classmethod
+    def validate_optional_utc(cls, v: Optional[datetime.datetime]) -> Optional[datetime.datetime]:
+        return _ensure_utc(v)
+
+    @model_validator(mode="after")
+    def compute_maturity_date(self) -> DecisionArtifact:
+        if self.maturity_date is None and self.created_at:
+            horizon = self.declared_horizon_days if self.declared_horizon_days is not None else 7
+            self.maturity_date = self.created_at + datetime.timedelta(days=horizon)
+        if self.maturity_date and self.maturity_date.tzinfo is None:
+            self.maturity_date = self.maturity_date.replace(tzinfo=datetime.timezone.utc)
+        return self
 
 
 class PolicyDecision(CanonicalAttributionModel):
