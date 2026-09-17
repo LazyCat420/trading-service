@@ -425,7 +425,7 @@ def partial_summary_fields(status: str, tickers_final, results, counts_source: s
     }
 
 
-def enqueue_autoresearch(cycle_id: str, cycle_summary: dict | None) -> str | None:
+def enqueue_autoresearch(cycle_id: str, cycle_summary: dict | None, *, force: bool = False) -> str | None:
     """Ask the eval worker for this cycle's reflection. One enqueue, one shape.
 
     Called from EVERY terminal tail of the cycle — done, stopped, error. Until
@@ -438,10 +438,35 @@ def enqueue_autoresearch(cycle_id: str, cycle_summary: dict | None) -> str | Non
     payload["cycle_id"] (eval_worker.py) and a string silently does not match.
     Returns the job id, or None when there is nothing to enqueue or the store
     refused — never raises into a cycle tail.
+
+    Step 12 Deduplication: Reuses existing job_id if a pending, running, or
+    completed command already exists for this cycle_id, unless force=True.
     """
-    if not cycle_summary:
+    if not cycle_summary or not cycle_id:
         return None
     try:
+        if not force:
+            existing_docs = mongo_store.find_docs(
+                "system_commands",
+                {
+                    "command_type": "AUTORESEARCH",
+                    "status": {"$in": ["pending", "running", "completed"]},
+                    "$or": [
+                        {"payload.cycle_id": cycle_id},
+                        {"cycle_id": cycle_id},
+                    ],
+                },
+                limit=1,
+            )
+            if isinstance(existing_docs, list) and existing_docs and isinstance(existing_docs[0], dict) and existing_docs[0].get("id"):
+                existing_job_id = existing_docs[0].get("id")
+                existing_status = existing_docs[0].get("status")
+                logger.info(
+                    "[PipelineService] Autoresearch command already exists for cycle %s (%s, status=%s); reusing existing job",
+                    cycle_id, existing_job_id, existing_status,
+                )
+                return existing_job_id
+
         import uuid as _uuid
 
         job_id = f"job_{_uuid.uuid4().hex[:8]}"

@@ -111,7 +111,7 @@ def _degenerate_anomaly(degenerate_subs: list[str], partial: bool) -> str | None
     return f"Degenerate sub-scores at 0.0: {', '.join(degenerate_subs)}"
 
 
-async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
+async def run_autoresearch(cycle_id: str, cycle_summary: dict, job_id: str | None = None) -> dict:
     """Main entry point: run full autoresearch after a cycle."""
     report_id = f"ar-{uuid.uuid4().hex[:12]}"
     tickers = _tickers_for(cycle_summary)
@@ -134,7 +134,16 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
 
         # created_at was a Postgres column DEFAULT. Mongo has none, and readers
         # filter on it, so an omitted field means the report is invisible.
-        mongo_store.insert_docs('autoresearch_reports', [{'id': report_id, 'cycle_id': cycle_id, 'status': 'running', 'phase': 'starting', 'created_at': datetime.now(timezone.utc)}])
+        init_doc = {
+            'id': report_id,
+            'cycle_id': cycle_id,
+            'status': 'running',
+            'phase': 'starting',
+            'created_at': datetime.now(timezone.utc),
+        }
+        if job_id:
+            init_doc['job_id'] = job_id
+        mongo_store.insert_docs('autoresearch_reports', [init_doc])
 
         # Resolve pending decision outcomes before scoring
         _update_ar_state(report_id, phase="outcome_resolution")
@@ -318,7 +327,24 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
             )
 
         score_ver = decision_quality.get("score_version", "v6")
-        mongo_store.update_docs('autoresearch_reports', {'id': report_id}, {'$set': {'score_version': score_ver, 'llm_score_version':llm_analysis.get('score_version'), 'data_quality_score': round(data_score, 1), 'decision_quality_score': round(decision_score, 1), 'llm_performance_score': round(llm_score, 1), 'overall_score': round(overall, 1), 'data_gaps': json.dumps(data_quality.get("gaps", [])), 'decision_issues': json.dumps(decision_quality.get("issues", [])), 'llm_issues': json.dumps(llm_analysis.get("issues", [])), 'performance_metrics': json.dumps(perf_metrics), 'reflection': json.dumps(reflection), 'recovery_stats': json.dumps(recovery), 'status': 'done'}})
+        update_fields = {
+            'score_version': score_ver,
+            'llm_score_version': llm_analysis.get('score_version'),
+            'data_quality_score': round(data_score, 1),
+            'decision_quality_score': round(decision_score, 1),
+            'llm_performance_score': round(llm_score, 1),
+            'overall_score': round(overall, 1),
+            'data_gaps': json.dumps(data_quality.get("gaps", [])),
+            'decision_issues': json.dumps(decision_quality.get("issues", [])),
+            'llm_issues': json.dumps(llm_analysis.get("issues", [])),
+            'performance_metrics': json.dumps(perf_metrics),
+            'reflection': json.dumps(reflection),
+            'recovery_stats': json.dumps(recovery),
+            'status': 'done',
+        }
+        if job_id:
+            update_fields['job_id'] = job_id
+        mongo_store.update_docs('autoresearch_reports', {'id': report_id}, {'$set': update_fields})
 
         try:
             lesson_result = _store_lessons(reflection, cycle_id)
@@ -400,7 +426,7 @@ async def run_autoresearch(cycle_id: str, cycle_summary: dict) -> dict:
             logger.warning("[AUTORESEARCH] Janitor failed: %s", jan_err)
 
         _update_ar_state(report_id, phase="done")
-        return {"id": report_id, "overall_score": round(overall, 1), "status": "done"}
+        return {"id": report_id, "report_id": report_id, "job_id": job_id, "cycle_id": cycle_id, "overall_score": round(overall, 1), "status": "done"}
 
     except asyncio.CancelledError:
         # The container was told to stop mid-audit. CancelledError is a
