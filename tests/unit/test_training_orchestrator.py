@@ -24,6 +24,7 @@ def mock_client():
     client.evaluate_candidate = AsyncMock()
     client.promote_candidate = AsyncMock()
     client.rollback_model = AsyncMock()
+    client.get_active_model = AsyncMock(return_value="cand-gliner-100")
     return client
 
 

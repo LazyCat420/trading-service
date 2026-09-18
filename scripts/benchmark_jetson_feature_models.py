@@ -67,9 +67,8 @@ async def run_benchmark():
     print("\n[2/4] Running Frozen Benchmark Evaluation Suites on Models...")
 
     # A. GLiNER / Candidate Evaluation
-    models_resp = await client._post_with_resilience("/v1/models", {}) if False else None
-    # Use candidate or champion for gliner
-    cand_id = "cand-gliner_finetune-20260918181218"
+    active_gliner = await client.get_active_model("gliner")
+    cand_id = active_gliner.get("model_id") or "gliner"
     print(f"\n  Evaluating GLiNER Candidate '{cand_id}'...")
     gliner_eval = await client.evaluate_candidate(cand_id)
     m = gliner_eval.get("metrics", {})

@@ -324,6 +324,7 @@ _VALID_ARTIFACT_TYPES = frozenset({
     # row that claimed a full pipeline ran. 22 attempts 2026-07-28..08-10, 0
     # completions. See tests/unit/test_desk_phase_transition.py.
     "degradation_note",
+    "specialist_features",
 })
 
 # Artifacts that carry a tradeable action, and therefore must always declare
@@ -369,6 +370,7 @@ class SharedDesk:
     trade_decision: dict | None = None      # Decision Synthesizer output (Layer 5)
     tournament_result: dict | None = None    # Tournament Debate output (Layer 3 alt)
     delta_report: dict | None = None        # Delta Analyst output (fast re-look tier)
+    specialist_features: dict | None = None  # Jetson Neural Intelligence (GLiNER, CNN, RNN)
 
     # ── Agent data tags — free-form labels harvested from artifacts ──
     # artifact_type -> ["#catalyst", "#risk", ...]. Lets agents mark data
@@ -819,6 +821,11 @@ class SharedDesk:
                 )
             sections.append(text)
 
+        # Specialist Neural Intelligence (GLiNER, Market CNN, Timeseries RNN)
+        spec_text = self.render_specialist_features_context()
+        if spec_text:
+            sections.append(spec_text)
+
         # Debate artifacts (only if requested, and only in "active" mode).
         #
         # Verdict sections track the debate sections. These were once split by
@@ -1123,6 +1130,70 @@ class SharedDesk:
         return ("## Debate Structure (verbatim claims — the summaries above "
                 "may omit these)\n" + "\n".join(lines))
 
+    def record_agent_specialist_features_reached(
+        self, agent_role: str, features: list[str]
+    ) -> None:
+        """Record which specialist features reached a deciding agent for lineage tracking."""
+        entry = {
+            "agent_role": agent_role,
+            "specialist_features_reached": list(features),
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.agent_telemetry.append(entry)
+
+    def render_specialist_features_context(self) -> str:
+        """Render specialist neural intelligence (GLiNER, CNN, RNN) for prompt injection."""
+        if not self.specialist_features or not isinstance(self.specialist_features, dict):
+            return ""
+        mode = self.specialist_features.get("mode", "disabled")
+        if mode != "advisory":
+            return ""
+
+        parts = ["## Specialist Neural Intelligence (Advisory)"]
+
+        # GLiNER entities
+        gliner = self.specialist_features.get("gliner")
+        if gliner and isinstance(gliner, dict):
+            entities = gliner.get("entities") or []
+            if entities:
+                ent_lines = []
+                for e in entities[:10]:
+                    txt = e.get("text", "")
+                    lbl = e.get("label", "")
+                    tck = e.get("ticker", "")
+                    prefix = f"[{tck}] " if tck else ""
+                    ent_lines.append(f"- {prefix}{txt} ({lbl})")
+                parts.append("### GLiNER Entities\n" + "\n".join(ent_lines))
+
+        # CNN market regime
+        cnn = self.specialist_features.get("cnn")
+        if cnn and isinstance(cnn, dict):
+            regime = cnn.get("predicted_regime", "?")
+            brier = cnn.get("brier_score")
+            probs = cnn.get("probabilities") or {}
+            prob_str = ", ".join(f"{k}: {v:.1%}" if isinstance(v, float) else f"{k}: {v}" for k, v in probs.items())
+            brier_str = f" (Brier: {brier:.3f})" if isinstance(brier, float) else ""
+            parts.append(f"### Market CNN Regime: {regime}{brier_str}\nProbabilities: {prob_str}")
+
+        # RNN forecast
+        rnn = self.specialist_features.get("rnn")
+        if rnn and isinstance(rnn, dict):
+            horizon = rnn.get("horizon_days", 5)
+            quantiles = rnn.get("quantiles") or {}
+            q_strs = []
+            for qk in ("p10", "p50", "p90"):
+                if qk in quantiles:
+                    val = quantiles[qk]
+                    if isinstance(val, float):
+                        q_strs.append(f"{qk}={val:+.1%}")
+                    else:
+                        q_strs.append(f"{qk}={val}")
+            stop = rnn.get("stop_loss_ref")
+            stop_str = f" | Stop Ref: {stop}" if stop is not None else ""
+            parts.append(f"### Timeseries RNN {horizon}-Day Forecast\nReturn Quantiles: {', '.join(q_strs)}{stop_str}")
+
+        return "\n\n".join(parts)
+
     def record_agent_telemetry(self, entry: dict[str, Any]) -> None:
         """Record a telemetry entry for an agent run."""
         entry["_recorded_at"] = datetime.now(timezone.utc).isoformat()
@@ -1151,6 +1222,7 @@ class SharedDesk:
             "trade_decision": self.trade_decision,
             "tournament_result": self.tournament_result,
             "delta_report": self.delta_report,
+            "specialist_features": self.specialist_features,
             "artifact_tags": self.artifact_tags,
             "phase_outcomes": self.phase_outcomes,
             "cycle_metadata": self.cycle_metadata,
@@ -1179,6 +1251,7 @@ class SharedDesk:
         desk.trade_decision = data.get("trade_decision")
         desk.tournament_result = data.get("tournament_result")
         desk.delta_report = data.get("delta_report")
+        desk.specialist_features = data.get("specialist_features")
         desk.artifact_tags = data.get("artifact_tags") or {}
         desk.phase_outcomes = data.get("phase_outcomes", {})
         desk.cycle_metadata = data.get("cycle_metadata", {})

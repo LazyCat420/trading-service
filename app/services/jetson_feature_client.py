@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -358,29 +359,51 @@ class JetsonFeatureClient:
     ) -> dict[str, Any]:
         """
         GLiNER Inference: Extracts entity and event spans from source documents.
-
-        Documents input:
-        [
-          {
-            "document_id": "finnhub:12345",
-            "text": "...",
-            "source_url": "https://...",
-            "published_at": "2026-09-18T12:00:00Z"
-          }
-        ]
+        Chunks document batches > 45 to adhere to Jetson's 50 items batch constraint.
         """
-        payload = {
-            "documents": documents,
-            "labels": labels or DEFAULT_GLINER_LABELS,
-            "threshold": threshold,
-        }
-        return await self._post_with_resilience(
-            endpoint="/v1/features/entities",
-            payload=payload,
-            timeout=timeout,
-            trace_id=trace_id,
-            span_id=span_id,
-        )
+        if not documents:
+            return {"result": {"entities": []}, "documents_processed": 0}
+
+        chunk_size = 45
+        if len(documents) <= chunk_size:
+            payload = {
+                "documents": documents,
+                "labels": labels or DEFAULT_GLINER_LABELS,
+                "threshold": threshold,
+            }
+            return await self._post_with_resilience(
+                endpoint="/v1/features/entities",
+                payload=payload,
+                timeout=timeout,
+                trace_id=trace_id,
+                span_id=span_id,
+            )
+
+        all_entities = []
+        combined_resp: dict[str, Any] | None = None
+        for i in range(0, len(documents), chunk_size):
+            chunk = documents[i : i + chunk_size]
+            payload = {
+                "documents": chunk,
+                "labels": labels or DEFAULT_GLINER_LABELS,
+                "threshold": threshold,
+            }
+            resp = await self._post_with_resilience(
+                endpoint="/v1/features/entities",
+                payload=payload,
+                timeout=timeout,
+                trace_id=trace_id,
+                span_id=span_id,
+            )
+            if combined_resp is None:
+                combined_resp = dict(resp)
+            ents = resp.get("result", {}).get("entities", [])
+            all_entities.extend(ents)
+
+        if combined_resp:
+            combined_resp["result"] = {"entities": all_entities}
+            return combined_resp
+        return {"result": {"entities": []}}
 
     async def classify_market_regime(
         self,
@@ -397,22 +420,35 @@ class JetsonFeatureClient:
     ) -> dict[str, Any]:
         """
         Market CNN Inference: Classifies market regime from normalized lookback tensor.
-        Accepts ohlcv as either list of lists [[o,h,l,c,v], ...] or list of dicts.
+        Rejects incomplete OHLCV (< 30 bars), zero prices, and NaN/inf values.
         """
+        if not ohlcv or len(ohlcv) < 30:
+            raise ValueError(
+                f"Incomplete OHLCV data for {instrument_id}: {len(ohlcv) if ohlcv else 0} bars provided, minimum 30 required. Zero-padding is rejected."
+            )
+
         formatted_ohlcv = []
-        for bar in ohlcv:
+        for idx, bar in enumerate(ohlcv):
             if isinstance(bar, dict):
-                formatted_ohlcv.append([
-                    float(bar.get("open", 0.0)),
-                    float(bar.get("high", 0.0)),
-                    float(bar.get("low", 0.0)),
-                    float(bar.get("close", 0.0)),
-                    float(bar.get("volume", 0.0)),
-                ])
+                vals = [bar.get("open"), bar.get("high"), bar.get("low"), bar.get("close"), bar.get("volume")]
+                if any(v is None for v in vals):
+                    raise ValueError(f"Bar {idx} in OHLCV for {instrument_id} is missing required values: {bar}")
+                float_vals = [float(x) for x in vals]
             elif isinstance(bar, (list, tuple)):
-                formatted_ohlcv.append([float(x) for x in bar])
+                if len(bar) < 5:
+                    raise ValueError(f"Bar {idx} in OHLCV has fewer than 5 elements: {bar}")
+                float_vals = [float(x) for x in bar[:5]]
             else:
-                formatted_ohlcv.append(bar)
+                raise ValueError(f"Bar {idx} in OHLCV is of invalid type: {type(bar)}")
+
+            # Validate finite and strictly positive prices
+            for p in float_vals[:4]:
+                if math.isnan(p) or math.isinf(p) or p <= 0.0:
+                    raise ValueError(f"Bar {idx} has invalid non-finite or non-positive price: {p}")
+            if math.isnan(float_vals[4]) or math.isinf(float_vals[4]) or float_vals[4] < 0.0:
+                raise ValueError(f"Bar {idx} has invalid non-finite or negative volume: {float_vals[4]}")
+
+            formatted_ohlcv.append(float_vals)
 
         payload = {
             "instrument_id": instrument_id,
@@ -448,7 +484,7 @@ class JetsonFeatureClient:
     ) -> dict[str, Any]:
         """
         Timeseries RNN Inference: Predicts return quantiles and volatility uncertainty.
-        Accepts sequence or ohlcv tensor of historical lookback features.
+        Validates minimum sequence length (>= 25), non-finite checks, and quantile monotonicity.
         """
         formatted_seq = sequence
         if formatted_seq is None and ohlcv is not None:
@@ -467,6 +503,16 @@ class JetsonFeatureClient:
                 else:
                     formatted_seq.append(item)
 
+        if formatted_seq is None or len(formatted_seq) < 25:
+            raise ValueError(
+                f"Incomplete sequence data for {instrument_id}: {len(formatted_seq) if formatted_seq else 0} steps provided, minimum 25 required."
+            )
+
+        for idx, step in enumerate(formatted_seq):
+            for v in step:
+                if math.isnan(float(v)) or math.isinf(float(v)):
+                    raise ValueError(f"Step {idx} in forecast sequence has non-finite value: {v}")
+
         payload = {
             "instrument_id": instrument_id,
             "bar_interval": bar_interval,
@@ -479,13 +525,29 @@ class JetsonFeatureClient:
         if feature_schema:
             payload["feature_schema"] = feature_schema
 
-        return await self._post_with_resilience(
+        resp = await self._post_with_resilience(
             endpoint="/v1/features/forecast",
             payload=payload,
             timeout=timeout,
             trace_id=trace_id,
             span_id=span_id,
         )
+
+        # Monotonicity check on return quantiles: p10 <= p50 <= p90
+        res = resp.get("result", {})
+        quantiles = res.get("return_quantiles") or res.get("quantiles", {})
+        p10 = quantiles.get("p10")
+        p50 = quantiles.get("p50")
+        p90 = quantiles.get("p90")
+        if p10 is not None and p50 is not None and p90 is not None:
+            if not (float(p10) <= float(p50) <= float(p90)):
+                logger.error(
+                    "[JetsonFeatureClient] Crossed quantiles detected: p10=%s, p50=%s, p90=%s for %s",
+                    p10, p50, p90, instrument_id,
+                )
+                resp["status"] = "DEGRADED"
+
+        return resp
 
     # -------------------------------------------------------------------------
     # Training & Model Lifecycle Management (Port 8002)
@@ -617,11 +679,34 @@ class JetsonFeatureClient:
             resp = await client.post(url, headers=headers)
             if resp.is_success:
                 return resp.json()
+    async def list_models(self, timeout: float | None = None) -> list[dict[str, Any]]:
+        """Lists all registered models on Jetson Orin platform."""
+        url = f"{self.base_url}/v1/models"
+        headers = self._headers()
+        req_timeout = timeout or self.timeout
+        async with httpx.AsyncClient(timeout=req_timeout) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.is_success:
+                data = resp.json()
+                return data.get("models", [])
             raise FeatureServiceResponseError(
-                message=f"Failed to rollback model {model_id}: {resp.text}",
+                message=f"Failed to list models: {resp.text}",
                 status_code=resp.status_code,
-                error_code="ROLLBACK_ERROR",
+                error_code="LIST_MODELS_ERROR",
             )
+
+    async def get_active_model(self, task: str, timeout: float | None = None) -> Optional[str]:
+        """Returns model_id of active champion model for the given task."""
+        models = await self.list_models(timeout=timeout)
+        t_lower = task.lower()
+        for m in models:
+            if m.get("status") == "active":
+                m_task = (m.get("task") or "").lower()
+                m_id = (m.get("model_id") or "").lower()
+                if t_lower in m_task or m_task in t_lower or t_lower in m_id:
+                    return m.get("model_id")
+        return None
+
 
 
 # Global singleton instance for trading-service cycle consumers
