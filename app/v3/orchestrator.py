@@ -579,6 +579,116 @@ async def run_v3_pipeline(
         if context:
             desk.cycle_metadata['prior_research_answers_context'] = context
 
+    async def _build_specialist_features_task():
+        from app.config import settings
+        spec_mode = getattr(settings, "SPECIALIST_MODE", "advisory").lower()
+        if spec_mode == "disabled":
+            desk.specialist_features = {
+                "mode": "disabled",
+                "status": "DISABLED",
+                "ticker": ticker,
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            }
+            desk.append_artifact("specialist_features", desk.specialist_features)
+            return
+
+        from app.services.jetson_feature_client import feature_client
+        gliner_res = None
+        cnn_res = None
+        rnn_res = None
+
+        # 1. GLiNER news entity extraction
+        try:
+            news_items = data_report.get("news") or []
+            news_texts = []
+            if isinstance(news_items, list):
+                for item in news_items[:5]:
+                    if isinstance(item, dict):
+                        t = item.get("title") or item.get("summary") or item.get("headline") or ""
+                        if t:
+                            news_texts.append(str(t))
+                    elif isinstance(item, str) and item:
+                        news_texts.append(item)
+            if not news_texts:
+                news_texts = [f"{ticker} trading update and financial performance."]
+
+            entities_res = await feature_client.extract_entities(news_texts)
+            gliner_res = {
+                "entities": entities_res.get("entities", []),
+                "model_version": entities_res.get("model_version", "gliner-v1"),
+                "status": "AVAILABLE",
+            }
+        except Exception as e:
+            logger.warning("[V3] %s: GLiNER extraction failed: %s", ticker, e)
+            gliner_res = {"status": "UNAVAILABLE", "error": str(e)}
+
+        # 2. CNN market regime classification (requires 30 bars)
+        try:
+            prices = data_report.get("price_history") or data_report.get("prices") or []
+            if isinstance(prices, list) and len(prices) >= 30:
+                recent_bars = prices[-30:]
+            else:
+                recent_bars = []
+
+            if recent_bars:
+                regime_res = await feature_client.predict_regime(recent_bars)
+                cnn_res = {
+                    "predicted_regime": regime_res.get("predicted_regime", "neutral"),
+                    "brier_score": regime_res.get("brier_score"),
+                    "probabilities": regime_res.get("probabilities", {}),
+                    "model_version": regime_res.get("model_version", "market_cnn-v1"),
+                    "status": "AVAILABLE",
+                }
+            else:
+                cnn_res = {"status": "UNAVAILABLE", "error": "Insufficient bars for CNN (need >= 30)"}
+        except Exception as e:
+            logger.warning("[V3] %s: Market CNN prediction failed: %s", ticker, e)
+            cnn_res = {"status": "UNAVAILABLE", "error": str(e)}
+
+        # 3. RNN quantile forecast (requires 25 bars)
+        try:
+            prices = data_report.get("price_history") or data_report.get("prices") or []
+            if isinstance(prices, list) and len(prices) >= 25:
+                recent_series = prices[-25:]
+            else:
+                recent_series = []
+
+            if recent_series:
+                forecast_res = await feature_client.forecast_quantiles(recent_series)
+                rnn_res = {
+                    "quantiles": forecast_res.get("quantiles", {}),
+                    "horizon_days": forecast_res.get("horizon_days", 5),
+                    "stop_loss_ref": forecast_res.get("stop_loss_ref"),
+                    "model_version": forecast_res.get("model_version", "timeseries_rnn-v1"),
+                    "status": "AVAILABLE",
+                }
+            else:
+                rnn_res = {"status": "UNAVAILABLE", "error": "Insufficient bars for RNN (need >= 25)"}
+        except Exception as e:
+            logger.warning("[V3] %s: Timeseries RNN forecast failed: %s", ticker, e)
+            rnn_res = {"status": "UNAVAILABLE", "error": str(e)}
+
+        specialist_payload = {
+            "mode": spec_mode,
+            "ticker": ticker,
+            "collected_at": datetime.now(timezone.utc).isoformat(),
+            "gliner": gliner_res,
+            "cnn": cnn_res,
+            "rnn": rnn_res,
+        }
+        desk.specialist_features = specialist_payload
+        desk.append_artifact("specialist_features", specialist_payload)
+
+        # In advisory mode, record delivery receipts for the deciding agent roles
+        if spec_mode == "advisory":
+            desk.record_agent_specialist_features_reached("v3_fundamental_analyst", ["gliner"])
+            desk.record_agent_specialist_features_reached("v3_technical_analyst", ["cnn"])
+            desk.record_agent_specialist_features_reached("v3_quant_analyst", ["rnn", "cnn"])
+            desk.record_agent_specialist_features_reached("v3_board_of_directors", ["gliner", "cnn", "rnn"])
+            logger.info("[V3] %s: Specialist features delivered to deciding agents in advisory mode", ticker)
+        else:
+            logger.info("[V3] %s: Specialist features persisted in %s mode (prompts unaffected)", ticker, spec_mode)
+
     # Execute independent context builders in parallel.
     t0_ctx = time.monotonic()
     await asyncio.gather(
@@ -595,11 +705,12 @@ async def run_v3_pipeline(
         _build_memory_task(),
         _build_previous_desk_task(),
         _build_research_answers_task(),
+        _build_specialist_features_task(),
         return_exceptions=True,
     )
     ctx_assembly_ms = int((time.monotonic() - t0_ctx) * 1000)
     desk.cycle_metadata["context_assembly_ms"] = ctx_assembly_ms
-    logger.info("[V3] %s: 13 context blocks assembled in %dms", ticker, ctx_assembly_ms)
+    logger.info("[V3] %s: 14 context blocks assembled in %dms", ticker, ctx_assembly_ms)
 
     # Deterministic Data Readiness Gate (shadow evaluation before Phase 0 triage)
     try:

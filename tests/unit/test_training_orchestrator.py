@@ -74,6 +74,7 @@ async def test_orchestration_successful_promotion(orchestrator, mock_client):
     # 4. Evaluation returns metrics that beat promotion thresholds
     mock_client.evaluate_candidate.return_value = {
         "model_id": "cand-gliner-100",
+        "sample_count": 150,
         "metrics": {"f1": 0.935, "precision": 0.94, "recall": 0.93, "latency_p99_ms": 25.0},
         "gate_ready": True,
     }
@@ -117,6 +118,7 @@ async def test_orchestration_rejects_degraded_candidate(orchestrator, mock_clien
     # Degraded metrics: F1 is below threshold (0.85 < 0.912)
     mock_client.evaluate_candidate.return_value = {
         "model_id": "cand-gliner-degraded",
+        "sample_count": 150,
         "metrics": {"f1": 0.85, "precision": 0.86, "recall": 0.84, "latency_p99_ms": 25.0},
         "gate_ready": True,
     }

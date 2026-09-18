@@ -115,8 +115,13 @@ class DurableTrainingService:
             if hasattr(self.db, "get_collection"):
                 return self.db.get_collection(self.COLLECTION_NAME)
             return self.db[self.COLLECTION_NAME]
-        # Default to global mongo_store
-        return mongo_store.db[self.COLLECTION_NAME]
+        # Default to global mongo_store doc db
+        try:
+            return mongo_store.get_doc_db()[self.COLLECTION_NAME]
+        except Exception:
+            if hasattr(mongo_store, "db") and mongo_store.db is not None:
+                return mongo_store.db[self.COLLECTION_NAME]
+            raise
 
     @staticmethod
     def compute_idempotency_key(task: str, manifest_id: str | None, hyperparams: dict[str, Any] | None) -> str:
@@ -179,9 +184,14 @@ class DurableTrainingService:
         """
         col = self._get_collection()
 
-        # 1. Check internal active jobs
-        active_jobs = col.find({"status": {"$in": [JobStatus.ADMITTED.value, JobStatus.RUNNING.value, JobStatus.EVALUATING.value]}})
-        if len(active_jobs) > 0:
+        # 1. Check internal active jobs using count_documents (NOT len(find(...)))
+        active_filter = {"status": {"$in": [JobStatus.ADMITTED.value, JobStatus.RUNNING.value, JobStatus.EVALUATING.value]}}
+        if hasattr(col, "count_documents"):
+            active_count = col.count_documents(active_filter)
+        else:
+            active_count = sum(1 for _ in col.find(active_filter))
+
+        if active_count > 0:
             return False
 
         # 2. Check Jetson capacity
@@ -196,21 +206,46 @@ class DurableTrainingService:
             logger.warning("[DurableTrainingService] Failed to check Jetson health: %s", e)
             return False
 
-        # 3. Find oldest queued job
-        queued = col.find({"status": JobStatus.QUEUED.value})
-        if not queued:
+        # 3. Atomically admit oldest queued job
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        if hasattr(col, "find_one_and_update"):
+            target = col.find_one_and_update(
+                {"status": JobStatus.QUEUED.value},
+                {"$set": {"status": JobStatus.ADMITTED.value, "updated_at": now_iso}},
+                sort=[("created_at", 1)],
+            )
+            if not target:
+                return False
+            job_id = target["job_id"]
+        else:
+            # Fallback for simple dict mock
+            queued = [d for d in col.find({"status": JobStatus.QUEUED.value})]
+            if not queued:
+                return False
+            sorted_queued = sorted(queued, key=lambda x: x.get("created_at", ""))
+            target = sorted_queued[0]
+            job_id = target["job_id"]
+            res = col.update_one(
+                {"job_id": job_id, "status": JobStatus.QUEUED.value},
+                {"$set": {"status": JobStatus.ADMITTED.value, "updated_at": now_iso}},
+            )
+            if hasattr(res, "modified_count") and res.modified_count == 0:
+                return False
+
+        # 4. Anti-race safety gate: ensure we didn't admit concurrently above capacity
+        if hasattr(col, "count_documents"):
+            post_count = col.count_documents(active_filter)
+        else:
+            post_count = sum(1 for _ in col.find(active_filter))
+
+        if post_count > 1:
+            # Revert this admission to prevent queue overflow
+            col.update_one(
+                {"job_id": job_id, "status": JobStatus.ADMITTED.value},
+                {"$set": {"status": JobStatus.QUEUED.value, "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}},
+            )
             return False
 
-        # Sort by created_at ascending
-        sorted_queued = sorted(queued, key=lambda x: x.get("created_at", ""))
-        target = sorted_queued[0]
-        job_id = target["job_id"]
-
-        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        col.update_one(
-            {"job_id": job_id, "status": JobStatus.QUEUED.value},
-            {"$set": {"status": JobStatus.ADMITTED.value, "updated_at": now_iso}},
-        )
         logger.info("[DurableTrainingService] Admitted job %s for execution", job_id)
         return True
 
@@ -224,68 +259,91 @@ class DurableTrainingService:
         expected_champion_version: str | None = None,
     ) -> TrainingJobRecord:
         """
-        Executes an admitted job with lease renewal, status polling, holdout evaluation,
-        and fail-closed promotion.
+        Executes an admitted job with conditional lease acquisition, heartbeat renewal,
+        resilient status polling, holdout evaluation, and fail-closed promotion.
         """
         col = self._get_collection()
         job = await self.get_job(job_id)
         if not job:
             raise ValueError(f"Job {job_id} not found")
 
-        # 1. Acquire lease and mark RUNNING
+        # 1. Conditionally acquire lease and mark RUNNING
         now = datetime.datetime.now(datetime.timezone.utc)
+        now_iso = now.isoformat()
         expires_at = (now + datetime.timedelta(seconds=lease_seconds)).isoformat()
-        col.update_one(
-            {"job_id": job_id},
+        acquire_res = col.update_one(
+            {
+                "job_id": job_id,
+                "$or": [
+                    {"status": JobStatus.ADMITTED.value},
+                    {"lease_owner": None},
+                    {"lease_expires_at": {"$lt": now_iso}},
+                    {"lease_owner": self.worker_id},
+                ],
+            },
             {
                 "$set": {
                     "status": JobStatus.RUNNING.value,
                     "lease_owner": self.worker_id,
                     "lease_expires_at": expires_at,
-                    "updated_at": now.isoformat(),
+                    "updated_at": now_iso,
                 }
             },
         )
+        if hasattr(acquire_res, "modified_count") and acquire_res.modified_count == 0:
+            raise RuntimeError(f"Failed to acquire lease for job {job_id}: lease held by another worker")
 
-        # 2. Submit to Jetson
-        try:
-            sub = await self.client.submit_training_job(
-                task=job.task,
-                base_model_id=job.base_model_id,
-                dataset_manifest_id=job.dataset_manifest_id,
-                hyperparameters=job.hyperparameters,
-            )
-            jetson_job_id = sub.get("job_id")
-            col.update_one({"job_id": job_id}, {"$set": {"jetson_job_id": jetson_job_id}})
-        except Exception as e:
-            col.update_one(
-                {"job_id": job_id},
-                {"$set": {"status": JobStatus.FAILED.value, "result": {"error": str(e)}}},
-            )
-            return await self.get_job(job_id)
+        # 2. Submit to Jetson (or resume existing remote job if recovering from restart)
+        jetson_job_id = job.jetson_job_id
+        if not jetson_job_id:
+            try:
+                sub = await self.client.submit_training_job(
+                    task=job.task,
+                    base_model_id=job.base_model_id,
+                    dataset_manifest_id=job.dataset_manifest_id,
+                    hyperparameters=job.hyperparameters,
+                )
+                jetson_job_id = sub.get("job_id")
+                col.update_one(
+                    {"job_id": job_id, "lease_owner": self.worker_id},
+                    {"$set": {"jetson_job_id": jetson_job_id}},
+                )
+            except Exception as e:
+                col.update_one(
+                    {"job_id": job_id, "lease_owner": self.worker_id},
+                    {"$set": {"status": JobStatus.FAILED.value, "result": {"error": str(e)}}},
+                )
+                return await self.get_job(job_id)
+        else:
+            logger.info("[DurableTrainingService] Resuming existing remote Jetson job %s for job %s", jetson_job_id, job_id)
 
         # 3. Poll Jetson until complete with lease heartbeat
         start_time = time.monotonic()
         cand_model_id = None
         while time.monotonic() - start_time < max_poll_seconds:
-            # Heartbeat lease
+            # Heartbeat lease, verifying we still own the lease
             now_dt = datetime.datetime.now(datetime.timezone.utc)
-            col.update_one(
-                {"job_id": job_id},
+            hb_res = col.update_one(
+                {"job_id": job_id, "lease_owner": self.worker_id},
                 {"$set": {"lease_expires_at": (now_dt + datetime.timedelta(seconds=lease_seconds)).isoformat()}},
             )
+            if hasattr(hb_res, "modified_count") and hb_res.modified_count == 0:
+                raise RuntimeError(f"Lost lease ownership during execution of job {job_id}")
 
             status_resp = await self.client.get_training_job(jetson_job_id)
             j_status = status_resp.get("status")
 
             if j_status == "completed":
                 cand_model_id = status_resp.get("candidate_model_id")
-                col.update_one({"job_id": job_id}, {"$set": {"candidate_model_id": cand_model_id}})
+                col.update_one(
+                    {"job_id": job_id, "lease_owner": self.worker_id},
+                    {"$set": {"candidate_model_id": cand_model_id}},
+                )
                 break
             elif j_status in ("failed", "cancelled"):
-                err_msg = status_resp.get("error_message") or f"Jetson job terminated with status {j_status}"
+                err_msg = status_resp.get("error", f"Jetson training reported {j_status}")
                 col.update_one(
-                    {"job_id": job_id},
+                    {"job_id": job_id, "lease_owner": self.worker_id},
                     {"$set": {"status": JobStatus.FAILED.value, "result": {"error": err_msg}}},
                 )
                 return await self.get_job(job_id)
@@ -294,47 +352,81 @@ class DurableTrainingService:
 
         if not cand_model_id:
             col.update_one(
-                {"job_id": job_id},
-                {"$set": {"status": JobStatus.TIMEOUT.value, "result": {"error": "Polling timed out"}}},
+                {"job_id": job_id, "lease_owner": self.worker_id},
+                {"$set": {"status": JobStatus.TIMEOUT.value, "result": {"error": "Training poll timeout"}}},
             )
             return await self.get_job(job_id)
 
-        # 4. Evaluate candidate
-        col.update_one({"job_id": job_id}, {"$set": {"status": JobStatus.EVALUATING.value}})
-        eval_resp = await self.client.evaluate_candidate(cand_model_id)
+        # 4. Evaluate Candidate on Holdout
+        col.update_one(
+            {"job_id": job_id, "lease_owner": self.worker_id},
+            {"$set": {"status": JobStatus.EVALUATING.value, "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}},
+        )
 
-        # 5. Fail-closed promotion gate
-        cand_metadata = {"candidate_model_id": cand_model_id, "task": job.task}
-        passed, reason = self.orchestrator.evaluate_promotion_gate(
+        try:
+            eval_resp = await self.client.evaluate_candidate(cand_model_id)
+            metrics = eval_resp.get("metrics", {})
+        except Exception as e:
+            col.update_one(
+                {"job_id": job_id, "lease_owner": self.worker_id},
+                {"$set": {"status": JobStatus.FAILED.value, "result": {"error": f"Evaluation failed: {e}"}}},
+            )
+            return await self.get_job(job_id)
+
+        # 5. Promotion Gatekeeper
+        cand_metadata = {
+            "task": job.task,
+            "candidate_model_id": cand_model_id,
+        }
+        cand_eval_payload = dict(eval_resp)
+        if "model_id" not in cand_eval_payload:
+            cand_eval_payload["model_id"] = cand_model_id
+        if "dataset_manifest_id" not in cand_eval_payload and job.dataset_manifest_id:
+            cand_eval_payload["dataset_manifest_id"] = job.dataset_manifest_id
+
+        should_promote, reason = self.orchestrator.evaluate_promotion_gate(
             candidate_metadata=cand_metadata,
-            candidate_eval=eval_resp,
+            candidate_eval=cand_eval_payload,
             champion_eval=champion_eval,
             expected_champion_version=expected_champion_version,
+            require_champion_eval=(champion_eval is not None),
         )
 
         result_payload = {
-            "metrics": eval_resp.get("metrics", eval_resp),
+            "candidate_model_id": cand_model_id,
+            "metrics": metrics,
+            "promotion_gate": "PASSED" if should_promote else "FAILED",
             "reason": reason,
-            "decision": PromotionDecision.PROMOTED.value if passed else PromotionDecision.REJECTED.value,
         }
 
-        if passed:
-            await self.client.promote_candidate(cand_model_id)
-            active_model = await self.client.get_active_model(job.task)
+        if should_promote:
+            try:
+                promo_resp = await self.client.promote_candidate(cand_model_id)
+                result_payload["promotion_response"] = promo_resp
+            except Exception as e:
+                col.update_one(
+                    {"job_id": job_id, "lease_owner": self.worker_id},
+                    {"$set": {"status": JobStatus.FAILED.value, "result": {"error": f"Promotion request failed: {e}"}}},
+                )
+                return await self.get_job(job_id)
+
+            # Post-promotion verification: active model must match candidate
+            active_info = await self.client.get_active_model(job.task)
+            active_model = active_info.get("model_id") if isinstance(active_info, dict) else str(active_info)
             if active_model != cand_model_id:
                 col.update_one(
-                    {"job_id": job_id},
+                    {"job_id": job_id, "lease_owner": self.worker_id},
                     {"$set": {"status": JobStatus.FAILED.value, "result": {"error": "Verification failed post-promotion"}}},
                 )
                 raise PromotionVerificationError(f"Active model for {job.task} is {active_model}, expected {cand_model_id}")
 
             col.update_one(
-                {"job_id": job_id},
+                {"job_id": job_id, "lease_owner": self.worker_id},
                 {"$set": {"status": JobStatus.PROMOTED.value, "result": result_payload}},
             )
         else:
             col.update_one(
-                {"job_id": job_id},
+                {"job_id": job_id, "lease_owner": self.worker_id},
                 {"$set": {"status": JobStatus.REJECTED.value, "result": result_payload}},
             )
 
@@ -344,24 +436,39 @@ class DurableTrainingService:
         """Finds running jobs whose worker lease has expired and reclaims or re-queues them."""
         col = self._get_collection()
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        running_jobs = col.find({"status": JobStatus.RUNNING.value})
+        running_jobs = [j for j in col.find({"status": JobStatus.RUNNING.value})]
 
         reclaimed_count = 0
         for job in running_jobs:
             lease_exp = job.get("lease_expires_at")
             if lease_exp and lease_exp < now_iso:
                 job_id = job["job_id"]
-                col.update_one(
-                    {"job_id": job_id},
-                    {
-                        "$set": {
-                            "status": JobStatus.QUEUED.value,
-                            "lease_owner": None,
-                            "lease_expires_at": None,
-                            "updated_at": now_iso,
-                        }
-                    },
-                )
+                # If the job was already submitted to Jetson (has jetson_job_id),
+                # keep it in RUNNING with lease cleared so a worker can resume polling it!
+                # Do NOT reset to QUEUED (which would duplicate remote training).
+                if job.get("jetson_job_id"):
+                    col.update_one(
+                        {"job_id": job_id, "lease_expires_at": lease_exp},
+                        {
+                            "$set": {
+                                "lease_owner": None,
+                                "lease_expires_at": None,
+                                "updated_at": now_iso,
+                            }
+                        },
+                    )
+                else:
+                    col.update_one(
+                        {"job_id": job_id, "lease_expires_at": lease_exp},
+                        {
+                            "$set": {
+                                "status": JobStatus.QUEUED.value,
+                                "lease_owner": None,
+                                "lease_expires_at": None,
+                                "updated_at": now_iso,
+                            }
+                        },
+                    )
                 reclaimed_count += 1
                 logger.warning("[DurableTrainingService] Reclaimed stale job %s", job_id)
 

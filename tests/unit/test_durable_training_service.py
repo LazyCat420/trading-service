@@ -24,43 +24,39 @@ from app.services.durable_training_service import (
 def mock_db():
     docs = {}
 
+    def _matches(doc, q):
+        for k, v in q.items():
+            if k == "$or":
+                sub_match = any(_matches(doc, cond) for cond in v)
+                if not sub_match:
+                    return False
+            elif isinstance(v, dict):
+                if "$in" in v and doc.get(k) not in v["$in"]:
+                    return False
+                if "$lt" in v:
+                    doc_val = doc.get(k)
+                    if doc_val is None or str(doc_val) >= str(v["$lt"]):
+                        return False
+            elif doc.get(k) != v:
+                return False
+        return True
+
     class MockCollection:
         def find_one(self, query):
             for doc in docs.values():
-                match = True
-                for k, v in query.items():
-                    if k == "$or":
-                        sub_match = any(doc.get(sub_k) == sub_v for cond in v for sub_k, sub_v in cond.items())
-                        if not sub_match:
-                            match = False
-                            break
-                    elif isinstance(v, dict) and "$in" in v:
-                        if doc.get(k) not in v["$in"]:
-                            match = False
-                            break
-                    elif doc.get(k) != v:
-                        match = False
-                        break
-                if match:
+                if _matches(doc, query):
                     return dict(doc)
             return None
 
         def find(self, query=None):
             results = []
             for doc in docs.values():
-                match = True
-                if query:
-                    for k, v in query.items():
-                        if k == "status" and isinstance(v, dict) and "$in" in v:
-                            if doc.get("status") not in v["$in"]:
-                                match = False
-                                break
-                        elif doc.get(k) != v:
-                            match = False
-                            break
-                if match:
+                if query is None or _matches(doc, query):
                     results.append(dict(doc))
             return results
+
+        def count_documents(self, query):
+            return len(self.find(query))
 
         def insert_one(self, doc):
             doc_id = doc.get("job_id", str(uuid.uuid4()))
@@ -69,12 +65,7 @@ def mock_db():
 
         def update_one(self, query, update):
             for job_id, doc in docs.items():
-                match = True
-                for k, v in query.items():
-                    if doc.get(k) != v:
-                        match = False
-                        break
-                if match:
+                if _matches(doc, query):
                     if "$set" in update:
                         doc.update(update["$set"])
                     return MagicMock(modified_count=1)
@@ -93,9 +84,13 @@ def mock_jetson():
     client.get_health = AsyncMock(return_value={"status": "ok", "queue": {"training_active": 0, "training_max": 1}})
     client.submit_training_job = AsyncMock(return_value={"job_id": "jetson-job-1", "status": "pending"})
     client.get_training_job = AsyncMock(return_value={"status": "completed", "candidate_model_id": "cand-test-1"})
-    client.evaluate_candidate = AsyncMock(return_value={"model_id": "cand-test-1", "metrics": {"f1": 0.94, "precision": 0.94, "recall": 0.94, "latency_p99_ms": 25.0}})
+    client.evaluate_candidate = AsyncMock(return_value={
+        "model_id": "cand-test-1",
+        "sample_count": 150,
+        "metrics": {"f1": 0.94, "precision": 0.94, "recall": 0.94, "latency_p99_ms": 25.0}
+    })
     client.promote_candidate = AsyncMock(return_value={"status": "promoted"})
-    client.get_active_model = AsyncMock(return_value="cand-test-1")
+    client.get_active_model = AsyncMock(return_value={"model_id": "cand-test-1", "task": "gliner"})
     return client
 
 

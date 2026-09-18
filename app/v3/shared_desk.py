@@ -1154,43 +1154,52 @@ class SharedDesk:
         # GLiNER entities
         gliner = self.specialist_features.get("gliner")
         if gliner and isinstance(gliner, dict):
-            entities = gliner.get("entities") or []
-            if entities:
-                ent_lines = []
-                for e in entities[:10]:
-                    txt = e.get("text", "")
-                    lbl = e.get("label", "")
-                    tck = e.get("ticker", "")
-                    prefix = f"[{tck}] " if tck else ""
-                    ent_lines.append(f"- {prefix}{txt} ({lbl})")
-                parts.append("### GLiNER Entities\n" + "\n".join(ent_lines))
+            if gliner.get("status") == "UNAVAILABLE":
+                parts.append(f"### GLiNER Entities: UNAVAILABLE ({gliner.get('error', 'Inference failed')})")
+            else:
+                entities = gliner.get("entities") or []
+                if entities:
+                    ent_lines = []
+                    for e in entities[:10]:
+                        txt = e.get("text", "")
+                        lbl = e.get("label", "")
+                        tck = e.get("ticker", "")
+                        prefix = f"[{tck}] " if tck else ""
+                        ent_lines.append(f"- {prefix}{txt} ({lbl})")
+                    parts.append("### GLiNER Entities\n" + "\n".join(ent_lines))
 
         # CNN market regime
         cnn = self.specialist_features.get("cnn")
         if cnn and isinstance(cnn, dict):
-            regime = cnn.get("predicted_regime", "?")
-            brier = cnn.get("brier_score")
-            probs = cnn.get("probabilities") or {}
-            prob_str = ", ".join(f"{k}: {v:.1%}" if isinstance(v, float) else f"{k}: {v}" for k, v in probs.items())
-            brier_str = f" (Brier: {brier:.3f})" if isinstance(brier, float) else ""
-            parts.append(f"### Market CNN Regime: {regime}{brier_str}\nProbabilities: {prob_str}")
+            if cnn.get("status") == "UNAVAILABLE":
+                parts.append(f"### Market CNN Regime: UNAVAILABLE ({cnn.get('error', 'Inference failed')})")
+            else:
+                regime = cnn.get("predicted_regime", "?")
+                brier = cnn.get("brier_score")
+                probs = cnn.get("probabilities") or {}
+                prob_str = ", ".join(f"{k}: {v:.1%}" if isinstance(v, float) else f"{k}: {v}" for k, v in probs.items())
+                brier_str = f" (Brier: {brier:.3f})" if isinstance(brier, float) else ""
+                parts.append(f"### Market CNN Regime: {regime}{brier_str}\nProbabilities: {prob_str}")
 
         # RNN forecast
         rnn = self.specialist_features.get("rnn")
         if rnn and isinstance(rnn, dict):
-            horizon = rnn.get("horizon_days", 5)
-            quantiles = rnn.get("quantiles") or {}
-            q_strs = []
-            for qk in ("p10", "p50", "p90"):
-                if qk in quantiles:
-                    val = quantiles[qk]
-                    if isinstance(val, float):
-                        q_strs.append(f"{qk}={val:+.1%}")
-                    else:
-                        q_strs.append(f"{qk}={val}")
-            stop = rnn.get("stop_loss_ref")
-            stop_str = f" | Stop Ref: {stop}" if stop is not None else ""
-            parts.append(f"### Timeseries RNN {horizon}-Day Forecast\nReturn Quantiles: {', '.join(q_strs)}{stop_str}")
+            if rnn.get("status") == "UNAVAILABLE":
+                parts.append(f"### Timeseries RNN Forecast: UNAVAILABLE ({rnn.get('error', 'Inference failed')})")
+            else:
+                horizon = rnn.get("horizon_days", 5)
+                quantiles = rnn.get("quantiles") or {}
+                q_strs = []
+                for qk in ("p10", "p50", "p90"):
+                    if qk in quantiles:
+                        val = quantiles[qk]
+                        if isinstance(val, float):
+                            q_strs.append(f"{qk}={val:+.1%}")
+                        else:
+                            q_strs.append(f"{qk}={val}")
+                stop = rnn.get("stop_loss_ref")
+                stop_str = f" | Stop Ref: {stop}" if stop is not None else ""
+                parts.append(f"### Timeseries RNN {horizon}-Day Forecast\nReturn Quantiles: {', '.join(q_strs)}{stop_str}")
 
         return "\n\n".join(parts)
 

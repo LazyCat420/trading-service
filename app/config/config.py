@@ -189,6 +189,10 @@ class Settings(BaseSettings):
     SPARK_BENCH_ENABLED: bool = True
     SPARK_BENCH_URL: str = _config.get("SPARK_BENCH_URL", "http://10.0.0.141:8800")
 
+    # ── Jetson Feature Specialists (GLiNER, CNN, RNN) ──
+    SPECIALIST_MODE: str = _config.get("SPECIALIST_MODE", "advisory")  # "disabled" | "shadow" | "advisory"
+    JETSON_FEATURE_SERVICE_URL: str = _config.get("JETSON_FEATURE_SERVICE_URL", "http://10.0.0.30:8002")
+
     # ── World Simulator ──
     EXECUTION_MODE: str = "production"  # "production" | "staging" | "simulation"
     SIMULATION_TREND: str = "bullish"  # "bullish" | "bearish" | "neutral" | "volatile"

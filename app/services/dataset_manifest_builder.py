@@ -111,17 +111,20 @@ class DatasetManifestBuilder:
         sorted_samples = [item[1] for item in stamped_samples]
         n = len(sorted_samples)
 
-        train_end = int(n * train_ratio)
-        val_end = int(n * (train_ratio + val_ratio))
-
-        # Ensure at least 1 sample in validation and test if n is small and ratios > 0
-        if n >= 3:
-            train_end = min(train_end, n - 2)
-            val_end = min(max(val_end, train_end + 1), n - 1)
-
-        raw_train = sorted_samples[:train_end]
-        raw_val = sorted_samples[train_end:val_end]
-        raw_test = sorted_samples[val_end:]
+        if n == 1:
+            raw_train = sorted_samples
+            raw_val = []
+            raw_test = []
+        elif n == 2:
+            raw_train = [sorted_samples[0]]
+            raw_val = []
+            raw_test = [sorted_samples[1]]
+        else:
+            train_end = min(max(int(n * train_ratio), 1), n - 2)
+            val_end = min(max(int(n * (train_ratio + val_ratio)), train_end + 1), n - 1)
+            raw_train = sorted_samples[:train_end]
+            raw_val = sorted_samples[train_end:val_end]
+            raw_test = sorted_samples[val_end:]
 
         # Apply temporal embargo gaps between splits if requested
         if embargo_hours > 0.0 and raw_train and raw_val and raw_test:

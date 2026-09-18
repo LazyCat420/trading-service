@@ -82,6 +82,7 @@ class JetsonTrainingOrchestrator:
         expected_champion_version: str | None = None,
         slice_regression_tolerance: float = 0.02,
         primary_margin: float = 0.0,
+        require_champion_eval: bool = False,
     ) -> tuple[bool, str]:
         """
         Applies deterministic fail-closed mathematical promotion rules.
@@ -103,9 +104,13 @@ class JetsonTrainingOrchestrator:
         if not task:
             return False, "Unknown or missing task in candidate metadata"
 
-        # Check candidate identity match if model_id is present in evaluation
+        # Check candidate identity: must be present in both metadata and evaluation
         eval_model_id = candidate_eval.get("model_id") or candidate_eval.get("candidate_model_id")
-        if cand_id and eval_model_id and cand_id != eval_model_id:
+        if not cand_id:
+            return False, "Missing candidate model identity in candidate metadata"
+        if not eval_model_id:
+            return False, "Missing candidate model identity in candidate evaluation"
+        if cand_id != eval_model_id:
             return False, f"Candidate identity mismatch (metadata '{cand_id}' vs eval '{eval_model_id}')"
 
         # Extract metrics dictionary
@@ -116,7 +121,7 @@ class JetsonTrainingOrchestrator:
         if not isinstance(metrics, dict):
             return False, "Candidate evaluation missing valid 'metrics' dictionary"
 
-        # 2. Enforce sample size floor
+        # 2. Enforce sample size floor (MANDATORY - non-optional)
         sample_count = candidate_eval.get("sample_count")
         if sample_count is None and "samples_evaluated" in metrics:
             sample_count = metrics["samples_evaluated"]
@@ -137,7 +142,11 @@ class JetsonTrainingOrchestrator:
         else:
             return False, f"Unknown task type '{task}' in candidate metadata"
 
-        if sample_count is not None and sample_count < min_samples:
+        if sample_count is None:
+            return False, f"Missing required sample count in candidate evaluation (floor: {min_samples})"
+        if not isinstance(sample_count, (int, float)) or isinstance(sample_count, bool):
+            return False, f"Invalid type for sample_count: expected numeric, got {type(sample_count).__name__}"
+        if sample_count < min_samples:
             return False, f"Sample count {sample_count} below task floor of {min_samples}"
 
         # 3. Sanitize metrics: reject missing, non-numeric, NaN, infinity
@@ -147,7 +156,7 @@ class JetsonTrainingOrchestrator:
                 return False, f"Missing required metric '{req_key}' for task {task_type}"
 
             raw_val = metrics[req_key]
-            # Strict type check: float or int
+            # Strict type check: float or int (exclude bool)
             if not isinstance(raw_val, (int, float)) or isinstance(raw_val, bool):
                 return False, f"Invalid type for metric '{req_key}': expected float/int, got {type(raw_val).__name__}"
 
@@ -157,12 +166,17 @@ class JetsonTrainingOrchestrator:
 
             clean_metrics[req_key] = val
 
-        # 4. Check absolute quality thresholds
+        # Range verification: ensure metrics are mathematically and physically valid
         if task_type == "gliner":
             f1 = clean_metrics["f1"]
             prec = clean_metrics["precision"]
             rec = clean_metrics["recall"]
             p99 = clean_metrics["latency_p99_ms"]
+
+            if not (0.0 <= f1 <= 1.0) or not (0.0 <= prec <= 1.0) or not (0.0 <= rec <= 1.0):
+                return False, f"Metrics out of valid range [0, 1]: f1={f1}, prec={prec}, rec={rec}"
+            if p99 <= 0.0:
+                return False, f"Latency P99 must be positive, got {p99}"
 
             if f1 < 0.912:
                 return False, f"F1 {f1:.3f} below threshold 0.912"
@@ -177,6 +191,9 @@ class JetsonTrainingOrchestrator:
             macro_f1 = clean_metrics["macro_f1"]
             brier = clean_metrics["brier_score"]
 
+            if not (0.0 <= macro_f1 <= 1.0) or not (0.0 <= brier <= 1.0):
+                return False, f"Metrics out of valid range [0, 1]: macro_f1={macro_f1}, brier={brier}"
+
             if macro_f1 < 0.865:
                 return False, f"Macro F1 {macro_f1:.3f} below threshold 0.865"
             if brier > 0.095:
@@ -186,20 +203,28 @@ class JetsonTrainingOrchestrator:
             rmse = clean_metrics["rmse"]
             cov = clean_metrics["coverage_80"]
 
+            if rmse < 0.0:
+                return False, f"RMSE must be non-negative, got {rmse}"
+            if not (0.0 <= cov <= 1.0):
+                return False, f"Coverage out of valid range [0, 1]: {cov}"
+
             if rmse > 0.024:
                 return False, f"RMSE {rmse:.4f} exceeds threshold 0.024"
             if not (0.75 <= cov <= 0.85):
                 return False, f"Coverage {cov:.3f} outside bounds [0.75, 0.85]"
 
-        # 5. Anti-Regression Against Current Champion (Item 3)
+        # 4. Anti-Regression Against Current Champion (Item 3 & 4)
+        if (require_champion_eval or expected_champion_version is not None) and champion_eval is None:
+            return False, "Missing champion evaluation: champion evaluation is required to verify non-regression"
+
         if champion_eval is not None:
-            # A. Enforce identical dataset manifest
-            cand_manifest = candidate_eval.get("dataset_manifest_id")
-            champ_manifest = champion_eval.get("dataset_manifest_id")
-            if cand_manifest and champ_manifest and cand_manifest != champ_manifest:
+            # A. Enforce identical dataset manifest / checksum
+            cand_manifest = candidate_eval.get("dataset_manifest_id") or candidate_eval.get("manifest_checksum")
+            champ_manifest = champion_eval.get("dataset_manifest_id") or champion_eval.get("manifest_checksum")
+            if not cand_manifest or not champ_manifest or cand_manifest != champ_manifest:
                 return (
                     False,
-                    f"Candidate and Champion evaluated on different dataset manifests ('{cand_manifest}' vs '{champ_manifest}')",
+                    f"Candidate and Champion evaluated on mismatched dataset manifests/checksums ('{cand_manifest}' vs '{champ_manifest}')",
                 )
 
             # B. Optimistic locking on champion version
@@ -234,31 +259,34 @@ class JetsonTrainingOrchestrator:
                         f"Candidate RMSE ({clean_metrics['rmse']:.4f}) regresses against champion ({champ_rmse:.4f})",
                     )
 
-            # D. Critical slice regression check
+            # D. Critical slice regression and omission check
             cand_slices = candidate_eval.get("slices", {})
             champ_slices = champion_eval.get("slices", {})
-            if isinstance(cand_slices, dict) and isinstance(champ_slices, dict):
-                for slice_name, c_slice in cand_slices.items():
-                    if slice_name in champ_slices:
-                        ch_slice = champ_slices[slice_name]
-                        # Compare F1 for gliner/cnn, or RMSE for rnn
-                        if task_type in ("gliner", "cnn"):
-                            metric_name = "f1" if "f1" in c_slice else "macro_f1"
-                            c_val = float(c_slice.get(metric_name, 0.0))
-                            ch_val = float(ch_slice.get(metric_name, 0.0))
-                            if c_val < ch_val - slice_regression_tolerance:
-                                return (
-                                    False,
-                                    f"Candidate regressed on critical slice '{slice_name}': {c_val:.3f} vs champion {ch_val:.3f}",
-                                )
-                        elif task_type == "rnn":
-                            c_rmse = float(c_slice.get("rmse", 1.0))
-                            ch_rmse = float(ch_slice.get("rmse", 1.0))
-                            if c_rmse > ch_rmse + slice_regression_tolerance:
-                                return (
-                                    False,
-                                    f"Candidate regressed on critical slice '{slice_name}': RMSE {c_rmse:.4f} vs champion {ch_rmse:.4f}",
-                                )
+            if isinstance(champ_slices, dict) and champ_slices:
+                if not isinstance(cand_slices, dict) or not cand_slices:
+                    return False, "Candidate omitted critical slice evaluations present in champion evaluation"
+                for slice_name, ch_slice in champ_slices.items():
+                    if slice_name not in cand_slices:
+                        return False, f"Candidate omitted critical slice '{slice_name}' present in champion evaluation"
+                    c_slice = cand_slices[slice_name]
+                    # Compare F1 for gliner/cnn, or RMSE for rnn
+                    if task_type in ("gliner", "cnn"):
+                        metric_name = "f1" if "f1" in c_slice else "macro_f1"
+                        c_val = float(c_slice.get(metric_name, 0.0))
+                        ch_val = float(ch_slice.get(metric_name, 0.0))
+                        if c_val < ch_val - slice_regression_tolerance:
+                            return (
+                                False,
+                                f"Candidate regressed on critical slice '{slice_name}': {c_val:.3f} vs champion {ch_val:.3f}",
+                            )
+                    elif task_type == "rnn":
+                        c_rmse = float(c_slice.get("rmse", 1.0))
+                        ch_rmse = float(ch_slice.get("rmse", 1.0))
+                        if c_rmse > ch_rmse + slice_regression_tolerance:
+                            return (
+                                False,
+                                f"Candidate regressed on critical slice '{slice_name}': RMSE {c_rmse:.4f} vs champion {ch_rmse:.4f}",
+                            )
 
         return True, f"Candidate beat baseline and champion thresholds for {task_type}"
 
