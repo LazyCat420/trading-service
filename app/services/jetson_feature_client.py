@@ -128,6 +128,7 @@ class JetsonFeatureClient:
         max_retries: int | None = None,
         trip_count: int | None = None,
         reset_seconds: float | None = None,
+        shadow_mode: bool | None = None,
     ):
         self.base_url = (base_url or getattr(settings, "JETSON_FEATURES_URL", "http://10.0.0.30:8002")).rstrip("/")
         self.api_key = api_key if api_key is not None else getattr(settings, "JETSON_FEATURES_API_KEY", "")
@@ -137,10 +138,47 @@ class JetsonFeatureClient:
         trip = trip_count if trip_count is not None else int(getattr(settings, "JETSON_FEATURE_CIRCUIT_BREAKER_TRIP_COUNT", 3))
         reset_sec = reset_seconds if reset_seconds is not None else float(getattr(settings, "JETSON_FEATURE_CIRCUIT_BREAKER_RESET_SECONDS", 60.0))
         self.circuit_breaker = CircuitBreaker(trip_count=trip, reset_seconds=reset_sec)
+        self.shadow_mode = shadow_mode if shadow_mode is not None else getattr(settings, "JETSON_FEATURE_SHADOW_MODE", True)
 
         self._capabilities_cache: dict[str, Any] | None = None
         self._capabilities_cached_at: float = 0.0
         self._capabilities_ttl_s: float = 300.0  # 5 minutes
+
+    async def __aenter__(self) -> JetsonFeatureClient:
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        pass
+
+    def build_lineage_record(
+        self,
+        cycle_id: str,
+        decision_id: str | None,
+        instrument_id: str,
+        source_id: str,
+        response_envelope: dict[str, Any],
+        mode: str | None = None,
+    ) -> dict[str, Any]:
+        """Builds a standardized feature lineage document ready for MongoDB persistence."""
+        import datetime
+        import uuid
+        now_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        return {
+            "feature_id": f"feat-{uuid.uuid4().hex[:12]}",
+            "cycle_id": cycle_id or "",
+            "decision_id": decision_id or None,
+            "instrument_id": instrument_id.upper() if instrument_id else "",
+            "source_id": source_id,
+            "document_id": source_id,
+            "model_id": response_envelope.get("model_id", "unknown"),
+            "model_version": response_envelope.get("model_version", "v1"),
+            "schema_version": response_envelope.get("schema_version", "1"),
+            "input_hash": response_envelope.get("input_hash", ""),
+            "created_at": now_utc,
+            "latency_ms": response_envelope.get("latency_ms", 0),
+            "mode": mode or ("shadow" if self.shadow_mode else "active"),
+            "payload": response_envelope.get("result", {}),
+        }
 
     def _headers(self, trace_id: str | None = None, span_id: str | None = None) -> dict[str, str]:
         headers = {
@@ -350,7 +388,7 @@ class JetsonFeatureClient:
         bar_interval: str,
         window_end: str,
         lookback_bars: int,
-        ohlcv: list[dict[str, Any]],
+        ohlcv: list[Any],
         price_source: str = "pinned-provider",
         adjustment_policy: str = "adjusted",
         timeout: float | None = None,
@@ -359,17 +397,33 @@ class JetsonFeatureClient:
     ) -> dict[str, Any]:
         """
         Market CNN Inference: Classifies market regime from normalized lookback tensor.
+        Accepts ohlcv as either list of lists [[o,h,l,c,v], ...] or list of dicts.
         """
+        formatted_ohlcv = []
+        for bar in ohlcv:
+            if isinstance(bar, dict):
+                formatted_ohlcv.append([
+                    float(bar.get("open", 0.0)),
+                    float(bar.get("high", 0.0)),
+                    float(bar.get("low", 0.0)),
+                    float(bar.get("close", 0.0)),
+                    float(bar.get("volume", 0.0)),
+                ])
+            elif isinstance(bar, (list, tuple)):
+                formatted_ohlcv.append([float(x) for x in bar])
+            else:
+                formatted_ohlcv.append(bar)
+
         payload = {
             "instrument_id": instrument_id,
             "bar_interval": bar_interval,
             "window_end": window_end,
             "lookback_bars": lookback_bars,
-            "ohlcv": ohlcv,
+            "ohlcv": formatted_ohlcv,
             "feature_version": "1",
             "price_source": price_source,
             "adjustment_policy": adjustment_policy,
-            "input_hash": self.compute_input_hash(ohlcv),
+            "input_hash": self.compute_input_hash(formatted_ohlcv),
         }
         return await self._post_with_resilience(
             endpoint="/v1/features/market-regime",
@@ -383,9 +437,10 @@ class JetsonFeatureClient:
         self,
         instrument_id: str,
         bar_interval: str,
-        cutoff: str,
         lookback_bars: int,
-        ohlcv: list[dict[str, Any]] | None = None,
+        cutoff: str | None = None,
+        sequence: list[list[float]] | None = None,
+        ohlcv: list[Any] | None = None,
         feature_schema: dict[str, Any] | None = None,
         timeout: float | None = None,
         trace_id: str | None = None,
@@ -393,16 +448,37 @@ class JetsonFeatureClient:
     ) -> dict[str, Any]:
         """
         Timeseries RNN Inference: Predicts return quantiles and volatility uncertainty.
+        Accepts sequence or ohlcv tensor of historical lookback features.
         """
+        formatted_seq = sequence
+        if formatted_seq is None and ohlcv is not None:
+            formatted_seq = []
+            for item in ohlcv:
+                if isinstance(item, dict):
+                    formatted_seq.append([
+                        float(item.get("open", 0.0)),
+                        float(item.get("high", 0.0)),
+                        float(item.get("low", 0.0)),
+                        float(item.get("close", 0.0)),
+                        float(item.get("volume", 0.0)),
+                    ])
+                elif isinstance(item, (list, tuple)):
+                    formatted_seq.append([float(x) for x in item])
+                else:
+                    formatted_seq.append(item)
+
         payload = {
             "instrument_id": instrument_id,
             "bar_interval": bar_interval,
-            "cutoff": cutoff,
             "lookback_bars": lookback_bars,
-            "ohlcv": ohlcv or [],
-            "feature_schema": feature_schema or {"schema_version": "1"},
-            "input_hash": self.compute_input_hash(ohlcv or []),
+            "sequence": formatted_seq or [],
+            "input_hash": self.compute_input_hash(formatted_seq or []),
         }
+        if cutoff:
+            payload["cutoff"] = cutoff
+        if feature_schema:
+            payload["feature_schema"] = feature_schema
+
         return await self._post_with_resilience(
             endpoint="/v1/features/forecast",
             payload=payload,

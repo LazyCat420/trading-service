@@ -73,9 +73,18 @@ Persists all feature inferences to `trading_bot.feature_lineage`:
    - Verification that downstream facts map is untouched by GLiNER.
    - Verification that offline/failing feature service fails open without impacting cycle execution.
 
-3. **Execution Results**:
+3. **Live Jetson Integration Tests** (`tests/integration/test_live_jetson_feature_platform.py`):
+   - Verified live `GET /health`: GPU available (`Orin`, 62.8 GB unified memory), models `gliner`, `cnn`, `rnn` loaded.
+   - Verified live `GET /v1/capabilities`: Tasks `entity_extraction`, `market_regime`, and `forecast`.
+   - Verified live `POST /v1/features/entities`: GLiNER extracted `Apple` (canonical `AAPL`, score 0.9893) and `NVIDIA` (canonical `NVDA`, score 0.9824).
+   - Verified live `POST /v1/features/market-regime`: CNN classified regime with 9 class probabilities.
+   - Verified live `POST /v1/features/forecast`: RNN predicted 5d return quantiles `p10`, `p50`, `p90`.
+
+4. **Execution Results**:
    ```
    tests/unit/test_jetson_feature_client.py: 10 passed
    tests/integration/test_gliner_shadow_pipeline.py: 2 passed
-   ============================== 12 passed in 1.69s ==============================
+   tests/integration/test_live_jetson_feature_platform.py: 4 passed
+   ============================== 16 passed in 2.34s ==============================
    ```
+

@@ -369,8 +369,10 @@ async def _dispatch_gliner_shadow(items: list[tuple[str, str, str, str]]) -> Non
         req_id = res.get("request_id", "")
         latency = res.get("latency_ms", 0)
 
+        docs_list = entities_result.get("documents") or []
+        doc_map = {d.get("document_id"): d.get("entities", []) for d in docs_list if isinstance(d, dict)}
         for aid, tkr, _, _ in items:
-            doc_entities = entities_result.get(aid) or entities_result.get("entities") or []
+            doc_entities = doc_map.get(aid) or entities_result.get(aid) or entities_result.get("entities") or []
             record_feature(
                 cycle_id="",
                 instrument_id=tkr,
