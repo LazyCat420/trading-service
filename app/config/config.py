@@ -79,6 +79,15 @@ class Settings(BaseSettings):
 
     ACTIVE_MODEL: str = ""  # Auto-discovered from vLLM /v1/models at startup
 
+    # ── Jetson Feature Platform (Port 8002) ──
+    JETSON_FEATURES_URL: str = Field(default=os.getenv("JETSON_FEATURES_URL", "http://10.0.0.30:8002"), description="Base URL for Jetson specialized feature service")
+    JETSON_FEATURES_API_KEY: str = Field(default=os.getenv("JETSON_FEATURES_API_KEY", ""), description="API key / Bearer token for feature service")
+    JETSON_FEATURE_TIMEOUT_SECONDS: float = Field(default=float(os.getenv("JETSON_FEATURE_TIMEOUT_SECONDS", "5.0")), description="Request timeout in seconds")
+    JETSON_FEATURE_MAX_RETRIES: int = Field(default=int(os.getenv("JETSON_FEATURE_MAX_RETRIES", "2")), description="Max retries on transient errors")
+    JETSON_FEATURE_CIRCUIT_BREAKER_TRIP_COUNT: int = Field(default=int(os.getenv("JETSON_FEATURE_CIRCUIT_BREAKER_TRIP_COUNT", "3")), description="Consecutive errors to trip circuit breaker")
+    JETSON_FEATURE_CIRCUIT_BREAKER_RESET_SECONDS: float = Field(default=float(os.getenv("JETSON_FEATURE_CIRCUIT_BREAKER_RESET_SECONDS", "60.0")), description="Cooldown seconds before half-open probe")
+    JETSON_FEATURE_SHADOW_MODE: bool = Field(default=os.getenv("JETSON_FEATURE_SHADOW_MODE", "true").lower() in ("1", "true", "yes"), description="Shadow mode: compute & persist features without altering prompts/decisions")
+
     # ── Concurrency (tuned from saturation benchmarks — see tests/benchmarks/outputs/) ──
     RLM_MAX_CONCURRENT: int = (
         2  # max concurrent RLM sessions (uses own client, occupies slots)

@@ -334,6 +334,59 @@ def _store_facts(article_id: str, facts: list[dict[str, Any]], model_note: str) 
         logger.warning("[news-extract] store failed for %s: %s", article_id, e)
 
 
+async def _dispatch_gliner_shadow(items: list[tuple[str, str, str, str]]) -> None:
+    """Dispatches asynchronous GLiNER entity extraction in shadow mode.
+
+    Shadow mode guarantees zero alteration of downstream prompts, facts, or decisions.
+    Output is persisted to feature_lineage collection for offline scoring and calibration.
+    """
+    try:
+        from app.config import settings
+        if not getattr(settings, "JETSON_FEATURE_SHADOW_MODE", True):
+            return
+
+        from app.services.jetson_feature_client import feature_client
+        from app.services.feature_lineage_store import record_feature
+
+        docs = [
+            {
+                "document_id": aid,
+                "text": txt,
+                "source_url": "",
+                "published_at": "",
+                "ticker": tkr,
+                "title": ttl,
+            }
+            for aid, tkr, ttl, txt in items
+        ]
+        if not docs:
+            return
+
+        res = await feature_client.extract_entities(documents=docs, threshold=0.75, timeout=5.0)
+        entities_result = res.get("result", {})
+        input_hash = res.get("input_hash", "")
+        model_version = res.get("model_version", "gliner-trading-v1")
+        req_id = res.get("request_id", "")
+        latency = res.get("latency_ms", 0)
+
+        for aid, tkr, _, _ in items:
+            doc_entities = entities_result.get(aid) or entities_result.get("entities") or []
+            record_feature(
+                cycle_id="",
+                instrument_id=tkr,
+                model_id="gliner",
+                payload={"entities": doc_entities},
+                input_hash=input_hash,
+                model_version=model_version,
+                document_id=aid,
+                request_id=req_id,
+                latency_ms=latency,
+                mode="shadow",
+            )
+    except Exception as e:
+        logger.debug("[news-extract] GLiNER shadow dispatch skipped (fail-open): %s", e)
+
+
 async def ensure_facts(
     rows: list[tuple[str, str, str, Any]],
     budget_s: float = _BATCH_BUDGET_S,
@@ -378,6 +431,12 @@ async def ensure_facts(
 
     if not todo:
         return have
+
+    # Trigger GLiNER in shadow mode asynchronously without blocking cycle budget
+    try:
+        asyncio.create_task(_dispatch_gliner_shadow(todo))
+    except Exception as e:
+        logger.debug("[news-extract] Could not schedule shadow task: %s", e)
 
     sem = asyncio.Semaphore(_CONCURRENCY)
 
