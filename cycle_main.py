@@ -397,6 +397,7 @@ def create_app() -> FastAPI:
         "component_health_router",
         "research_firm_router",
         "watch_allocator_router",
+        "feature_training_router",
     )
 
     _mounted, _failed = [], []

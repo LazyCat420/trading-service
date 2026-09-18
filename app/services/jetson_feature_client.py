@@ -487,6 +487,142 @@ class JetsonFeatureClient:
             span_id=span_id,
         )
 
+    # -------------------------------------------------------------------------
+    # Training & Model Lifecycle Management (Port 8002)
+    # -------------------------------------------------------------------------
+
+    async def submit_training_job(
+        self,
+        task: str,
+        base_model_id: str,
+        dataset_manifest_id: str | None = None,
+        label_schema_version: str = "1",
+        evaluation_suite_id: str | None = None,
+        hyperparameters: dict[str, Any] | None = None,
+        requested_by: str | None = None,
+        proposal_id: str | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Submits an asynchronous training job to the Jetson Feature Platform."""
+        url = f"{self.base_url}/v1/training/jobs"
+        headers = self._headers()
+        payload: dict[str, Any] = {
+            "task": task,
+            "base_model_id": base_model_id,
+            "label_schema_version": label_schema_version,
+        }
+        if dataset_manifest_id is not None:
+            payload["dataset_manifest_id"] = dataset_manifest_id
+        if evaluation_suite_id is not None:
+            payload["evaluation_suite_id"] = evaluation_suite_id
+        if hyperparameters is not None:
+            payload["hyperparameters"] = hyperparameters
+        if requested_by is not None:
+            payload["requested_by"] = requested_by
+        if proposal_id is not None:
+            payload["proposal_id"] = proposal_id
+
+        req_timeout = timeout or self.timeout
+        async with httpx.AsyncClient(timeout=req_timeout) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            if resp.is_success:
+                return resp.json()
+            raise FeatureServiceResponseError(
+                message=f"Failed to submit training job: {resp.text}",
+                status_code=resp.status_code,
+                error_code="TRAINING_SUBMISSION_ERROR",
+            )
+
+    async def list_training_jobs(self, timeout: float | None = None) -> list[dict[str, Any]]:
+        """Retrieves all submitted training jobs from Jetson in chronological order."""
+        url = f"{self.base_url}/v1/training/jobs"
+        headers = self._headers()
+        req_timeout = timeout or self.timeout
+        async with httpx.AsyncClient(timeout=req_timeout) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.is_success:
+                return resp.json()
+            raise FeatureServiceResponseError(
+                message=f"Failed to list training jobs: {resp.text}",
+                status_code=resp.status_code,
+                error_code="TRAINING_LIST_ERROR",
+            )
+
+    async def get_training_job(self, job_id: str, timeout: float | None = None) -> dict[str, Any]:
+        """Retrieves current execution status, progress, metrics, and logs for a training job."""
+        url = f"{self.base_url}/v1/training/jobs/{job_id}"
+        headers = self._headers()
+        req_timeout = timeout or self.timeout
+        async with httpx.AsyncClient(timeout=req_timeout) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.is_success:
+                return resp.json()
+            raise FeatureServiceResponseError(
+                message=f"Failed to get training job {job_id}: {resp.text}",
+                status_code=resp.status_code,
+                error_code="TRAINING_STATUS_ERROR",
+            )
+
+    async def cancel_training_job(self, job_id: str, timeout: float | None = None) -> dict[str, Any]:
+        """Cancels a pending or running training job on Jetson."""
+        url = f"{self.base_url}/v1/training/jobs/{job_id}/cancel"
+        headers = self._headers()
+        req_timeout = timeout or self.timeout
+        async with httpx.AsyncClient(timeout=req_timeout) as client:
+            resp = await client.post(url, headers=headers)
+            if resp.is_success:
+                return resp.json()
+            raise FeatureServiceResponseError(
+                message=f"Failed to cancel training job {job_id}: {resp.text}",
+                status_code=resp.status_code,
+                error_code="TRAINING_CANCEL_ERROR",
+            )
+
+    async def evaluate_candidate(self, candidate_id: str, timeout: float | None = None) -> dict[str, Any]:
+        """Runs the frozen test evaluation suite on an immutable candidate artifact."""
+        url = f"{self.base_url}/v1/models/{candidate_id}/evaluate"
+        headers = self._headers()
+        req_timeout = timeout or max(self.timeout, 10.0)  # Evaluation can take up to 10s
+        async with httpx.AsyncClient(timeout=req_timeout) as client:
+            resp = await client.post(url, headers=headers)
+            if resp.is_success:
+                return resp.json()
+            raise FeatureServiceResponseError(
+                message=f"Failed to evaluate candidate model {candidate_id}: {resp.text}",
+                status_code=resp.status_code,
+                error_code="EVALUATION_ERROR",
+            )
+
+    async def promote_candidate(self, candidate_id: str, timeout: float | None = None) -> dict[str, Any]:
+        """Promotes candidate model through Jetson's policy gate to become active champion."""
+        url = f"{self.base_url}/v1/models/{candidate_id}/promote"
+        headers = self._headers()
+        req_timeout = timeout or self.timeout
+        async with httpx.AsyncClient(timeout=req_timeout) as client:
+            resp = await client.post(url, headers=headers)
+            if resp.is_success:
+                return resp.json()
+            raise FeatureServiceResponseError(
+                message=f"Failed to promote candidate model {candidate_id}: {resp.text}",
+                status_code=resp.status_code,
+                error_code="PROMOTION_ERROR",
+            )
+
+    async def rollback_model(self, model_id: str, timeout: float | None = None) -> dict[str, Any]:
+        """Restores prior champion model after drift, timeout, or metric breach."""
+        url = f"{self.base_url}/v1/models/{model_id}/rollback"
+        headers = self._headers()
+        req_timeout = timeout or self.timeout
+        async with httpx.AsyncClient(timeout=req_timeout) as client:
+            resp = await client.post(url, headers=headers)
+            if resp.is_success:
+                return resp.json()
+            raise FeatureServiceResponseError(
+                message=f"Failed to rollback model {model_id}: {resp.text}",
+                status_code=resp.status_code,
+                error_code="ROLLBACK_ERROR",
+            )
+
 
 # Global singleton instance for trading-service cycle consumers
 feature_client = JetsonFeatureClient()
