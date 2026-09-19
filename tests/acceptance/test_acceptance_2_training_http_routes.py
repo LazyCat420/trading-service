@@ -240,10 +240,11 @@ async def test_training_http_routes_all_three_models(api_client, mock_jetson, is
         assert processed_job.candidate_model_id == "cand-accepted-01"
         assert processed_job.jetson_job_id == "jetson-job-abc"
 
-        # Verify feature_client.submit_training_job received the correct manifest and base_model
+        # Verify feature_client.submit_training_job received the correct manifest, base_model, and idempotency key
         mock_jetson.submit_training_job.assert_awaited_with(
             task="gliner_finetune",
             base_model_id="gliner",
             dataset_manifest_id=data_gliner["manifest_id"],
             hyperparameters={"learning_rate": 5e-5, "epochs": 3},
+            idempotency_key=processed_job.idempotency_key,
         )
