@@ -47,6 +47,7 @@ from app.services.durable_training_service import (
 from app.services.decay_monitor_service import (
     DecayMonitorService,
     DecayEvaluationResult,
+    RollbackTriggerReason,
 )
 from app.services.jetson_feature_client import (
     JetsonFeatureClient,
@@ -73,11 +74,29 @@ def clean_mongo(real_mongo):
 def mock_jetson():
     client = MagicMock(spec=JetsonFeatureClient)
     client.base_url = "http://10.0.0.30:8002"
+    active_models_state = {
+        "gliner": "gliner-champ-baseline",
+        "cnn": "market_cnn-v1",
+        "rnn": "timeseries_rnn-v1",
+        "gliner_finetune": "gliner-champ-baseline",
+    }
     client.get_health = AsyncMock(return_value={
         "status": "ok",
         "gpu": {"available": True, "device_name": "Orin"},
         "queue": {"training_active": 0, "training_max": 1, "inference_active": 0, "inference_max": 4},
         "models_loaded": ["gliner", "cnn", "rnn"],
+    })
+    client.get_capabilities = AsyncMock(return_value={
+        "models": {
+            "gliner": {"version": "gliner-v1"},
+            "cnn": {"version": "market_cnn-v1"},
+            "rnn": {"version": "timeseries_rnn-v1"},
+        }
+    })
+    client.get_active_models = AsyncMock(return_value={
+        "gliner": {"version": "gliner-v1"},
+        "cnn": {"version": "market_cnn-v1"},
+        "rnn": {"version": "timeseries_rnn-v1"},
     })
     client.extract_entities = AsyncMock(return_value={
         "result": {
@@ -124,18 +143,31 @@ def mock_jetson():
         "sample_count": 250,
         "metrics": {"f1": 0.945, "precision": 0.93, "recall": 0.96, "latency_p99_ms": 22.0},
     })
-    client.get_active_model = AsyncMock(return_value={
-        "model_id": "gliner-champ-baseline",
-        "metrics": {"f1": 0.910, "precision": 0.90, "recall": 0.92},
-    })
-    client.promote_candidate = AsyncMock(return_value={
-        "status": "promoted",
-        "model_id": "cand-gliner-e2e-100",
-    })
-    client.rollback_model = AsyncMock(return_value={
-        "status": "rolled_back",
-        "active_model_id": "gliner-champ-baseline",
-    })
+
+    async def _get_active_model(task="gliner"):
+        model_id = active_models_state.get(task, "gliner-champ-baseline")
+        return {
+            "model_id": model_id,
+            "metrics": {"f1": 0.910, "precision": 0.90, "recall": 0.92},
+        }
+    client.get_active_model = AsyncMock(side_effect=_get_active_model)
+
+    async def _promote_candidate(cand_id, task="gliner_finetune"):
+        active_models_state[task] = cand_id
+        active_models_state["gliner"] = cand_id
+        return {
+            "status": "promoted",
+            "model_id": cand_id,
+        }
+    client.promote_candidate = AsyncMock(side_effect=_promote_candidate)
+
+    async def _rollback_model(task="gliner"):
+        active_models_state[task] = "gliner-champ-baseline"
+        return {
+            "status": "rolled_back",
+            "active_model_id": "gliner-champ-baseline",
+        }
+    client.rollback_model = AsyncMock(side_effect=_rollback_model)
     return client
 
 
@@ -161,7 +193,7 @@ async def test_stage1_worker_startup_and_background_loops(clean_mongo, mock_jets
 
     # Start background loops as concurrent tasks
     training_task = asyncio.create_task(
-        training_svc.start_worker_loop(poll_interval=0.05, shutdown_event=shutdown_event)
+        training_svc.start_worker_loop(poll_interval_seconds=0.05, shutdown_event=shutdown_event)
     )
     decay_task = asyncio.create_task(
         decay_svc.start_worker_loop(poll_interval_seconds=0.05, shutdown_event=shutdown_event)
@@ -299,25 +331,33 @@ async def test_stage4_controlled_degradation_and_verified_rollback(clean_mongo, 
         db=clean_mongo,
     )
 
-    # Mock degraded evaluation metrics on active model
-    mock_jetson.evaluate_candidate = AsyncMock(return_value={
-        "model_id": "cand-degraded-v2",
-        "sample_count": 250,
-        "metrics": {"f1": 0.72, "precision": 0.70, "recall": 0.74, "latency_p99_ms": 120.0},
-    })
-    mock_jetson.get_active_model = AsyncMock(return_value={
-        "model_id": "cand-degraded-v2",
-        "metrics": {"f1": 0.91, "precision": 0.90, "recall": 0.92},
-    })
+    # Mock degraded active model that reverts to champion on rollback
+    active_id = "cand-degraded-v2"
+    async def _get_active(task="gliner"):
+        return {"model_id": active_id, "metrics": {"f1": 0.91, "precision": 0.90, "recall": 0.92}}
+    async def _rollback(target=None, timeout=None):
+        nonlocal active_id
+        active_id = "gliner-champ-baseline"
+        return {"status": "rolled_back", "active_model_id": "gliner-champ-baseline"}
 
-    # Run evaluation
-    result = await decay_svc.evaluate_model_decay("gliner", "cand-degraded-v2")
-    assert result.status == "DEGRADED"
+    mock_jetson.get_active_model = AsyncMock(side_effect=_get_active)
+    mock_jetson.rollback_model = AsyncMock(side_effect=_rollback)
 
-    # Trigger verified rollback
-    rollback_resp = await mock_jetson.rollback_model("gliner")
-    assert rollback_resp.get("status") == "rolled_back"
-    assert rollback_resp.get("active_model_id") == "gliner-champ-baseline"
+    # Run evaluation with F1=0.62 (< CRITICAL_GLINER_F1_MIN 0.70)
+    result = await decay_svc.record_and_evaluate({
+        "task": "gliner",
+        "model_id": "cand-degraded-v2",
+        "metrics": {"f1": 0.62, "precision": 0.60, "recall": 0.64, "latency_p99_ms": 120.0},
+    })
+    assert result.triggered_rollback is True
+    assert result.reason == RollbackTriggerReason.EXTRACTION_DECAY
+    assert result.rollback_response is not None
+    assert result.rollback_response.get("status") == "rolled_back"
+    mock_jetson.rollback_model.assert_called_once_with("cand-degraded-v2")
+
+    # Verify active model is now restored champion
+    active_after = await mock_jetson.get_active_model("gliner")
+    assert active_after["model_id"] == "gliner-champ-baseline"
 
 
 # ── Stage 5: Resilience, Crashes, and Invariants ──────────────────────────────
@@ -367,12 +407,10 @@ async def test_stage5_resilience_crashes_and_invariants(clean_mongo, mock_jetson
         task="rnn_train",
         base_model_id="timeseries_rnn",
         dataset_manifest_id="manifest-rnn-unique",
-        idempotency_key="idemp-key-stage5",
     )
     job2 = await service.submit_job(
         task="rnn_train",
         base_model_id="timeseries_rnn",
         dataset_manifest_id="manifest-rnn-unique",
-        idempotency_key="idemp-key-stage5",
     )
     assert job1.job_id == job2.job_id
