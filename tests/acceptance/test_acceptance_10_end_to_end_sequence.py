@@ -141,6 +141,7 @@ def mock_jetson():
     client.evaluate_candidate = AsyncMock(return_value={
         "model_id": "cand-gliner-e2e-100",
         "sample_count": 250,
+        "dataset_manifest_id": "manifest-e2e-gliner-1",
         "metrics": {"f1": 0.945, "precision": 0.93, "recall": 0.96, "latency_p99_ms": 22.0},
     })
 
@@ -152,8 +153,17 @@ def mock_jetson():
         }
     client.get_active_model = AsyncMock(side_effect=_get_active_model)
 
-    async def _promote_candidate(cand_id, task="gliner_finetune"):
-        active_models_state[task] = cand_id
+    async def _get_model_metrics(model_id):
+        return {
+            "model_id": model_id,
+            "sample_count": 250,
+            "dataset_manifest_id": "manifest-e2e-gliner-1",
+            "metrics": {"f1": 0.910, "precision": 0.90, "recall": 0.92, "latency_p99_ms": 25.0},
+        }
+    client.get_model_metrics = AsyncMock(side_effect=_get_model_metrics)
+
+    async def _promote_candidate(cand_id, *args, **kwargs):
+        active_models_state["gliner_finetune"] = cand_id
         active_models_state["gliner"] = cand_id
         return {
             "status": "promoted",
@@ -315,7 +325,7 @@ async def test_stage3_training_proposal_lifecycle(clean_mongo, mock_jetson):
     assert processed_job.status == JobStatus.PROMOTED
     assert processed_job.candidate_model_id == "cand-gliner-e2e-100"
     mock_jetson.submit_training_job.assert_called_once()
-    mock_jetson.promote_candidate.assert_called_once_with("cand-gliner-e2e-100")
+    mock_jetson.promote_candidate.assert_called_once_with("cand-gliner-e2e-100", expected_champion_version="gliner-champ-baseline")
 
 
 # ── Stage 4: Controlled Degradation & Verified Rollback ────────────────────────
