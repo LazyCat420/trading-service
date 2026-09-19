@@ -68,7 +68,7 @@ async def run_benchmark():
 
     # A. GLiNER / Candidate Evaluation
     active_gliner = await client.get_active_model("gliner")
-    cand_id = active_gliner.get("model_id") or "gliner"
+    cand_id = active_gliner.get("model_id") if isinstance(active_gliner, dict) else (str(active_gliner) or "gliner")
     print(f"\n  Evaluating GLiNER Candidate '{cand_id}'...")
     gliner_eval = await client.evaluate_candidate(cand_id)
     m = gliner_eval.get("metrics", {})
