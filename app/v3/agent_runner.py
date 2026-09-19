@@ -1428,24 +1428,32 @@ async def run_v3_agent(
         trace_data(cycle_id, desk.ticker, agent_name, "prompt.assembled",
                    data={"system":system_prompt,"user":user_prompt,"tools":tool_whitelist},
                    attempt=attempt_no)
-        result = await asyncio.wait_for(
-            _with_heartbeat(run_agent(
-                agent_name=agent_name,
-                ticker=desk.ticker,
-                cycle_id=cycle_id,
-                bot_id=bot_id,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                max_tokens=safe_max_tokens,
-                enable_tools=bool(tool_whitelist),
-                model_override=model_override,
-                prism_overrides=prism_overrides,
-                cost_sink=_cost_sink,
-                soft_deadline_s=timeout_seconds * 0.5,
-                deadline_monotonic=t_start + timeout_seconds,
-            ), cycle_id),
-            timeout=timeout_seconds,
-        )
+        import os
+        USE_V2_SDK = os.getenv("USE_V2_SDK", "False").lower() == "true"
+        if USE_V2_SDK and agent_name == "v3_junior_analyst":
+            from app.agents.sdk_adapter import run_analyst_via_sdk
+            result = await run_analyst_via_sdk(agent_name, user_prompt, max_turns=7)
+            if not result:
+                result = {"response": "{}", "loops_used": 1, "tokens_used": 0}
+        else:
+            result = await asyncio.wait_for(
+                _with_heartbeat(run_agent(
+                    agent_name=agent_name,
+                    ticker=desk.ticker,
+                    cycle_id=cycle_id,
+                    bot_id=bot_id,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    max_tokens=safe_max_tokens,
+                    enable_tools=bool(tool_whitelist),
+                    model_override=model_override,
+                    prism_overrides=prism_overrides,
+                    cost_sink=_cost_sink,
+                    soft_deadline_s=timeout_seconds * 0.5,
+                    deadline_monotonic=t_start + timeout_seconds,
+                ), cycle_id),
+                timeout=timeout_seconds,
+            )
 
         elapsed_ms = int((time.monotonic() - t_start) * 1000)
         final_text = result.get("response", "")
