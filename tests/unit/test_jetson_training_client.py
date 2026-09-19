@@ -200,3 +200,113 @@ async def test_rollback_model(client):
         assert rb["active_model_id"] == "gliner-base"
         call_url = mock_post.call_args[0][0]
         assert call_url.endswith(f"/v1/models/{cand_id}/rollback")
+
+
+@pytest.mark.asyncio
+async def test_submit_training_job_with_idempotency_key(client):
+    idemp_key = f"idemp-{secrets.token_hex(6)}"
+    mock_resp = MagicMock()
+    mock_resp.is_success = True
+    mock_resp.status_code = 202
+    mock_resp.json.return_value = {
+        "job_id": "job-123",
+        "task": "gliner_finetune",
+        "status": "pending",
+        "base_model_id": "gliner",
+    }
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_resp
+        result = await client.submit_training_job(
+            task="gliner_finetune",
+            base_model_id="gliner",
+            idempotency_key=idemp_key,
+        )
+        assert result["job_id"] == "job-123"
+        call_kwargs = mock_post.call_args[1]
+        assert call_kwargs["headers"].get("Idempotency-Key") == idemp_key
+        assert call_kwargs["json"].get("idempotency_key") == idemp_key
+
+
+@pytest.mark.asyncio
+async def test_rollback_model_failure_raises(client):
+    cand_id = f"cand-{secrets.token_hex(6)}"
+    mock_resp = MagicMock()
+    mock_resp.is_success = False
+    mock_resp.status_code = 500
+    mock_resp.text = "Internal rollback failure"
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_resp
+        with pytest.raises(FeatureServiceResponseError) as exc_info:
+            await client.rollback_model(cand_id)
+        assert exc_info.value.error_code == "ROLLBACK_ERROR"
+        assert exc_info.value.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_get_model_metrics_direct(client):
+    model_id = f"cnn-{secrets.token_hex(4)}"
+    mock_resp = MagicMock()
+    mock_resp.is_success = True
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "model_id": model_id,
+        "task": "market_cnn",
+        "metrics": {"macro_f1": 0.88, "brier_score": 0.08},
+        "sample_count": 120,
+        "evaluated_at": "2026-09-18T12:00:00Z",
+    }
+
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_resp
+        metrics_res = await client.get_model_metrics(model_id)
+        assert metrics_res["model_id"] == model_id
+        assert metrics_res["metrics"]["macro_f1"] == 0.88
+        assert metrics_res["evaluated_at"] == "2026-09-18T12:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_get_model_metrics_fallback_to_evaluate(client):
+    model_id = f"gliner-{secrets.token_hex(4)}"
+    mock_get_resp = MagicMock()
+    mock_get_resp.is_success = False
+    mock_get_resp.status_code = 404
+    mock_get_resp.text = "Not found"
+
+    mock_eval_resp = {
+        "model_id": model_id,
+        "task": "gliner",
+        "metrics": {"f1": 0.93, "precision": 0.94, "recall": 0.92, "latency_p99_ms": 22.0},
+        "sample_count": 150,
+        "evaluated_at": "2026-09-18T13:00:00Z",
+    }
+
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get, \
+         patch.object(client, "evaluate_candidate", new_callable=AsyncMock) as mock_eval:
+        mock_get.return_value = mock_get_resp
+        mock_eval.return_value = mock_eval_resp
+
+        metrics_res = await client.get_model_metrics(model_id)
+        assert metrics_res["model_id"] == model_id
+        assert metrics_res["metrics"]["f1"] == 0.93
+        mock_eval.assert_awaited_once_with(model_id, timeout=None)
+
+
+@pytest.mark.asyncio
+async def test_get_active_models(client):
+    mock_models = [
+        {"model_id": "gliner-prod-v1", "task": "gliner", "status": "active"},
+        {"model_id": "cnn-prod-v2", "task": "market_cnn", "status": "active"},
+        {"model_id": "rnn-prod-v1", "task": "timeseries_rnn", "status": "active"},
+        {"model_id": "old-cnn", "task": "market_cnn", "status": "retired"},
+    ]
+    with patch.object(client, "list_models", new_callable=AsyncMock) as mock_list:
+        mock_list.return_value = mock_models
+        active_map = await client.get_active_models()
+        assert "gliner" in active_map
+        assert active_map["gliner"]["model_id"] == "gliner-prod-v1"
+        assert "cnn" in active_map
+        assert active_map["cnn"]["model_id"] == "cnn-prod-v2"
+        assert "rnn" in active_map
+        assert active_map["rnn"]["model_id"] == "rnn-prod-v1"

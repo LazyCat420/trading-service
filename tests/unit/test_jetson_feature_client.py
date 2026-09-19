@@ -373,3 +373,98 @@ def test_feature_lineage_store_recording_and_querying():
         results = feature_lineage_store.get_features_for_cycle("cycle-test-101")
         assert len(results) == 1
         assert results[0]["feature_id"] == feature_id
+
+
+@pytest.mark.asyncio
+async def test_extract_entities_version_mismatch_raises(client):
+    mock_resp = MagicMock()
+    mock_resp.is_success = True
+    mock_resp.json.return_value = {
+        "request_id": "req-1",
+        "model_id": "gliner",
+        "model_version": "gliner-v2-unexpected",
+        "schema_version": "1",
+        "input_hash": "h1",
+        "result": {"entities": []},
+    }
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_resp
+        with pytest.raises(FeatureServiceResponseError) as exc_info:
+            await client.extract_entities(
+                documents=[{"text": "Apple reported earnings"}],
+                expected_version="gliner-v1",
+            )
+        assert exc_info.value.error_code == "VERSION_MISMATCH"
+        assert exc_info.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_classify_market_regime_version_mismatch_raises(client):
+    valid_bars = [
+        {"open": 100.0, "high": 105.0, "low": 98.0, "close": 102.0, "volume": 1000.0}
+        for _ in range(30)
+    ]
+    formatted = [[100.0, 105.0, 98.0, 102.0, 1000.0] for _ in range(30)]
+    input_hash = client.compute_input_hash(formatted)
+
+    mock_resp = MagicMock()
+    mock_resp.is_success = True
+    mock_resp.json.return_value = {
+        "request_id": "req-2",
+        "model_id": "cnn",
+        "model_version": "cnn-v2-unexpected",
+        "schema_version": "1",
+        "input_hash": input_hash,
+        "instrument_id": "NVDA",
+        "result": {"regime": "bullish", "input_hash": input_hash, "instrument_id": "NVDA"},
+    }
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_resp
+        with pytest.raises(FeatureServiceResponseError) as exc_info:
+            await client.classify_market_regime(
+                instrument_id="NVDA",
+                bar_interval="1d",
+                window_end="2026-09-18T20:00:00Z",
+                lookback_bars=30,
+                ohlcv=valid_bars,
+                expected_version="cnn-v1",
+            )
+        assert exc_info.value.error_code == "VERSION_MISMATCH"
+        assert exc_info.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_predict_forecast_version_mismatch_raises(client):
+    valid_seq = [[100.0, 105.0, 98.0, 102.0, 1000.0] for _ in range(25)]
+    input_hash = client.compute_input_hash(valid_seq)
+
+    mock_resp = MagicMock()
+    mock_resp.is_success = True
+    mock_resp.json.return_value = {
+        "request_id": "req-3",
+        "model_id": "rnn",
+        "model_version": "rnn-v2-unexpected",
+        "schema_version": "1",
+        "input_hash": input_hash,
+        "instrument_id": "NVDA",
+        "result": {
+            "quantiles": {"p10": -0.02, "p50": 0.01, "p90": 0.04},
+            "input_hash": input_hash,
+            "instrument_id": "NVDA",
+        },
+    }
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_resp
+        with pytest.raises(FeatureServiceResponseError) as exc_info:
+            await client.predict_forecast(
+                instrument_id="NVDA",
+                bar_interval="1d",
+                lookback_bars=25,
+                sequence=valid_seq,
+                expected_version="rnn-v1",
+            )
+        assert exc_info.value.error_code == "VERSION_MISMATCH"
+        assert exc_info.value.status_code == 409

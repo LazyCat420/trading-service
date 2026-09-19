@@ -121,6 +121,11 @@ class CircuitBreaker:
 class JetsonFeatureClient:
     """Async client interfacing with Jetson Feature Platform on port 8002."""
 
+    # Explicit Jetson Orin server capability characteristics & known constraints
+    CAPABILITY_CONCURRENT_VERSIONS: bool = False  # Jetson hosts exactly 1 active champion per task in GPU memory
+    CAPABILITY_DYNAMIC_MODEL_HOTSWAP: bool = False  # Per-request historical version swapping unsupported
+    CAPABILITY_IDEMPOTENT_SUBMISSION: bool = True  # Idempotency keys supported via header & payload
+
     def __init__(
         self,
         base_url: str | None = None,
@@ -181,7 +186,12 @@ class JetsonFeatureClient:
             "payload": response_envelope.get("result", {}),
         }
 
-    def _headers(self, trace_id: str | None = None, span_id: str | None = None) -> dict[str, str]:
+    def _headers(
+        self,
+        trace_id: str | None = None,
+        span_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, str]:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
@@ -192,6 +202,8 @@ class JetsonFeatureClient:
             headers["X-Trace-Id"] = trace_id
         if span_id:
             headers["X-Span-Id"] = span_id
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
         return headers
 
     @staticmethod
@@ -353,6 +365,8 @@ class JetsonFeatureClient:
         documents: list[dict[str, Any]],
         labels: dict[str, str] | None = None,
         threshold: float = 0.75,
+        expected_version: str | None = None,
+        model_id: str | None = None,
         timeout: float | None = None,
         trace_id: str | None = None,
         span_id: str | None = None,
@@ -360,24 +374,48 @@ class JetsonFeatureClient:
         """
         GLiNER Inference: Extracts entity and event spans from source documents.
         Chunks document batches > 45 to adhere to Jetson's 50 items batch constraint.
+        Enforces expected_version consistency if supplied, rejecting version drift.
         """
         if not documents:
             return {"result": {"entities": []}, "documents_processed": 0}
 
+        def _verify_version(resp_obj: dict[str, Any]) -> None:
+            if not expected_version:
+                return
+            actual_version = (
+                resp_obj.get("model_version")
+                or resp_obj.get("model_id")
+                or (resp_obj.get("result", {}) if isinstance(resp_obj.get("result"), dict) else {}).get("model_version")
+                or (resp_obj.get("result", {}) if isinstance(resp_obj.get("result"), dict) else {}).get("model_id")
+            )
+            if actual_version and actual_version != expected_version:
+                raise FeatureServiceResponseError(
+                    message=f"Model version mismatch for GLiNER: expected '{expected_version}', got '{actual_version}'",
+                    error_code="VERSION_MISMATCH",
+                    status_code=409,
+                    details={"expected_version": expected_version, "actual_version": actual_version},
+                )
+
         chunk_size = 45
         if len(documents) <= chunk_size:
-            payload = {
+            payload: dict[str, Any] = {
                 "documents": documents,
                 "labels": labels or DEFAULT_GLINER_LABELS,
                 "threshold": threshold,
             }
-            return await self._post_with_resilience(
+            if expected_version:
+                payload["expected_version"] = expected_version
+            if model_id:
+                payload["model_id"] = model_id
+            resp = await self._post_with_resilience(
                 endpoint="/v1/features/entities",
                 payload=payload,
                 timeout=timeout,
                 trace_id=trace_id,
                 span_id=span_id,
             )
+            _verify_version(resp)
+            return resp
 
         all_entities = []
         combined_resp: dict[str, Any] | None = None
@@ -388,6 +426,10 @@ class JetsonFeatureClient:
                 "labels": labels or DEFAULT_GLINER_LABELS,
                 "threshold": threshold,
             }
+            if expected_version:
+                payload["expected_version"] = expected_version
+            if model_id:
+                payload["model_id"] = model_id
             resp = await self._post_with_resilience(
                 endpoint="/v1/features/entities",
                 payload=payload,
@@ -395,6 +437,7 @@ class JetsonFeatureClient:
                 trace_id=trace_id,
                 span_id=span_id,
             )
+            _verify_version(resp)
             if combined_resp is None:
                 combined_resp = dict(resp)
             ents = resp.get("result", {}).get("entities", [])
@@ -427,6 +470,8 @@ class JetsonFeatureClient:
         ohlcv: list[Any],
         price_source: str = "pinned-provider",
         adjustment_policy: str = "adjusted",
+        expected_version: str | None = None,
+        model_id: str | None = None,
         timeout: float | None = None,
         trace_id: str | None = None,
         span_id: str | None = None,
@@ -434,6 +479,7 @@ class JetsonFeatureClient:
         """
         Market CNN Inference: Classifies market regime from normalized lookback tensor.
         Rejects incomplete OHLCV (< 30 bars), zero prices, future bars past window_end, and NaN/inf values.
+        Enforces expected_version consistency if supplied.
         """
         if not ohlcv or len(ohlcv) < 30:
             raise ValueError(
@@ -489,6 +535,11 @@ class JetsonFeatureClient:
             "adjustment_policy": adjustment_policy,
             "input_hash": input_hash,
         }
+        if expected_version:
+            payload["expected_version"] = expected_version
+        if model_id:
+            payload["model_id"] = model_id
+
         resp = await self._post_with_resilience(
             endpoint="/v1/features/market-regime",
             payload=payload,
@@ -497,8 +548,23 @@ class JetsonFeatureClient:
             span_id=span_id,
         )
 
-        # Validate response window binding & hash integrity
         res = resp.get("result", {})
+        if expected_version:
+            actual_version = (
+                resp.get("model_version")
+                or resp.get("model_id")
+                or (res.get("model_version") if isinstance(res, dict) else None)
+                or (res.get("model_id") if isinstance(res, dict) else None)
+            )
+            if actual_version and actual_version != expected_version:
+                raise FeatureServiceResponseError(
+                    message=f"Model version mismatch for market CNN: expected '{expected_version}', got '{actual_version}'",
+                    error_code="VERSION_MISMATCH",
+                    status_code=409,
+                    details={"expected_version": expected_version, "actual_version": actual_version},
+                )
+
+        # Validate response window binding & hash integrity
         resp_hash = resp.get("input_hash") or res.get("input_hash")
         if resp_hash and resp_hash != input_hash:
             raise FeatureServiceResponseError(
@@ -526,6 +592,8 @@ class JetsonFeatureClient:
         adjustment_policy: str = "adjusted",
         horizon_bars: int = 5,
         preprocessing_version: str = "1",
+        expected_version: str | None = None,
+        model_id: str | None = None,
         timeout: float | None = None,
         trace_id: str | None = None,
         span_id: str | None = None,
@@ -533,6 +601,7 @@ class JetsonFeatureClient:
         """
         Timeseries RNN Inference: Predicts return quantiles and volatility uncertainty.
         Validates minimum sequence length (>= 25), non-finite checks, future bar cutoff bounds, and quantile monotonicity.
+        Enforces expected_version consistency if supplied.
         """
         # Future bar leakage check against cutoff
         if cutoff and ohlcv:
@@ -590,6 +659,10 @@ class JetsonFeatureClient:
             payload["cutoff"] = cutoff
         if feature_schema:
             payload["feature_schema"] = feature_schema
+        if expected_version:
+            payload["expected_version"] = expected_version
+        if model_id:
+            payload["model_id"] = model_id
 
         resp = await self._post_with_resilience(
             endpoint="/v1/features/forecast",
@@ -598,6 +671,22 @@ class JetsonFeatureClient:
             trace_id=trace_id,
             span_id=span_id,
         )
+
+        res = resp.get("result", {})
+        if expected_version:
+            actual_version = (
+                resp.get("model_version")
+                or resp.get("model_id")
+                or (res.get("model_version") if isinstance(res, dict) else None)
+                or (res.get("model_id") if isinstance(res, dict) else None)
+            )
+            if actual_version and actual_version != expected_version:
+                raise FeatureServiceResponseError(
+                    message=f"Model version mismatch for timeseries RNN: expected '{expected_version}', got '{actual_version}'",
+                    error_code="VERSION_MISMATCH",
+                    status_code=409,
+                    details={"expected_version": expected_version, "actual_version": actual_version},
+                )
 
         # Validate response window binding & hash integrity
         res = resp.get("result", {})
@@ -643,11 +732,12 @@ class JetsonFeatureClient:
         hyperparameters: dict[str, Any] | None = None,
         requested_by: str | None = None,
         proposal_id: str | None = None,
+        idempotency_key: str | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        """Submits an asynchronous training job to the Jetson Feature Platform."""
+        """Submits an asynchronous training job to the Jetson Feature Platform with optional idempotency key."""
         url = f"{self.base_url}/v1/training/jobs"
-        headers = self._headers()
+        headers = self._headers(idempotency_key=idempotency_key)
         payload: dict[str, Any] = {
             "task": task,
             "base_model_id": base_model_id,
@@ -663,6 +753,8 @@ class JetsonFeatureClient:
             payload["requested_by"] = requested_by
         if proposal_id is not None:
             payload["proposal_id"] = proposal_id
+        if idempotency_key is not None:
+            payload["idempotency_key"] = idempotency_key
 
         req_timeout = timeout or self.timeout
         async with httpx.AsyncClient(timeout=req_timeout) as client:
@@ -759,6 +851,58 @@ class JetsonFeatureClient:
             resp = await client.post(url, headers=headers)
             if resp.is_success:
                 return resp.json()
+            raise FeatureServiceResponseError(
+                message=f"Failed to rollback model {model_id}: {resp.text}",
+                status_code=resp.status_code,
+                error_code="ROLLBACK_ERROR",
+            )
+
+    async def get_model_metrics(self, model_id: str, timeout: float | None = None) -> dict[str, Any]:
+        """
+        Retrieves evaluation metrics and evaluation timestamp for a registered or active model.
+        First tries GET /v1/models/{model_id}/metrics.
+        If that returns 404 or 405 (or FeatureServiceResponseError with 404/405), falls back to evaluate_candidate(model_id).
+        Returns:
+            {
+                "model_id": str,
+                "task": str,
+                "metrics": dict[str, float],
+                "sample_count": int,
+                "evaluated_at": str (ISO-8601),
+                "dataset_manifest_id": str | None,
+            }
+        """
+        url = f"{self.base_url}/v1/models/{model_id}/metrics"
+        headers = self._headers()
+        req_timeout = timeout or self.timeout
+        try:
+            async with httpx.AsyncClient(timeout=req_timeout) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.is_success:
+                    data = resp.json()
+                    if isinstance(data, dict):
+                        return {
+                            "model_id": data.get("model_id") or model_id,
+                            "task": data.get("task") or "",
+                            "metrics": data.get("metrics") or {},
+                            "sample_count": data.get("sample_count") or data.get("samples") or 0,
+                            "evaluated_at": data.get("evaluated_at") or data.get("timestamp") or "",
+                            "dataset_manifest_id": data.get("dataset_manifest_id"),
+                        }
+        except (httpx.RequestError, FeatureServiceError):
+            pass
+
+        # Fallback: run holdout evaluation to obtain real metrics
+        eval_resp = await self.evaluate_candidate(model_id, timeout=timeout)
+        return {
+            "model_id": eval_resp.get("model_id") or model_id,
+            "task": eval_resp.get("task") or "",
+            "metrics": eval_resp.get("metrics") or {},
+            "sample_count": eval_resp.get("sample_count") or eval_resp.get("samples") or 0,
+            "evaluated_at": eval_resp.get("evaluated_at") or eval_resp.get("timestamp") or "",
+            "dataset_manifest_id": eval_resp.get("dataset_manifest_id"),
+        }
+
     async def list_models(self, timeout: float | None = None) -> list[dict[str, Any]]:
         """Lists all registered models on Jetson Orin platform."""
         url = f"{self.base_url}/v1/models"
@@ -786,6 +930,30 @@ class JetsonFeatureClient:
                 if t_lower in m_task or m_task in t_lower or t_lower in m_id:
                     return m.get("model_id")
         return None
+
+    async def get_active_models(self, timeout: float | None = None) -> dict[str, dict[str, Any]]:
+        """
+        Discovers all currently active champion models across specialist tasks on Jetson.
+        Returns mapping by canonical task name:
+            {
+                "gliner": {"model_id": ..., "model_version": ..., "task": "gliner", "status": "active"},
+                "cnn": {"model_id": ..., "model_version": ..., "task": "market_cnn", "status": "active"},
+                "rnn": {"model_id": ..., "model_version": ..., "task": "timeseries_rnn", "status": "active"},
+            }
+        """
+        models = await self.list_models(timeout=timeout)
+        active_map: dict[str, dict[str, Any]] = {}
+        for m in models:
+            if m.get("status") == "active":
+                task_raw = (m.get("task") or "").lower()
+                m_id = (m.get("model_id") or "").lower()
+                if "gliner" in task_raw or "entity" in task_raw or "gliner" in m_id:
+                    active_map["gliner"] = m
+                elif "cnn" in task_raw or "regime" in task_raw or "cnn" in m_id:
+                    active_map["cnn"] = m
+                elif "rnn" in task_raw or "forecast" in task_raw or "volatility" in task_raw or "rnn" in m_id:
+                    active_map["rnn"] = m
+        return active_map
 
 
 
