@@ -227,11 +227,22 @@ async def test_http_route_rejects_stale_active_model_post_promotion(api_client):
     still reports the old model. The system MUST raise PromotionVerificationError.
     """
     mock_client = MagicMock()
-    mock_client.evaluate_candidate = AsyncMock(return_value={
-        "model_id": "cand-01",
-        "sample_count": 200,
-        "metrics": {"f1": 0.95, "precision": 0.95, "recall": 0.95, "latency_p99_ms": 25.0},
-    })
+    async def _mock_eval(mid):
+        if mid == "cand-01":
+            return {
+                "model_id": "cand-01",
+                "dataset_manifest_id": "m-shared",
+                "sample_count": 200,
+                "metrics": {"f1": 0.95, "precision": 0.95, "recall": 0.95, "latency_p99_ms": 25.0},
+            }
+        return {
+            "model_id": "old-stale-champion",
+            "dataset_manifest_id": "m-shared",
+            "sample_count": 200,
+            "metrics": {"f1": 0.92, "precision": 0.92, "recall": 0.92, "latency_p99_ms": 25.0},
+        }
+
+    mock_client.evaluate_candidate = AsyncMock(side_effect=_mock_eval)
     mock_client.promote_candidate = AsyncMock(return_value={"status": "promoted"})
     # Jetson lies: returns status 'promoted', but active model remains the old one!
     mock_client.get_active_model = AsyncMock(return_value={"model_id": "old-stale-champion", "task": "gliner"})
@@ -241,9 +252,125 @@ async def test_http_route_rejects_stale_active_model_post_promotion(api_client):
             "/features/training/models/cand-01/promote",
             json={
                 "task": "gliner_finetune",
+                "dataset_manifest_id": "m-shared",
                 "candidate_metrics": {"f1": 0.95, "precision": 0.95, "recall": 0.95, "latency_p99_ms": 25.0},
                 "sample_count": 200,
             }
         )
         assert resp.status_code == 500
         assert "promotion verification failed" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_http_route_rejects_when_champion_discovery_fails(api_client):
+    """Verifies that champion discovery outage fails closed with HTTP 502."""
+    mock_client = MagicMock()
+    mock_client.evaluate_candidate = AsyncMock(return_value={
+        "model_id": "cand-01",
+        "task": "gliner_finetune",
+        "dataset_manifest_id": "m-shared",
+        "sample_count": 200,
+        "metrics": {"f1": 0.95, "precision": 0.95, "recall": 0.95, "latency_p99_ms": 25.0},
+    })
+    mock_client.get_active_model = AsyncMock(side_effect=RuntimeError("Jetson registry unreachable"))
+
+    with patch("app.routers.feature_training_router.feature_client", mock_client):
+        resp = api_client.post(
+            "/features/training/models/cand-01/promote",
+            json={"task": "gliner_finetune", "dataset_manifest_id": "m-shared"}
+        )
+        assert resp.status_code == 502
+        assert "champion discovery failed" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_http_route_rejects_when_champion_evaluation_fails(api_client):
+    """Verifies that failure evaluating the existing champion fails closed with HTTP 502."""
+    mock_client = MagicMock()
+
+    async def _mock_eval(mid):
+        if mid == "cand-01":
+            return {
+                "model_id": "cand-01",
+                "task": "gliner_finetune",
+                "dataset_manifest_id": "m-shared",
+                "sample_count": 200,
+                "metrics": {"f1": 0.95, "precision": 0.95, "recall": 0.95, "latency_p99_ms": 25.0},
+            }
+        raise RuntimeError("Champion holdout evaluation crashed on GPU")
+
+    mock_client.evaluate_candidate = AsyncMock(side_effect=_mock_eval)
+    mock_client.get_active_model = AsyncMock(return_value={"model_id": "champ-v1", "task": "gliner"})
+
+    with patch("app.routers.feature_training_router.feature_client", mock_client):
+        resp = api_client.post(
+            "/features/training/models/cand-01/promote",
+            json={"task": "gliner_finetune", "dataset_manifest_id": "m-shared"}
+        )
+        assert resp.status_code == 502
+        assert "champion evaluation failed" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_http_route_rejects_concurrent_promotion_cas_race(api_client):
+    """
+    Simulates a race condition where the active champion changes between
+    candidate evaluation and the promote call.
+    Must be rejected with HTTP 409 Conflict.
+    """
+    mock_client = MagicMock()
+
+    async def _mock_eval(mid):
+        if mid == "cand-01":
+            return {
+                "model_id": "cand-01",
+                "task": "gliner_finetune",
+                "dataset_manifest_id": "m-shared",
+                "sample_count": 200,
+                "metrics": {"f1": 0.95, "precision": 0.95, "recall": 0.95, "latency_p99_ms": 25.0},
+            }
+        return {
+            "model_id": "champ-v1",
+            "task": "gliner_finetune",
+            "dataset_manifest_id": "m-shared",
+            "sample_count": 200,
+            "metrics": {"f1": 0.92, "precision": 0.92, "recall": 0.92, "latency_p99_ms": 25.0},
+        }
+
+    mock_client.evaluate_candidate = AsyncMock(side_effect=_mock_eval)
+    # First get_active_model returns champ-v1; second call (CAS check before promote) returns champ-v2!
+    mock_client.get_active_model = AsyncMock(side_effect=[
+        {"model_id": "champ-v1", "task": "gliner"},
+        {"model_id": "champ-v2-concurrently-promoted", "task": "gliner"},
+    ])
+
+    with patch("app.routers.feature_training_router.feature_client", mock_client):
+        resp = api_client.post(
+            "/features/training/models/cand-01/promote",
+            json={"task": "gliner_finetune", "dataset_manifest_id": "m-shared"}
+        )
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert "concurrent promotion detected" in detail["reason"].lower()
+
+
+def test_rejects_champion_with_incomplete_or_nan_metrics(orchestrator):
+    """Verifies that champion evaluation missing metrics or containing NaN is rejected."""
+    meta = {"candidate_model_id": "cand-01", "task": "gliner_finetune"}
+    cand_eval = {
+        "model_id": "cand-01",
+        "sample_count": 200,
+        "dataset_manifest_id": "m-shared",
+        "metrics": {"f1": 0.95, "precision": 0.95, "recall": 0.95, "latency_p99_ms": 25.0},
+    }
+    champ_eval_bad = {
+        "model_id": "champ-v1",
+        "sample_count": 200,
+        "dataset_manifest_id": "m-shared",
+        "metrics": {"f1": float("nan"), "precision": 0.92, "recall": 0.92, "latency_p99_ms": 25.0},
+    }
+    allowed, reason = orchestrator.evaluate_promotion_gate(
+        meta, cand_eval, champion_eval=champ_eval_bad, require_champion_eval=True
+    )
+    assert not allowed
+    assert "non-finite" in reason.lower()

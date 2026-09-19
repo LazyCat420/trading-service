@@ -1131,15 +1131,24 @@ class SharedDesk:
                 "may omit these)\n" + "\n".join(lines))
 
     def record_agent_specialist_features_reached(
-        self, agent_role: str, features: list[str]
+        self, agent_role: str, features: Any, attempt: int = 1
     ) -> None:
         """Record which specialist features reached a deciding agent for lineage tracking."""
-        entry = {
-            "agent_role": agent_role,
-            "specialist_features_reached": list(features),
-            "recorded_at": datetime.now(timezone.utc).isoformat(),
-        }
+        if isinstance(features, dict) and "features" in features:
+            entry = dict(features)
+            # Also keep specialist_features_reached list for backward compatibility
+            entry.setdefault("specialist_features_reached", [
+                f["feature_id"] for f in features["features"] if f.get("delivery_status") == "DELIVERED"
+            ])
+        else:
+            entry = {
+                "agent_role": agent_role,
+                "attempt": attempt,
+                "specialist_features_reached": list(features) if isinstance(features, (list, tuple, set)) else [str(features)],
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            }
         self.agent_telemetry.append(entry)
+        self.cycle_metadata.setdefault("specialist_delivery_receipts", []).append(entry)
 
     def render_specialist_features_context(self) -> str:
         """Render specialist neural intelligence (GLiNER, CNN, RNN) for prompt injection."""
@@ -1291,3 +1300,113 @@ class SharedDesk:
         desk.cycle_metadata = data.get("cycle_metadata", {})
         desk.agent_telemetry = data.get("agent_telemetry", [])
         return desk
+
+
+def extract_outbound_delivery_receipt(
+    agent_role: str,
+    outbound_prompt: str,
+    specialist_features: dict | None,
+    attempt: int = 1,
+) -> dict[str, Any]:
+    """Inspect the final outbound GLM prompt and record exact specialist evidence delivery.
+
+    Distinguishes:
+    - DELIVERED: Actual predictions (entities, regime, quantiles) present in prompt.
+    - UNAVAILABLE_NOTICE: An explicit unavailable/timed out notice was rendered.
+    - OMITTED_OR_TRUNCATED: The specialist section was omitted or truncated out.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    receipt: dict[str, Any] = {
+        "agent_role": agent_role,
+        "attempt": attempt,
+        "mode": (specialist_features or {}).get("mode", "disabled"),
+        "features": [],
+        "recorded_at": now_iso,
+    }
+    if not specialist_features or not isinstance(specialist_features, dict):
+        return receipt
+
+    has_specialist_block = (
+        "Specialist Neural Intelligence" in outbound_prompt
+        or "Price-Derived Technical Signals" in outbound_prompt
+    )
+
+    # GLiNER check
+    gliner_data = specialist_features.get("gliner")
+    if isinstance(gliner_data, dict):
+        gliner_ver = gliner_data.get("model_version") or "unknown"
+        gliner_status = gliner_data.get("status", "AVAILABLE")
+        if not has_specialist_block or "GLiNER Entities" not in outbound_prompt:
+            delivery = "OMITTED_OR_TRUNCATED"
+            item_count = 0
+        elif (
+            "### GLiNER Entities: UNAVAILABLE" in outbound_prompt
+            or "### GLiNER Entities: TIMED_OUT" in outbound_prompt
+            or gliner_status in ("UNAVAILABLE", "TIMED_OUT")
+        ):
+            delivery = "UNAVAILABLE_NOTICE"
+            item_count = 0
+        else:
+            delivery = "DELIVERED"
+            item_count = len(gliner_data.get("entities") or [])
+
+        receipt["features"].append({
+            "feature_id": "gliner",
+            "model_version": gliner_ver,
+            "delivery_status": delivery,
+            "item_count": item_count,
+        })
+
+    # CNN check
+    cnn_data = specialist_features.get("cnn")
+    if isinstance(cnn_data, dict):
+        cnn_ver = cnn_data.get("model_version") or "unknown"
+        cnn_status = cnn_data.get("status", "AVAILABLE")
+        if not has_specialist_block or "Market CNN Regime" not in outbound_prompt:
+            delivery = "OMITTED_OR_TRUNCATED"
+            detail = None
+        elif (
+            "#### Market CNN Regime: UNAVAILABLE" in outbound_prompt
+            or "#### Market CNN Regime: TIMED_OUT" in outbound_prompt
+            or cnn_status in ("UNAVAILABLE", "TIMED_OUT")
+        ):
+            delivery = "UNAVAILABLE_NOTICE"
+            detail = None
+        else:
+            delivery = "DELIVERED"
+            detail = cnn_data.get("predicted_regime")
+
+        receipt["features"].append({
+            "feature_id": "cnn",
+            "model_version": cnn_ver,
+            "delivery_status": delivery,
+            "detail": detail,
+        })
+
+    # RNN check
+    rnn_data = specialist_features.get("rnn")
+    if isinstance(rnn_data, dict):
+        rnn_ver = rnn_data.get("model_version") or "unknown"
+        rnn_status = rnn_data.get("status", "AVAILABLE")
+        if not has_specialist_block or "Timeseries RNN" not in outbound_prompt:
+            delivery = "OMITTED_OR_TRUNCATED"
+            detail = None
+        elif (
+            "#### Timeseries RNN Forecast: UNAVAILABLE" in outbound_prompt
+            or "#### Timeseries RNN Forecast: TIMED_OUT" in outbound_prompt
+            or rnn_status in ("UNAVAILABLE", "TIMED_OUT")
+        ):
+            delivery = "UNAVAILABLE_NOTICE"
+            detail = None
+        else:
+            delivery = "DELIVERED"
+            detail = rnn_data.get("quantiles")
+
+        receipt["features"].append({
+            "feature_id": "rnn",
+            "model_version": rnn_ver,
+            "delivery_status": delivery,
+            "detail": detail,
+        })
+
+    return receipt

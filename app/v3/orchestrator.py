@@ -34,6 +34,269 @@ from app.quant.returns import one_vendor  # pin ONE vendor per price_history rea
 
 logger = logging.getLogger(__name__)
 
+def _parse_utc_dt(val: Any) -> datetime | None:
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        if val.tzinfo is None:
+            return val.replace(tzinfo=timezone.utc)
+        return val.astimezone(timezone.utc)
+    if isinstance(val, (int, float)):
+        try:
+            ts = val / 1000.0 if val > 1e11 else float(val)
+            return datetime.fromtimestamp(ts, tz=timezone.utc)
+        except Exception:
+            return None
+    if isinstance(val, str):
+        val = val.strip()
+        try:
+            dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except Exception:
+            pass
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y/%m/%d"):
+            try:
+                dt = datetime.strptime(val, fmt)
+                return dt.replace(tzinfo=timezone.utc)
+            except Exception:
+                pass
+    return None
+
+
+def _prepare_specialist_price_series(
+    ticker: str,
+    raw_prices: list | None,
+    cycle_cutoff: datetime | str | None = None,
+) -> tuple[list[dict] | None, list[dict] | None, str | None, str | None]:
+    """Filter, sort, and slice market bars for specialist models.
+
+    Enforces:
+    1. Ticker match: filters out any bars from other instruments.
+    2. Cycle cutoff: filters out future bars (timestamp > cycle_cutoff).
+    3. Chronological sorting: oldest to newest.
+    4. Minimum history: >= 30 bars for CNN, >= 25 bars for RNN.
+
+    Returns: (cnn_bars, rnn_bars, cnn_err, rnn_err)
+    """
+    cutoff_dt = _parse_utc_dt(cycle_cutoff) or datetime.now(timezone.utc)
+    ticker_clean = (ticker or "").upper().strip()
+
+    if not isinstance(raw_prices, list) or not raw_prices:
+        err = "No price bars available"
+        return None, None, err, err
+
+    eligible = []
+    for bar in raw_prices:
+        if not isinstance(bar, dict):
+            continue
+        bar_ticker = (bar.get("ticker") or ticker_clean).upper().strip()
+        if bar_ticker != ticker_clean:
+            continue
+        ts_val = bar.get("timestamp") or bar.get("date") or bar.get("datetime")
+        bar_dt = _parse_utc_dt(ts_val)
+        if bar_dt is None or bar_dt > cutoff_dt:
+            continue
+        eligible.append((bar_dt, bar))
+
+    # Sort chronologically
+    eligible.sort(key=lambda x: x[0])
+    ordered_bars = [x[1] for x in eligible]
+
+    cnn_bars, cnn_err = None, None
+    rnn_bars, rnn_err = None, None
+
+    if len(ordered_bars) < 30:
+        cnn_err = f"Insufficient eligible bars <= cutoff (need >= 30, got {len(ordered_bars)})"
+    else:
+        cnn_bars = ordered_bars[-30:]
+
+    if len(ordered_bars) < 25:
+        rnn_err = f"Insufficient eligible bars <= cutoff (need >= 25, got {len(ordered_bars)})"
+    else:
+        rnn_bars = ordered_bars[-25:]
+
+    return cnn_bars, rnn_bars, cnn_err, rnn_err
+
+
+def _prepare_specialist_news_documents(
+    ticker: str,
+    raw_news: list | None,
+) -> tuple[list[dict], str | None]:
+    """Prepare news documents for GLiNER entity extraction.
+
+    Enforces:
+    1. Zero synthetic fallback: returns empty list with error if news is missing.
+    2. Document provenance: preserves id, published_at, and source url.
+
+    Returns: (documents, error)
+    """
+    if not isinstance(raw_news, list) or not raw_news:
+        return [], "No eligible news articles available"
+
+    documents = []
+    for idx, item in enumerate(raw_news[:5]):
+        if isinstance(item, dict):
+            text = item.get("summary") or item.get("title") or item.get("headline") or item.get("text") or ""
+            doc_id = item.get("id") or item.get("_id") or item.get("document_id") or f"{ticker}_news_{idx}"
+            pub_at = item.get("published_at") or item.get("datetime")
+            url = item.get("url") or item.get("source_url") or item.get("source")
+        elif isinstance(item, str) and item.strip():
+            text = item.strip()
+            doc_id = f"{ticker}_news_{idx}"
+            pub_at = None
+            url = None
+        else:
+            continue
+
+        if not text:
+            continue
+
+        documents.append({
+            "id": str(doc_id),
+            "document_id": str(doc_id),
+            "text": str(text),
+            "published_at": pub_at,
+            "url": url,
+        })
+
+    if not documents:
+        return [], "No eligible news articles available"
+
+    return documents, None
+
+
+async def _discover_active_specialist_versions(feature_client) -> dict[str, str]:
+    """Discover actual active specialist versions at cycle admission.
+
+    Fails closed with zero invented defaults if query fails.
+    """
+    if feature_client is None:
+        return {}
+    import inspect
+    try:
+        fn = getattr(feature_client, "get_active_models", None)
+        if callable(fn):
+            res = fn()
+            if inspect.isawaitable(res):
+                models = await res
+            elif isinstance(res, dict):
+                models = res
+            else:
+                models = None
+            if isinstance(models, dict):
+                out = {}
+                for k in ("gliner", "cnn", "rnn"):
+                    if k in models and isinstance(models[k], dict) and "version" in models[k]:
+                        out[k] = models[k]["version"]
+                if out:
+                    return out
+    except Exception as e:
+        logger.debug("[V3][specialists] get_active_models failed: %s", e)
+
+    try:
+        fn_cap = getattr(feature_client, "get_capabilities", None)
+        if callable(fn_cap):
+            res = fn_cap()
+            if inspect.isawaitable(res):
+                caps = await res
+            elif isinstance(res, dict):
+                caps = res
+            else:
+                caps = None
+            if isinstance(caps, dict) and "models" in caps:
+                m = caps["models"]
+                out = {}
+                for k in ("gliner", "cnn", "rnn"):
+                    if k in m and isinstance(m[k], dict) and "version" in m[k]:
+                        out[k] = m[k]["version"]
+                if out:
+                    return out
+    except Exception as e:
+        logger.debug("[V3][specialists] get_capabilities failed: %s", e)
+
+    return {}
+
+
+async def _invoke_specialist_with_version_check(
+    specialist_name: str,
+    call_coro: Any,
+    expected_version: str | None,
+) -> dict[str, Any]:
+    """Invoke a specialist inference coroutine and verify model version consistency."""
+    try:
+        res = await call_coro
+        if not isinstance(res, dict):
+            return {"status": "UNAVAILABLE", "error": f"Unexpected non-dict response from {specialist_name}: {type(res)}"}
+
+        res_obj = res.get("result", {}) if isinstance(res.get("result"), dict) else {}
+        served_ver = res.get("model_version") or res_obj.get("model_version")
+
+        if expected_version and served_ver and served_ver != expected_version:
+            logger.warning(
+                "[V3][specialists] Version drift on %s: expected %s, got %s",
+                specialist_name, expected_version, served_ver,
+            )
+            return {
+                "status": "UNAVAILABLE",
+                "error": f"Version drift on {specialist_name}: expected {expected_version}, got {served_ver}",
+            }
+
+        out = dict(res)
+        if "status" not in out:
+            out["status"] = "AVAILABLE"
+        if served_ver and "model_version" not in out:
+            out["model_version"] = served_ver
+        return out
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.warning("[V3][specialists] %s call failed: %s", specialist_name, e)
+        return {"status": "UNAVAILABLE", "error": str(e)}
+
+
+async def _gather_specialists_with_deadline(
+    gliner_coro: Any,
+    cnn_coro: Any,
+    rnn_coro: Any,
+    deadline_s: float,
+) -> dict[str, Any]:
+    """Run specialist inference tasks with a non-destructive shared deadline budget.
+
+    If one specialist times out, all completed results are preserved.
+    Unfinished tasks are cancelled and awaited to prevent background socket leakage.
+    """
+    tasks = {
+        asyncio.create_task(gliner_coro): "gliner",
+        asyncio.create_task(cnn_coro): "cnn",
+        asyncio.create_task(rnn_coro): "rnn",
+    }
+    done, pending = await asyncio.wait(set(tasks.keys()), timeout=deadline_s)
+
+    # Cancel and await unfinished stragglers
+    for p in pending:
+        p.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+    results: dict[str, Any] = {}
+    for t, name in tasks.items():
+        if t in done:
+            if t.cancelled():
+                results[name] = {"status": "TIMED_OUT", "error": f"Deadline exceeded ({deadline_s}s)"}
+            else:
+                exc = t.exception()
+                if exc:
+                    results[name] = {"status": "UNAVAILABLE", "error": str(exc)}
+                else:
+                    results[name] = t.result()
+        else:
+            results[name] = {"status": "TIMED_OUT", "error": f"Deadline exceeded ({deadline_s}s)"}
+
+    return results
+
+
 # Fire-and-forget background tasks (e.g. memory consolidation) — a bare
 # create_task result gets garbage-collected mid-flight without this anchor.
 _BG_TASKS: set = set()
@@ -111,6 +374,17 @@ async def run_v3_pipeline(
     # LAYER 1: Context Init — Create SharedDesk + inject metadata
     # ═══════════════════════════════════════════════════════════════════
     desk = SharedDesk(cycle_id=cycle_id, ticker=ticker)
+
+    # Enforce cycle cutoff and discover active specialist versions at admission
+    cutoff_dt = datetime.now(timezone.utc)
+    desk.cycle_metadata["cycle_cutoff"] = cutoff_dt.isoformat()
+    try:
+        from app.services.jetson_feature_client import feature_client
+        desk.pinned_specialist_versions = await _discover_active_specialist_versions(feature_client)
+    except Exception as _disc_err:
+        logger.warning("[V3] %s: specialist active version discovery failed: %s", ticker, _disc_err)
+        desk.pinned_specialist_versions = {}
+    desk.cycle_metadata["pinned_specialist_versions"] = dict(desk.pinned_specialist_versions or {})
 
     # Pre-collect data report in parallel
     emit(
@@ -595,52 +869,42 @@ async def run_v3_pipeline(
         from app.services.jetson_feature_client import feature_client
         from app.db import mongo_store
 
-        # Pin specialist versions for the cycle if not already pinned
+        # Ensure pinned versions exist (fallback to discovery if missed at admission)
         if not getattr(desk, "pinned_specialist_versions", None):
-            desk.pinned_specialist_versions = {
-                "gliner": "gliner-v1",
-                "cnn": "market_cnn-v1",
-                "rnn": "timeseries_rnn-v1",
-            }
-            try:
-                caps = await feature_client.get_capabilities()
-                if isinstance(caps, dict) and "models" in caps:
-                    m = caps["models"]
-                    if "gliner" in m:
-                        desk.pinned_specialist_versions["gliner"] = m["gliner"].get("version", "gliner-v1")
-                    if "cnn" in m:
-                        desk.pinned_specialist_versions["cnn"] = m["cnn"].get("version", "market_cnn-v1")
-                    if "rnn" in m:
-                        desk.pinned_specialist_versions["rnn"] = m["rnn"].get("version", "timeseries_rnn-v1")
-            except Exception:
-                pass
+            desk.pinned_specialist_versions = await _discover_active_specialist_versions(feature_client)
+            desk.cycle_metadata["pinned_specialist_versions"] = dict(desk.pinned_specialist_versions or {})
 
         # 1. Extract raw structured data from precollect_stats sink or mongo_store fallback
         raw_data = precollect_stats.get("raw_data") if isinstance(precollect_stats, dict) else {}
         if not raw_data and isinstance(data_report, dict):
             raw_data = data_report
 
-        # Price history resolution (needs >= 30 bars for CNN, >= 25 for RNN)
+        # Price history resolution: Enforce cycle cutoff and chronological ordering
         prices = None
         if isinstance(raw_data, dict):
             prices = raw_data.get("price_history") or raw_data.get("prices") or raw_data.get("yfinance_price")
         if prices is None:
             try:
+                cycle_cutoff_iso = desk.cycle_metadata.get("cycle_cutoff")
+                cycle_cutoff_dt = _parse_utc_dt(cycle_cutoff_iso) or datetime.now(timezone.utc)
                 db_prices = mongo_store.find_docs(
                     "price_history",
-                    {"ticker": ticker},
-                    sort=[("date", 1)],
+                    {"ticker": ticker, "date": {"$lte": cycle_cutoff_dt}},
+                    sort=[("date", -1)],
                     limit=60,
                 )
                 if db_prices and len(db_prices) >= 25:
-                    prices = db_prices
+                    prices = list(reversed(db_prices))
             except Exception as e:
                 logger.debug("[V3] %s: Failed to fetch prices from DB for specialists: %s", ticker, e)
 
-        if not isinstance(prices, list):
-            prices = []
+        cnn_bars, rnn_bars, cnn_input_err, rnn_input_err = _prepare_specialist_price_series(
+            ticker=ticker,
+            raw_prices=prices,
+            cycle_cutoff=desk.cycle_metadata.get("cycle_cutoff"),
+        )
 
-        # News resolution for GLiNER
+        # News resolution for GLiNER: Zero synthetic fallback, preserve provenance
         news_items = None
         if isinstance(raw_data, dict):
             news_items = raw_data.get("news") or raw_data.get("finnhub_news") or raw_data.get("multi_api_news")
@@ -657,74 +921,99 @@ async def run_v3_pipeline(
             except Exception as e:
                 logger.debug("[V3] %s: Failed to fetch news from DB for specialists: %s", ticker, e)
 
-        news_texts = []
-        if isinstance(news_items, list):
-            for item in news_items[:5]:
-                if isinstance(item, dict):
-                    t = item.get("summary") or item.get("title") or item.get("headline") or ""
-                    if t:
-                        news_texts.append(str(t))
-                elif isinstance(item, str) and item:
-                    news_texts.append(item)
-        if not news_texts:
-            news_texts = [f"{ticker} trading update and financial performance."]
+        news_docs, news_input_err = _prepare_specialist_news_documents(
+            ticker=ticker,
+            raw_news=news_items,
+        )
 
         # Shared deadline budget for all specialist inference calls
         spec_deadline = float(getattr(settings, "SPECIALIST_DEADLINE_SECONDS", 5.0))
 
         async def _run_gliner():
-            try:
-                documents = [{"text": str(t), "id": f"doc_{idx}", "document_id": f"doc_{idx}"} for idx, t in enumerate(news_texts)]
-                entities_res = await feature_client.extract_entities(documents=documents)
+            if news_input_err:
+                return {"status": "UNAVAILABLE", "error": news_input_err, "entities": []}
+            pinned_ver = (desk.pinned_specialist_versions or {}).get("gliner")
+
+            async def _do_gliner():
+                kw = {"documents": news_docs}
+                try:
+                    import inspect
+                    sig = inspect.signature(feature_client.extract_entities)
+                    if "expected_version" in sig.parameters or "model_version" in sig.parameters:
+                        param_name = "expected_version" if "expected_version" in sig.parameters else "model_version"
+                        kw[param_name] = pinned_ver
+                except Exception:
+                    pass
+                entities_res = await feature_client.extract_entities(**kw)
                 res_obj = entities_res.get("result", {}) if isinstance(entities_res, dict) else {}
                 if isinstance(res_obj, dict) and "documents" in res_obj:
                     entities = []
                     for d in res_obj.get("documents", []):
-                        entities.extend(d.get("entities", []))
+                        d_id = d.get("id") or d.get("document_id")
+                        for ent in d.get("entities", []):
+                            if d_id and isinstance(ent, dict) and "document_id" not in ent:
+                                ent["document_id"] = d_id
+                            entities.append(ent)
                 elif isinstance(res_obj, dict) and "entities" in res_obj:
                     entities = res_obj.get("entities", [])
                 else:
                     entities = entities_res.get("entities", [])
-                model_ver = entities_res.get("model_version") or (res_obj.get("model_version") if isinstance(res_obj, dict) else None) or desk.pinned_specialist_versions["gliner"]
+
+                if len(news_docs) == 1:
+                    single_doc = news_docs[0]
+                    for ent in entities:
+                        if isinstance(ent, dict):
+                            ent.setdefault("document_id", single_doc.get("document_id"))
+                            ent.setdefault("published_at", single_doc.get("published_at"))
+                            ent.setdefault("url", single_doc.get("url"))
+
+                model_ver = entities_res.get("model_version") or (res_obj.get("model_version") if isinstance(res_obj, dict) else None) or pinned_ver
                 return {
                     "entities": entities or [],
                     "model_version": model_ver,
                     "status": "AVAILABLE",
                 }
-            except asyncio.TimeoutError:
-                logger.warning("[V3] %s: GLiNER extraction timed out after %.1fs", ticker, spec_deadline)
-                return {"status": "UNAVAILABLE", "error": f"Timed out after {spec_deadline}s"}
-            except Exception as e:
-                logger.warning("[V3] %s: GLiNER extraction failed: %s", ticker, e)
-                return {"status": "UNAVAILABLE", "error": str(e)}
+
+            return await _invoke_specialist_with_version_check("gliner", _do_gliner(), pinned_ver)
 
         async def _run_cnn():
-            if len(prices) < 30:
-                return {"status": "UNAVAILABLE", "error": f"Insufficient bars for CNN (need >= 30, got {len(prices)})"}
-            try:
-                recent_bars = prices[-30:]
-                last_bar = recent_bars[-1]
-                window_end = last_bar.get("date") if isinstance(last_bar, dict) else datetime.now(timezone.utc).isoformat()
+            if cnn_input_err:
+                return {"status": "UNAVAILABLE", "error": cnn_input_err}
+            pinned_ver = (desk.pinned_specialist_versions or {}).get("cnn")
+
+            async def _do_cnn():
+                last_bar = cnn_bars[-1]
+                window_end = last_bar.get("date") or last_bar.get("timestamp") or datetime.now(timezone.utc).isoformat()
                 if isinstance(window_end, datetime):
                     window_end = window_end.isoformat()
                 elif not isinstance(window_end, str):
                     window_end = str(window_end)
 
                 if "predict_regime" in getattr(feature_client, "__dict__", {}):
-                    regime_res = await feature_client.predict_regime(ticker, recent_bars)
+                    regime_res = await feature_client.predict_regime(ticker, cnn_bars)
                 else:
-                    regime_res = await feature_client.classify_market_regime(
-                        instrument_id=ticker,
-                        bar_interval="1d",
-                        window_end=window_end,
-                        lookback_bars=30,
-                        ohlcv=recent_bars,
-                    )
+                    kw = {
+                        "instrument_id": ticker,
+                        "bar_interval": "1d",
+                        "window_end": window_end,
+                        "lookback_bars": 30,
+                        "ohlcv": cnn_bars,
+                    }
+                    try:
+                        import inspect
+                        sig = inspect.signature(feature_client.classify_market_regime)
+                        if "expected_version" in sig.parameters or "model_version" in sig.parameters:
+                            param_name = "expected_version" if "expected_version" in sig.parameters else "model_version"
+                            kw[param_name] = pinned_ver
+                    except Exception:
+                        pass
+                    regime_res = await feature_client.classify_market_regime(**kw)
+
                 res_obj = regime_res.get("result", {}) if isinstance(regime_res, dict) else {}
                 pred = res_obj.get("regime") or res_obj.get("predicted_regime") or regime_res.get("regime") or regime_res.get("predicted_regime", "neutral")
                 brier = res_obj.get("brier_score", regime_res.get("brier_score"))
                 probs = res_obj.get("class_probabilities") or res_obj.get("probabilities") or regime_res.get("probabilities", {})
-                model_ver = regime_res.get("model_version") or (res_obj.get("model_version") if isinstance(res_obj, dict) else None) or desk.pinned_specialist_versions["cnn"]
+                model_ver = regime_res.get("model_version") or (res_obj.get("model_version") if isinstance(res_obj, dict) else None) or pinned_ver
                 return {
                     "predicted_regime": pred,
                     "brier_score": brier,
@@ -732,40 +1021,47 @@ async def run_v3_pipeline(
                     "model_version": model_ver,
                     "status": "AVAILABLE",
                 }
-            except asyncio.TimeoutError:
-                logger.warning("[V3] %s: Market CNN prediction timed out after %.1fs", ticker, spec_deadline)
-                return {"status": "UNAVAILABLE", "error": f"Timed out after {spec_deadline}s"}
-            except Exception as e:
-                logger.warning("[V3] %s: Market CNN prediction failed: %s", ticker, e)
-                return {"status": "UNAVAILABLE", "error": str(e)}
+
+            return await _invoke_specialist_with_version_check("cnn", _do_cnn(), pinned_ver)
 
         async def _run_rnn():
-            if len(prices) < 25:
-                return {"status": "UNAVAILABLE", "error": f"Insufficient bars for RNN (need >= 25, got {len(prices)})"}
-            try:
-                recent_series = prices[-25:]
-                last_bar = recent_series[-1]
-                cutoff = last_bar.get("date") if isinstance(last_bar, dict) else datetime.now(timezone.utc).isoformat()
+            if rnn_input_err:
+                return {"status": "UNAVAILABLE", "error": rnn_input_err}
+            pinned_ver = (desk.pinned_specialist_versions or {}).get("rnn")
+
+            async def _do_rnn():
+                last_bar = rnn_bars[-1]
+                cutoff = last_bar.get("date") or last_bar.get("timestamp") or datetime.now(timezone.utc).isoformat()
                 if isinstance(cutoff, datetime):
                     cutoff = cutoff.isoformat()
                 elif not isinstance(cutoff, str):
                     cutoff = str(cutoff)
 
                 if "forecast_quantiles" in getattr(feature_client, "__dict__", {}):
-                    forecast_res = await feature_client.forecast_quantiles(ticker, recent_series)
+                    forecast_res = await feature_client.forecast_quantiles(ticker, rnn_bars)
                 else:
-                    forecast_res = await feature_client.predict_forecast(
-                        instrument_id=ticker,
-                        bar_interval="1d",
-                        lookback_bars=25,
-                        cutoff=cutoff,
-                        ohlcv=recent_series,
-                    )
+                    kw = {
+                        "instrument_id": ticker,
+                        "bar_interval": "1d",
+                        "lookback_bars": 25,
+                        "cutoff": cutoff,
+                        "ohlcv": rnn_bars,
+                    }
+                    try:
+                        import inspect
+                        sig = inspect.signature(feature_client.predict_forecast)
+                        if "expected_version" in sig.parameters or "model_version" in sig.parameters:
+                            param_name = "expected_version" if "expected_version" in sig.parameters else "model_version"
+                            kw[param_name] = pinned_ver
+                    except Exception:
+                        pass
+                    forecast_res = await feature_client.predict_forecast(**kw)
+
                 res_obj = forecast_res.get("result", {}) if isinstance(forecast_res, dict) else {}
                 quantiles = res_obj.get("return_quantiles") or res_obj.get("quantiles") or forecast_res.get("quantiles", {})
                 horizon = res_obj.get("horizon_days", forecast_res.get("horizon_days", 5))
                 stop_ref = res_obj.get("stop_loss_ref", forecast_res.get("stop_loss_ref"))
-                model_ver = forecast_res.get("model_version") or (res_obj.get("model_version") if isinstance(res_obj, dict) else None) or desk.pinned_specialist_versions["rnn"]
+                model_ver = forecast_res.get("model_version") or (res_obj.get("model_version") if isinstance(res_obj, dict) else None) or pinned_ver
                 return {
                     "quantiles": quantiles,
                     "horizon_days": horizon,
@@ -773,31 +1069,27 @@ async def run_v3_pipeline(
                     "model_version": model_ver,
                     "status": "AVAILABLE",
                 }
-            except asyncio.TimeoutError:
-                logger.warning("[V3] %s: Timeseries RNN forecast timed out after %.1fs", ticker, spec_deadline)
-                return {"status": "UNAVAILABLE", "error": f"Timed out after {spec_deadline}s"}
-            except Exception as e:
-                logger.warning("[V3] %s: Timeseries RNN forecast failed: %s", ticker, e)
-                return {"status": "UNAVAILABLE", "error": str(e)}
 
-        # Run in parallel bounded by overall deadline
-        try:
-            gliner_res, cnn_res, rnn_res = await asyncio.wait_for(
-                asyncio.gather(_run_gliner(), _run_cnn(), _run_rnn(), return_exceptions=True),
-                timeout=spec_deadline + 0.5,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("[V3] %s: Specialist feature gathering overall deadline exceeded (%.1fs)", ticker, spec_deadline)
-            gliner_res = {"status": "UNAVAILABLE", "error": "Overall specialist deadline exceeded"}
-            cnn_res = {"status": "UNAVAILABLE", "error": "Overall specialist deadline exceeded"}
-            rnn_res = {"status": "UNAVAILABLE", "error": "Overall specialist deadline exceeded"}
+            return await _invoke_specialist_with_version_check("rnn", _do_rnn(), pinned_ver)
 
-        if isinstance(gliner_res, Exception):
-            gliner_res = {"status": "UNAVAILABLE", "error": str(gliner_res)}
-        if isinstance(cnn_res, Exception):
-            cnn_res = {"status": "UNAVAILABLE", "error": str(cnn_res)}
-        if isinstance(rnn_res, Exception):
-            rnn_res = {"status": "UNAVAILABLE", "error": str(rnn_res)}
+        # Run in parallel with non-destructive shared deadline
+        spec_results = await _gather_specialists_with_deadline(
+            gliner_coro=_run_gliner(),
+            cnn_coro=_run_cnn(),
+            rnn_coro=_run_rnn(),
+            deadline_s=spec_deadline,
+        )
+
+        gliner_res = spec_results.get("gliner", {"status": "UNAVAILABLE", "error": "Unknown error"})
+        cnn_res = spec_results.get("cnn", {"status": "UNAVAILABLE", "error": "Unknown error"})
+        rnn_res = spec_results.get("rnn", {"status": "UNAVAILABLE", "error": "Unknown error"})
+
+        versions_used = {
+            "gliner": gliner_res.get("model_version"),
+            "cnn": cnn_res.get("model_version"),
+            "rnn": rnn_res.get("model_version"),
+        }
+        desk.cycle_metadata["specialist_versions_used"] = versions_used
 
         specialist_payload = {
             "mode": spec_mode,
@@ -806,6 +1098,8 @@ async def run_v3_pipeline(
             "gliner": gliner_res,
             "cnn": cnn_res,
             "rnn": rnn_res,
+            "versions_used": versions_used,
+            "pinned_versions": dict(desk.pinned_specialist_versions or {}),
         }
         desk.specialist_features = specialist_payload
         desk.append_artifact("specialist_features", specialist_payload)

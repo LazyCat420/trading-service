@@ -218,6 +218,26 @@ class JetsonTrainingOrchestrator:
             return False, "Missing champion evaluation: champion evaluation is required to verify non-regression"
 
         if champion_eval is not None:
+            # Check champion sample count floor
+            champ_sample_count = champion_eval.get("sample_count")
+            if champ_sample_count is None and "samples_evaluated" in (champion_eval.get("metrics") or {}):
+                champ_sample_count = champion_eval["metrics"]["samples_evaluated"]
+            if champ_sample_count is not None and champ_sample_count < min_samples:
+                return False, f"Champion sample count {champ_sample_count} below task floor of {min_samples}"
+
+            # Check champion metrics completeness and finiteness
+            raw_champ_metrics = champion_eval.get("metrics")
+            if raw_champ_metrics is None and isinstance(champion_eval, dict):
+                raw_champ_metrics = champion_eval
+            if not isinstance(raw_champ_metrics, dict):
+                return False, "Champion evaluation missing valid 'metrics' dictionary"
+            for req_key in required_keys:
+                if req_key not in raw_champ_metrics or raw_champ_metrics[req_key] is None:
+                    return False, f"Champion evaluation missing required metric '{req_key}' for task {task_type}"
+                ch_val = raw_champ_metrics[req_key]
+                if not isinstance(ch_val, (int, float)) or isinstance(ch_val, bool) or math.isnan(float(ch_val)) or math.isinf(float(ch_val)):
+                    return False, f"Champion metric '{req_key}' has non-finite value: {ch_val}"
+
             # A. Enforce identical dataset manifest / checksum
             cand_manifest = candidate_eval.get("dataset_manifest_id") or candidate_eval.get("manifest_checksum")
             champ_manifest = champion_eval.get("dataset_manifest_id") or champion_eval.get("manifest_checksum")
@@ -374,6 +394,24 @@ class JetsonTrainingOrchestrator:
 
         # 6. Promote or reject
         if passed:
+            # Recheck expected champion atomically at promotion (CAS)
+            if expected_champion_version:
+                current_active_info = await self.client.get_active_model(task)
+                current_champ = current_active_info.get("model_id") if isinstance(current_active_info, dict) else str(current_active_info) if current_active_info else None
+                if current_champ and current_champ != expected_champion_version:
+                    cas_reason = (
+                        f"Concurrent promotion detected: active champion for task '{task}' changed from "
+                        f"'{expected_champion_version}' to '{current_champ}' before promotion execution"
+                    )
+                    logger.warning("[TrainingOrchestrator] %s", cas_reason)
+                    return OrchestrationResult(
+                        job_id=job_id,
+                        decision=PromotionDecision.REJECTED,
+                        candidate_model_id=cand_model_id,
+                        metrics=metrics,
+                        reason=cas_reason,
+                    )
+
             await self.client.promote_candidate(cand_model_id)
             logger.info("[TrainingOrchestrator] Candidate %s PROMOTED: %s", cand_model_id, reason)
 

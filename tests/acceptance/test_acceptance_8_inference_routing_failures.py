@@ -7,7 +7,7 @@ Acceptance Test 8: Test routing and inference failures during a cycle.
   WITHOUT fabricated zeros, cross-document attribution, or lost failure records.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
@@ -94,10 +94,16 @@ async def test_injected_inference_failures_become_explicit_unavailable_without_f
     mock_feature_client = MagicMock()
     mock_feature_client.extract_entities = AsyncMock(side_effect=TimeoutError("Remote GLiNER inference timed out after 10s"))
     mock_feature_client.predict_regime = AsyncMock()
+    mock_feature_client.classify_market_regime = AsyncMock()
     mock_feature_client.forecast_quantiles = AsyncMock(side_effect=RuntimeError("GPU OOM on specialist RNN"))
+    mock_feature_client.predict_forecast = AsyncMock(side_effect=RuntimeError("GPU OOM on specialist RNN"))
 
+    now = datetime.now(timezone.utc)
     short_data_report = {
-        "price_history": [{"close": 100.0 + i} for i in range(26)],  # < 30 for CNN, >= 25 for RNN
+        "price_history": [
+            {"close": 100.0 + i, "timestamp": (now - timedelta(days=26 - i)).isoformat(), "ticker": "MSFT"}
+            for i in range(26)
+        ],  # < 30 for CNN (26 bars), >= 25 for RNN (26 bars)
         "news": [{"title": "Short update"}],
         "metadata": {"ticker": "MSFT"},
     }
@@ -125,7 +131,7 @@ async def test_injected_inference_failures_become_explicit_unavailable_without_f
 
         # 2. CNN refused due to insufficient bars (not called remotely)
         assert spec.get("cnn", {}).get("status") == "UNAVAILABLE"
-        assert "insufficient bars" in spec.get("cnn", {}).get("error", "").lower()
+        assert "insufficient" in spec.get("cnn", {}).get("error", "").lower() and "bars" in spec.get("cnn", {}).get("error", "").lower()
         assert "probabilities" not in spec.get("cnn", {})
         assert "brier_score" not in spec.get("cnn", {})
         mock_feature_client.predict_regime.assert_not_called()
