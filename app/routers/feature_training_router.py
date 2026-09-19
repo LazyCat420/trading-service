@@ -215,13 +215,25 @@ async def promote_candidate(
         require_champ = False
         try:
             active_info = await feature_client.get_active_model(target_task)
-            champ_id = active_info.get("model_id") if isinstance(active_info, dict) else str(active_info)
-            if champ_id and champ_id not in ("unknown", "none", "", candidate_id) and manifest_id:
-                expected_champ = champ_id
-                champion_eval = await feature_client.evaluate_candidate(champ_id)
-                require_champ = True
         except Exception as ce:
-            logger.warning("[FeatureTrainingRouter] Champion lookup/eval for %s failed: %s", target_task, ce)
+            logger.error("[FeatureTrainingRouter] Champion discovery failed for %s: %s", target_task, ce)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Champion discovery failed for task '{target_task}': {ce}",
+            )
+
+        champ_id = active_info.get("model_id") if isinstance(active_info, dict) else str(active_info) if active_info else None
+        if champ_id and champ_id not in ("unknown", "none", "", candidate_id):
+            expected_champ = champ_id
+            require_champ = True
+            try:
+                champion_eval = await feature_client.evaluate_candidate(champ_id)
+            except Exception as ce:
+                logger.error("[FeatureTrainingRouter] Champion evaluation failed for %s (%s): %s", target_task, champ_id, ce)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Champion evaluation failed for active champion '{champ_id}' ({target_task}): {ce}",
+                )
 
         cand_metadata = {
             "candidate_model_id": candidate_id,
@@ -253,6 +265,31 @@ async def promote_candidate(
                     "metrics": metrics,
                 },
             )
+
+        # Atomic Compare-And-Swap (CAS) recheck immediately prior to promotion
+        if expected_champ:
+            try:
+                current_active_info = await feature_client.get_active_model(target_task)
+                current_champ = current_active_info.get("model_id") if isinstance(current_active_info, dict) else str(current_active_info) if current_active_info else None
+                if current_champ and current_champ != expected_champ:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "decision": PromotionDecision.REJECTED.value,
+                            "model_id": candidate_id,
+                            "reason": f"Concurrent promotion detected: active champion changed from '{expected_champ}' to '{current_champ}' before promotion execution",
+                            "expected_champion": expected_champ,
+                            "current_champion": current_champ,
+                        },
+                    )
+            except HTTPException:
+                raise
+            except Exception as ce:
+                logger.error("[FeatureTrainingRouter] Pre-promotion champion verification failed for %s: %s", target_task, ce)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Pre-promotion champion verification failed: {ce}",
+                )
 
         promo_resp = await feature_client.promote_candidate(candidate_id)
 

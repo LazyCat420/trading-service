@@ -49,16 +49,21 @@ def test_list_training_jobs(client):
 
 def test_evaluate_and_promote_candidate(client):
     with patch("app.services.jetson_feature_client.feature_client.evaluate_candidate", new_callable=AsyncMock) as mock_eval, \
-         patch("app.services.jetson_feature_client.feature_client.promote_candidate", new_callable=AsyncMock) as mock_promo:
+         patch("app.services.jetson_feature_client.feature_client.promote_candidate", new_callable=AsyncMock) as mock_promo, \
+         patch("app.services.jetson_feature_client.feature_client.get_active_model", new_callable=AsyncMock) as mock_active:
         mock_eval.return_value = {
             "model_id": "cand-01",
-            "metrics": {"f1": 0.935, "precision": 0.94, "recall": 0.93},
+            "task": "gliner_finetune",
+            "sample_count": 200,
+            "metrics": {"f1": 0.935, "precision": 0.94, "recall": 0.93, "latency_p99_ms": 25.0},
             "gate_ready": True,
         }
         mock_promo.return_value = {
             "status": "promoted",
             "model_id": "cand-01",
         }
+        # Initial cold start: no champion yet, then post-promotion active model is cand-01
+        mock_active.side_effect = [None, {"model_id": "cand-01", "task": "gliner"}]
 
         # Evaluate
         resp_eval = client.post("/features/training/models/cand-01/evaluate")

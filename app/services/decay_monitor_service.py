@@ -64,8 +64,12 @@ class DecayMonitorService:
 
     COLLECTION_NAME = "specialist_decay_incidents"
 
-    def __init__(self, feature_client: Any, db: Any = None):
-        self.feature_client = feature_client
+    def __init__(self, feature_client: Any = None, db: Any = None):
+        if feature_client is None:
+            from app.services.jetson_feature_client import feature_client as default_client
+            self.feature_client = default_client
+        else:
+            self.feature_client = feature_client
         self.db = db
         self.history: list[dict[str, Any]] = []
 
@@ -91,7 +95,7 @@ class DecayMonitorService:
 
         triggered = False
         reason = RollbackTriggerReason.HEALTHY
-        detail = "Metrics within acceptable boundaries."
+        detail = eval_data.get("detail") or "Metrics within acceptable boundaries."
 
         # 1. Missing or non-dict evidence is NEVER healthy
         if metrics is None or not isinstance(metrics, dict) or len(metrics) == 0:
@@ -102,13 +106,14 @@ class DecayMonitorService:
             eval_ts = eval_data.get("timestamp") or eval_data.get("evaluated_at")
             if eval_ts:
                 try:
-                    dt = datetime.fromisoformat(eval_ts)
+                    cleaned_ts = str(eval_ts).replace("Z", "+00:00")
+                    dt = datetime.fromisoformat(cleaned_ts)
                     age_h = (datetime.now(timezone.utc) - dt).total_seconds() / 3600.0
                     if age_h > 48.0:
                         reason = RollbackTriggerReason.STALE_EVALUATION
                         detail = f"Evaluation evidence is stale ({age_h:.1f} hours old, max allowed: 48h)."
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logger.debug("[DecayMonitor] Timestamp parse error for '%s': %s", eval_ts, ex)
 
             t_lower = task.lower()
             # 3. Task-specific metric evaluation
@@ -209,16 +214,18 @@ class DecayMonitorService:
                     detail += f" [Rollback call error: {e}]"
 
         now_iso = datetime.now(timezone.utc).isoformat()
+        original_ts = eval_data.get("timestamp") or eval_data.get("evaluated_at") or now_iso
         entry = {
             "task": task,
             "model_id": model_id,
             "metrics": metrics,
             "triggered_rollback": triggered,
-            "status": "ROLLED_BACK" if triggered and not rollback_resp is None else ("DEGRADED" if reason != RollbackTriggerReason.HEALTHY else "HEALTHY"),
+            "status": "ROLLED_BACK" if (triggered and rollback_resp is not None) else ("DEGRADED" if reason != RollbackTriggerReason.HEALTHY else "HEALTHY"),
             "reason": reason.value,
             "detail": detail,
             "rollback_response": rollback_resp,
-            "evaluated_at": now_iso,
+            "evaluated_at": original_ts,
+            "recorded_at": now_iso,
         }
 
         if col is not None:
@@ -232,7 +239,7 @@ class DecayMonitorService:
             reason=reason,
             diagnostic_detail=detail,
             rollback_response=rollback_resp,
-            evaluated_at=now_iso,
+            evaluated_at=original_ts,
         )
 
     async def start_worker_loop(self, poll_interval_seconds: float = 60.0, shutdown_event: Any = None):
@@ -247,21 +254,38 @@ class DecayMonitorService:
                 # Periodically query active models for each task
                 for task in ("gliner", "market_cnn", "timeseries_rnn"):
                     try:
-                        if hasattr(self.feature_client, "get_active_model"):
-                            act = await self.feature_client.get_active_model(task)
-                            mid = act.get("model_id") if isinstance(act, dict) else str(act)
-                            if mid and mid != "unknown":
-                                if hasattr(self.feature_client, "get_model_metrics"):
-                                    m_resp = await self.feature_client.get_model_metrics(mid)
-                                    if m_resp and "metrics" in m_resp:
-                                        await self.record_and_evaluate({
-                                            "task": task,
-                                            "model_id": mid,
-                                            "metrics": m_resp["metrics"],
-                                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                                        })
+                        act = await self.feature_client.get_active_model(task)
+                        mid = act.get("model_id") if isinstance(act, dict) else str(act)
+                        if mid and mid not in ("unknown", "None", ""):
+                            try:
+                                m_resp = await self.feature_client.get_model_metrics(mid)
+                                if m_resp and "metrics" in m_resp and m_resp["metrics"]:
+                                    original_ts = m_resp.get("evaluated_at") or m_resp.get("timestamp")
+                                    await self.record_and_evaluate({
+                                        "task": task,
+                                        "model_id": mid,
+                                        "metrics": m_resp["metrics"],
+                                        "evaluated_at": original_ts,
+                                        "sample_count": m_resp.get("sample_count"),
+                                    })
+                                else:
+                                    # Missing or empty metrics produced by client contract -> degraded state
+                                    await self.record_and_evaluate({
+                                        "task": task,
+                                        "model_id": mid,
+                                        "metrics": None,
+                                        "detail": f"Model {mid} returned empty or missing metrics.",
+                                    })
+                            except Exception as me:
+                                logger.warning("[DecayMonitorService] Failed to retrieve metrics for %s (%s): %s", mid, task, me)
+                                await self.record_and_evaluate({
+                                    "task": task,
+                                    "model_id": mid,
+                                    "metrics": None,
+                                    "detail": f"Failed to retrieve metrics for {mid}: {me}",
+                                })
                     except Exception as te:
-                        logger.debug("[DecayMonitorService] Task check error for %s: %s", task, te)
+                        logger.warning("[DecayMonitorService] Task check error for %s: %s", task, te)
             except asyncio.CancelledError:
                 logger.info("[DecayMonitorService] Worker loop cancelled")
                 break
