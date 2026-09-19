@@ -593,80 +593,211 @@ async def run_v3_pipeline(
             return
 
         from app.services.jetson_feature_client import feature_client
-        gliner_res = None
-        cnn_res = None
-        rnn_res = None
+        from app.db import mongo_store
 
-        # 1. GLiNER news entity extraction
-        try:
-            news_items = data_report.get("news") or []
-            news_texts = []
-            if isinstance(news_items, list):
-                for item in news_items[:5]:
-                    if isinstance(item, dict):
-                        t = item.get("title") or item.get("summary") or item.get("headline") or ""
-                        if t:
-                            news_texts.append(str(t))
-                    elif isinstance(item, str) and item:
-                        news_texts.append(item)
-            if not news_texts:
-                news_texts = [f"{ticker} trading update and financial performance."]
-
-            entities_res = await feature_client.extract_entities(news_texts)
-            gliner_res = {
-                "entities": entities_res.get("entities", []),
-                "model_version": entities_res.get("model_version", "gliner-v1"),
-                "status": "AVAILABLE",
+        # Pin specialist versions for the cycle if not already pinned
+        if not getattr(desk, "pinned_specialist_versions", None):
+            desk.pinned_specialist_versions = {
+                "gliner": "gliner-v1",
+                "cnn": "market_cnn-v1",
+                "rnn": "timeseries_rnn-v1",
             }
-        except Exception as e:
-            logger.warning("[V3] %s: GLiNER extraction failed: %s", ticker, e)
-            gliner_res = {"status": "UNAVAILABLE", "error": str(e)}
+            try:
+                caps = await feature_client.get_capabilities()
+                if isinstance(caps, dict) and "models" in caps:
+                    m = caps["models"]
+                    if "gliner" in m:
+                        desk.pinned_specialist_versions["gliner"] = m["gliner"].get("version", "gliner-v1")
+                    if "cnn" in m:
+                        desk.pinned_specialist_versions["cnn"] = m["cnn"].get("version", "market_cnn-v1")
+                    if "rnn" in m:
+                        desk.pinned_specialist_versions["rnn"] = m["rnn"].get("version", "timeseries_rnn-v1")
+            except Exception:
+                pass
 
-        # 2. CNN market regime classification (requires 30 bars)
-        try:
-            prices = data_report.get("price_history") or data_report.get("prices") or []
-            if isinstance(prices, list) and len(prices) >= 30:
+        # 1. Extract raw structured data from precollect_stats sink or mongo_store fallback
+        raw_data = precollect_stats.get("raw_data") if isinstance(precollect_stats, dict) else {}
+        if not raw_data and isinstance(data_report, dict):
+            raw_data = data_report
+
+        # Price history resolution (needs >= 30 bars for CNN, >= 25 for RNN)
+        prices = None
+        if isinstance(raw_data, dict):
+            prices = raw_data.get("price_history") or raw_data.get("prices") or raw_data.get("yfinance_price")
+        if prices is None:
+            try:
+                db_prices = mongo_store.find_docs(
+                    "price_history",
+                    {"ticker": ticker},
+                    sort=[("date", 1)],
+                    limit=60,
+                )
+                if db_prices and len(db_prices) >= 25:
+                    prices = db_prices
+            except Exception as e:
+                logger.debug("[V3] %s: Failed to fetch prices from DB for specialists: %s", ticker, e)
+
+        if not isinstance(prices, list):
+            prices = []
+
+        # News resolution for GLiNER
+        news_items = None
+        if isinstance(raw_data, dict):
+            news_items = raw_data.get("news") or raw_data.get("finnhub_news") or raw_data.get("multi_api_news")
+        if news_items is None:
+            try:
+                db_news = mongo_store.find_docs(
+                    "news_articles",
+                    {"ticker": ticker, "quality_status": {"$nin": ["thin", "discarded"]}},
+                    sort=[("published_at", -1)],
+                    limit=5,
+                )
+                if db_news:
+                    news_items = db_news
+            except Exception as e:
+                logger.debug("[V3] %s: Failed to fetch news from DB for specialists: %s", ticker, e)
+
+        news_texts = []
+        if isinstance(news_items, list):
+            for item in news_items[:5]:
+                if isinstance(item, dict):
+                    t = item.get("summary") or item.get("title") or item.get("headline") or ""
+                    if t:
+                        news_texts.append(str(t))
+                elif isinstance(item, str) and item:
+                    news_texts.append(item)
+        if not news_texts:
+            news_texts = [f"{ticker} trading update and financial performance."]
+
+        # Shared deadline budget for all specialist inference calls
+        spec_deadline = float(getattr(settings, "SPECIALIST_DEADLINE_SECONDS", 5.0))
+
+        async def _run_gliner():
+            try:
+                documents = [{"text": str(t), "id": f"doc_{idx}", "document_id": f"doc_{idx}"} for idx, t in enumerate(news_texts)]
+                entities_res = await feature_client.extract_entities(documents=documents)
+                res_obj = entities_res.get("result", {}) if isinstance(entities_res, dict) else {}
+                if isinstance(res_obj, dict) and "documents" in res_obj:
+                    entities = []
+                    for d in res_obj.get("documents", []):
+                        entities.extend(d.get("entities", []))
+                elif isinstance(res_obj, dict) and "entities" in res_obj:
+                    entities = res_obj.get("entities", [])
+                else:
+                    entities = entities_res.get("entities", [])
+                model_ver = entities_res.get("model_version") or (res_obj.get("model_version") if isinstance(res_obj, dict) else None) or desk.pinned_specialist_versions["gliner"]
+                return {
+                    "entities": entities or [],
+                    "model_version": model_ver,
+                    "status": "AVAILABLE",
+                }
+            except asyncio.TimeoutError:
+                logger.warning("[V3] %s: GLiNER extraction timed out after %.1fs", ticker, spec_deadline)
+                return {"status": "UNAVAILABLE", "error": f"Timed out after {spec_deadline}s"}
+            except Exception as e:
+                logger.warning("[V3] %s: GLiNER extraction failed: %s", ticker, e)
+                return {"status": "UNAVAILABLE", "error": str(e)}
+
+        async def _run_cnn():
+            if len(prices) < 30:
+                return {"status": "UNAVAILABLE", "error": f"Insufficient bars for CNN (need >= 30, got {len(prices)})"}
+            try:
                 recent_bars = prices[-30:]
-            else:
-                recent_bars = []
+                last_bar = recent_bars[-1]
+                window_end = last_bar.get("date") if isinstance(last_bar, dict) else datetime.now(timezone.utc).isoformat()
+                if isinstance(window_end, datetime):
+                    window_end = window_end.isoformat()
+                elif not isinstance(window_end, str):
+                    window_end = str(window_end)
 
-            if recent_bars:
-                regime_res = await feature_client.predict_regime(recent_bars)
-                cnn_res = {
-                    "predicted_regime": regime_res.get("predicted_regime", "neutral"),
-                    "brier_score": regime_res.get("brier_score"),
-                    "probabilities": regime_res.get("probabilities", {}),
-                    "model_version": regime_res.get("model_version", "market_cnn-v1"),
+                if "predict_regime" in getattr(feature_client, "__dict__", {}):
+                    regime_res = await feature_client.predict_regime(ticker, recent_bars)
+                else:
+                    regime_res = await feature_client.classify_market_regime(
+                        instrument_id=ticker,
+                        bar_interval="1d",
+                        window_end=window_end,
+                        lookback_bars=30,
+                        ohlcv=recent_bars,
+                    )
+                res_obj = regime_res.get("result", {}) if isinstance(regime_res, dict) else {}
+                pred = res_obj.get("regime") or res_obj.get("predicted_regime") or regime_res.get("regime") or regime_res.get("predicted_regime", "neutral")
+                brier = res_obj.get("brier_score", regime_res.get("brier_score"))
+                probs = res_obj.get("class_probabilities") or res_obj.get("probabilities") or regime_res.get("probabilities", {})
+                model_ver = regime_res.get("model_version") or (res_obj.get("model_version") if isinstance(res_obj, dict) else None) or desk.pinned_specialist_versions["cnn"]
+                return {
+                    "predicted_regime": pred,
+                    "brier_score": brier,
+                    "probabilities": probs,
+                    "model_version": model_ver,
                     "status": "AVAILABLE",
                 }
-            else:
-                cnn_res = {"status": "UNAVAILABLE", "error": "Insufficient bars for CNN (need >= 30)"}
-        except Exception as e:
-            logger.warning("[V3] %s: Market CNN prediction failed: %s", ticker, e)
-            cnn_res = {"status": "UNAVAILABLE", "error": str(e)}
+            except asyncio.TimeoutError:
+                logger.warning("[V3] %s: Market CNN prediction timed out after %.1fs", ticker, spec_deadline)
+                return {"status": "UNAVAILABLE", "error": f"Timed out after {spec_deadline}s"}
+            except Exception as e:
+                logger.warning("[V3] %s: Market CNN prediction failed: %s", ticker, e)
+                return {"status": "UNAVAILABLE", "error": str(e)}
 
-        # 3. RNN quantile forecast (requires 25 bars)
-        try:
-            prices = data_report.get("price_history") or data_report.get("prices") or []
-            if isinstance(prices, list) and len(prices) >= 25:
+        async def _run_rnn():
+            if len(prices) < 25:
+                return {"status": "UNAVAILABLE", "error": f"Insufficient bars for RNN (need >= 25, got {len(prices)})"}
+            try:
                 recent_series = prices[-25:]
-            else:
-                recent_series = []
+                last_bar = recent_series[-1]
+                cutoff = last_bar.get("date") if isinstance(last_bar, dict) else datetime.now(timezone.utc).isoformat()
+                if isinstance(cutoff, datetime):
+                    cutoff = cutoff.isoformat()
+                elif not isinstance(cutoff, str):
+                    cutoff = str(cutoff)
 
-            if recent_series:
-                forecast_res = await feature_client.forecast_quantiles(recent_series)
-                rnn_res = {
-                    "quantiles": forecast_res.get("quantiles", {}),
-                    "horizon_days": forecast_res.get("horizon_days", 5),
-                    "stop_loss_ref": forecast_res.get("stop_loss_ref"),
-                    "model_version": forecast_res.get("model_version", "timeseries_rnn-v1"),
+                if "forecast_quantiles" in getattr(feature_client, "__dict__", {}):
+                    forecast_res = await feature_client.forecast_quantiles(ticker, recent_series)
+                else:
+                    forecast_res = await feature_client.predict_forecast(
+                        instrument_id=ticker,
+                        bar_interval="1d",
+                        lookback_bars=25,
+                        cutoff=cutoff,
+                        ohlcv=recent_series,
+                    )
+                res_obj = forecast_res.get("result", {}) if isinstance(forecast_res, dict) else {}
+                quantiles = res_obj.get("return_quantiles") or res_obj.get("quantiles") or forecast_res.get("quantiles", {})
+                horizon = res_obj.get("horizon_days", forecast_res.get("horizon_days", 5))
+                stop_ref = res_obj.get("stop_loss_ref", forecast_res.get("stop_loss_ref"))
+                model_ver = forecast_res.get("model_version") or (res_obj.get("model_version") if isinstance(res_obj, dict) else None) or desk.pinned_specialist_versions["rnn"]
+                return {
+                    "quantiles": quantiles,
+                    "horizon_days": horizon,
+                    "stop_loss_ref": stop_ref,
+                    "model_version": model_ver,
                     "status": "AVAILABLE",
                 }
-            else:
-                rnn_res = {"status": "UNAVAILABLE", "error": "Insufficient bars for RNN (need >= 25)"}
-        except Exception as e:
-            logger.warning("[V3] %s: Timeseries RNN forecast failed: %s", ticker, e)
-            rnn_res = {"status": "UNAVAILABLE", "error": str(e)}
+            except asyncio.TimeoutError:
+                logger.warning("[V3] %s: Timeseries RNN forecast timed out after %.1fs", ticker, spec_deadline)
+                return {"status": "UNAVAILABLE", "error": f"Timed out after {spec_deadline}s"}
+            except Exception as e:
+                logger.warning("[V3] %s: Timeseries RNN forecast failed: %s", ticker, e)
+                return {"status": "UNAVAILABLE", "error": str(e)}
+
+        # Run in parallel bounded by overall deadline
+        try:
+            gliner_res, cnn_res, rnn_res = await asyncio.wait_for(
+                asyncio.gather(_run_gliner(), _run_cnn(), _run_rnn(), return_exceptions=True),
+                timeout=spec_deadline + 0.5,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("[V3] %s: Specialist feature gathering overall deadline exceeded (%.1fs)", ticker, spec_deadline)
+            gliner_res = {"status": "UNAVAILABLE", "error": "Overall specialist deadline exceeded"}
+            cnn_res = {"status": "UNAVAILABLE", "error": "Overall specialist deadline exceeded"}
+            rnn_res = {"status": "UNAVAILABLE", "error": "Overall specialist deadline exceeded"}
+
+        if isinstance(gliner_res, Exception):
+            gliner_res = {"status": "UNAVAILABLE", "error": str(gliner_res)}
+        if isinstance(cnn_res, Exception):
+            cnn_res = {"status": "UNAVAILABLE", "error": str(cnn_res)}
+        if isinstance(rnn_res, Exception):
+            rnn_res = {"status": "UNAVAILABLE", "error": str(rnn_res)}
 
         specialist_payload = {
             "mode": spec_mode,
@@ -678,16 +809,7 @@ async def run_v3_pipeline(
         }
         desk.specialist_features = specialist_payload
         desk.append_artifact("specialist_features", specialist_payload)
-
-        # In advisory mode, record delivery receipts for the deciding agent roles
-        if spec_mode == "advisory":
-            desk.record_agent_specialist_features_reached("v3_fundamental_analyst", ["gliner"])
-            desk.record_agent_specialist_features_reached("v3_technical_analyst", ["cnn"])
-            desk.record_agent_specialist_features_reached("v3_quant_analyst", ["rnn", "cnn"])
-            desk.record_agent_specialist_features_reached("v3_board_of_directors", ["gliner", "cnn", "rnn"])
-            logger.info("[V3] %s: Specialist features delivered to deciding agents in advisory mode", ticker)
-        else:
-            logger.info("[V3] %s: Specialist features persisted in %s mode (prompts unaffected)", ticker, spec_mode)
+        logger.info("[V3] %s: Specialist features assembled in %s mode (delivery receipts deferred to agent consumption)", ticker, spec_mode)
 
     # Execute independent context builders in parallel.
     t0_ctx = time.monotonic()

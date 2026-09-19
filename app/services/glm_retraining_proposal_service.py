@@ -73,14 +73,17 @@ class GLMRetrainingProposalService:
     """Evaluates and bounds autonomous retraining proposals submitted by GLM with durable MongoDB persistence."""
 
     COLLECTION_NAME = "specialist_retraining_proposals"
+    _budget_lock = None  # Initialized in __init__
 
     def __init__(
         self,
         max_jobs_per_24h: int = 2,
         cooldown_hours: float = 4.0,
         protected_datasets: set[str] | None = None,
+        protected_content_hashes: set[str] | None = None,
         db: Any = None,
     ):
+        import threading
         self.max_jobs_per_24h = max_jobs_per_24h
         self.cooldown_hours = cooldown_hours
         self.protected_datasets = set(protected_datasets or {
@@ -88,10 +91,61 @@ class GLMRetrainingProposalService:
             "champion_test_slice_v2",
             "protected_test_dataset",
         })
+        self.protected_content_hashes = set(protected_content_hashes or set())
         self.db = db
         # Fallback volatile store if mongo is unavailable
         self._proposals: dict[str, RetrainingProposal] = {}
         self._accepted_proposals: list[tuple[RetrainingProposal, str, str]] = []
+        self._budget_lock = threading.Lock()
+
+    def check_holdout_collision(self, dataset_manifest_id: str) -> tuple[bool, str]:
+        """Verify that candidate dataset does not collide with protected holdouts by name, provenance, or content hash."""
+        # 1. Exact name/ID match
+        if dataset_manifest_id in self.protected_datasets:
+            return True, f"Dataset '{dataset_manifest_id}' is a named protected evaluation holdout."
+
+        # 2. Check provenance and content hashes if manifest exists on disk or DB
+        from pathlib import Path
+        candidate_paths = [
+            Path("/tmp/trading_datasets"),
+            Path("./trading_datasets"),
+        ]
+        for base in candidate_paths:
+            if not base.exists():
+                continue
+            for task_dir in base.iterdir():
+                if not task_dir.is_dir():
+                    continue
+                m_path = task_dir / dataset_manifest_id / "manifest.json"
+                if m_path.exists():
+                    try:
+                        with open(m_path, "r", encoding="utf-8") as f:
+                            m_data = json.load(f)
+                        # Provenance check
+                        prov = m_data.get("provenance", {})
+                        meta = m_data.get("metadata", {})
+                        if prov.get("role") == "holdout" or meta.get("is_holdout") or meta.get("role") == "holdout":
+                            return True, f"Dataset '{dataset_manifest_id}' provenance marks it as a protected holdout."
+                        # Content hash collision check
+                        split_hashes = m_data.get("splits", {}).get("test", {}).get("sha256") or m_data.get("sha256")
+                        if split_hashes and split_hashes in self.protected_content_hashes:
+                            return True, f"Dataset '{dataset_manifest_id}' content hash matches a protected holdout dataset."
+                    except Exception as ex:
+                        logger.debug("[ProposalService] Error reading manifest %s: %s", m_path, ex)
+
+        return False, ""
+
+    def reconcile_failed_submission(self, proposal_id: str, task: str) -> None:
+        """Rolls back accepted proposal capacity if subsequent execution or submission failed."""
+        with self._budget_lock:
+            col = self._get_collection()
+            if col is not None:
+                col.update_one(
+                    {"proposal_id": proposal_id},
+                    {"$set": {"status": ProposalStatus.REJECTED.value, "reason": "Execution submission failed"}},
+                )
+            self._accepted_proposals = [p for p in self._accepted_proposals if p[0].proposal_id != proposal_id]
+            logger.info("[ProposalService] Reconciled failed submission for proposal %s on task %s", proposal_id, task)
 
     def _get_collection(self) -> Any:
         if self.db is not None:
@@ -136,14 +190,11 @@ class GLMRetrainingProposalService:
             logger.warning("[ProposalService] %s: %s", pid, msg)
             return ProposalResult(proposal_id=pid, status=ProposalStatus.REJECTED, reason=msg)
 
-        # 2. Protected dataset isolation
-        if proposal.dataset_manifest_id in self.protected_datasets:
-            msg = (
-                f"Dataset '{proposal.dataset_manifest_id}' is a protected evaluation holdout. "
-                "Retraining proposals may never select protected datasets."
-            )
-            logger.error("[ProposalService] %s: %s", pid, msg)
-            return ProposalResult(proposal_id=pid, status=ProposalStatus.REJECTED, reason=msg)
+        # 2. Protected dataset isolation (by name, provenance, and content hash)
+        is_colliding, collision_reason = self.check_holdout_collision(proposal.dataset_manifest_id)
+        if is_colliding:
+            logger.error("[ProposalService] %s: %s", pid, collision_reason)
+            return ProposalResult(proposal_id=pid, status=ProposalStatus.REJECTED, reason=collision_reason)
 
         # 3. Hyperparameter validation & policy override prohibition
         hp = proposal.hyperparameters
@@ -180,104 +231,105 @@ class GLMRetrainingProposalService:
 
         p_hash = self._compute_proposal_hash(proposal)
 
-        # 4. Persistent Deduplication check
-        if col is not None:
-            dup = col.find_one({"proposal_hash": p_hash, "status": ProposalStatus.ACCEPTED.value})
-            if dup:
-                msg = f"Duplicate proposal rejected. Matches prior accepted proposal {dup.get('proposal_id')}."
-                logger.info("[ProposalService] %s: %s", pid, msg)
-                return ProposalResult(proposal_id=pid, status=ProposalStatus.DUPLICATE_REJECTED, reason=msg)
-        else:
-            for prev_p, prev_hash, _ in self._accepted_proposals:
-                if p_hash == prev_hash:
-                    msg = f"Duplicate proposal rejected. Matches prior accepted proposal {prev_p.proposal_id}."
+        # 4, 5, 6: Atomic Deduplication, Cooldown, and 24h Budget Reservation
+        with self._budget_lock:
+            # 4. Persistent Deduplication check
+            if col is not None:
+                dup = col.find_one({"proposal_hash": p_hash, "status": ProposalStatus.ACCEPTED.value})
+                if dup:
+                    msg = f"Duplicate proposal rejected. Matches prior accepted proposal {dup.get('proposal_id')}."
                     logger.info("[ProposalService] %s: %s", pid, msg)
                     return ProposalResult(proposal_id=pid, status=ProposalStatus.DUPLICATE_REJECTED, reason=msg)
-
-        # 5. Persistent Cooldown check per task
-        cutoff_cooldown = now - timedelta(hours=self.cooldown_hours)
-        if col is not None:
-            # Query recent accepted proposals for this task
-            recent_task_p = col.find_one({
-                "task": proposal.task,
-                "status": ProposalStatus.ACCEPTED.value,
-                "submitted_at": {"$gte": cutoff_cooldown.isoformat()},
-            })
-            if recent_task_p:
-                prev_ts_str = recent_task_p.get("submitted_at")
-                elapsed = (now - datetime.fromisoformat(prev_ts_str)).total_seconds() / 3600.0 if prev_ts_str else 0.0
-                msg = (
-                    f"Task '{proposal.task}' cooldown active. "
-                    f"Last job was {elapsed:.2f}h ago; cooldown is {self.cooldown_hours}h."
-                )
-                logger.info("[ProposalService] %s: %s", pid, msg)
-                return ProposalResult(proposal_id=pid, status=ProposalStatus.COOLDOWN_BLOCKED, reason=msg)
-        else:
-            for prev_p, _, _ in reversed(self._accepted_proposals):
-                if prev_p.task == proposal.task:
-                    if prev_p.submitted_at > cutoff_cooldown:
-                        elapsed = (proposal.submitted_at - prev_p.submitted_at).total_seconds() / 3600.0
-                        msg = (
-                            f"Task '{proposal.task}' cooldown active. "
-                            f"Last job was {elapsed:.2f}h ago; cooldown is {self.cooldown_hours}h."
-                        )
-                        logger.info("[ProposalService] %s: %s", pid, msg)
-                        return ProposalResult(proposal_id=pid, status=ProposalStatus.COOLDOWN_BLOCKED, reason=msg)
-                    break
-
-        # 6. Persistent Experiment budget limit per 24h
-        cutoff_24h = now - timedelta(hours=24)
-        if col is not None:
-            if hasattr(col, "count_documents"):
-                recent_count = col.count_documents({
-                    "status": ProposalStatus.ACCEPTED.value,
-                    "submitted_at": {"$gte": cutoff_24h.isoformat()},
-                })
             else:
-                recent_count = sum(1 for _ in col.find({
+                for prev_p, prev_hash, _ in self._accepted_proposals:
+                    if p_hash == prev_hash:
+                        msg = f"Duplicate proposal rejected. Matches prior accepted proposal {prev_p.proposal_id}."
+                        logger.info("[ProposalService] %s: %s", pid, msg)
+                        return ProposalResult(proposal_id=pid, status=ProposalStatus.DUPLICATE_REJECTED, reason=msg)
+
+            # 5. Persistent Cooldown check per task
+            cutoff_cooldown = now - timedelta(hours=self.cooldown_hours)
+            if col is not None:
+                recent_task_p = col.find_one({
+                    "task": proposal.task,
                     "status": ProposalStatus.ACCEPTED.value,
-                    "submitted_at": {"$gte": cutoff_24h.isoformat()},
-                }))
-        else:
-            recent_count = sum(1 for prev_p, _, _ in self._accepted_proposals if prev_p.submitted_at > cutoff_24h)
+                    "submitted_at": {"$gte": cutoff_cooldown.isoformat()},
+                })
+                if recent_task_p:
+                    prev_ts_str = recent_task_p.get("submitted_at")
+                    elapsed = (now - datetime.fromisoformat(prev_ts_str)).total_seconds() / 3600.0 if prev_ts_str else 0.0
+                    msg = (
+                        f"Task '{proposal.task}' cooldown active. "
+                        f"Last job was {elapsed:.2f}h ago; cooldown is {self.cooldown_hours}h."
+                    )
+                    logger.info("[ProposalService] %s: %s", pid, msg)
+                    return ProposalResult(proposal_id=pid, status=ProposalStatus.COOLDOWN_BLOCKED, reason=msg)
+            else:
+                for prev_p, _, _ in reversed(self._accepted_proposals):
+                    if prev_p.task == proposal.task:
+                        if prev_p.submitted_at > cutoff_cooldown:
+                            elapsed = (proposal.submitted_at - prev_p.submitted_at).total_seconds() / 3600.0
+                            msg = (
+                                f"Task '{proposal.task}' cooldown active. "
+                                f"Last job was {elapsed:.2f}h ago; cooldown is {self.cooldown_hours}h."
+                            )
+                            logger.info("[ProposalService] %s: %s", pid, msg)
+                            return ProposalResult(proposal_id=pid, status=ProposalStatus.COOLDOWN_BLOCKED, reason=msg)
+                        break
 
-        if recent_count >= self.max_jobs_per_24h:
-            msg = (
-                f"24-hour experiment budget exceeded ({recent_count}/{self.max_jobs_per_24h} jobs used). "
-                "Autonomous retraining throttled."
+            # 6. Persistent Experiment budget limit per 24h
+            cutoff_24h = now - timedelta(hours=24)
+            if col is not None:
+                if hasattr(col, "count_documents"):
+                    recent_count = col.count_documents({
+                        "status": ProposalStatus.ACCEPTED.value,
+                        "submitted_at": {"$gte": cutoff_24h.isoformat()},
+                    })
+                else:
+                    recent_count = sum(1 for _ in col.find({
+                        "status": ProposalStatus.ACCEPTED.value,
+                        "submitted_at": {"$gte": cutoff_24h.isoformat()},
+                    }))
+            else:
+                recent_count = sum(1 for prev_p, _, _ in self._accepted_proposals if prev_p.submitted_at > cutoff_24h)
+
+            if recent_count >= self.max_jobs_per_24h:
+                msg = (
+                    f"24-hour experiment budget exceeded ({recent_count}/{self.max_jobs_per_24h} jobs used). "
+                    "Autonomous retraining throttled."
+                )
+                logger.warning("[ProposalService] %s: %s", pid, msg)
+                return ProposalResult(proposal_id=pid, status=ProposalStatus.BUDGET_EXCEEDED, reason=msg)
+
+            # All gates passed: assign job ID and record persistently
+            job_id = f"job-{proposal.task}-{uuid.uuid4().hex[:8]}"
+            doc = {
+                "proposal_id": pid,
+                "task": proposal.task,
+                "candidate_name": proposal.candidate_name,
+                "dataset_manifest_id": proposal.dataset_manifest_id,
+                "hyperparameters": proposal.hyperparameters,
+                "failure_cluster_ids": proposal.failure_cluster_ids,
+                "proposal_hash": p_hash,
+                "status": ProposalStatus.ACCEPTED.value,
+                "job_id": job_id,
+                "submitted_at": now.isoformat(),
+            }
+
+            if col is not None:
+                col.insert_one(doc)
+            self._accepted_proposals.append((proposal, p_hash, job_id))
+
+            logger.info(
+                "[ProposalService] Proposal %s ACCEPTED for task %s -> assigned job %s",
+                pid, proposal.task, job_id
             )
-            logger.warning("[ProposalService] %s: %s", pid, msg)
-            return ProposalResult(proposal_id=pid, status=ProposalStatus.BUDGET_EXCEEDED, reason=msg)
-
-        # All gates passed: assign job ID and record persistently
-        job_id = f"job-{proposal.task}-{uuid.uuid4().hex[:8]}"
-        doc = {
-            "proposal_id": pid,
-            "task": proposal.task,
-            "candidate_name": proposal.candidate_name,
-            "dataset_manifest_id": proposal.dataset_manifest_id,
-            "hyperparameters": proposal.hyperparameters,
-            "failure_cluster_ids": proposal.failure_cluster_ids,
-            "proposal_hash": p_hash,
-            "status": ProposalStatus.ACCEPTED.value,
-            "job_id": job_id,
-            "submitted_at": now.isoformat(),
-        }
-
-        if col is not None:
-            col.insert_one(doc)
-        self._accepted_proposals.append((proposal, p_hash, job_id))
-
-        logger.info(
-            "[ProposalService] Proposal %s ACCEPTED for task %s -> assigned job %s",
-            pid, proposal.task, job_id
-        )
-        return ProposalResult(
-            proposal_id=pid,
-            status=ProposalStatus.ACCEPTED,
-            job_id=job_id,
-            reason="Proposal accepted within all safety and capacity bounds.",
-        )
+            return ProposalResult(
+                proposal_id=pid,
+                status=ProposalStatus.ACCEPTED,
+                job_id=job_id,
+                reason="Proposal accepted within all safety and capacity bounds.",
+            )
 
     async def submit_proposal_to_training(
         self,
@@ -300,20 +352,29 @@ class GLMRetrainingProposalService:
             else:
                 base_model = proposal.task
 
-            durable_job = await durable_service.submit_job(
-                task=proposal.task,
-                base_model_id=base_model,
-                dataset_manifest_id=proposal.dataset_manifest_id,
-                hyperparameters=proposal.hyperparameters,
-            )
-            result.job_id = durable_job.job_id
+            try:
+                durable_job = await durable_service.submit_job(
+                    task=proposal.task,
+                    base_model_id=base_model,
+                    dataset_manifest_id=proposal.dataset_manifest_id,
+                    hyperparameters=proposal.hyperparameters,
+                )
+                result.job_id = durable_job.job_id
 
-            # Update persistent proposal record with actual durable job_id
-            col = self._get_collection()
-            if col is not None:
-                col.update_one(
-                    {"proposal_id": proposal.proposal_id},
-                    {"$set": {"job_id": durable_job.job_id}},
+                # Update persistent proposal record with actual durable job_id
+                col = self._get_collection()
+                if col is not None:
+                    col.update_one(
+                        {"proposal_id": proposal.proposal_id},
+                        {"$set": {"job_id": durable_job.job_id}},
+                    )
+            except Exception as e:
+                logger.error("[ProposalService] Submission failed for %s: %s; reconciling capacity", proposal.proposal_id, e)
+                self.reconcile_failed_submission(proposal.proposal_id, proposal.task)
+                return ProposalResult(
+                    proposal_id=proposal.proposal_id,
+                    status=ProposalStatus.REJECTED,
+                    reason=f"Durable submission failed: {e}",
                 )
 
         return result

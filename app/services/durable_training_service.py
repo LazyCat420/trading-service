@@ -136,11 +136,11 @@ class DurableTrainingService:
         dataset_manifest_id: str | None = None,
         hyperparameters: dict[str, Any] | None = None,
     ) -> TrainingJobRecord:
-        """Submits a training job with idempotency deduplication."""
+        """Submits a training job with idempotency and task-manifest deduplication."""
         idem_key = self.compute_idempotency_key(task, dataset_manifest_id, hyperparameters)
         col = self._get_collection()
 
-        # Check for existing active job with same idempotency key
+        # Check for existing active job with same idempotency key OR task + manifest
         active_statuses = [
             JobStatus.SUBMITTED.value,
             JobStatus.QUEUED.value,
@@ -148,8 +148,16 @@ class DurableTrainingService:
             JobStatus.RUNNING.value,
             JobStatus.EVALUATING.value,
         ]
-        existing = col.find_one({"idempotency_key": idem_key, "status": {"$in": active_statuses}})
+        query_clauses: list[dict[str, Any]] = [{"idempotency_key": idem_key}]
+        if dataset_manifest_id:
+            query_clauses.append({"task": task, "dataset_manifest_id": dataset_manifest_id})
+
+        existing = col.find_one({"$or": query_clauses, "status": {"$in": active_statuses}})
         if existing:
+            logger.info(
+                "[DurableTrainingService] Job already queued/active for task=%s, manifest=%s (job_id=%s). Deduplicating.",
+                task, dataset_manifest_id, existing.get("job_id")
+            )
             return TrainingJobRecord.from_dict(existing)
 
         job_id = f"job-{uuid.uuid4().hex[:12]}"
@@ -239,12 +247,24 @@ class DurableTrainingService:
             post_count = sum(1 for _ in col.find(active_filter))
 
         if post_count > 1:
-            # Revert this admission to prevent queue overflow
-            col.update_one(
-                {"job_id": job_id, "status": JobStatus.ADMITTED.value},
-                {"$set": {"status": JobStatus.QUEUED.value, "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}},
-            )
-            return False
+            # Multi-worker tie-breaker: keep the oldest active job, revert any newer concurrent admission
+            oldest_active = col.find_one(active_filter, sort=[("created_at", 1)]) if hasattr(col, "find_one") else None
+            if oldest_active and oldest_active.get("job_id") != job_id:
+                # Revert this admission to prevent queue overflow
+                col.update_one(
+                    {"job_id": job_id, "status": JobStatus.ADMITTED.value},
+                    {"$set": {"status": JobStatus.QUEUED.value, "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}},
+                )
+                return False
+            elif oldest_active and oldest_active.get("job_id") == job_id:
+                # We won the race as the oldest job; keep admission
+                pass
+            else:
+                col.update_one(
+                    {"job_id": job_id, "status": JobStatus.ADMITTED.value},
+                    {"$set": {"status": JobStatus.QUEUED.value, "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}},
+                )
+                return False
 
         logger.info("[DurableTrainingService] Admitted job %s for execution", job_id)
         return True
@@ -473,3 +493,77 @@ class DurableTrainingService:
                 logger.warning("[DurableTrainingService] Reclaimed stale job %s", job_id)
 
         return reclaimed_count
+
+    async def cancel_job(self, job_id: str) -> Optional[TrainingJobRecord]:
+        """Cancels a job locally and calls Jetson /v1/training/jobs/{job_id}/cancel if remote job exists."""
+        col = self._get_collection()
+        job = await self.get_job(job_id)
+        if not job:
+            return None
+
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        if job.jetson_job_id:
+            try:
+                if hasattr(self.client, "cancel_training_job"):
+                    await self.client.cancel_training_job(job.jetson_job_id)
+                elif hasattr(self.client, "_post_with_resilience"):
+                    await self.client._post_with_resilience(f"/v1/training/jobs/{job.jetson_job_id}/cancel", payload={})
+            except Exception as e:
+                logger.warning("[DurableTrainingService] Remote cancellation notice failed for %s: %s", job.jetson_job_id, e)
+
+        col.update_one(
+            {"job_id": job_id},
+            {
+                "$set": {
+                    "status": JobStatus.CANCELLED.value,
+                    "updated_at": now_iso,
+                    "lease_owner": None,
+                    "lease_expires_at": None,
+                }
+            },
+        )
+        logger.info("[DurableTrainingService] Job %s marked CANCELLED", job_id)
+        return await self.get_job(job_id)
+
+    async def start_worker_loop(self, poll_interval_seconds: float = 5.0, shutdown_event: Any = None):
+        """Continuous background worker loop for durable training orchestration."""
+        logger.info("[DurableTrainingService] Starting worker loop (worker_id=%s, interval=%.1fs)", self.worker_id, poll_interval_seconds)
+        while True:
+            if shutdown_event is not None and shutdown_event.is_set():
+                logger.info("[DurableTrainingService] Worker loop received shutdown signal")
+                break
+            try:
+                # 1. Reconcile stale leases
+                await self.reconcile_stale_leases()
+
+                # 2. Try admitting next queued job
+                await self.try_admit_next_job()
+
+                # 3. Find any job currently admitted/running under this worker (or available)
+                col = self._get_collection()
+                now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                target_job = col.find_one({
+                    "status": {"$in": [JobStatus.ADMITTED.value, JobStatus.RUNNING.value]},
+                    "$or": [
+                        {"lease_owner": self.worker_id},
+                        {"lease_owner": None},
+                        {"lease_expires_at": {"$lt": now_iso}},
+                    ],
+                })
+                if target_job:
+                    jid = target_job["job_id"]
+                    try:
+                        await self.execute_leased_job(jid)
+                    except Exception as ex:
+                        logger.error("[DurableTrainingService] Execution failed for job %s: %s", jid, ex)
+
+            except asyncio.CancelledError:
+                logger.info("[DurableTrainingService] Worker loop cancelled")
+                break
+            except Exception as e:
+                logger.error("[DurableTrainingService] Error in worker loop: %s", e)
+
+            try:
+                await asyncio.sleep(poll_interval_seconds)
+            except asyncio.CancelledError:
+                break

@@ -308,13 +308,46 @@ async def run_worker(tickers: list[str] | None = None, shutdown_event: asyncio.E
     outcome_task = asyncio.create_task(start_outcome_worker_loop(poll_interval_seconds=30.0))
     logger.info("[cycle_backend] Started Mature Outcome evaluation worker.")
 
+    # Run Durable Training worker loop for Jetson models
+    training_worker_task = None
+    try:
+        from app.services.durable_training_service import DurableTrainingService
+        durable_svc = DurableTrainingService()
+        training_worker_task = asyncio.create_task(
+            durable_svc.start_worker_loop(poll_interval_seconds=5.0, shutdown_event=shutdown)
+        )
+        logger.info("[cycle_backend] Started Durable Training worker loop.")
+    except Exception as e:
+        logger.error("[cycle_backend] Failed to start Durable Training worker loop: %s", e)
+
+    # Run Specialist Neural Decay Monitor worker loop
+    decay_worker_task = None
+    try:
+        from app.services.decay_monitor_service import DecayMonitorService
+        decay_svc = DecayMonitorService()
+        decay_worker_task = asyncio.create_task(
+            decay_svc.start_worker_loop(poll_interval_seconds=60.0, shutdown_event=shutdown)
+        )
+        logger.info("[cycle_backend] Started Specialist Decay Monitor worker loop.")
+    except Exception as e:
+        logger.error("[cycle_backend] Failed to start Specialist Decay Monitor worker loop: %s", e)
+
     await shutdown.wait()
 
     outbox_task.cancel()
     outcome_task.cancel()
     learning_task.cancel()
+    if training_worker_task:
+        training_worker_task.cancel()
+    if decay_worker_task:
+        decay_worker_task.cancel()
     try:
-        await asyncio.gather(outbox_task, outcome_task, learning_task, return_exceptions=True)
+        gather_tasks = [outbox_task, outcome_task, learning_task]
+        if training_worker_task:
+            gather_tasks.append(training_worker_task)
+        if decay_worker_task:
+            gather_tasks.append(decay_worker_task)
+        await asyncio.gather(*gather_tasks, return_exceptions=True)
     except Exception:
         pass
 

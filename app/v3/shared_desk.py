@@ -1151,41 +1151,56 @@ class SharedDesk:
 
         parts = ["## Specialist Neural Intelligence (Advisory)"]
 
-        # GLiNER entities
+        # GLiNER entities (with fact qualification notice and preserved spans)
         gliner = self.specialist_features.get("gliner")
         if gliner and isinstance(gliner, dict):
             if gliner.get("status") == "UNAVAILABLE":
                 parts.append(f"### GLiNER Entities: UNAVAILABLE ({gliner.get('error', 'Inference failed')})")
+            elif gliner.get("status") == "TIMED_OUT":
+                parts.append(f"### GLiNER Entities: TIMED_OUT ({gliner.get('error', 'Inference deadline exceeded')})")
             else:
                 entities = gliner.get("entities") or []
                 if entities:
-                    ent_lines = []
-                    for e in entities[:10]:
+                    ent_lines = [
+                        "> **NOTICE (Fact Qualification):** Extracted entities are candidate text mentions, NOT verified financial facts. "
+                        "They do not establish relationships, negation, reporting periods, or whether a number is actual versus guidance. "
+                        "Inspect source spans and verify figures against filing context."
+                    ]
+                    for e in entities[:12]:
                         txt = e.get("text", "")
                         lbl = e.get("label", "")
                         tck = e.get("ticker", "")
                         prefix = f"[{tck}] " if tck else ""
-                        ent_lines.append(f"- {prefix}{txt} ({lbl})")
+                        span_info = ""
+                        if "start" in e and "end" in e:
+                            span_info = f" [span {e['start']}:{e['end']}]"
+                        conf = e.get("confidence") or e.get("score")
+                        conf_info = f" (conf: {conf:.2f})" if isinstance(conf, (int, float)) else ""
+                        ent_lines.append(f"- {prefix}{txt} ({lbl}){span_info}{conf_info}")
                     parts.append("### GLiNER Entities\n" + "\n".join(ent_lines))
 
-        # CNN market regime
+        # Price-derived technical signals (CNN + RNN) grouped to prevent double-counting
+        tech_parts = []
         cnn = self.specialist_features.get("cnn")
         if cnn and isinstance(cnn, dict):
             if cnn.get("status") == "UNAVAILABLE":
-                parts.append(f"### Market CNN Regime: UNAVAILABLE ({cnn.get('error', 'Inference failed')})")
+                tech_parts.append(f"#### Market CNN Regime: UNAVAILABLE ({cnn.get('error', 'Inference failed')})")
+            elif cnn.get("status") == "TIMED_OUT":
+                tech_parts.append(f"#### Market CNN Regime: TIMED_OUT ({cnn.get('error', 'Inference deadline exceeded')})")
             else:
                 regime = cnn.get("predicted_regime", "?")
                 brier = cnn.get("brier_score")
                 probs = cnn.get("probabilities") or {}
                 prob_str = ", ".join(f"{k}: {v:.1%}" if isinstance(v, float) else f"{k}: {v}" for k, v in probs.items())
                 brier_str = f" (Brier: {brier:.3f})" if isinstance(brier, float) else ""
-                parts.append(f"### Market CNN Regime: {regime}{brier_str}\nProbabilities: {prob_str}")
+                tech_parts.append(f"#### Market CNN Regime: {regime}{brier_str}\nProbabilities: {prob_str}")
 
-        # RNN forecast
         rnn = self.specialist_features.get("rnn")
         if rnn and isinstance(rnn, dict):
             if rnn.get("status") == "UNAVAILABLE":
-                parts.append(f"### Timeseries RNN Forecast: UNAVAILABLE ({rnn.get('error', 'Inference failed')})")
+                tech_parts.append(f"#### Timeseries RNN Forecast: UNAVAILABLE ({rnn.get('error', 'Inference failed')})")
+            elif rnn.get("status") == "TIMED_OUT":
+                tech_parts.append(f"#### Timeseries RNN Forecast: TIMED_OUT ({rnn.get('error', 'Inference deadline exceeded')})")
             else:
                 horizon = rnn.get("horizon_days", 5)
                 quantiles = rnn.get("quantiles") or {}
@@ -1199,7 +1214,17 @@ class SharedDesk:
                             q_strs.append(f"{qk}={val}")
                 stop = rnn.get("stop_loss_ref")
                 stop_str = f" | Stop Ref: {stop}" if stop is not None else ""
-                parts.append(f"### Timeseries RNN {horizon}-Day Forecast\nReturn Quantiles: {', '.join(q_strs)}{stop_str}")
+                tech_parts.append(f"#### Timeseries RNN {horizon}-Day Forecast\nReturn Quantiles: {', '.join(q_strs)}{stop_str}")
+
+        if tech_parts:
+            tech_block = (
+                "### Price-Derived Technical Signals (Shared OHLCV Source — Correlated Dimensions)\n"
+                "> **ANTI-DOUBLE-COUNTING WARNING:** CNN market regime and RNN forecast quantiles derive from the exact same "
+                "historical OHLCV price series as classical technical indicators (RSI, MACD, MA). Do NOT treat them as independent "
+                "orthogonal confirmations. Treat them as correlated dimensions of historical price structure.\n\n"
+                + "\n\n".join(tech_parts)
+            )
+            parts.append(tech_block)
 
         return "\n\n".join(parts)
 

@@ -378,6 +378,14 @@ async def build_ticker_data_report(
         stats_sink["timed_out"] = list(timed_out)
         stats_sink["skipped"] = list(skipped)
         
+        raw_data = {}
+        for t in (set(task_map) - set(pending)):
+            try:
+                raw_data[task_map[t]] = t.result()
+            except Exception:
+                pass
+        stats_sink["raw_data"] = raw_data
+        
     # 2. Fetch Formatted Markdown via existing tools
     from app.tools.finance_tools import get_market_data, get_finnhub_news, get_technical_indicators
     

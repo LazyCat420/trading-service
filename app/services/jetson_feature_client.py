@@ -405,6 +405,19 @@ class JetsonFeatureClient:
             return combined_resp
         return {"result": {"entities": []}}
 
+    @staticmethod
+    def _parse_iso_ts(ts_val: Any) -> float:
+        """Parses ISO timestamp or numeric epoch into float timestamp."""
+        if isinstance(ts_val, (int, float)):
+            return float(ts_val)
+        try:
+            import datetime
+            cleaned = str(ts_val).replace("Z", "+00:00")
+            dt = datetime.datetime.fromisoformat(cleaned)
+            return dt.timestamp()
+        except Exception:
+            return 0.0
+
     async def classify_market_regime(
         self,
         instrument_id: str,
@@ -420,12 +433,26 @@ class JetsonFeatureClient:
     ) -> dict[str, Any]:
         """
         Market CNN Inference: Classifies market regime from normalized lookback tensor.
-        Rejects incomplete OHLCV (< 30 bars), zero prices, and NaN/inf values.
+        Rejects incomplete OHLCV (< 30 bars), zero prices, future bars past window_end, and NaN/inf values.
         """
         if not ohlcv or len(ohlcv) < 30:
             raise ValueError(
                 f"Incomplete OHLCV data for {instrument_id}: {len(ohlcv) if ohlcv else 0} bars provided, minimum 30 required. Zero-padding is rejected."
             )
+
+        # Future bar leakage check against window_end
+        if window_end:
+            we_ts = self._parse_iso_ts(window_end)
+            if we_ts > 0.0:
+                for idx, bar in enumerate(ohlcv):
+                    if isinstance(bar, dict):
+                        b_ts_raw = bar.get("timestamp") or bar.get("time") or bar.get("date")
+                        if b_ts_raw:
+                            b_ts = self._parse_iso_ts(b_ts_raw)
+                            if b_ts > we_ts + 1.0:
+                                raise ValueError(
+                                    f"Future bar leakage detected in {instrument_id}: bar {idx} timestamp {b_ts_raw} > window_end {window_end}"
+                                )
 
         formatted_ohlcv = []
         for idx, bar in enumerate(ohlcv):
@@ -450,6 +477,7 @@ class JetsonFeatureClient:
 
             formatted_ohlcv.append(float_vals)
 
+        input_hash = self.compute_input_hash(formatted_ohlcv)
         payload = {
             "instrument_id": instrument_id,
             "bar_interval": bar_interval,
@@ -459,15 +487,32 @@ class JetsonFeatureClient:
             "feature_version": "1",
             "price_source": price_source,
             "adjustment_policy": adjustment_policy,
-            "input_hash": self.compute_input_hash(formatted_ohlcv),
+            "input_hash": input_hash,
         }
-        return await self._post_with_resilience(
+        resp = await self._post_with_resilience(
             endpoint="/v1/features/market-regime",
             payload=payload,
             timeout=timeout,
             trace_id=trace_id,
             span_id=span_id,
         )
+
+        # Validate response window binding & hash integrity
+        res = resp.get("result", {})
+        resp_hash = resp.get("input_hash") or res.get("input_hash")
+        if resp_hash and resp_hash != input_hash:
+            raise FeatureServiceResponseError(
+                f"Input hash mismatch in market regime response for {instrument_id}: expected {input_hash}, got {resp_hash}",
+                error_code="STALE_OR_MISMATCHED_OUTPUT",
+            )
+        resp_inst = resp.get("instrument_id") or res.get("instrument_id")
+        if resp_inst and resp_inst.upper() != instrument_id.upper():
+            raise FeatureServiceResponseError(
+                f"Instrument ID mismatch in market regime response: expected {instrument_id}, got {resp_inst}",
+                error_code="STALE_OR_MISMATCHED_OUTPUT",
+            )
+
+        return resp
 
     async def predict_forecast(
         self,
@@ -478,14 +523,31 @@ class JetsonFeatureClient:
         sequence: list[list[float]] | None = None,
         ohlcv: list[Any] | None = None,
         feature_schema: dict[str, Any] | None = None,
+        adjustment_policy: str = "adjusted",
+        horizon_bars: int = 5,
+        preprocessing_version: str = "1",
         timeout: float | None = None,
         trace_id: str | None = None,
         span_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Timeseries RNN Inference: Predicts return quantiles and volatility uncertainty.
-        Validates minimum sequence length (>= 25), non-finite checks, and quantile monotonicity.
+        Validates minimum sequence length (>= 25), non-finite checks, future bar cutoff bounds, and quantile monotonicity.
         """
+        # Future bar leakage check against cutoff
+        if cutoff and ohlcv:
+            c_ts = self._parse_iso_ts(cutoff)
+            if c_ts > 0.0:
+                for idx, bar in enumerate(ohlcv):
+                    if isinstance(bar, dict):
+                        b_ts_raw = bar.get("timestamp") or bar.get("time") or bar.get("date")
+                        if b_ts_raw:
+                            b_ts = self._parse_iso_ts(b_ts_raw)
+                            if b_ts > c_ts + 1.0:
+                                raise ValueError(
+                                    f"Future bar leakage detected in {instrument_id}: bar {idx} timestamp {b_ts_raw} > cutoff {cutoff}"
+                                )
+
         formatted_seq = sequence
         if formatted_seq is None and ohlcv is not None:
             formatted_seq = []
@@ -513,12 +575,16 @@ class JetsonFeatureClient:
                 if math.isnan(float(v)) or math.isinf(float(v)):
                     raise ValueError(f"Step {idx} in forecast sequence has non-finite value: {v}")
 
+        input_hash = self.compute_input_hash(formatted_seq or [])
         payload = {
             "instrument_id": instrument_id,
             "bar_interval": bar_interval,
             "lookback_bars": lookback_bars,
             "sequence": formatted_seq or [],
-            "input_hash": self.compute_input_hash(formatted_seq or []),
+            "adjustment_policy": adjustment_policy,
+            "horizon_bars": horizon_bars,
+            "preprocessing_version": preprocessing_version,
+            "input_hash": input_hash,
         }
         if cutoff:
             payload["cutoff"] = cutoff
@@ -533,8 +599,22 @@ class JetsonFeatureClient:
             span_id=span_id,
         )
 
-        # Monotonicity check on return quantiles: p10 <= p50 <= p90
+        # Validate response window binding & hash integrity
         res = resp.get("result", {})
+        resp_hash = resp.get("input_hash") or res.get("input_hash")
+        if resp_hash and resp_hash != input_hash:
+            raise FeatureServiceResponseError(
+                f"Input hash mismatch in forecast response for {instrument_id}: expected {input_hash}, got {resp_hash}",
+                error_code="STALE_OR_MISMATCHED_OUTPUT",
+            )
+        resp_inst = resp.get("instrument_id") or res.get("instrument_id")
+        if resp_inst and resp_inst.upper() != instrument_id.upper():
+            raise FeatureServiceResponseError(
+                f"Instrument ID mismatch in forecast response: expected {instrument_id}, got {resp_inst}",
+                error_code="STALE_OR_MISMATCHED_OUTPUT",
+            )
+
+        # Monotonicity check on return quantiles: p10 <= p50 <= p90
         quantiles = res.get("return_quantiles") or res.get("quantiles", {})
         p10 = quantiles.get("p10")
         p50 = quantiles.get("p50")

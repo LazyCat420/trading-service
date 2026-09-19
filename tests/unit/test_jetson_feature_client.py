@@ -219,7 +219,7 @@ async def test_typed_error_rejection_no_retry_on_4xx(client):
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
         mock_post.return_value = mock_resp
         with pytest.raises(FeatureServiceResponseError) as exc_info:
-            await client.extract_entities(documents=[])
+            await client.extract_entities(documents=[{"document_id": "1", "text": "bad schema text"}])
 
         assert exc_info.value.error_code == "UNSUPPORTED_SCHEMA"
         assert exc_info.value.status_code == 400
@@ -229,6 +229,8 @@ async def test_typed_error_rejection_no_retry_on_4xx(client):
 
 @pytest.mark.asyncio
 async def test_classify_market_regime_payload_contract(client):
+    ohlcv_bars = [{"open": 100, "high": 105, "low": 98, "close": 102, "volume": 1000} for _ in range(30)]
+    expected_hash = client.compute_input_hash([[100.0, 105.0, 98.0, 102.0, 1000.0] for _ in range(30)])
     mock_resp = MagicMock()
     mock_resp.is_success = True
     mock_resp.json.return_value = {
@@ -236,7 +238,8 @@ async def test_classify_market_regime_payload_contract(client):
         "model_id": "market_cnn",
         "model_version": "cnn-regime-v1",
         "schema_version": "1",
-        "input_hash": "hash-cnn",
+        "instrument_id": "NVDA",
+        "input_hash": expected_hash,
         "result": {
             "regime": "range_bound",
             "class_probabilities": {"range_bound": 0.82, "breakout_candidate": 0.12},
@@ -253,7 +256,7 @@ async def test_classify_market_regime_payload_contract(client):
             bar_interval="1d",
             window_end="2026-09-18T20:00:00Z",
             lookback_bars=128,
-            ohlcv=[{"open": 100, "high": 105, "low": 98, "close": 102, "volume": 1000}],
+            ohlcv=ohlcv_bars,
         )
         assert res["model_id"] == "market_cnn"
         assert res["result"]["regime"] == "range_bound"
@@ -269,6 +272,8 @@ async def test_classify_market_regime_payload_contract(client):
 
 @pytest.mark.asyncio
 async def test_predict_forecast_payload_contract(client):
+    seq = [[100.0, 105.0, 98.0, 102.0, 1000.0] for _ in range(30)]
+    expected_hash = client.compute_input_hash(seq)
     mock_resp = MagicMock()
     mock_resp.is_success = True
     mock_resp.json.return_value = {
@@ -276,7 +281,8 @@ async def test_predict_forecast_payload_contract(client):
         "model_id": "timeseries_rnn",
         "model_version": "rnn-forecast-v1",
         "schema_version": "1",
-        "input_hash": "hash-rnn",
+        "instrument_id": "AAPL",
+        "input_hash": expected_hash,
         "result": {
             "horizon": "5d",
             "return_quantiles": {"p10": -0.05, "p50": 0.02, "p90": 0.08},
@@ -294,10 +300,48 @@ async def test_predict_forecast_payload_contract(client):
             bar_interval="1d",
             cutoff="2026-09-18T20:00:00Z",
             lookback_bars=60,
+            sequence=seq,
         )
         assert res["model_id"] == "timeseries_rnn"
         assert res["result"]["horizon"] == "5d"
         assert res["result"]["return_quantiles"]["p50"] == 0.02
+
+
+@pytest.mark.asyncio
+async def test_rejects_future_bar_leakage_and_hash_mismatch(client):
+    """Verifies market window binding: future bars rejected and response hash mismatch caught."""
+    # 1. Future bar past window_end rejected
+    future_bars = [{"open": 100, "high": 105, "low": 98, "close": 102, "volume": 1000, "timestamp": "2026-09-19T00:00:00Z"} for _ in range(30)]
+    with pytest.raises(ValueError) as exc_info:
+        await client.classify_market_regime(
+            instrument_id="NVDA",
+            bar_interval="1d",
+            window_end="2026-09-18T20:00:00Z",
+            lookback_bars=30,
+            ohlcv=future_bars,
+        )
+    assert "Future bar leakage detected" in str(exc_info.value)
+
+    # 2. Response hash mismatch rejected
+    valid_bars = [{"open": 100, "high": 105, "low": 98, "close": 102, "volume": 1000, "timestamp": "2026-09-18T10:00:00Z"} for _ in range(30)]
+    mock_resp = MagicMock()
+    mock_resp.is_success = True
+    mock_resp.json.return_value = {
+        "instrument_id": "NVDA",
+        "input_hash": "stale_hash_from_earlier_request",
+        "result": {"regime": "trending"},
+    }
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_resp
+        with pytest.raises(FeatureServiceResponseError) as exc_info2:
+            await client.classify_market_regime(
+                instrument_id="NVDA",
+                bar_interval="1d",
+                window_end="2026-09-18T20:00:00Z",
+                lookback_bars=30,
+                ohlcv=valid_bars,
+            )
+        assert exc_info2.value.error_code == "STALE_OR_MISMATCHED_OUTPUT"
 
 
 def test_feature_lineage_store_recording_and_querying():

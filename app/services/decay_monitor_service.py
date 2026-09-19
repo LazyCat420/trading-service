@@ -193,8 +193,8 @@ class DecayMonitorService:
                     # 5. Read-back active model verification: ensure model was restored
                     if hasattr(self.feature_client, "get_active_model"):
                         active_info = await self.feature_client.get_active_model(task)
-                        active_model = active_info.get("model_id") if isinstance(active_info, dict) else str(active_info)
-                        if active_model == model_id:
+                        restored_model = active_info.get("model_id") if isinstance(active_info, dict) else str(active_info)
+                        if restored_model == model_id:
                             err_msg = (
                                 f"Rollback failed verification: active model for task '{task}' "
                                 f"is still decaying model '{model_id}'"
@@ -234,3 +234,41 @@ class DecayMonitorService:
             rollback_response=rollback_resp,
             evaluated_at=now_iso,
         )
+
+    async def start_worker_loop(self, poll_interval_seconds: float = 60.0, shutdown_event: Any = None):
+        """Continuous worker loop monitoring active model decay across tasks."""
+        import asyncio
+        logger.info("[DecayMonitorService] Starting decay monitor worker loop (interval=%.1fs)", poll_interval_seconds)
+        while True:
+            if shutdown_event is not None and shutdown_event.is_set():
+                logger.info("[DecayMonitorService] Worker loop received shutdown signal")
+                break
+            try:
+                # Periodically query active models for each task
+                for task in ("gliner", "market_cnn", "timeseries_rnn"):
+                    try:
+                        if hasattr(self.feature_client, "get_active_model"):
+                            act = await self.feature_client.get_active_model(task)
+                            mid = act.get("model_id") if isinstance(act, dict) else str(act)
+                            if mid and mid != "unknown":
+                                if hasattr(self.feature_client, "get_model_metrics"):
+                                    m_resp = await self.feature_client.get_model_metrics(mid)
+                                    if m_resp and "metrics" in m_resp:
+                                        await self.record_and_evaluate({
+                                            "task": task,
+                                            "model_id": mid,
+                                            "metrics": m_resp["metrics"],
+                                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                                        })
+                    except Exception as te:
+                        logger.debug("[DecayMonitorService] Task check error for %s: %s", task, te)
+            except asyncio.CancelledError:
+                logger.info("[DecayMonitorService] Worker loop cancelled")
+                break
+            except Exception as e:
+                logger.error("[DecayMonitorService] Error in decay worker loop: %s", e)
+
+            try:
+                await asyncio.sleep(poll_interval_seconds)
+            except asyncio.CancelledError:
+                break

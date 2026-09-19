@@ -1354,6 +1354,22 @@ async def run_v3_agent(
             "system_chars": len(system_prompt), "user_chars": len(user_prompt),
         })
 
+        # Record specialist features reached telemetry at actual prompt delivery point
+        spec_mode = getattr(_settings, "SPECIALIST_MODE", "advisory").lower()
+        if spec_mode == "advisory" and desk.specialist_features:
+            features_reached = []
+            if "Specialist Neural Intelligence" in delivered_text or "GLiNER" in delivered_text or "Market CNN" in delivered_text or "Timeseries RNN" in delivered_text:
+                if agent_name in ("v3_fundamental_analyst", "fundamental_analyst"):
+                    features_reached.append("gliner")
+                elif agent_name in ("v3_technical_analyst", "technical_analyst"):
+                    features_reached.append("cnn")
+                elif agent_name in ("v3_quant_analyst", "quant_analyst"):
+                    features_reached.extend(["rnn", "cnn"])
+                elif agent_name in ("v3_board_of_directors", "board_of_directors"):
+                    features_reached.extend(["gliner", "cnn", "rnn"])
+            if features_reached:
+                desk.record_agent_specialist_features_reached(agent_name, features_reached)
+
         try:
             from app.services.learning.receipts import record_delivery
             from app.autoresearch.skill_loader import active_skill_version

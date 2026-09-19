@@ -201,25 +201,27 @@ async def promote_candidate(
     orchestrator = JetsonTrainingOrchestrator(client=feature_client)
 
     try:
-        if req and req.candidate_metrics:
-            metrics = req.candidate_metrics
-            sample_count = req.sample_count
-            slices = req.slices
-            manifest_id = req.dataset_manifest_id
-            target_task = req.task
-            champion_eval = req.champion_eval
-            expected_champ = req.expected_champion_version
-            require_champ = req.require_champion_eval
-        else:
-            eval_resp = await feature_client.evaluate_candidate(candidate_id)
-            metrics = eval_resp.get("metrics", {})
-            sample_count = eval_resp.get("sample_count")
-            slices = eval_resp.get("slices", {})
-            manifest_id = eval_resp.get("dataset_manifest_id")
-            target_task = task
-            champion_eval = None
-            expected_champ = None
-            require_champ = False
+        # Server-side evaluation: NEVER trust caller-supplied metrics directly
+        target_task = req.task if req and req.task else task
+        eval_resp = await feature_client.evaluate_candidate(candidate_id)
+        metrics = eval_resp.get("metrics", {})
+        sample_count = eval_resp.get("sample_count")
+        slices = eval_resp.get("slices", {})
+        manifest_id = eval_resp.get("dataset_manifest_id") or (req.dataset_manifest_id if req else None)
+
+        # Query active champion and evaluate it server-side on the same holdout test slice
+        champion_eval = None
+        expected_champ = None
+        require_champ = False
+        try:
+            active_info = await feature_client.get_active_model(target_task)
+            champ_id = active_info.get("model_id") if isinstance(active_info, dict) else str(active_info)
+            if champ_id and champ_id not in ("unknown", "none", "", candidate_id) and manifest_id:
+                expected_champ = champ_id
+                champion_eval = await feature_client.evaluate_candidate(champ_id)
+                require_champ = True
+        except Exception as ce:
+            logger.warning("[FeatureTrainingRouter] Champion lookup/eval for %s failed: %s", target_task, ce)
 
         cand_metadata = {
             "candidate_model_id": candidate_id,
