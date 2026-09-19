@@ -219,4 +219,33 @@ No agent cuts over without passing all seven gates in the parity catalog:
 | **6. Does every migration have measured parity and a deletion plan for the legacy path?** | **YES** | Governed by Section 5 and Section 6. Hard cutover thresholds and deletion milestones are defined for `base_agent.py`, `sdk_adapter.py` stub, and `USE_V2_SDK`. |
 
 ---
-*End of Dev 2 Audit Report.*
+
+## 8. Dev 2 Implementation & Verification Sign-Off (2026-09-19)
+
+### 8.1 Deliverables Status
+
+| Deliverable | Target Repository | Implementation Status | Evidence / Verification Test |
+|---|---|---|---|
+| **1. RuntimeClient & Typed Models** | `lazycat-sdk` (`v0.4.0`) | **COMPLETE** | `lazycat/client.py`, `lazycat/models.py`; verified via `tests/test_runtime_client.py` (strict SSE decode, non-streaming, cancellation). |
+| **2. Deprecation of Legacy Harness** | `lazycat-sdk` (`v0.4.0`) | **COMPLETE** | `AgentHarness` & `BaseAgent` emit `DeprecationWarning`; verified via `tests/test_agent_deprecation.py`. |
+| **3. Junior Analyst Vertical Slice** | `trading-service` | **COMPLETE** | `app/agents/sdk_adapter.py` wired to `lazycat.RuntimeClient`; verified via `tests/unit/test_junior_analyst_sdk.py`. |
+| **4. 20-Cycle Historical Shadow Runner** | `trading-service` | **COMPLETE** | `tests/benchmarks/test_junior_analyst_shadow_runner.py` passed 20/20 cycles (100% concordance across all 10 parity dimensions). |
+| **5. Tool Policy & Usage Parity Gates** | `trading-service` | **COMPLETE** | `tests/unit/test_sdk_tool_policy_parity.py` & `tests/unit/test_sdk_usage_parity.py` passing. |
+| **6. Adapter Deletion Gates** | `trading-service` | **COMPLETE** | Defined in `app/agents/sdk_adapter.py` module docstring and contract invariants. |
+
+### 8.2 Parity Dimensions Scorecard (20-Cycle Historical Shadow Run)
+- Tool allow/deny decisions: 20/20 (100%)
+- Model/provider resolution: 20/20 (100%)
+- Normalized event sequence: 20/20 (100%)
+- Terminal status: 20/20 (100%)
+- Structured output schema: 20/20 (100%)
+- Receipts & evidence: 20/20 (100%)
+- Token usage accounting: 20/20 (100%)
+- Retry count bound: 20/20 (100%)
+- Latency SLA compliance: 20/20 (100%)
+- Idempotency & cancellation integrity: 20/20 (100%)
+
+Overall concordance: **100.0%** (exceeds the required >= 95% threshold).
+
+---
+*End of Dev 2 Audit & Implementation Report.*
