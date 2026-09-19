@@ -33,20 +33,37 @@ def mock_db():
             elif isinstance(v, dict):
                 if "$in" in v and doc.get(k) not in v["$in"]:
                     return False
+                if "$ne" in v and doc.get(k) == v["$ne"]:
+                    return False
                 if "$lt" in v:
                     doc_val = doc.get(k)
                     if doc_val is None or str(doc_val) >= str(v["$lt"]):
+                        return False
+                if "$gte" in v:
+                    doc_val = doc.get(k)
+                    if doc_val is None or str(doc_val) < str(v["$gte"]):
                         return False
             elif doc.get(k) != v:
                 return False
         return True
 
     class MockCollection:
-        def find_one(self, query):
-            for doc in docs.values():
-                if _matches(doc, query):
-                    return dict(doc)
-            return None
+        def __init__(self):
+            self.indexes = {}
+
+        def create_index(self, keys, **kwargs):
+            name = kwargs.get("name", str(keys))
+            self.indexes[name] = {"keys": keys, "kwargs": kwargs}
+            return name
+
+        def find_one(self, query, sort=None):
+            matched = [dict(d) for d in docs.values() if _matches(d, query)]
+            if not matched:
+                return None
+            if sort:
+                key, direction = sort[0]
+                matched.sort(key=lambda x: x.get(key, ""), reverse=(direction < 0))
+            return matched[0]
 
         def find(self, query=None):
             results = []
@@ -176,3 +193,164 @@ async def test_recovers_orphaned_job_after_crash(service, mock_db):
     job = await service.get_job("crashed-job-1")
     # Recovered job should either be re-queued or reclaimed
     assert job.status in (JobStatus.QUEUED, JobStatus.RUNNING)
+
+
+@pytest.mark.asyncio
+async def test_worker_loop_dispatches_without_execute_leased_job_error(service, mock_jetson):
+    """
+    Submits a job, runs start_worker_loop as a background task.
+    Verifies that the worker loop admits and processes the job to PROMOTED without
+    failing with AttributeError: execute_leased_job.
+    """
+    import asyncio
+    shutdown = asyncio.Event()
+
+    job = await service.submit_job(
+        task="gliner_finetune",
+        base_model_id="gliner",
+        dataset_manifest_id="manifest-worker-loop-test",
+    )
+
+    worker_task = asyncio.create_task(
+        service.start_worker_loop(poll_interval_seconds=0.05, shutdown_event=shutdown)
+    )
+
+    try:
+        # Wait up to 3s for the worker loop to process the job
+        for _ in range(60):
+            current = await service.get_job(job.job_id)
+            if current and current.status == JobStatus.PROMOTED:
+                break
+            await asyncio.sleep(0.05)
+
+        final_job = await service.get_job(job.job_id)
+        assert final_job.status == JobStatus.PROMOTED
+        assert final_job.candidate_model_id == "cand-test-1"
+    finally:
+        shutdown.set()
+        worker_task.cancel()
+        try:
+            await worker_task
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_pre_promotion_cancellation_check(service, mock_jetson, mock_db):
+    """
+    SABOTAGE / SAFETY GATE:
+    Job evaluates successfully, but is cancelled prior to promotion call.
+    The service must detect cancellation, abort promotion, and NOT call client.promote_candidate.
+    """
+    job = await service.submit_job(
+        task="gliner_finetune",
+        base_model_id="gliner",
+        dataset_manifest_id="manifest-cancel-test",
+    )
+    await service.try_admit_next_job()
+
+    # Intercept evaluate_candidate to cancel the job right before promotion
+    orig_evaluate = mock_jetson.evaluate_candidate
+    async def cancel_mid_flight(*args, **kwargs):
+        res = await orig_evaluate(*args, **kwargs)
+        # Simulate operator cancelling the job
+        await service.cancel_job(job.job_id)
+        return res
+    mock_jetson.evaluate_candidate = cancel_mid_flight
+
+    processed = await service.process_admitted_job(job.job_id)
+    assert processed.status == JobStatus.CANCELLED
+    mock_jetson.promote_candidate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pre_promotion_lease_loss_check(service, mock_jetson, mock_db):
+    """
+    SABOTAGE / SAFETY GATE:
+    Worker A evaluates job, but Worker B steals/claims the lease right before promotion.
+    Worker A must detect lost ownership and abort with RuntimeError without calling promote_candidate.
+    """
+    job = await service.submit_job(
+        task="gliner_finetune",
+        base_model_id="gliner",
+        dataset_manifest_id="manifest-lease-loss",
+    )
+    await service.try_admit_next_job()
+
+    orig_evaluate = mock_jetson.evaluate_candidate
+    async def steal_lease_mid_flight(*args, **kwargs):
+        res = await orig_evaluate(*args, **kwargs)
+        # Another worker steals lease
+        mock_db["training_jobs"].update_one(
+            {"job_id": job.job_id},
+            {"$set": {"lease_owner": "worker-thief-99"}}
+        )
+        return res
+    mock_jetson.evaluate_candidate = steal_lease_mid_flight
+
+    with pytest.raises(RuntimeError, match="Cannot promote candidate.*lease held by worker-thief-99"):
+        await service.process_admitted_job(job.job_id)
+
+    mock_jetson.promote_candidate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_recovers_interrupted_evaluating_job(service, mock_jetson, mock_db):
+    """
+    Worker crashes during EVALUATING after remote training has completed (candidate_model_id set).
+    Recovering worker reclaims job:
+    - Skips submit_training_job and polling
+    - Directly executes holdout evaluation and promotion
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+    stale_time = (now - datetime.timedelta(minutes=5)).isoformat()
+    mock_db["training_jobs"].insert_one({
+        "job_id": "job-evaluating-crash",
+        "task": "gliner_finetune",
+        "base_model_id": "gliner",
+        "dataset_manifest_id": "man-eval-crash",
+        "status": JobStatus.EVALUATING.value,
+        "lease_owner": "dead-worker",
+        "lease_expires_at": stale_time,
+        "jetson_job_id": "jetson-already-done",
+        "candidate_model_id": "cand-already-trained",
+    })
+
+    # Reconcile stale leases should clear lease on EVALUATING job
+    reclaimed = await service.reconcile_stale_leases()
+    assert reclaimed == 1
+
+    mock_jetson.evaluate_candidate.return_value = {
+        "model_id": "cand-already-trained",
+        "sample_count": 150,
+        "metrics": {"f1": 0.94, "precision": 0.94, "recall": 0.94, "latency_p99_ms": 25.0}
+    }
+    mock_jetson.get_active_model.return_value = {"model_id": "cand-already-trained", "task": "gliner"}
+
+    # Recovering worker processes the job
+    processed = await service.process_admitted_job("job-evaluating-crash")
+    assert processed.status == JobStatus.PROMOTED
+    assert processed.candidate_model_id == "cand-already-trained"
+
+    # Zero remote training submissions or polling
+    mock_jetson.submit_training_job.assert_not_called()
+    mock_jetson.get_training_job.assert_not_called()
+    mock_jetson.evaluate_candidate.assert_called_once_with("cand-already-trained")
+    mock_jetson.promote_candidate.assert_called_once_with("cand-already-trained")
+
+
+@pytest.mark.asyncio
+async def test_cannot_process_terminal_job(service, mock_db):
+    """
+    Attempting to process a job already in a terminal state (PROMOTED, CANCELLED, etc.) raises ValueError.
+    """
+    mock_db["training_jobs"].insert_one({
+        "job_id": "job-already-promoted",
+        "task": "gliner_finetune",
+        "base_model_id": "gliner",
+        "status": JobStatus.PROMOTED.value,
+    })
+
+    with pytest.raises(ValueError, match="Cannot process job.*terminal state PROMOTED"):
+        await service.process_admitted_job("job-already-promoted")
+
