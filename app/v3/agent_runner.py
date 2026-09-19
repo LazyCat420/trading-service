@@ -1357,18 +1357,26 @@ async def run_v3_agent(
         # Record specialist features reached telemetry at actual prompt delivery point
         spec_mode = getattr(_settings, "SPECIALIST_MODE", "advisory").lower()
         if spec_mode == "advisory" and desk.specialist_features:
-            features_reached = []
-            if "Specialist Neural Intelligence" in delivered_text or "GLiNER" in delivered_text or "Market CNN" in delivered_text or "Timeseries RNN" in delivered_text:
-                if agent_name in ("v3_fundamental_analyst", "fundamental_analyst"):
-                    features_reached.append("gliner")
-                elif agent_name in ("v3_technical_analyst", "technical_analyst"):
-                    features_reached.append("cnn")
-                elif agent_name in ("v3_quant_analyst", "quant_analyst"):
-                    features_reached.extend(["rnn", "cnn"])
-                elif agent_name in ("v3_board_of_directors", "board_of_directors"):
-                    features_reached.extend(["gliner", "cnn", "rnn"])
-            if features_reached:
-                desk.record_agent_specialist_features_reached(agent_name, features_reached)
+            from app.v3.shared_desk import extract_outbound_delivery_receipt
+            receipt = extract_outbound_delivery_receipt(
+                agent_role=agent_name,
+                outbound_prompt=delivered_text,
+                specialist_features=desk.specialist_features,
+                attempt=attempt_no,
+            )
+            role_allowed = set()
+            if agent_name in ("v3_fundamental_analyst", "fundamental_analyst"):
+                role_allowed = {"gliner"}
+            elif agent_name in ("v3_technical_analyst", "technical_analyst"):
+                role_allowed = {"cnn"}
+            elif agent_name in ("v3_quant_analyst", "quant_analyst"):
+                role_allowed = {"cnn", "rnn"}
+            elif agent_name in ("v3_board_of_directors", "board_of_directors", "v3_decision_synthesizer"):
+                role_allowed = {"gliner", "cnn", "rnn"}
+
+            if role_allowed:
+                receipt["features"] = [f for f in receipt["features"] if f["feature_id"] in role_allowed]
+                desk.record_agent_specialist_features_reached(agent_name, receipt, attempt=attempt_no)
 
         try:
             from app.services.learning.receipts import record_delivery

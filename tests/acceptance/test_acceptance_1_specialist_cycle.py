@@ -10,7 +10,7 @@ Exercises run_v3_pipeline across advisory, shadow, disabled, and sabotage modes:
   without injecting fake features into prompts.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
@@ -59,19 +59,44 @@ def mock_feature_client():
             "rnn": {"version": "timeseries_rnn-v1"},
         }
     })
+    client.get_active_models = AsyncMock(return_value={
+        "gliner": {"version": "gliner-bi-encoder-v1"},
+        "cnn": {"version": "market_cnn-v1"},
+        "rnn": {"version": "timeseries_rnn-v1"},
+    })
     return client
 
 
 @pytest.fixture
 def fake_build_report():
     async def _build(ticker, stats_sink=None, **kwargs):
+        now = datetime.now(timezone.utc)
         bars = [
-            {"close": 150.0 + i, "open": 149.0 + i, "high": 152.0 + i, "low": 148.0 + i, "volume": 1000000, "timestamp": f"2026-09-18T{i:02d}:00:00Z"}
+            {
+                "close": 150.0 + i,
+                "open": 149.0 + i,
+                "high": 152.0 + i,
+                "low": 148.0 + i,
+                "volume": 1000000,
+                "timestamp": (now - timedelta(days=36 - i)).isoformat(),
+            }
             for i in range(35)
         ]
         news = [
-            {"title": "Apple announces record Q4 earnings and new AI initiatives", "summary": "Apple announces record Q4 earnings and new AI initiatives", "published_at": datetime.now(timezone.utc).isoformat()},
-            {"title": "Analyst upgrades AAPL price target on supply chain strength", "summary": "Analyst upgrades AAPL price target on supply chain strength", "published_at": datetime.now(timezone.utc).isoformat()},
+            {
+                "id": "doc_1",
+                "title": "Apple announces record Q4 earnings and new AI initiatives",
+                "summary": "Apple announces record Q4 earnings and new AI initiatives",
+                "published_at": (now - timedelta(hours=2)).isoformat(),
+                "url": "https://news.example.com/apple-q4",
+            },
+            {
+                "id": "doc_2",
+                "title": "Analyst upgrades AAPL price target on supply chain strength",
+                "summary": "Analyst upgrades AAPL price target on supply chain strength",
+                "published_at": (now - timedelta(hours=1)).isoformat(),
+                "url": "https://news.example.com/analyst-upgrade",
+            },
         ]
         if stats_sink is not None:
             stats_sink["raw_data"] = {
