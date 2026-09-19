@@ -400,6 +400,7 @@ class DurableTrainingService:
                         "base_model_id": job.base_model_id,
                         "dataset_manifest_id": job.dataset_manifest_id,
                         "hyperparameters": job.hyperparameters,
+                        "idempotency_key": job.idempotency_key,
                     }
                     if job.hyperparameters and "proposal_id" in job.hyperparameters:
                         submit_kwargs["proposal_id"] = job.hyperparameters["proposal_id"]
@@ -484,23 +485,71 @@ class DurableTrainingService:
             return await self.get_job(job_id)
 
         # 5. Promotion Gatekeeper
-        cand_metadata = {
-            "task": job.task,
-            "candidate_model_id": cand_model_id,
-        }
-        cand_eval_payload = dict(eval_resp)
-        if "model_id" not in cand_eval_payload:
-            cand_eval_payload["model_id"] = cand_model_id
-        if "dataset_manifest_id" not in cand_eval_payload and job.dataset_manifest_id:
-            cand_eval_payload["dataset_manifest_id"] = job.dataset_manifest_id
+        # Background worker discovers active champion to enforce non-regression
+        active_champ_id = expected_champion_version
+        if not active_champ_id and hasattr(self.client, "get_active_model"):
+            try:
+                active_info = await self.client.get_active_model(job.task)
+                active_champ_id = active_info.get("model_id") if isinstance(active_info, dict) else str(active_info) if active_info else None
+            except Exception as ce:
+                logger.warning("[DurableTrainingService] Error resolving active champion for %s: %s", job.task, ce)
+                active_champ_id = None
 
-        should_promote, reason = self.orchestrator.evaluate_promotion_gate(
-            candidate_metadata=cand_metadata,
-            candidate_eval=cand_eval_payload,
-            champion_eval=champion_eval,
-            expected_champion_version=expected_champion_version,
-            require_champion_eval=(champion_eval is not None),
+        has_active_champion = bool(
+            active_champ_id
+            and active_champ_id not in ("unknown", "none", "None", "")
+            and active_champ_id != cand_model_id
         )
+
+        if has_active_champion and champion_eval is None:
+            try:
+                champion_eval = await self.client.get_model_metrics(active_champ_id)
+                expected_champion_version = active_champ_id
+            except Exception as me:
+                logger.error("[DurableTrainingService] Failed to retrieve trusted metrics for active champion %s (%s): %s", active_champ_id, job.task, me)
+                champion_eval = None
+
+        # Fail-closed check: if replacing an active champion, trusted evidence is MANDATORY
+        if has_active_champion:
+            if not champion_eval or not isinstance(champion_eval.get("metrics"), dict) or not champion_eval.get("metrics"):
+                should_promote = False
+                reason = f"Trusted champion evidence unavailable for active model '{active_champ_id}' on task '{job.task}'. Replacement promotion rejected fail-closed."
+            else:
+                cand_metadata = {
+                    "task": job.task,
+                    "candidate_model_id": cand_model_id,
+                }
+                cand_eval_payload = dict(eval_resp)
+                if "model_id" not in cand_eval_payload:
+                    cand_eval_payload["model_id"] = cand_model_id
+                if "dataset_manifest_id" not in cand_eval_payload and job.dataset_manifest_id:
+                    cand_eval_payload["dataset_manifest_id"] = job.dataset_manifest_id
+
+                should_promote, reason = self.orchestrator.evaluate_promotion_gate(
+                    candidate_metadata=cand_metadata,
+                    candidate_eval=cand_eval_payload,
+                    champion_eval=champion_eval,
+                    expected_champion_version=expected_champion_version or active_champ_id,
+                    require_champion_eval=True,
+                )
+        else:
+            cand_metadata = {
+                "task": job.task,
+                "candidate_model_id": cand_model_id,
+            }
+            cand_eval_payload = dict(eval_resp)
+            if "model_id" not in cand_eval_payload:
+                cand_eval_payload["model_id"] = cand_model_id
+            if "dataset_manifest_id" not in cand_eval_payload and job.dataset_manifest_id:
+                cand_eval_payload["dataset_manifest_id"] = job.dataset_manifest_id
+
+            should_promote, reason = self.orchestrator.evaluate_promotion_gate(
+                candidate_metadata=cand_metadata,
+                candidate_eval=cand_eval_payload,
+                champion_eval=champion_eval,
+                expected_champion_version=expected_champion_version,
+                require_champion_eval=(champion_eval is not None),
+            )
 
         result_payload = {
             "candidate_model_id": cand_model_id,
@@ -546,7 +595,14 @@ class DurableTrainingService:
                 raise RuntimeError(f"Lost lease ownership before promotion for job {job_id}")
 
             try:
-                promo_resp = await self.client.promote_candidate(cand_model_id)
+                target_expected_champ = expected_champion_version or (active_champ_id if has_active_champion else None)
+                if target_expected_champ:
+                    promo_resp = await self.client.promote_candidate(
+                        cand_model_id,
+                        expected_champion_version=target_expected_champ,
+                    )
+                else:
+                    promo_resp = await self.client.promote_candidate(cand_model_id)
                 result_payload["promotion_response"] = promo_resp
             except Exception as e:
                 col.update_one(

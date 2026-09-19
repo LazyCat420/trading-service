@@ -317,6 +317,7 @@ class JetsonTrainingOrchestrator:
         dataset_manifest_id: str | None = None,
         hyperparameters: dict[str, Any] | None = None,
         proposal_id: str | None = None,
+        idempotency_key: str | None = None,
         poll_interval_s: float = 5.0,
         max_poll_seconds: float = 600.0,
         champion_eval: dict[str, Any] | None = None,
@@ -326,7 +327,7 @@ class JetsonTrainingOrchestrator:
         """
         Full orchestration loop:
         1. Pre-flight capacity check
-        2. Submit training job
+        2. Submit training job with stable idempotency key
         3. Poll for completion
         4. Evaluate candidate on frozen holdout suite
         5. Verify fail-closed deterministic promotion gate
@@ -336,6 +337,12 @@ class JetsonTrainingOrchestrator:
         # 1. Capacity check
         await self.check_training_capacity()
 
+        # Deterministic fallback idempotency key if not supplied
+        if not idempotency_key:
+            import hashlib, json
+            raw_idem = f"{task}:{dataset_manifest_id or ''}:{json.dumps(hyperparameters or {}, sort_keys=True)}"
+            idempotency_key = hashlib.sha256(raw_idem.encode("utf-8")).hexdigest()[:16]
+
         # 2. Submit job
         sub = await self.client.submit_training_job(
             task=task,
@@ -343,9 +350,10 @@ class JetsonTrainingOrchestrator:
             dataset_manifest_id=dataset_manifest_id,
             hyperparameters=hyperparameters,
             proposal_id=proposal_id,
+            idempotency_key=idempotency_key,
         )
         job_id = sub["job_id"]
-        logger.info("[TrainingOrchestrator] Job %s submitted for task '%s'", job_id, task)
+        logger.info("[TrainingOrchestrator] Job %s submitted for task '%s' (idem=%s)", job_id, task, idempotency_key)
 
         # 3. Poll for completion
         start_time = time.monotonic()
@@ -412,7 +420,10 @@ class JetsonTrainingOrchestrator:
                         reason=cas_reason,
                     )
 
-            await self.client.promote_candidate(cand_model_id)
+            await self.client.promote_candidate(
+                cand_model_id,
+                expected_champion_version=expected_champion_version,
+            )
             logger.info("[TrainingOrchestrator] Candidate %s PROMOTED: %s", cand_model_id, reason)
 
             # 7. Post-promotion active model verification

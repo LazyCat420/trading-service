@@ -4,6 +4,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.db import mongo_store
 from app.services.jetson_feature_client import feature_client
 from app.services.jetson_training_orchestrator import (
     JetsonTrainingOrchestrator,
@@ -162,7 +163,13 @@ async def curate_and_train(req: CurationRequest) -> dict[str, Any]:
     }
 
     if req.auto_submit:
-        durable_svc = DurableTrainingService(client=feature_client)
+        doc_db = None
+        try:
+            doc_db = mongo_store.get_doc_db()
+        except Exception:
+            if hasattr(mongo_store, "db"):
+                doc_db = mongo_store.db
+        durable_svc = DurableTrainingService(db=doc_db, client=feature_client)
         try:
             durable_job = await durable_svc.submit_job(
                 task=req.task,
@@ -345,8 +352,14 @@ async def submit_retraining_proposal(req: RetrainingProposalRequest) -> dict[str
         RetrainingProposal,
         ProposalStatus,
     )
-    proposal_svc = GLMRetrainingProposalService()
-    durable_svc = DurableTrainingService(client=feature_client)
+    doc_db = None
+    try:
+        doc_db = mongo_store.get_doc_db()
+    except Exception:
+        if hasattr(mongo_store, "db"):
+            doc_db = mongo_store.db
+    proposal_svc = GLMRetrainingProposalService(db=doc_db)
+    durable_svc = DurableTrainingService(db=doc_db, client=feature_client)
 
     proposal = RetrainingProposal(
         task=req.task,
@@ -381,6 +394,7 @@ class DecayEvaluationRequest(BaseModel):
     model_id: str = Field(description="Active model ID")
     metrics: dict[str, Any] = Field(description="Rolling evaluation metrics")
     timestamp: str | None = Field(default=None, description="Evaluation timestamp")
+    expected_champion: str | None = Field(default=None, description="Expected champion model ID to restore upon rollback")
 
 
 @router.post("/decay/evaluate")
@@ -393,13 +407,20 @@ async def evaluate_specialist_decay(req: DecayEvaluationRequest) -> dict[str, An
         DecayMonitorService,
         RollbackVerificationError,
     )
-    decay_svc = DecayMonitorService(feature_client=feature_client)
+    doc_db = None
+    try:
+        doc_db = mongo_store.get_doc_db()
+    except Exception:
+        if hasattr(mongo_store, "db"):
+            doc_db = mongo_store.db
+    decay_svc = DecayMonitorService(db=doc_db, feature_client=feature_client)
     try:
         eval_result = await decay_svc.record_and_evaluate({
             "task": req.task,
             "model_id": req.model_id,
             "metrics": req.metrics,
             "timestamp": req.timestamp,
+            "expected_champion": req.expected_champion,
         })
         return {
             "task": eval_result.task,

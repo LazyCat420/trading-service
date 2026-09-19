@@ -165,7 +165,11 @@ class DecayMonitorService:
                         f"{CRITICAL_GLINER_F1_MIN:.4f}."
                     )
 
+        expected_champion = eval_data.get("expected_champion")
         rollback_resp = None
+        verification_status = "NOT_APPLICABLE"
+        restored_model = None
+
         if triggered:
             # 4. Deduplication: Check if rollback was already initiated for this model
             already_rolled_back = False
@@ -195,32 +199,107 @@ class DecayMonitorService:
                 try:
                     rollback_resp = await self.feature_client.rollback_model(model_id)
 
-                    # 5. Read-back active model verification: ensure model was restored
+                    # 5. Read-back active model verification: ensure expected champion was restored
                     if hasattr(self.feature_client, "get_active_model"):
                         active_info = await self.feature_client.get_active_model(task)
                         restored_model = active_info.get("model_id") if isinstance(active_info, dict) else str(active_info)
                         if restored_model == model_id:
+                            verification_status = "FAILED"
                             err_msg = (
                                 f"Rollback failed verification: active model for task '{task}' "
                                 f"is still decaying model '{model_id}'"
                             )
                             logger.critical("[DecayMonitor] %s", err_msg)
+                            now_iso = datetime.now(timezone.utc).isoformat()
+                            original_ts = eval_data.get("timestamp") or eval_data.get("evaluated_at") or now_iso
+                            entry = {
+                                "task": task,
+                                "model_id": model_id,
+                                "expected_champion": expected_champion,
+                                "restored_model": restored_model,
+                                "metrics": metrics,
+                                "triggered_rollback": True,
+                                "status": "UNRESOLVED",
+                                "verification_status": "FAILED",
+                                "reason": reason.value,
+                                "detail": f"{detail} [{err_msg}]",
+                                "rollback_response": rollback_resp,
+                                "evaluated_at": original_ts,
+                                "recorded_at": now_iso,
+                            }
+                            if col is not None:
+                                col.insert_one(dict(entry))
+                            self.history.append(entry)
                             raise RollbackVerificationError(err_msg)
+
+                        if expected_champion and restored_model != expected_champion:
+                            verification_status = "FAILED"
+                            err_msg = (
+                                f"Rollback failed verification: active model for task '{task}' "
+                                f"is '{restored_model}', expected specific champion '{expected_champion}'"
+                            )
+                            logger.critical("[DecayMonitor] %s", err_msg)
+                            now_iso = datetime.now(timezone.utc).isoformat()
+                            original_ts = eval_data.get("timestamp") or eval_data.get("evaluated_at") or now_iso
+                            entry = {
+                                "task": task,
+                                "model_id": model_id,
+                                "expected_champion": expected_champion,
+                                "restored_model": restored_model,
+                                "metrics": metrics,
+                                "triggered_rollback": True,
+                                "status": "UNRESOLVED",
+                                "verification_status": "FAILED",
+                                "reason": reason.value,
+                                "detail": f"{detail} [{err_msg}]",
+                                "rollback_response": rollback_resp,
+                                "evaluated_at": original_ts,
+                                "recorded_at": now_iso,
+                            }
+                            if col is not None:
+                                col.insert_one(dict(entry))
+                            self.history.append(entry)
+                            raise RollbackVerificationError(err_msg)
+
+                        verification_status = "VERIFIED"
 
                 except RollbackVerificationError:
                     raise
                 except Exception as e:
                     logger.critical("[DecayMonitor] Rollback call failed for %s: %s", model_id, e)
                     detail += f" [Rollback call error: {e}]"
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    original_ts = eval_data.get("timestamp") or eval_data.get("evaluated_at") or now_iso
+                    entry = {
+                        "task": task,
+                        "model_id": model_id,
+                        "expected_champion": expected_champion,
+                        "metrics": metrics,
+                        "triggered_rollback": True,
+                        "status": "UNRESOLVED",
+                        "verification_status": "FAILED",
+                        "reason": reason.value,
+                        "detail": detail,
+                        "rollback_response": None,
+                        "evaluated_at": original_ts,
+                        "recorded_at": now_iso,
+                    }
+                    if col is not None:
+                        col.insert_one(dict(entry))
+                    self.history.append(entry)
+                    raise
 
         now_iso = datetime.now(timezone.utc).isoformat()
         original_ts = eval_data.get("timestamp") or eval_data.get("evaluated_at") or now_iso
         entry = {
             "task": task,
             "model_id": model_id,
+            "expected_champion": expected_champion,
+            "restored_model": restored_model,
             "metrics": metrics,
             "triggered_rollback": triggered,
             "status": "ROLLED_BACK" if (triggered and rollback_resp is not None) else ("DEGRADED" if reason != RollbackTriggerReason.HEALTHY else "HEALTHY"),
+            "verification_status": verification_status,
             "reason": reason.value,
             "detail": detail,
             "rollback_response": rollback_resp,

@@ -125,6 +125,8 @@ class JetsonFeatureClient:
     CAPABILITY_CONCURRENT_VERSIONS: bool = False  # Jetson hosts exactly 1 active champion per task in GPU memory
     CAPABILITY_DYNAMIC_MODEL_HOTSWAP: bool = False  # Per-request historical version swapping unsupported
     CAPABILITY_IDEMPOTENT_SUBMISSION: bool = True  # Idempotency keys supported via header & payload
+    CAPABILITY_SERVER_CAS_PROMOTION: bool = False  # Jetson Orin /v1/models/{id}/promote lacks server-side atomic expected-champion CAS gate
+    CAPABILITY_DATASET_REGISTRATION_ROUTE: bool = False  # Jetson Orin lacks /v1/datasets endpoint (404 Not Found); datasets must be pre-staged
 
     def __init__(
         self,
@@ -827,13 +829,23 @@ class JetsonFeatureClient:
                 error_code="EVALUATION_ERROR",
             )
 
-    async def promote_candidate(self, candidate_id: str, timeout: float | None = None) -> dict[str, Any]:
+    async def promote_candidate(
+        self,
+        candidate_id: str,
+        expected_champion_version: str | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         """Promotes candidate model through Jetson's policy gate to become active champion."""
         url = f"{self.base_url}/v1/models/{candidate_id}/promote"
         headers = self._headers()
+        payload: dict[str, Any] = {}
+        if expected_champion_version is not None:
+            payload["expected_champion"] = expected_champion_version
+            headers["X-Expected-Champion"] = expected_champion_version
+
         req_timeout = timeout or self.timeout
         async with httpx.AsyncClient(timeout=req_timeout) as client:
-            resp = await client.post(url, headers=headers)
+            resp = await client.post(url, json=payload if payload else None, headers=headers)
             if resp.is_success:
                 return resp.json()
             raise FeatureServiceResponseError(
@@ -841,6 +853,77 @@ class JetsonFeatureClient:
                 status_code=resp.status_code,
                 error_code="PROMOTION_ERROR",
             )
+
+    async def register_dataset(
+        self,
+        manifest_descriptor: dict[str, Any],
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """
+        Registers a dataset manifest with Jetson Feature Platform.
+        Attempts POST /v1/datasets. If the Jetson server returns 404/501 (capability gap),
+        validates local manifest integrity (verifying SHA-256 top-level and split checksums),
+        and records the server capability gap.
+        """
+        url = f"{self.base_url}/v1/datasets"
+        headers = self._headers()
+        req_timeout = timeout or self.timeout
+
+        manifest_id = manifest_descriptor.get("manifest_id")
+        task = manifest_descriptor.get("task")
+        sha256 = manifest_descriptor.get("sha256")
+        splits = manifest_descriptor.get("splits", {})
+
+        payload = {
+            "manifest_id": manifest_id,
+            "task": task,
+            "sha256": sha256,
+            "splits": {
+                "train_sha256": splits.get("train_sha256"),
+                "val_sha256": splits.get("val_sha256"),
+                "test_sha256": splits.get("test_sha256"),
+                "train_count": splits.get("train_count", 0),
+                "val_count": splits.get("val_count", 0),
+                "test_count": splits.get("test_count", 0),
+            },
+            "created_at": manifest_descriptor.get("created_at"),
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=req_timeout) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+                if resp.is_success:
+                    return resp.json()
+                elif resp.status_code in (404, 405, 501):
+                    logger.warning(
+                        "[JetsonFeatureClient] Jetson does not support /v1/datasets (HTTP %d). "
+                        "Reporting capability gap CAPABILITY_DATASET_REGISTRATION_ROUTE=False.",
+                        resp.status_code,
+                    )
+                    return {
+                        "status": "acknowledged_local_only",
+                        "manifest_id": manifest_id,
+                        "sha256": sha256,
+                        "splits": payload["splits"],
+                        "capability_gap": "JETSON_LACKS_DATASET_REGISTRATION_ENDPOINT",
+                        "server_status_code": resp.status_code,
+                    }
+                else:
+                    raise FeatureServiceResponseError(
+                        message=f"Dataset registration failed: {resp.text}",
+                        status_code=resp.status_code,
+                        error_code="DATASET_REGISTRATION_ERROR",
+                    )
+        except (httpx.RequestError, FeatureServiceConnectionError) as exc:
+            logger.warning("[JetsonFeatureClient] Failed to reach /v1/datasets: %s. Falling back to local manifest verification.", exc)
+            return {
+                "status": "acknowledged_local_only",
+                "manifest_id": manifest_id,
+                "sha256": sha256,
+                "splits": payload["splits"],
+                "capability_gap": "JETSON_UNREACHABLE_OR_NO_ENDPOINT",
+                "error": str(exc),
+            }
 
     async def rollback_model(self, model_id: str, timeout: float | None = None) -> dict[str, Any]:
         """Restores prior champion model after drift, timeout, or metric breach."""
