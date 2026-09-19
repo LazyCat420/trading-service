@@ -110,12 +110,20 @@ def _prepare_specialist_price_series(
     if len(ordered_bars) < 30:
         cnn_err = f"Insufficient eligible bars <= cutoff (need >= 30, got {len(ordered_bars)})"
     else:
-        cnn_bars = ordered_bars[-30:]
+        latest_bar_dt = eligible[-1][0]
+        if (cutoff_dt - latest_bar_dt).total_seconds() > 14 * 86400:
+            cnn_err = f"Stale market bars: latest bar ({latest_bar_dt.isoformat()}) exceeds 14d cutoff gap ({cutoff_dt.isoformat()})"
+        else:
+            cnn_bars = ordered_bars[-30:]
 
     if len(ordered_bars) < 25:
         rnn_err = f"Insufficient eligible bars <= cutoff (need >= 25, got {len(ordered_bars)})"
     else:
-        rnn_bars = ordered_bars[-25:]
+        latest_bar_dt = eligible[-1][0]
+        if (cutoff_dt - latest_bar_dt).total_seconds() > 14 * 86400:
+            rnn_err = f"Stale market bars: latest bar ({latest_bar_dt.isoformat()}) exceeds 14d cutoff gap ({cutoff_dt.isoformat()})"
+        else:
+            rnn_bars = ordered_bars[-25:]
 
     return cnn_bars, rnn_bars, cnn_err, rnn_err
 
@@ -241,6 +249,8 @@ async def _invoke_specialist_with_version_check(
             return {
                 "status": "UNAVAILABLE",
                 "error": f"Version drift on {specialist_name}: expected {expected_version}, got {served_ver}",
+                "model_version": served_ver,
+                "expected_version": expected_version,
             }
 
         out = dict(res)

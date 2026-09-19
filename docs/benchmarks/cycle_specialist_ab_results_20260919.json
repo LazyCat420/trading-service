@@ -1,0 +1,170 @@
+{
+  "timestamp": "2026-09-19T06:43:15Z",
+  "summary": {
+    "mean_lat_a_s": 70.27840956280124,
+    "mean_lat_b_s": 13.498828841403883,
+    "overall_speedup": 5.206259771754559,
+    "total_tok_a": 9642,
+    "total_tok_b": 2521,
+    "total_tok_savings_pct": 73.85397220493674
+  },
+  "results_a": [
+    {
+      "arm": "ARM_A_LLM_ONLY",
+      "ticker": "NVDA",
+      "total_tokens": 1913,
+      "total_latency_ms": 81993.55321800249,
+      "news_latency_ms": 34944.917252003506,
+      "tech_latency_ms": 19962.23048400134,
+      "quant_latency_ms": 14579.053934998228,
+      "synth_latency_ms": 12507.351546999416,
+      "grounded": false,
+      "decision_text": ""
+    },
+    {
+      "arm": "ARM_A_LLM_ONLY",
+      "ticker": "AAPL",
+      "total_tokens": 1921,
+      "total_latency_ms": 49258.90043000254,
+      "news_latency_ms": 9943.014602999028,
+      "tech_latency_ms": 8249.589667000691,
+      "quant_latency_ms": 20410.467369001708,
+      "synth_latency_ms": 10655.828791001113,
+      "grounded": true,
+      "decision_text": ""
+    },
+    {
+      "arm": "ARM_A_LLM_ONLY",
+      "ticker": "MSFT",
+      "total_tokens": 1938,
+      "total_latency_ms": 81519.39643800142,
+      "news_latency_ms": 18254.49490400206,
+      "tech_latency_ms": 17543.571096997766,
+      "quant_latency_ms": 25906.43851299683,
+      "synth_latency_ms": 19814.89192400477,
+      "grounded": false,
+      "decision_text": ""
+    },
+    {
+      "arm": "ARM_A_LLM_ONLY",
+      "ticker": "LULU",
+      "total_tokens": 1932,
+      "total_latency_ms": 73040.82794299757,
+      "news_latency_ms": 24476.173876995745,
+      "tech_latency_ms": 14722.559045003436,
+      "quant_latency_ms": 23703.37188099802,
+      "synth_latency_ms": 10138.723140000366,
+      "grounded": false,
+      "decision_text": ""
+    },
+    {
+      "arm": "ARM_A_LLM_ONLY",
+      "ticker": "SPY",
+      "total_tokens": 1938,
+      "total_latency_ms": 65579.3697850022,
+      "news_latency_ms": 18320.010802999604,
+      "tech_latency_ms": 13066.026620996126,
+      "quant_latency_ms": 23803.043272004288,
+      "synth_latency_ms": 10390.28908900218,
+      "grounded": false,
+      "decision_text": ""
+    }
+  ],
+  "results_b": [
+    {
+      "arm": "ARM_B_SPECIALIST",
+      "ticker": "NVDA",
+      "total_tokens": 490,
+      "total_latency_ms": 14718.604644011066,
+      "news_latency_ms": 161.27662200597115,
+      "tech_latency_ms": 47.66223500337219,
+      "quant_latency_ms": 46.55399100010982,
+      "synth_latency_ms": 14463.111796001613,
+      "regime": "no_setup",
+      "quantiles": {
+        "p10": -0.0236,
+        "p50": -0.0021,
+        "p90": 0.0194
+      },
+      "grounded": false,
+      "decision_text": "",
+      "telemetry_count": 4
+    },
+    {
+      "arm": "ARM_B_SPECIALIST",
+      "ticker": "AAPL",
+      "total_tokens": 535,
+      "total_latency_ms": 11887.757505006448,
+      "news_latency_ms": 306.28637200425146,
+      "tech_latency_ms": 83.13723700121045,
+      "quant_latency_ms": 54.599759001575876,
+      "synth_latency_ms": 11443.73413699941,
+      "regime": "no_setup",
+      "quantiles": {
+        "p10": -0.0235,
+        "p50": -0.0021,
+        "p90": 0.0194
+      },
+      "grounded": false,
+      "decision_text": "",
+      "telemetry_count": 4
+    },
+    {
+      "arm": "ARM_B_SPECIALIST",
+      "ticker": "MSFT",
+      "total_tokens": 511,
+      "total_latency_ms": 15910.36787799385,
+      "news_latency_ms": 275.42725399689516,
+      "tech_latency_ms": 48.45204699813621,
+      "quant_latency_ms": 39.26232799858553,
+      "synth_latency_ms": 15547.226249000232,
+      "regime": "trend_up",
+      "quantiles": {
+        "p10": -0.0234,
+        "p50": -0.0019,
+        "p90": 0.0196
+      },
+      "grounded": false,
+      "decision_text": "",
+      "telemetry_count": 4
+    },
+    {
+      "arm": "ARM_B_SPECIALIST",
+      "ticker": "LULU",
+      "total_tokens": 494,
+      "total_latency_ms": 14083.549805000075,
+      "news_latency_ms": 238.6701289942721,
+      "tech_latency_ms": 42.52315500343684,
+      "quant_latency_ms": 46.163979000994004,
+      "synth_latency_ms": 13756.192542001372,
+      "regime": "trend_up",
+      "quantiles": {
+        "p10": -0.0235,
+        "p50": -0.002,
+        "p90": 0.0194
+      },
+      "grounded": false,
+      "decision_text": "",
+      "telemetry_count": 4
+    },
+    {
+      "arm": "ARM_B_SPECIALIST",
+      "ticker": "SPY",
+      "total_tokens": 491,
+      "total_latency_ms": 10893.86437500798,
+      "news_latency_ms": 248.96705400169594,
+      "tech_latency_ms": 40.48655700171366,
+      "quant_latency_ms": 43.93662499933271,
+      "synth_latency_ms": 10560.474139005237,
+      "regime": "trend_up",
+      "quantiles": {
+        "p10": -0.0234,
+        "p50": -0.0019,
+        "p90": 0.0196
+      },
+      "grounded": false,
+      "decision_text": "",
+      "telemetry_count": 4
+    }
+  ]
+}

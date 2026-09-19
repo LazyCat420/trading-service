@@ -111,7 +111,7 @@ async def evaluate_arm_a_llm_only(case: dict[str, Any]) -> dict[str, Any]:
     total_latency_ms = 0.0
 
     # Specialist features explicitly marked disabled on SharedDesk
-    desk.append_artifact("specialist_features", {"mode": "disabled"})
+    desk.append_artifact("specialist_features", {"summary": "Specialist features disabled", "mode": "disabled"})
 
     # 1. News Desk LLM extraction
     news_prompt = f"Extract all tickers, financial metrics, and corporate events from this article:\n\n{case['news']}"
@@ -186,13 +186,14 @@ async def evaluate_arm_b_specialist(case: dict[str, Any], client: JetsonFeatureC
 
     # 3. Quant Desk Timeseries RNN (0 LLM tokens)
     t0 = time.monotonic()
-    rnn_resp = await client.predict_forecast(ticker, "1d", 25, sequence=case["rnn_seq"])
+    rnn_resp = await client.predict_forecast(ticker, "1d", 25, cutoff="2026-09-18T16:00:00Z", sequence=case["rnn_seq"])
     rnn_ms = (time.monotonic() - t0) * 1000
     total_latency_ms += rnn_ms
     quantiles = rnn_resp.get("result", {}).get("return_quantiles", {})
 
     # Append typed specialist features in ADVISORY mode
     feature_payload = {
+        "summary": f"Jetson Specialist Features for {ticker}",
         "mode": "advisory",
         "gliner": {
             "model_version": "gliner-v1",
@@ -210,6 +211,7 @@ async def evaluate_arm_b_specialist(case: dict[str, Any], client: JetsonFeatureC
             "quantiles": quantiles,
         },
     }
+    desk.specialist_features = feature_payload
     desk.append_artifact("specialist_features", feature_payload)
 
     # Record feature lineage per agent
@@ -354,6 +356,24 @@ async def run_cycle_ab_benchmark():
     print("\n" + "=" * 85)
     print("  ⭐ PRODUCTION PATH EVALUATION COMPLETE")
     print("=" * 85)
+
+    out_payload = {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "summary": {
+            "mean_lat_a_s": mean_lat_a,
+            "mean_lat_b_s": mean_lat_b,
+            "overall_speedup": overall_speedup,
+            "total_tok_a": total_tok_a,
+            "total_tok_b": total_tok_b,
+            "total_tok_savings_pct": total_tok_savings,
+        },
+        "results_a": results_a,
+        "results_b": results_b,
+    }
+    out_path = Path("docs/benchmarks/cycle_specialist_ab_results_20260919.json")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(out_payload, indent=2))
+    print(f"  📁 Results written to: {out_path}")
 
 
 if __name__ == "__main__":
