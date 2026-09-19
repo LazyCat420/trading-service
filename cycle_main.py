@@ -312,7 +312,11 @@ async def run_worker(tickers: list[str] | None = None, shutdown_event: asyncio.E
     training_worker_task = None
     try:
         from app.services.durable_training_service import DurableTrainingService
-        durable_svc = DurableTrainingService()
+        from app.services.jetson_feature_client import feature_client
+        from app.db import mongo_store
+        doc_db = mongo_store.get_doc_db() if mongo_store else None
+        durable_svc = DurableTrainingService(db=doc_db, client=feature_client)
+        durable_svc.ensure_indexes()
         training_worker_task = asyncio.create_task(
             durable_svc.start_worker_loop(poll_interval_seconds=5.0, shutdown_event=shutdown)
         )
@@ -324,7 +328,10 @@ async def run_worker(tickers: list[str] | None = None, shutdown_event: asyncio.E
     decay_worker_task = None
     try:
         from app.services.decay_monitor_service import DecayMonitorService
-        decay_svc = DecayMonitorService()
+        from app.services.jetson_feature_client import feature_client
+        from app.db import mongo_store
+        doc_db = mongo_store.get_doc_db() if mongo_store else None
+        decay_svc = DecayMonitorService(feature_client=feature_client, db=doc_db)
         decay_worker_task = asyncio.create_task(
             decay_svc.start_worker_loop(poll_interval_seconds=60.0, shutdown_event=shutdown)
         )

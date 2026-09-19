@@ -220,3 +220,175 @@ async def test_sabotage_worker_cannot_acquire_unexpired_lease_of_another_worker(
     persisted = col.find_one({"job_id": job.job_id})
     assert persisted["lease_owner"] == "worker-A"
     assert persisted["status"] == JobStatus.RUNNING.value
+
+
+@pytest.mark.asyncio
+async def test_crash_recovery_at_admitted_transition_with_real_mongo(clean_mongo, mock_jetson):
+    """
+    Worker 1 admits job to ADMITTED, then crashes before acquiring lease.
+    reconcile_stale_leases reconciles the stale unassigned ADMITTED job back to QUEUED.
+    Worker 2 re-admits and completes execution.
+    """
+    worker_1 = DurableTrainingService(db=clean_mongo, client=mock_jetson, worker_id="worker-admit-crash")
+    job = await worker_1.submit_job(task="gliner_finetune", base_model_id="gliner", dataset_manifest_id="m-admit-crash")
+    admitted = await worker_1.try_admit_next_job()
+    assert admitted is True
+
+    col = clean_mongo.get_collection("training_jobs")
+    # Simulate time passing with unowned ADMITTED job (stale > 60s)
+    stale_ts = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=90)).isoformat()
+    col.update_one({"job_id": job.job_id}, {"$set": {"updated_at": stale_ts, "created_at": stale_ts}})
+
+    worker_2 = DurableTrainingService(db=clean_mongo, client=mock_jetson, worker_id="worker-admit-recovery")
+    reclaimed = await worker_2.reconcile_stale_leases()
+    assert reclaimed == 1
+
+    # Re-checked job must be reset to QUEUED for fresh admission
+    reloaded = await worker_2.get_job(job.job_id)
+    assert reloaded.status == JobStatus.QUEUED
+
+    # Worker 2 admits and processes it
+    assert await worker_2.try_admit_next_job() is True
+    completed = await worker_2.process_admitted_job(job.job_id)
+    assert completed.status == JobStatus.PROMOTED
+
+
+@pytest.mark.asyncio
+async def test_crash_recovery_at_evaluating_transition_with_real_mongo(clean_mongo, mock_jetson):
+    """
+    Job finishes remote training, enters EVALUATING with candidate_model_id set.
+    Worker crashes during evaluation. Lease expires.
+    Replacement worker recovers the job and completes holdout evaluation without re-submitting to Jetson.
+    """
+    col = clean_mongo.get_collection("training_jobs")
+    stale_exp = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=10)).isoformat()
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    col.insert_one({
+        "job_id": "job-eval-recovery-real",
+        "task": "gliner_finetune",
+        "base_model_id": "gliner",
+        "dataset_manifest_id": "m-eval-real",
+        "status": JobStatus.EVALUATING.value,
+        "candidate_model_id": "cand-999",
+        "jetson_job_id": "jetson-already-completed",
+        "lease_owner": "worker-crashed-eval",
+        "lease_expires_at": stale_exp,
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    })
+
+    worker_recovery = DurableTrainingService(db=clean_mongo, client=mock_jetson, worker_id="worker-recovery")
+    reclaimed = await worker_recovery.reconcile_stale_leases()
+    assert reclaimed == 1
+
+    completed = await worker_recovery.process_admitted_job("job-eval-recovery-real")
+    assert completed.status == JobStatus.PROMOTED
+    assert completed.candidate_model_id == "cand-999"
+
+    # Verify: submit_training_job was never called
+    mock_jetson.submit_training_job.assert_not_called()
+    mock_jetson.get_training_job.assert_not_called()
+    mock_jetson.evaluate_candidate.assert_called_once_with("cand-999")
+    mock_jetson.promote_candidate.assert_called_once_with("cand-999")
+
+
+@pytest.mark.asyncio
+async def test_database_enforced_submission_uniqueness_with_real_mongo(clean_mongo, mock_jetson):
+    """
+    Tests database-enforced submission uniqueness under concurrent load.
+    Spawns 20 parallel submission tasks with the exact same idempotency key.
+    Enforces that exactly 1 document is inserted and all 20 return the same job_id.
+    """
+    service = DurableTrainingService(db=clean_mongo, client=mock_jetson, worker_id="worker-uniq-check")
+    service.ensure_indexes()
+
+    async def _submit():
+        return await service.submit_job(
+            task="gliner_finetune",
+            base_model_id="gliner",
+            dataset_manifest_id="manifest-concurrency-uniq-test",
+            hyperparameters={"lr": 1e-4, "epochs": 3},
+        )
+
+    tasks = [_submit() for _ in range(20)]
+    results = await asyncio.gather(*tasks)
+
+    # All 20 must return the same job_id
+    job_ids = {r.job_id for r in results}
+    assert len(job_ids) == 1
+    shared_job_id = job_ids.pop()
+
+    col = clean_mongo.get_collection("training_jobs")
+    # Real Mongo must contain exactly 1 document for this idempotency key
+    assert col.count_documents({"job_id": shared_job_id}) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancellation_before_promotion_with_real_mongo(clean_mongo, mock_jetson):
+    """
+    Verifies that a job cancelled prior to promotion is aborted without calling promote_candidate.
+    """
+    worker = DurableTrainingService(db=clean_mongo, client=mock_jetson, worker_id="worker-cancel-test")
+    job = await worker.submit_job(task="gliner_finetune", base_model_id="gliner", dataset_manifest_id="m-cancel")
+    await worker.try_admit_next_job()
+
+    orig_evaluate = mock_jetson.evaluate_candidate
+    async def cancel_mid_flight(*args, **kwargs):
+        res = await orig_evaluate(*args, **kwargs)
+        await worker.cancel_job(job.job_id)
+        return res
+    mock_jetson.evaluate_candidate = cancel_mid_flight
+
+    processed = await worker.process_admitted_job(job.job_id)
+    assert processed.status == JobStatus.CANCELLED
+    mock_jetson.promote_candidate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_worker_loop_end_to_end_http_queue_drain_with_real_mongo(clean_mongo, mock_jetson):
+    """
+    Tests the actual background worker loop draining the queue without manual intervention.
+    Starts start_worker_loop in an async task against real MongoDB.
+    Submits a job via submit_job (or HTTP route).
+    Asserts the worker loop claims, executes, evaluates, and promotes the job automatically.
+    """
+    worker = DurableTrainingService(db=clean_mongo, client=mock_jetson, worker_id="worker-loop-drain")
+    worker.ensure_indexes()
+    shutdown = asyncio.Event()
+
+    loop_task = asyncio.create_task(
+        worker.start_worker_loop(poll_interval_seconds=0.05, shutdown_event=shutdown)
+    )
+
+    try:
+        # Submit a job into the queue
+        job = await worker.submit_job(
+            task="gliner_finetune",
+            base_model_id="gliner",
+            dataset_manifest_id="m-loop-drain",
+            hyperparameters={"epochs": 2},
+        )
+        assert job.status == JobStatus.QUEUED
+
+        # Poll real MongoDB until the job is PROMOTED
+        final_job = None
+        for _ in range(60):
+            current = await worker.get_job(job.job_id)
+            if current and current.status == JobStatus.PROMOTED:
+                final_job = current
+                break
+            await asyncio.sleep(0.05)
+
+        assert final_job is not None, "Worker loop did not drain queue to PROMOTED within timeout"
+        assert final_job.status == JobStatus.PROMOTED
+        assert final_job.candidate_model_id == "cand-999"
+
+    finally:
+        shutdown.set()
+        loop_task.cancel()
+        try:
+            await loop_task
+        except asyncio.CancelledError:
+            pass
+
